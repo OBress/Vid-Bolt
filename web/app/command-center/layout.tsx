@@ -36,6 +36,11 @@ export default function CommandCenterLayout({
           href: "/command-center/media/video-studio",
         },
         {
+          id: "video-editor",
+          label: "Video Editor",
+          href: "/command-center/media/video-editor",
+        },
+        {
           id: "assets",
           label: "Asset Manager",
           href: "/command-center/media/assets",
