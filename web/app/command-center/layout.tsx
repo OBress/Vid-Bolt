@@ -24,42 +24,80 @@ export default function CommandCenterLayout({
   const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  const navItems = [
+  const navGroups = [
     {
-      id: "overview",
+      id: "media",
+      label: "MEDIA CREATION",
       icon: Monitor,
-      label: "COMMAND CENTER",
-      href: "/command-center",
+      items: [
+        {
+          id: "video-studio",
+          label: "Video Studio",
+          href: "/command-center/media/video-studio",
+        },
+        {
+          id: "assets",
+          label: "Asset Manager",
+          href: "/command-center/media/assets",
+        },
+      ],
     },
     {
-      id: "agents",
-      icon: Users,
-      label: "AGENT NETWORK",
-      href: "/command-center/agent-network",
-    },
-    {
-      id: "operations",
+      id: "analytics",
+      label: "ANALYTICS",
       icon: Target,
-      label: "OPERATIONS",
-      href: "/command-center/operations",
+      items: [
+        {
+          id: "performance",
+          label: "Performance",
+          href: "/command-center/analytics/performance",
+        },
+        {
+          id: "audience",
+          label: "Audience",
+          href: "/command-center/analytics/audience",
+        },
+      ],
     },
     {
-      id: "intelligence",
-      icon: Shield,
-      label: "INTELLIGENCE",
-      href: "/command-center/intelligence",
-    },
-    {
-      id: "systems",
+      id: "settings",
+      label: "SETTINGS",
       icon: Settings,
-      label: "SYSTEMS",
-      href: "/command-center/systems",
+      items: [
+        {
+          id: "general",
+          label: "General Settings",
+          href: "/command-center/settings/general",
+        },
+        {
+          id: "api-keys",
+          label: "API Keys",
+          href: "/command-center/settings/api-keys",
+        },
+      ],
     },
   ];
 
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([
+    "media",
+    "analytics",
+    "settings",
+  ]);
+
+  const toggleGroup = (groupId: string) => {
+    setExpandedGroups((prev) =>
+      prev.includes(groupId)
+        ? prev.filter((id) => id !== groupId)
+        : [...prev, groupId]
+    );
+  };
+
   const getActiveLabel = () => {
-    const item = navItems.find((item) => item.href === pathname);
-    return item ? item.label : "OVERVIEW";
+    for (const group of navGroups) {
+      const item = group.items.find((item) => item.href === pathname);
+      if (item) return item.label.toUpperCase();
+    }
+    return "COMMAND CENTER";
   };
 
   return (
@@ -76,9 +114,9 @@ export default function CommandCenterLayout({
           <div className="flex items-center justify-between mb-8">
             <div className={`${sidebarCollapsed ? "hidden" : "block"}`}>
               <h1 className="text-orange-500 font-bold text-lg tracking-wider">
-                TACTICAL OPS
+                VID BOLT
               </h1>
-              <p className="text-neutral-500 text-xs">v2.1.7 CLASSIFIED</p>
+              <p className="text-neutral-500 text-xs">v1.0.0 BETA</p>
             </div>
             <Button
               variant="ghost"
@@ -94,22 +132,65 @@ export default function CommandCenterLayout({
             </Button>
           </div>
 
-          <nav className="space-y-2 mb-8 flex-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.id}
-                href={item.href}
-                className={`w-full flex items-center gap-3 p-3 rounded transition-colors ${
-                  pathname === item.href
-                    ? "bg-orange-500 text-white"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-800"
-                }`}
-              >
-                <item.icon className="w-5 h-5 md:w-5 md:h-5 sm:w-6 sm:h-6" />
-                {!sidebarCollapsed && (
-                  <span className="text-sm font-medium">{item.label}</span>
+          <nav className="space-y-4 mb-8 flex-1 overflow-y-auto custom-scrollbar">
+            <Link
+              href="/command-center"
+              className={`w-full flex items-center gap-3 p-3 rounded transition-colors mb-4 ${
+                pathname === "/command-center"
+                  ? "bg-orange-500 text-white"
+                  : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+              }`}
+            >
+              <Monitor className="w-5 h-5" />
+              {!sidebarCollapsed && (
+                <span className="text-sm font-medium">COMMAND CENTER</span>
+              )}
+            </Link>
+
+            {navGroups.map((group) => (
+              <div key={group.id} className="space-y-1">
+                {!sidebarCollapsed ? (
+                  <>
+                    <button
+                      onClick={() => toggleGroup(group.id)}
+                      className="w-full flex items-center justify-between p-2 text-neutral-500 hover:text-white transition-colors group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <group.icon className="w-4 h-4" />
+                        <span className="text-xs font-bold tracking-widest">
+                          {group.label}
+                        </span>
+                      </div>
+                      <ChevronRight
+                        className={`w-3 h-3 transition-transform duration-200 ${
+                          expandedGroups.includes(group.id) ? "rotate-90" : ""
+                        }`}
+                      />
+                    </button>
+                    {expandedGroups.includes(group.id) && (
+                      <div className="space-y-1 ml-4 border-l border-neutral-800 pl-2">
+                        {group.items.map((item) => (
+                          <Link
+                            key={item.id}
+                            href={item.href}
+                            className={`block p-2 text-sm rounded transition-colors ${
+                              pathname === item.href
+                                ? "text-orange-500 font-medium"
+                                : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+                            }`}
+                          >
+                            {item.label}
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center gap-4">
+                    <group.icon className="w-5 h-5 text-neutral-400" />
+                  </div>
                 )}
-              </Link>
+              </div>
             ))}
           </nav>
 

@@ -9,9 +9,34 @@ export async function GET(request: Request) {
 
   if (code) {
     const supabase = await createClient()
-    const { error } = await supabase.auth.exchangeCodeForSession(code)
-    if (!error) {
-      const response = NextResponse.redirect(`${origin}${next}`)
+    const { error, data: { session } } = await supabase.auth.exchangeCodeForSession(code)
+    
+    if (!error && session) {
+      const user = session.user
+      
+      // Upsert user into public.users table if it doesn't exist
+      // We do this to ensure we have a record to track onboarding
+      const { data: profile } = await supabase
+        .from('users')
+        .select('onboarding_completed')
+        .eq('id', user.id)
+        .single()
+
+      if (!profile) {
+        // Create initial profile
+        await supabase.from('users').insert({
+          id: user.id,
+          email: user.email,
+        })
+      }
+
+      // Determine redirection
+      let redirectUrl = next
+      if (!profile || !profile.onboarding_completed) {
+        redirectUrl = '/onboarding'
+      }
+
+      const response = NextResponse.redirect(`${origin}${redirectUrl}`)
       // Set a lightweight cookie for optimization
       response.cookies.set('is_logged_in', 'true', {
         path: '/',
