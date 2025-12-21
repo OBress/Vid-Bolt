@@ -1,5 +1,7 @@
 "use client";
 
+import { ArrowLeft } from "lucide-react";
+
 interface Step {
   id: number;
   label: string;
@@ -9,13 +11,31 @@ interface Step {
 interface WizardProgressProps {
   steps: readonly Step[];
   currentStep: number;
+  onBack?: () => void;
 }
 
-export function WizardProgress({ steps, currentStep }: WizardProgressProps) {
+export function WizardProgress({
+  steps,
+  currentStep,
+  onBack,
+}: WizardProgressProps) {
   return (
-    <div className="px-4 py-1">
-      {/* Progress bar - minimal vertical space, centered, bigger elements */}
-      <div className="relative max-w-4xl mx-auto">
+    <div className="px-4 py-2 flex items-center gap-4">
+      {/* Back button */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-800/80 border border-neutral-700 hover:border-orange-500/50 hover:bg-neutral-800 transition-all duration-300 group"
+        >
+          <ArrowLeft className="w-4 h-4 text-neutral-400 group-hover:text-orange-500 transition-colors" />
+          <span className="text-xs font-mono text-neutral-400 group-hover:text-orange-500 uppercase tracking-widest transition-colors">
+            Back
+          </span>
+        </button>
+      )}
+
+      {/* Progress bar - compact, centered */}
+      <div className="relative flex-1 max-w-3xl mx-auto">
         {/* Background track */}
         <div className="absolute top-3.5 left-0 right-0 h-0.5 bg-neutral-800" />
 
@@ -35,7 +55,7 @@ export function WizardProgress({ steps, currentStep }: WizardProgressProps) {
 
             return (
               <div key={step.id} className="flex flex-col items-center">
-                {/* Step dot - bigger */}
+                {/* Step dot */}
                 <div
                   className={`
                     w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold
@@ -68,7 +88,7 @@ export function WizardProgress({ steps, currentStep }: WizardProgressProps) {
                   )}
                 </div>
 
-                {/* Step label - bigger text */}
+                {/* Step label */}
                 <span
                   className={`
                     mt-1 text-[10px] font-mono uppercase tracking-wider

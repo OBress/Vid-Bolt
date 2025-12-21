@@ -35,13 +35,13 @@ const STEPS = [
 
 interface VideoCreationWizardProps {
   onComplete: (videoId: string) => void;
-  onClose: () => void;
+  onBack: () => void;
   projectId: string;
 }
 
 export function VideoCreationWizard({
   onComplete,
-  onClose,
+  onBack,
   projectId,
 }: VideoCreationWizardProps) {
   const [currentStep, setCurrentStep] = useState(1);
@@ -262,7 +262,7 @@ HOST: "If you found this valuable, don't forget to like and subscribe for more c
             videoId={state.videoId!}
             projectId={projectId}
             onBack={() => goToStep(9)}
-            onClose={onClose}
+            onClose={onBack}
           />
         );
       default:
@@ -279,9 +279,13 @@ HOST: "If you found this valuable, don't forget to like and subscribe for more c
         isEditorStep ? "" : "max-w-5xl"
       } mx-auto`}
     >
-      {/* Progress indicator - minimal vertical space */}
-      <div className="flex-shrink-0 pt-1 pr-12">
-        <WizardProgress steps={STEPS} currentStep={currentStep} />
+      {/* Progress indicator with back button */}
+      <div className="flex-shrink-0 pt-2">
+        <WizardProgress
+          steps={STEPS}
+          currentStep={currentStep}
+          onBack={onBack}
+        />
       </div>
 
       {/* Step content */}
