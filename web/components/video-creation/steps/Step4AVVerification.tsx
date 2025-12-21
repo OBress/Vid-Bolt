@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ArrowLeft, Check, Play, Pause, Volume2, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-interface AVScriptItem {
+export interface AVScriptItem {
   timestamp: string;
   visual: string;
   audio: string;
@@ -15,6 +15,8 @@ interface Step4AVVerificationProps {
   avScript: AVScriptItem[];
   onConfirm: () => void;
   onBack: () => void;
+  isLocked?: boolean;
+  lockedMessage?: string;
 }
 
 export function Step4AVVerification({
@@ -22,11 +24,14 @@ export function Step4AVVerification({
   avScript,
   onConfirm,
   onBack,
+  isLocked,
+  lockedMessage,
 }: Step4AVVerificationProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeSegment, setActiveSegment] = useState<number | null>(null);
 
   const togglePlay = () => {
+    if (isLocked) return;
     setIsPlaying(!isPlaying);
     // In real implementation, this would control audio playback
   };
@@ -48,11 +53,20 @@ export function Step4AVVerification({
       </div>
 
       {/* Audio player */}
-      <div className="w-full bg-neutral-900/50 border border-neutral-800 rounded-xl p-4">
+      <div
+        className={`w-full bg-neutral-900/50 border border-neutral-800 rounded-xl p-4 ${
+          isLocked ? "opacity-50" : ""
+        }`}
+      >
         <div className="flex items-center gap-4">
           <button
             onClick={togglePlay}
-            className="w-12 h-12 rounded-full bg-orange-500 hover:bg-orange-400 flex items-center justify-center transition-colors"
+            disabled={isLocked}
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${
+              isLocked
+                ? "bg-neutral-800 cursor-not-allowed"
+                : "bg-orange-500 hover:bg-orange-400"
+            }`}
           >
             {isPlaying ? (
               <Pause className="w-5 h-5 text-white" />
@@ -79,7 +93,7 @@ export function Step4AVVerification({
       </div>
 
       {/* AV Script timeline */}
-      <div className="w-full">
+      <div className={`w-full ${isLocked ? "opacity-50" : ""}`}>
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-mono text-neutral-500 uppercase tracking-wider">
             AV Script Timeline
@@ -93,11 +107,13 @@ export function Step4AVVerification({
           {avScript.map((item, index) => (
             <div
               key={index}
-              onClick={() =>
-                setActiveSegment(activeSegment === index ? null : index)
-              }
+              onClick={() => {
+                if (isLocked) return;
+                setActiveSegment(activeSegment === index ? null : index);
+              }}
               className={`
-                p-3 rounded-lg border cursor-pointer transition-all duration-200
+                p-3 rounded-lg border transition-all duration-200
+                ${isLocked ? "cursor-not-allowed" : "cursor-pointer"}
                 ${
                   activeSegment === index
                     ? "bg-orange-500/10 border-orange-500/50"
@@ -131,21 +147,29 @@ export function Step4AVVerification({
 
       {/* Actions */}
       <div className="flex items-center gap-4 w-full">
-        <Button
-          onClick={onBack}
-          variant="outline"
-          className="flex-1 h-12 border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800 gap-2"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back
-        </Button>
-        <Button
-          onClick={onConfirm}
-          className="flex-[2] h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest gap-2"
-        >
-          <Check className="w-4 h-4" />
-          Generate Video
-        </Button>
+        {isLocked ? (
+          <div className="w-full h-12 flex items-center justify-center bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-500 font-mono text-xs uppercase tracking-widest">
+            {lockedMessage}
+          </div>
+        ) : (
+          <>
+            <Button
+              onClick={onBack}
+              variant="outline"
+              className="flex-1 h-12 border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800 gap-2"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back
+            </Button>
+            <Button
+              onClick={onConfirm}
+              className="flex-[2] h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest gap-2"
+            >
+              <Check className="w-4 h-4" />
+              Generate Video
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

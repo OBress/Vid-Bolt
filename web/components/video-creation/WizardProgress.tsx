@@ -11,13 +11,17 @@ interface Step {
 interface WizardProgressProps {
   steps: readonly Step[];
   currentStep: number;
+  maxStepReached: number;
   onBack?: () => void;
+  onStepClick?: (step: number) => void;
 }
 
 export function WizardProgress({
   steps,
   currentStep,
+  maxStepReached,
   onBack,
+  onStepClick,
 }: WizardProgressProps) {
   return (
     <div className="px-4 py-2 flex items-center gap-4">
@@ -37,35 +41,43 @@ export function WizardProgress({
       {/* Progress bar - compact, centered */}
       <div className="relative flex-1 max-w-3xl mx-auto">
         {/* Background track */}
-        <div className="absolute top-3.5 left-0 right-0 h-0.5 bg-neutral-800" />
+        <div className="absolute top-3.5 left-0 right-0 h-0.5 bg-neutral-800 z-0" />
 
-        {/* Active progress */}
+        {/* Active progress track (Official progress) */}
         <div
-          className="absolute top-3.5 left-0 h-0.5 bg-gradient-to-r from-orange-500 to-orange-400 transition-all duration-700 ease-out"
+          className="absolute top-3.5 left-0 h-0.5 bg-gradient-to-r from-orange-500 to-orange-400 transition-all duration-700 ease-out z-0"
           style={{
-            width: `${((currentStep - 1) / (steps.length - 1)) * 100}%`,
+            width: `${((maxStepReached - 1) / (steps.length - 1)) * 100}%`,
           }}
         />
 
         {/* Step indicators */}
-        <div className="relative flex justify-between">
+        <div className="relative flex justify-between z-10">
           {steps.map((step) => {
-            const isCompleted = currentStep > step.id;
+            const isReached = step.id <= maxStepReached;
+            const isCompleted = currentStep > step.id && isReached;
             const isCurrent = currentStep === step.id;
+            const isFutureReached = step.id > currentStep && isReached;
 
             return (
-              <div key={step.id} className="flex flex-col items-center">
+              <button
+                key={step.id}
+                onClick={() => onStepClick?.(step.id)}
+                className="flex flex-col items-center group/step focus:outline-none"
+              >
                 {/* Step dot */}
                 <div
                   className={`
                     w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold
                     transition-all duration-500 ease-out
                     ${
-                      isCompleted
+                      isCurrent
+                        ? "bg-orange-500 text-white ring-4 ring-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.4)] scale-110 z-10"
+                        : isCompleted
                         ? "bg-orange-500 text-white"
-                        : isCurrent
-                        ? "bg-orange-500 text-white ring-2 ring-orange-500/40"
-                        : "bg-neutral-800 text-neutral-500"
+                        : isFutureReached
+                        ? "bg-neutral-950 border-2 border-orange-500/40 text-orange-500/60"
+                        : "bg-neutral-800 text-neutral-500 group-hover/step:bg-neutral-700 group-hover/step:text-neutral-300"
                     }
                   `}
                 >
@@ -91,20 +103,22 @@ export function WizardProgress({
                 {/* Step label */}
                 <span
                   className={`
-                    mt-1 text-[10px] font-mono uppercase tracking-wider
-                    transition-colors duration-300
+                    mt-1.5 text-[10px] font-mono uppercase tracking-wider
+                    transition-all duration-300
                     ${
                       isCurrent
-                        ? "text-orange-500 font-semibold"
+                        ? "text-orange-500 font-bold scale-105"
                         : isCompleted
-                        ? "text-neutral-400"
-                        : "text-neutral-600"
+                        ? "text-neutral-400 font-medium"
+                        : isFutureReached
+                        ? "text-orange-500/40"
+                        : "text-neutral-600 group-hover/step:text-neutral-400"
                     }
                   `}
                 >
                   {step.label}
                 </span>
-              </div>
+              </button>
             );
           })}
         </div>

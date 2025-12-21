@@ -9,15 +9,23 @@ interface StepEditorProps {
   projectId: string;
   onContinue: () => void;
   onBack: () => void;
+  isLocked?: boolean;
+  lockedMessage?: string;
 }
 
 export function StepEditor({
   videoId,
   projectId,
   onContinue,
+  isLocked,
+  lockedMessage,
 }: StepEditorProps) {
   return (
-    <div className="dark flex flex-col h-full w-full bg-background">
+    <div
+      className={`dark flex flex-col h-full w-full bg-background ${
+        isLocked ? "pointer-events-none" : ""
+      }`}
+    >
       {/* Compact header bar */}
       <div className="flex items-center justify-between px-3 py-2 bg-neutral-900/80 border-b border-neutral-800 flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -25,16 +33,25 @@ export function StepEditor({
             <Clapperboard className="w-3 h-3" />
             Editor
           </div>
-          <span className="text-sm text-neutral-400">Edit your video</span>
+          <span className="text-sm text-neutral-400">
+            {isLocked ? "Editor Locked" : "Edit your video"}
+          </span>
         </div>
-        <Button
-          onClick={onContinue}
-          size="sm"
-          className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white text-xs font-bold uppercase tracking-widest gap-1.5 h-8"
-        >
-          Continue to Export
-          <ArrowRight className="w-3 h-3" />
-        </Button>
+
+        {isLocked ? (
+          <div className="px-4 h-8 flex items-center bg-neutral-800 border border-neutral-700 rounded text-neutral-500 font-mono text-[10px] uppercase tracking-widest pointer-events-auto">
+            {lockedMessage}
+          </div>
+        ) : (
+          <Button
+            onClick={onContinue}
+            size="sm"
+            className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white text-xs font-bold uppercase tracking-widest gap-1.5 h-8"
+          >
+            Continue to Export
+            <ArrowRight className="w-3 h-3" />
+          </Button>
+        )}
       </div>
 
       {/* Full-bleed Editor with dark theme wrapper */}

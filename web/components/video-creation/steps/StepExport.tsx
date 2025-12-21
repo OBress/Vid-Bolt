@@ -21,6 +21,8 @@ interface StepExportProps {
   projectId: string;
   onBack: () => void;
   onClose: () => void;
+  isLocked?: boolean;
+  lockedMessage?: string;
 }
 
 export function StepExport({
@@ -28,6 +30,8 @@ export function StepExport({
   projectId,
   onBack,
   onClose,
+  isLocked,
+  lockedMessage,
 }: StepExportProps) {
   const exportOptions = [
     {
@@ -73,6 +77,7 @@ export function StepExport({
   ];
 
   const handleExport = (platformId: string) => {
+    if (isLocked) return;
     console.log(`Exporting to ${platformId}`, { videoId, projectId });
     // TODO: Implement actual export logic
   };
@@ -92,14 +97,25 @@ export function StepExport({
       </div>
 
       {/* Export options grid */}
-      <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div
+        className={`w-full grid grid-cols-1 sm:grid-cols-2 gap-3 ${
+          isLocked ? "opacity-50" : ""
+        }`}
+      >
         {exportOptions.map((option) => {
           const Icon = option.icon;
           return (
             <button
               key={option.id}
               onClick={() => handleExport(option.id)}
-              className={`group flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r ${option.color} ${option.hoverColor} text-white transition-all duration-300 hover:scale-[1.02] hover:shadow-lg`}
+              disabled={isLocked}
+              className={`group flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r ${
+                option.color
+              } ${
+                option.hoverColor
+              } text-white transition-all duration-300 hover:scale-[1.02] hover:shadow-lg ${
+                isLocked ? "cursor-not-allowed" : ""
+              }`}
             >
               <div className="p-2 bg-white/20 rounded-lg">
                 <Icon />
@@ -115,19 +131,27 @@ export function StepExport({
 
       {/* Actions */}
       <div className="flex items-center gap-4 w-full pt-4">
-        <Button
-          onClick={onBack}
-          variant="outline"
-          className="flex-1 h-12 border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800"
-        >
-          Back to Editor
-        </Button>
-        <Button
-          onClick={onClose}
-          className="flex-1 h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest"
-        >
-          Done
-        </Button>
+        {isLocked ? (
+          <div className="w-full h-12 flex items-center justify-center bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-500 font-mono text-xs uppercase tracking-widest">
+            {lockedMessage}
+          </div>
+        ) : (
+          <>
+            <Button
+              onClick={onBack}
+              variant="outline"
+              className="flex-1 h-12 border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800"
+            >
+              Back to Editor
+            </Button>
+            <Button
+              onClick={onClose}
+              className="flex-1 h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest"
+            >
+              Done
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

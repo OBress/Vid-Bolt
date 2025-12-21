@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
 import { useState } from "react";
 
-export function LogoutButton() {
+export function LogoutButton({ isCollapsed }: { isCollapsed?: boolean }) {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const supabase = createClient();
@@ -38,12 +38,22 @@ export function LogoutButton() {
       disabled={isLoading}
       className="text-neutral-400 hover:text-white hover:bg-neutral-800 gap-2 font-mono text-xs uppercase tracking-wider"
     >
-      {isLoading ? (
-        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-      ) : (
-        <LogOut className="w-4 h-4" />
-      )}
-      SECURE_LOGOUT
+      <div className="flex items-center justify-center">
+        {isLoading ? (
+          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+        ) : (
+          <LogOut className="w-4 h-4" />
+        )}
+      </div>
+      <span
+        className={`transition-all duration-300 ${
+          isCollapsed
+            ? "opacity-0 w-0 overflow-hidden"
+            : "opacity-100 w-auto ml-2"
+        } whitespace-nowrap`}
+      >
+        SECURE_LOGOUT
+      </span>
     </Button>
   );
 }

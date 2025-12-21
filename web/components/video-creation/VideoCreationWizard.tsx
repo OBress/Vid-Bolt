@@ -45,6 +45,7 @@ export function VideoCreationWizard({
   projectId,
 }: VideoCreationWizardProps) {
   const [currentStep, setCurrentStep] = useState(1);
+  const [maxStepReached, setMaxStepReached] = useState(1);
   const [state, setState] = useState<WizardState>({
     prompt: "",
     expandedIdea: "",
@@ -62,15 +63,39 @@ export function VideoCreationWizard({
     setCurrentStep(step);
   }, []);
 
+  const advanceToStep = useCallback((step: number) => {
+    setCurrentStep(step);
+    setMaxStepReached((prev) => Math.max(prev, step));
+  }, []);
+
+  // Helper to get lock state for a step
+  const getLockState = (stepId: number) => {
+    const isLocked = stepId > maxStepReached;
+    let lockedMessage = "";
+
+    if (isLocked) {
+      // Find the first incomplete required step
+      const previousStep = STEPS.find((s) => s.id === stepId - 1);
+      lockedMessage = `Must complete ${
+        previousStep?.label || "previous step"
+      } first`;
+    }
+
+    return { isLocked, lockedMessage };
+  };
+
   // Render the appropriate step content
   const renderStep = () => {
+    const lock = getLockState(currentStep);
+
     switch (currentStep) {
       case 1:
         return (
           <Step1PromptInput
             value={state.prompt}
             onChange={(prompt) => updateState({ prompt })}
-            onSubmit={() => goToStep(2)}
+            onSubmit={() => advanceToStep(2)}
+            {...lock}
           />
         );
       case 2:
@@ -88,7 +113,7 @@ export function VideoCreationWizard({
               updateState({
                 expandedIdea: `Enhanced Version of: "${state.prompt}"\n\nThis video will explore the fascinating world of ${state.prompt}. We'll break down the key concepts, provide real-world examples, and deliver actionable insights that viewers can apply immediately.\n\nKey Points:\n• Introduction to the core concept\n• Three main supporting arguments\n• Real-world case studies\n• Actionable takeaways for the audience`,
               });
-              goToStep(3);
+              advanceToStep(3);
             }}
             duration={3000}
           />
@@ -98,8 +123,9 @@ export function VideoCreationWizard({
           <Step2IdeaReview
             expandedIdea={state.expandedIdea}
             onChange={(expandedIdea: string) => updateState({ expandedIdea })}
-            onConfirm={() => goToStep(4)}
+            onConfirm={() => advanceToStep(4)}
             onBack={() => goToStep(1)}
+            {...lock}
           />
         );
       case 4:
@@ -140,7 +166,7 @@ HOST: "So there you have it! Remember, the key takeaways are..."
 [CALL TO ACTION - 2:30-2:45]
 HOST: "If you found this valuable, don't forget to like and subscribe for more content like this!"`,
               });
-              goToStep(5);
+              advanceToStep(5);
             }}
             duration={4000}
           />
@@ -150,8 +176,9 @@ HOST: "If you found this valuable, don't forget to like and subscribe for more c
           <Step3ScriptReview
             script={state.script}
             onChange={(script: string) => updateState({ script })}
-            onConfirm={() => goToStep(6)}
+            onConfirm={() => advanceToStep(6)}
             onBack={() => goToStep(3)}
+            {...lock}
           />
         );
       case 6:
@@ -210,7 +237,7 @@ HOST: "If you found this valuable, don't forget to like and subscribe for more c
                   },
                 ],
               });
-              goToStep(7);
+              advanceToStep(7);
             }}
             duration={5000}
           />
@@ -220,8 +247,9 @@ HOST: "If you found this valuable, don't forget to like and subscribe for more c
           <Step4AVVerification
             audioUrl={state.audioUrl}
             avScript={state.avScript}
-            onConfirm={() => goToStep(8)} // Go to Generate step
+            onConfirm={() => advanceToStep(8)} // Go to Generate step
             onBack={() => goToStep(5)}
+            {...lock}
           />
         );
       case 8:
@@ -242,7 +270,7 @@ HOST: "If you found this valuable, don't forget to like and subscribe for more c
             onComplete={() => {
               const videoId = `video-${Date.now()}`;
               updateState({ videoId });
-              goToStep(9);
+              advanceToStep(9);
             }}
             duration={4000}
           />
@@ -252,8 +280,9 @@ HOST: "If you found this valuable, don't forget to like and subscribe for more c
           <StepEditor
             videoId={state.videoId!}
             projectId={projectId}
-            onContinue={() => goToStep(10)}
+            onContinue={() => advanceToStep(10)}
             onBack={() => goToStep(7)}
+            {...lock}
           />
         );
       case 10:
@@ -263,6 +292,7 @@ HOST: "If you found this valuable, don't forget to like and subscribe for more c
             projectId={projectId}
             onBack={() => goToStep(9)}
             onClose={onBack}
+            {...lock}
           />
         );
       default:
@@ -284,7 +314,9 @@ HOST: "If you found this valuable, don't forget to like and subscribe for more c
         <WizardProgress
           steps={STEPS}
           currentStep={currentStep}
+          maxStepReached={maxStepReached}
           onBack={onBack}
+          onStepClick={goToStep}
         />
       </div>
 

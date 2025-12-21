@@ -8,18 +8,22 @@ interface Step1PromptInputProps {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
+  isLocked?: boolean;
+  lockedMessage?: string;
 }
 
 export function Step1PromptInput({
   value,
   onChange,
   onSubmit,
+  isLocked,
+  lockedMessage,
 }: Step1PromptInputProps) {
   const [isFocused, setIsFocused] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (value.trim()) {
+    if (value.trim() && !isLocked) {
       onSubmit();
     }
   };
@@ -54,7 +58,9 @@ export function Step1PromptInput({
           className={`
             relative rounded-xl border-2 transition-all duration-300
             ${
-              isFocused
+              isLocked
+                ? "border-neutral-800 bg-neutral-900/50 opacity-50 cursor-not-allowed"
+                : isFocused
                 ? "border-orange-500 bg-orange-500/5"
                 : "border-neutral-800 bg-neutral-900/50"
             }
@@ -65,6 +71,7 @@ export function Step1PromptInput({
             onChange={(e) => onChange(e.target.value)}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
+            disabled={isLocked}
             placeholder="Describe your video idea..."
             className="w-full h-32 p-4 bg-transparent text-white placeholder:text-neutral-600 resize-none focus:outline-none text-lg"
           />
@@ -76,32 +83,47 @@ export function Step1PromptInput({
         </div>
 
         {/* Suggestions */}
-        <div className="space-y-3">
-          <p className="text-xs text-neutral-600 font-mono uppercase tracking-wider">
-            Need inspiration? Try these:
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {suggestions.map((suggestion) => (
-              <button
-                key={suggestion}
-                type="button"
-                onClick={() => onChange(suggestion)}
-                className="px-3 py-1.5 bg-neutral-800/50 hover:bg-neutral-800 border border-neutral-700 rounded-lg text-xs text-neutral-400 hover:text-white transition-all duration-200"
-              >
-                {suggestion}
-              </button>
-            ))}
+        {!isLocked && (
+          <div className="space-y-3">
+            <p className="text-xs text-neutral-600 font-mono uppercase tracking-wider">
+              Need inspiration? Try these:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  onClick={() => onChange(suggestion)}
+                  className="px-3 py-1.5 bg-neutral-800/50 hover:bg-neutral-800 border border-neutral-700 rounded-lg text-xs text-neutral-400 hover:text-white transition-all duration-200"
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Submit button */}
         <Button
           type="submit"
-          disabled={!value.trim()}
-          className="w-full h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 gap-2"
+          disabled={!value.trim() || isLocked}
+          className={`
+            w-full h-12 text-white font-bold uppercase tracking-widest transition-all duration-300 gap-2
+            ${
+              isLocked
+                ? "bg-neutral-800 border border-neutral-700 text-neutral-500 cursor-not-allowed opacity-100"
+                : "bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            }
+          `}
         >
-          <Wand2 className="w-4 h-4" />
-          Generate Idea
+          {isLocked ? (
+            <span className="font-mono text-xs">{lockedMessage}</span>
+          ) : (
+            <>
+              <Wand2 className="w-4 h-4" />
+              Generate Idea
+            </>
+          )}
         </Button>
       </form>
     </div>

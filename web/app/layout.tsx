@@ -7,7 +7,7 @@ const geistMono = GeistMono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Vid Bolt Dashboard",
-  description: "Tactical command and control system",
+  description: "Command center and control system",
 };
 
 export default function RootLayout({
