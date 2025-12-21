@@ -27,23 +27,23 @@ export default function CommandCenterLayout({
   const navGroups = [
     {
       id: "media",
-      label: "MEDIA CREATION",
+      label: "MEDIA PROJECTS",
       icon: Monitor,
       items: [
         {
-          id: "video-studio",
-          label: "Video Studio",
-          href: "/command-center/media/video-studio",
+          id: "project-1",
+          label: "Media Project 1",
+          href: "/command-center/media/project-1",
         },
         {
-          id: "video-editor",
-          label: "Video Editor",
-          href: "/command-center/media/video-editor",
+          id: "project-2",
+          label: "Media Project 2",
+          href: "/command-center/media/project-2",
         },
         {
-          id: "assets",
-          label: "Asset Manager",
-          href: "/command-center/media/assets",
+          id: "project-3",
+          label: "Media Project 3",
+          href: "/command-center/media/project-3",
         },
       ],
     },
@@ -61,6 +61,11 @@ export default function CommandCenterLayout({
           id: "audience",
           label: "Audience",
           href: "/command-center/analytics/audience",
+        },
+        {
+          id: "video-editor",
+          label: "Video Editor",
+          href: "/command-center/media/video-editor",
         },
       ],
     },

@@ -19,6 +19,7 @@ export default function RootLayout({
     <html lang="es">
       <body
         className={`${geistMono.className} bg-black text-white antialiased`}
+        suppressHydrationWarning
       >
         {children}
       </body>
