@@ -56,6 +56,7 @@ export default function ProjectPage({
       <VideoCreationOverlay
         isOpen={isOverlayOpen}
         onClose={() => setIsOverlayOpen(false)}
+        projectId={projectId}
       />
 
       <div className="border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
