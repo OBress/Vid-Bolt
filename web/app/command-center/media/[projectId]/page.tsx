@@ -1,30 +1,9 @@
 "use client";
 
-import { use, useState, useRef, useCallback } from "react";
+import { use, useState, useRef, useCallback, useEffect } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Video, BarChart2, Settings, Hash, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { VideoCreationWizard } from "@/components/video-creation/VideoCreationWizard";
-import { useSidebar } from "@/components/layout/SidebarContext";
-import { VideoCard } from "@/components/features/project/VideoCard";
-import { AnalyticsTab } from "@/components/features/project/AnalyticsTab";
-import { SettingsTab } from "@/components/features/project/SettingsTab";
-import { RandomTab } from "@/components/features/project/RandomTab";
-
-interface AnimationOrigin {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-interface WizardState {
-  isOpen: boolean;
-  isAnimating: boolean;
-  isClosing: boolean;
-  origin: AnimationOrigin | null;
-  targetVideoIndex: number | null;
-}
+// ... (rest of imports)
 
 export default function ProjectPage({
   params,
@@ -32,16 +11,28 @@ export default function ProjectPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = use(params);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const initialTab = searchParams.get("tab") || "videos";
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [showFinished, setShowFinished] = useState(false);
   const { collapse } = useSidebar();
 
-  const [wizardState, setWizardState] = useState<WizardState>({
-    isOpen: false,
-    isAnimating: false,
-    isClosing: false,
-    origin: null,
-    targetVideoIndex: null,
-  });
+  // Sync active tab state if URL changes
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab && tab !== activeTab) {
+      setActiveTab(tab);
+    }
+  }, [searchParams, activeTab]);
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    // Optional: Update URL without full refresh
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", value);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  };
 
   const newVideoButtonRef = useRef<HTMLButtonElement>(null);
   const videoCardRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -182,7 +173,11 @@ export default function ProjectPage({
             </Button>
           </div>
 
-          <Tabs defaultValue="videos" className="w-full">
+          <Tabs
+            value={activeTab}
+            onValueChange={handleTabChange}
+            className="w-full"
+          >
             <div className="px-6">
               <TabsList className="bg-transparent border-b border-white/5 w-full justify-start h-12 p-0 gap-8 rounded-none">
                 {tabs.map((tab) => (
