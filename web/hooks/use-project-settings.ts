@@ -9,6 +9,7 @@ const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     pictureUrl: null,
     contentNiche: 'entertainment',
     aspectRatio: '9-16',
+    videoDurationRange: [10, 30],
     autoIdeaVerification: true,
     autoScriptVerification: true,
     autoExportToMedia: false,

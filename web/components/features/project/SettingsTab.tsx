@@ -2,12 +2,21 @@
 
 import React from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Info, Mic2, MonitorPlay, Scissors, Share2 } from "lucide-react";
+import {
+  Info,
+  Mic2,
+  MonitorPlay,
+  Scissors,
+  Share2,
+  ScrollText,
+  Volume2,
+} from "lucide-react";
 import { BasicInfoTab } from "./settings/BasicInfoTab";
-import { VoiceTab } from "./settings/VoiceTab";
+import { AudioTab } from "./settings/AudioTab";
 import { VisualsTab } from "./settings/VisualsTab";
 import { EditingTab } from "./settings/EditingTab";
 import { ExportTab } from "./settings/ExportTab";
+import { ScriptTab } from "./settings/ScriptTab";
 
 export function SettingsTab({ projectId }: { projectId?: string }) {
   const tabs = [
@@ -20,10 +29,16 @@ export function SettingsTab({ projectId }: { projectId?: string }) {
       ),
     },
     {
-      id: "voice",
-      label: "Voice",
-      icon: Mic2,
-      Component: (props: any) => <VoiceTab {...props} projectId={projectId} />,
+      id: "script",
+      label: "Script",
+      icon: ScrollText,
+      Component: (props: any) => <ScriptTab {...props} projectId={projectId} />,
+    },
+    {
+      id: "audio",
+      label: "Audio",
+      icon: Volume2,
+      Component: (props: any) => <AudioTab {...props} projectId={projectId} />,
     },
     {
       id: "visuals",

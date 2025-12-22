@@ -14,7 +14,7 @@ export function EditingTab({ projectId }: { projectId?: string }) {
   }
 
   return (
-    <div className="p-8 bg-neutral-900/40 border border-neutral-800 rounded-xl flex flex-col items-center justify-center text-center space-y-4">
+    <div className="p-8 bg-neutral-900/40 border border-neutral-800 rounded-xl flex flex-col items-center justify-center text-center space-y-4 w-full">
       <Scissors className="w-12 h-12 text-neutral-700" />
       <div>
         <h3 className="text-lg font-bold text-white uppercase tracking-tighter">

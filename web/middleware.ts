@@ -5,8 +5,12 @@ export async function middleware(request: NextRequest) {
   const { nextUrl } = request
   const isLoggedIn = request.cookies.get('is_logged_in')?.value === 'true'
 
-  // Allow access to auth callback and login page
-  if (nextUrl.pathname.startsWith('/auth') || nextUrl.pathname === '/login') {
+  // Allow access to auth callback, login page, and Inngest webhook
+  if (
+    nextUrl.pathname.startsWith('/auth') ||
+    nextUrl.pathname === '/login' ||
+    nextUrl.pathname.startsWith('/api/inngest')
+  ) {
     return await updateSession(request)
   }
 

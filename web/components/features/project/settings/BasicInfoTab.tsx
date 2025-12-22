@@ -13,7 +13,8 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Camera, Layers, Wand2 } from "lucide-react";
+import { Camera, Layers, Wand2, Clock } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
 
 import { useProjectSettings } from "@/hooks/use-project-settings";
 import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
@@ -37,13 +38,13 @@ export function BasicInfoTab({ projectId }: { projectId?: string }) {
   const { basic_info } = settings;
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 w-full">
       {/* Save Status */}
       <div className="flex justify-end">
         <SaveStatusIndicator status={saveStatus} />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
         {/* Project Identity */}
         <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm">
           <CardHeader>
@@ -162,6 +163,37 @@ export function BasicInfoTab({ projectId }: { projectId?: string }) {
                   <SelectItem value="1-1">1:1 (Instagram)</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-4 pt-4 border-t border-neutral-800/50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-orange-500" />
+                  <Label className="text-xs text-neutral-400 uppercase font-bold">
+                    Video Duration
+                  </Label>
+                </div>
+                <div className="px-3 py-1 rounded-lg bg-orange-500/10 border border-orange-500/20 text-xs font-bold text-orange-500 font-mono">
+                  {basic_info.videoDurationRange?.[0] || 10} -{" "}
+                  {basic_info.videoDurationRange?.[1] || 30} MIN
+                </div>
+              </div>
+              <Slider
+                defaultValue={basic_info.videoDurationRange || [10, 30]}
+                min={5}
+                max={60}
+                step={5}
+                minStepsBetweenThumbs={1}
+                onValueChange={(val) =>
+                  updateSettings({
+                    basic_info: { ...basic_info, videoDurationRange: val },
+                  })
+                }
+                className="py-4"
+              />
+              <p className="text-[10px] text-neutral-500 italic">
+                Set a range for generated video length (5 min steps).
+              </p>
             </div>
           </CardContent>
         </Card>

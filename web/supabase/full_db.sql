@@ -96,6 +96,26 @@ SET default_tablespace = '';
 SET default_table_access_method = "heap";
 
 
+CREATE TABLE IF NOT EXISTS "public"."continuity_state" (
+    "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
+    "task_id" "uuid" NOT NULL,
+    "current_chapter" integer DEFAULT 0 NOT NULL,
+    "total_chapters" integer DEFAULT 1 NOT NULL,
+    "events" "jsonb" DEFAULT '[]'::"jsonb",
+    "characters" "jsonb" DEFAULT '{}'::"jsonb",
+    "settings" "jsonb" DEFAULT '{}'::"jsonb",
+    "plot_points" "jsonb" DEFAULT '[]'::"jsonb",
+    "story_synopsis" "text",
+    "previous_chapter_summary" "text",
+    "future_chapter_hints" "text",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."continuity_state" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."media_projects" (
     "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
     "user_id" "uuid" NOT NULL,
@@ -118,6 +138,93 @@ CREATE TABLE IF NOT EXISTS "public"."project_settings" (
 
 
 ALTER TABLE "public"."project_settings" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."task_steps" (
+    "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
+    "task_id" "uuid" NOT NULL,
+    "phase" "text" NOT NULL,
+    "step_name" "text" NOT NULL,
+    "step_order" integer NOT NULL,
+    "status" "text" DEFAULT 'pending'::"text" NOT NULL,
+    "input_data" "jsonb" DEFAULT '{}'::"jsonb",
+    "output_data" "jsonb" DEFAULT '{}'::"jsonb",
+    "error_message" "text",
+    "duration_ms" integer,
+    "token_count" integer,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "started_at" timestamp with time zone,
+    "completed_at" timestamp with time zone,
+    CONSTRAINT "task_steps_phase_check" CHECK (("phase" = ANY (ARRAY['preprocessing'::"text", 'writing'::"text", 'postprocessing'::"text"]))),
+    CONSTRAINT "task_steps_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'running'::"text", 'completed'::"text", 'failed'::"text", 'skipped'::"text"])))
+);
+
+
+ALTER TABLE "public"."task_steps" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."tasks" (
+    "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "project_id" "uuid",
+    "type" "text" DEFAULT 'writing_workflow'::"text" NOT NULL,
+    "name" "text" NOT NULL,
+    "status" "text" DEFAULT 'pending'::"text" NOT NULL,
+    "current_phase" "text",
+    "current_step" "text",
+    "progress_percent" integer DEFAULT 0,
+    "error_message" "text",
+    "retry_count" integer DEFAULT 0,
+    "max_retries" integer DEFAULT 3,
+    "inngest_run_id" "text",
+    "input_data" "jsonb" DEFAULT '{}'::"jsonb",
+    "output_data" "jsonb" DEFAULT '{}'::"jsonb",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "started_at" timestamp with time zone,
+    "completed_at" timestamp with time zone,
+    "research" "text",
+    "master_outline" "jsonb",
+    "detailed_outline" "jsonb",
+    "characters" "jsonb" DEFAULT '[]'::"jsonb",
+    "settings" "jsonb" DEFAULT '[]'::"jsonb",
+    "chapters" "jsonb" DEFAULT '[]'::"jsonb",
+    "final_script" "text",
+    CONSTRAINT "tasks_current_phase_check" CHECK (("current_phase" = ANY (ARRAY['preprocessing'::"text", 'writing'::"text", 'postprocessing'::"text"]))),
+    CONSTRAINT "tasks_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
+    CONSTRAINT "tasks_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'running'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"])))
+);
+
+
+ALTER TABLE "public"."tasks" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."tasks"."research" IS 'Research notes for the story (plain text)';
+
+
+
+COMMENT ON COLUMN "public"."tasks"."master_outline" IS 'JSON: {title, synopsis, chapters[{chapterNumber, title, summary, keyEvents[]}]}';
+
+
+
+COMMENT ON COLUMN "public"."tasks"."detailed_outline" IS 'JSON: Enhanced chapter outlines with detailed beats';
+
+
+
+COMMENT ON COLUMN "public"."tasks"."characters" IS 'JSON array: [{name, description, role, traits[]}]';
+
+
+
+COMMENT ON COLUMN "public"."tasks"."settings" IS 'JSON array: [{name, description, significance}]';
+
+
+
+COMMENT ON COLUMN "public"."tasks"."chapters" IS 'JSON array: [{chapterNumber, title, content}] - supports 15k+ word scripts';
+
+
+
+COMMENT ON COLUMN "public"."tasks"."final_script" IS 'Final processed script ready for TTS (plain text)';
+
 
 
 CREATE TABLE IF NOT EXISTS "public"."user_api_keys" (
@@ -166,6 +273,16 @@ CREATE TABLE IF NOT EXISTS "public"."users" (
 ALTER TABLE "public"."users" OWNER TO "postgres";
 
 
+ALTER TABLE ONLY "public"."continuity_state"
+    ADD CONSTRAINT "continuity_state_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."continuity_state"
+    ADD CONSTRAINT "continuity_state_task_id_key" UNIQUE ("task_id");
+
+
+
 ALTER TABLE ONLY "public"."media_projects"
     ADD CONSTRAINT "media_projects_pkey" PRIMARY KEY ("id");
 
@@ -178,6 +295,16 @@ ALTER TABLE ONLY "public"."project_settings"
 
 ALTER TABLE ONLY "public"."project_settings"
     ADD CONSTRAINT "project_settings_project_id_key" UNIQUE ("project_id");
+
+
+
+ALTER TABLE ONLY "public"."task_steps"
+    ADD CONSTRAINT "task_steps_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."tasks"
+    ADD CONSTRAINT "tasks_pkey" PRIMARY KEY ("id");
 
 
 
@@ -221,11 +348,51 @@ ALTER TABLE ONLY "public"."users"
 
 
 
+CREATE INDEX "idx_task_steps_status" ON "public"."task_steps" USING "btree" ("status");
+
+
+
+CREATE INDEX "idx_task_steps_task_id" ON "public"."task_steps" USING "btree" ("task_id");
+
+
+
+CREATE INDEX "idx_tasks_created_at" ON "public"."tasks" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_tasks_has_final_script" ON "public"."tasks" USING "btree" ("user_id") WHERE ("final_script" IS NOT NULL);
+
+
+
+CREATE INDEX "idx_tasks_project_id" ON "public"."tasks" USING "btree" ("project_id");
+
+
+
+CREATE INDEX "idx_tasks_status" ON "public"."tasks" USING "btree" ("status");
+
+
+
+CREATE INDEX "idx_tasks_user_id" ON "public"."tasks" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_tasks_user_status" ON "public"."tasks" USING "btree" ("user_id", "status");
+
+
+
+CREATE OR REPLACE TRIGGER "set_updated_at_continuity_state" BEFORE UPDATE ON "public"."continuity_state" FOR EACH ROW EXECUTE FUNCTION "public"."handle_updated_at"();
+
+
+
 CREATE OR REPLACE TRIGGER "set_updated_at_media_projects" BEFORE UPDATE ON "public"."media_projects" FOR EACH ROW EXECUTE FUNCTION "public"."handle_updated_at"();
 
 
 
 CREATE OR REPLACE TRIGGER "set_updated_at_project_settings" BEFORE UPDATE ON "public"."project_settings" FOR EACH ROW EXECUTE FUNCTION "public"."handle_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "set_updated_at_tasks" BEFORE UPDATE ON "public"."tasks" FOR EACH ROW EXECUTE FUNCTION "public"."handle_updated_at"();
 
 
 
@@ -237,13 +404,33 @@ CREATE OR REPLACE TRIGGER "update_user_api_keys_updated_at" BEFORE UPDATE ON "pu
 
 
 
+ALTER TABLE ONLY "public"."continuity_state"
+    ADD CONSTRAINT "continuity_state_task_id_fkey" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."media_projects"
-    ADD CONSTRAINT "media_projects_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+    ADD CONSTRAINT "media_projects_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 
 
 ALTER TABLE ONLY "public"."project_settings"
     ADD CONSTRAINT "project_settings_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."media_projects"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."task_steps"
+    ADD CONSTRAINT "task_steps_task_id_fkey" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."tasks"
+    ADD CONSTRAINT "tasks_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."media_projects"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."tasks"
+    ADD CONSTRAINT "tasks_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
 
 
 
@@ -253,7 +440,7 @@ ALTER TABLE ONLY "public"."user_api_keys"
 
 
 ALTER TABLE ONLY "public"."user_settings"
-    ADD CONSTRAINT "user_settings_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+    ADD CONSTRAINT "user_settings_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 
 
@@ -278,11 +465,23 @@ CREATE POLICY "Users can manage settings for their owned projects" ON "public"."
 
 
 
+CREATE POLICY "Users can manage their own continuity state" ON "public"."continuity_state" USING ((EXISTS ( SELECT 1
+   FROM "public"."tasks"
+  WHERE (("tasks"."id" = "continuity_state"."task_id") AND ("tasks"."user_id" = "auth"."uid"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."tasks"
+  WHERE (("tasks"."id" = "continuity_state"."task_id") AND ("tasks"."user_id" = "auth"."uid"())))));
+
+
+
 CREATE POLICY "Users can manage their own general settings" ON "public"."user_settings" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
 CREATE POLICY "Users can manage their own media projects" ON "public"."media_projects" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "Users can manage their own tasks" ON "public"."tasks" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
@@ -302,10 +501,25 @@ CREATE POLICY "Users can view own profile" ON "public"."users" FOR SELECT USING 
 
 
 
+CREATE POLICY "Users can view steps for their own tasks" ON "public"."task_steps" USING ((EXISTS ( SELECT 1
+   FROM "public"."tasks"
+  WHERE (("tasks"."id" = "task_steps"."task_id") AND ("tasks"."user_id" = "auth"."uid"())))));
+
+
+
+ALTER TABLE "public"."continuity_state" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."media_projects" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."project_settings" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."task_steps" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."tasks" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."user_api_keys" ENABLE ROW LEVEL SECURITY;
@@ -320,6 +534,10 @@ ALTER TABLE "public"."users" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
+
+
+
+
 
 
 GRANT USAGE ON SCHEMA "public" TO "postgres";
@@ -512,6 +730,12 @@ GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."continuity_state" TO "anon";
+GRANT ALL ON TABLE "public"."continuity_state" TO "authenticated";
+GRANT ALL ON TABLE "public"."continuity_state" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."media_projects" TO "anon";
 GRANT ALL ON TABLE "public"."media_projects" TO "authenticated";
 GRANT ALL ON TABLE "public"."media_projects" TO "service_role";
@@ -521,6 +745,18 @@ GRANT ALL ON TABLE "public"."media_projects" TO "service_role";
 GRANT ALL ON TABLE "public"."project_settings" TO "anon";
 GRANT ALL ON TABLE "public"."project_settings" TO "authenticated";
 GRANT ALL ON TABLE "public"."project_settings" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."task_steps" TO "anon";
+GRANT ALL ON TABLE "public"."task_steps" TO "authenticated";
+GRANT ALL ON TABLE "public"."task_steps" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."tasks" TO "anon";
+GRANT ALL ON TABLE "public"."tasks" TO "authenticated";
+GRANT ALL ON TABLE "public"."tasks" TO "service_role";
 
 
 

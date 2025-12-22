@@ -3,6 +3,7 @@ export interface BasicInfoSettings {
   pictureUrl: string | null;
   contentNiche: string;
   aspectRatio: string;
+  videoDurationRange: number[];
   autoIdeaVerification: boolean;
   autoScriptVerification: boolean;
   autoExportToMedia: boolean;

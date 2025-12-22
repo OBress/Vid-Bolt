@@ -13,6 +13,7 @@ import { RandomTab } from "@/components/features/project/RandomTab";
 import { VideoCreationWizard } from "@/components/video-creation/VideoCreationWizard";
 
 import { useMediaProjects } from "@/hooks/use-media-projects";
+import { PageHeader } from "@/components/shared/PageHeader";
 
 interface AnimationOrigin {
   x: number;
@@ -189,10 +190,7 @@ export default function ProjectPage({
         }`}
       >
         <div className="border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
-          <div className="px-6 py-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold tracking-tight text-orange-500 uppercase">
-              {projectTitle}
-            </h2>
+          <PageHeader title={projectTitle}>
             <Button
               ref={newVideoButtonRef}
               variant="outline"
@@ -203,7 +201,7 @@ export default function ProjectPage({
               <Plus className="w-4 h-4" />
               NEW VIDEO
             </Button>
-          </div>
+          </PageHeader>
 
           <Tabs
             value={activeTab}

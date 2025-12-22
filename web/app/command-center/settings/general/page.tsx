@@ -7,6 +7,8 @@ import { AccountTab } from "@/components/features/settings/AccountTab";
 import { MediaProjectsTab } from "@/components/features/settings/MediaProjectsTab";
 import { ApiKeysTab } from "@/components/features/settings/ApiKeysTab";
 
+import { PageHeader } from "@/components/shared/PageHeader";
+
 export default function GeneralSettingsPage() {
   const tabs = [
     { id: "account", label: "Account", icon: User, Component: AccountTab },
@@ -22,14 +24,7 @@ export default function GeneralSettingsPage() {
   return (
     <div className="flex flex-col h-full bg-black text-white">
       <div className="border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
-        <div className="px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-1 bg-orange-500 rounded-full shadow-[0_0_15px_rgba(249,115,22,0.5)]" />
-            <h1 className="text-xl font-bold tracking-tight text-white uppercase font-mono">
-              General Settings
-            </h1>
-          </div>
-        </div>
+        <PageHeader title="General Settings" />
 
         <Tabs defaultValue="account" className="w-full">
           <div className="px-6 py-2">

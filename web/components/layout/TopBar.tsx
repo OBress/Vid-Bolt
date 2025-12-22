@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { getActiveLabel } from "@/app/command-center/navigation";
 import { useMediaProjects } from "@/hooks/use-media-projects";
 import { useMemo } from "react";
+import { TaskStatusButton } from "@/components/features/tasks/TaskStatusButton";
+import { DevButton } from "@/components/features/dev/DevButton";
 
 export function TopBar() {
   const pathname = usePathname();
@@ -33,10 +35,17 @@ export function TopBar() {
           <span className="text-orange-500">{displayLabel}</span>
         </div>
       </div>
-      <div className="flex items-center gap-4">
-        <div className="text-xs text-neutral-500">
+
+      {/* Center - Dev Button */}
+      <div className="absolute left-1/2 transform -translate-x-1/2">
+        <DevButton />
+      </div>
+
+      <div className="flex items-center gap-2">
+        <div className="text-xs text-neutral-500 mr-2">
           LAST UPDATE: 05/06/2025 20:00 UTC
         </div>
+        <TaskStatusButton />
         <Button
           variant="ghost"
           size="icon"

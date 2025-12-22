@@ -27,7 +27,7 @@ export function VisualsTab({ projectId }: { projectId?: string }) {
   const { visuals } = settings;
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 w-full">
       {/* Save Status */}
       <div className="flex justify-end">
         <SaveStatusIndicator status={saveStatus} />
