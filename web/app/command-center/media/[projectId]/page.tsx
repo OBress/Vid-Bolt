@@ -3,7 +3,29 @@
 import { use, useState, useRef, useCallback, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-// ... (rest of imports)
+import { Video, BarChart2, Settings, Hash, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useSidebar } from "@/components/layout/SidebarContext";
+import { VideoCard } from "@/components/features/project/VideoCard";
+import { AnalyticsTab } from "@/components/features/project/AnalyticsTab";
+import { SettingsTab } from "@/components/features/project/SettingsTab";
+import { RandomTab } from "@/components/features/project/RandomTab";
+import { VideoCreationWizard } from "@/components/video-creation/VideoCreationWizard";
+
+interface AnimationOrigin {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface WizardState {
+  isOpen: boolean;
+  isAnimating: boolean;
+  isClosing: boolean;
+  origin: AnimationOrigin | null;
+  targetVideoIndex: number | null;
+}
 
 export default function ProjectPage({
   params,
@@ -17,6 +39,14 @@ export default function ProjectPage({
   const [activeTab, setActiveTab] = useState(initialTab);
   const [showFinished, setShowFinished] = useState(false);
   const { collapse } = useSidebar();
+
+  const [wizardState, setWizardState] = useState<WizardState>({
+    isOpen: false,
+    isAnimating: false,
+    isClosing: false,
+    origin: null,
+    targetVideoIndex: null,
+  });
 
   // Sync active tab state if URL changes
   useEffect(() => {

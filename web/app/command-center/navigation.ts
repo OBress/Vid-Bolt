@@ -50,11 +50,6 @@ export const NAV_GROUPS = [
         label: "General Settings",
         href: "/command-center/settings/general",
       },
-      {
-        id: "api-keys",
-        label: "API Keys",
-        href: "/command-center/settings/api-keys",
-      },
     ],
   },
 ];
