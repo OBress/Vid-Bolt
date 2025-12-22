@@ -12,11 +12,29 @@ import {
   Music2,
   Share2,
   Download,
-  Link,
+  LinkIcon, // Changed from Link to LinkIcon
   Ghost,
 } from "lucide-react";
+import { useProjectSettings } from "@/hooks/use-project-settings";
+import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
 
-export function ExportTab() {
+export function ExportTab({ projectId }: { projectId?: string }) {
+  const { settings, loading, saveStatus, updateSettings } =
+    useProjectSettings(projectId);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="h-64 bg-neutral-900/40 border border-neutral-800 rounded-lg animate-pulse" />
+          <div className="h-64 bg-neutral-900/40 border border-neutral-800 rounded-lg animate-pulse" />
+        </div>
+      </div>
+    );
+  }
+
+  const { export: exportSettings } = settings;
+
   const socials = [
     {
       id: "youtube",
@@ -69,14 +87,27 @@ export function ExportTab() {
     },
   ];
 
+  const toggleTarget = (targetId: string) => {
+    const current = exportSettings.defaultTargets || [];
+    const next = current.includes(targetId)
+      ? current.filter((id) => id !== targetId)
+      : [...current, targetId];
+    updateSettings({ export: { ...exportSettings, defaultTargets: next } });
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      {/* Save Status */}
+      <div className="flex justify-end">
+        <SaveStatusIndicator status={saveStatus} />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Social Connections */}
         <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm">
           <CardHeader>
             <div className="flex items-center gap-3">
-              <Link className="text-orange-500 w-5 h-5" />
+              <LinkIcon className="text-orange-500 w-5 h-5" />
               <CardTitle className="text-sm font-bold uppercase tracking-widest text-neutral-200">
                 Social Connections
               </CardTitle>
@@ -146,7 +177,10 @@ export function ExportTab() {
                   >
                     <Checkbox
                       id={`default-${target.id}`}
-                      defaultChecked
+                      checked={(exportSettings.defaultTargets || []).includes(
+                        target.id
+                      )}
+                      onCheckedChange={() => toggleTarget(target.id)}
                       className="border-neutral-700 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
                     />
                     <label

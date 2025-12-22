@@ -5,7 +5,32 @@ import { User, Globe, LogOut, Trash2, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+import { useUserSettings } from "@/hooks/use-user-settings";
+import { createClient } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
+
 export function AccountTab() {
+  const { settings, loading, updateSettings } = useUserSettings();
+  const supabase = createClient();
+  const router = useRouter();
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    router.push("/auth");
+  };
+
+  if (loading) {
+    return (
+      <div className="space-y-8 animate-pulse">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="h-48 bg-neutral-900/40 border border-neutral-800 rounded-xl" />
+          <div className="h-48 bg-neutral-900/40 border border-neutral-800 rounded-xl" />
+        </div>
+        <div className="h-64 bg-neutral-900/40 border border-neutral-800 rounded-xl" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -24,19 +49,19 @@ export function AccountTab() {
               <label className="text-xs text-neutral-400 uppercase font-bold">
                 Name
               </label>
-              <p className="text-sm font-medium text-white">Owen</p>
+              <p className="text-sm font-medium text-white">User</p>
             </div>
             <div className="space-y-1">
               <label className="text-xs text-neutral-400 uppercase font-bold">
                 Username
               </label>
-              <p className="text-sm font-medium text-white">@owen</p>
+              <p className="text-sm font-medium text-white">@user</p>
             </div>
             <div className="space-y-1">
               <label className="text-xs text-neutral-400 uppercase font-bold">
                 Email
               </label>
-              <p className="text-sm font-medium text-white">owen@example.com</p>
+              <p className="text-sm font-medium text-white">user@example.com</p>
             </div>
           </CardContent>
         </Card>
@@ -57,14 +82,14 @@ export function AccountTab() {
                 Current Plan
               </label>
               <p className="text-sm font-medium text-orange-500 font-bold">
-                PRO PLAN
+                STARTER PLAN
               </p>
             </div>
             <div className="space-y-1">
               <label className="text-xs text-neutral-400 uppercase font-bold">
                 Next Bill Date
               </label>
-              <p className="text-sm font-medium text-white">January 21, 2026</p>
+              <p className="text-sm font-medium text-white">N/A</p>
             </div>
             <Button
               variant="outline"
@@ -93,12 +118,21 @@ export function AccountTab() {
               <p className="text-sm font-medium text-white">
                 Application Language
               </p>
-              <p className="text-xs text-neutral-400">English (US)</p>
+              <p className="text-xs text-neutral-400">
+                {settings.language === "en"
+                  ? "English (US)"
+                  : settings.language}
+              </p>
             </div>
             <Button
               variant="ghost"
               size="sm"
               className="text-orange-500 hover:text-orange-400 hover:bg-orange-500/10"
+              onClick={() =>
+                updateSettings({
+                  language: settings.language === "en" ? "es" : "en",
+                })
+              }
             >
               Change
             </Button>
@@ -108,13 +142,14 @@ export function AccountTab() {
             <div>
               <p className="text-sm font-medium text-white">Active Sessions</p>
               <p className="text-xs text-neutral-400">
-                Authenticated on 3 devices
+                Authenticated session active
               </p>
             </div>
             <Button
               variant="ghost"
               size="sm"
               className="text-neutral-400 hover:text-white hover:bg-neutral-800"
+              onClick={handleSignOut}
             >
               <LogOut className="w-4 h-4 mr-2" />
               Sign Out All

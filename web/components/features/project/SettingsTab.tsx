@@ -9,18 +9,44 @@ import { VisualsTab } from "./settings/VisualsTab";
 import { EditingTab } from "./settings/EditingTab";
 import { ExportTab } from "./settings/ExportTab";
 
-export function SettingsTab() {
+export function SettingsTab({ projectId }: { projectId?: string }) {
   const tabs = [
-    { id: "basic", label: "Basic Info", icon: Info, Component: BasicInfoTab },
-    { id: "voice", label: "Voice", icon: Mic2, Component: VoiceTab },
+    {
+      id: "basic",
+      label: "Basic Info",
+      icon: Info,
+      Component: (props: any) => (
+        <BasicInfoTab {...props} projectId={projectId} />
+      ),
+    },
+    {
+      id: "voice",
+      label: "Voice",
+      icon: Mic2,
+      Component: (props: any) => <VoiceTab {...props} projectId={projectId} />,
+    },
     {
       id: "visuals",
       label: "Visuals",
       icon: MonitorPlay,
-      Component: VisualsTab,
+      Component: (props: any) => (
+        <VisualsTab {...props} projectId={projectId} />
+      ),
     },
-    { id: "editing", label: "Editing", icon: Scissors, Component: EditingTab },
-    { id: "export", label: "Export", icon: Share2, Component: ExportTab },
+    {
+      id: "editing",
+      label: "Editing",
+      icon: Scissors,
+      Component: (props: any) => (
+        <EditingTab {...props} projectId={projectId} />
+      ),
+    },
+    {
+      id: "export",
+      label: "Export",
+      icon: Share2,
+      Component: (props: any) => <ExportTab {...props} projectId={projectId} />,
+    },
   ];
 
   return (

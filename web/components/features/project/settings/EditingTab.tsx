@@ -1,26 +1,33 @@
 "use client";
 
 import React from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { useProjectSettings } from "@/hooks/use-project-settings";
 import { Scissors } from "lucide-react";
 
-export function EditingTab() {
+export function EditingTab({ projectId }: { projectId?: string }) {
+  const { loading } = useProjectSettings(projectId);
+
+  if (loading) {
+    return (
+      <div className="h-48 bg-neutral-900/40 border border-neutral-800 rounded-xl animate-pulse" />
+    );
+  }
+
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-      <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm border-dashed">
-        <CardContent className="flex flex-col items-center justify-center py-20 text-center">
-          <div className="h-16 w-16 rounded-full bg-neutral-800/50 flex items-center justify-center mb-4">
-            <Scissors className="text-neutral-600 w-8 h-8" />
-          </div>
-          <h3 className="text-lg font-bold text-neutral-300 mb-2 uppercase tracking-tighter">
-            Editing Parameters
-          </h3>
-          <p className="text-sm text-neutral-500 max-w-sm">
-            Advanced editing rules and template configurations will be available
-            here soon.
-          </p>
-        </CardContent>
-      </Card>
+    <div className="p-8 bg-neutral-900/40 border border-neutral-800 rounded-xl flex flex-col items-center justify-center text-center space-y-4">
+      <Scissors className="w-12 h-12 text-neutral-700" />
+      <div>
+        <h3 className="text-lg font-bold text-white uppercase tracking-tighter">
+          Advanced Editing Logic
+        </h3>
+        <p className="text-sm text-neutral-500 max-w-sm mx-auto">
+          Configure how AI cut-scenes, transitions, and overlays are applied to
+          your media timeline.
+        </p>
+      </div>
+      <div className="text-[10px] font-mono text-orange-500 bg-orange-500/5 px-3 py-1 rounded border border-orange-500/20">
+        FEATURE COMING SOON
+      </div>
     </div>
   );
 }

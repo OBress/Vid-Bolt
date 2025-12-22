@@ -12,6 +12,8 @@ import { SettingsTab } from "@/components/features/project/SettingsTab";
 import { RandomTab } from "@/components/features/project/RandomTab";
 import { VideoCreationWizard } from "@/components/video-creation/VideoCreationWizard";
 
+import { useMediaProjects } from "@/hooks/use-media-projects";
+
 interface AnimationOrigin {
   x: number;
   y: number;
@@ -39,6 +41,11 @@ export default function ProjectPage({
   const [activeTab, setActiveTab] = useState(initialTab);
   const [showFinished, setShowFinished] = useState(false);
   const { collapse } = useSidebar();
+  const { projects } = useMediaProjects();
+
+  // Get actual project name from context
+  const project = projects.find((p) => p.id === projectId);
+  const projectTitle = project?.name || "Loading...";
 
   const [wizardState, setWizardState] = useState<WizardState>({
     isOpen: false,
@@ -157,11 +164,6 @@ export default function ProjectPage({
     { id: "random", label: "Random", icon: Hash },
   ];
 
-  const projectTitle = projectId
-    .split("-")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-
   const getTransformStyle = () => {
     if (!wizardState.origin) return {};
     const { x, y } = wizardState.origin;
@@ -208,16 +210,16 @@ export default function ProjectPage({
             onValueChange={handleTabChange}
             className="w-full"
           >
-            <div className="px-6">
-              <TabsList className="bg-transparent border-b border-white/5 w-full justify-start h-12 p-0 gap-8 rounded-none">
+            <div className="px-6 py-2">
+              <TabsList className="bg-neutral-900/50 p-1 rounded-xl border border-neutral-800/50 shadow-[0_4px_20px_rgba(0,0,0,0.3)] backdrop-blur-sm w-fit justify-start h-auto gap-1">
                 {tabs.map((tab) => (
                   <TabsTrigger
                     key={tab.id}
                     value={tab.id}
-                    className="data-[state=active]:bg-transparent data-[state=active]:text-orange-500 data-[state=active]:border-b-2 data-[state=active]:border-orange-500 rounded-none bg-transparent px-0 h-full text-neutral-400 hover:text-white transition-all gap-2"
+                    className="data-[state=active]:bg-neutral-800 data-[state=active]:text-orange-500 data-[state=active]:shadow-[0_2px_8px_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.05)] data-[state=active]:border-neutral-700/50 rounded-lg bg-transparent px-6 py-2 h-full text-neutral-400 hover:text-white transition-all gap-2 border border-transparent font-medium"
                   >
                     <tab.icon className="w-4 h-4" />
-                    <span className="text-sm font-medium">{tab.label}</span>
+                    <span className="text-sm">{tab.label}</span>
                   </TabsTrigger>
                 ))}
               </TabsList>
@@ -284,7 +286,7 @@ export default function ProjectPage({
               </TabsContent>
 
               <TabsContent value="settings" className="mt-0 outline-none">
-                <SettingsTab />
+                <SettingsTab projectId={projectId} />
               </TabsContent>
 
               <TabsContent value="random" className="mt-0 outline-none">

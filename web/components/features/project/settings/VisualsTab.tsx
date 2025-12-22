@@ -1,5 +1,5 @@
-"use client";
-
+import { useProjectSettings } from "@/hooks/use-project-settings";
+import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
 import React from "react";
 import { Label } from "@/components/ui/label";
 import {
@@ -12,9 +12,27 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MonitorPlay, Image as ImageIcon, Video } from "lucide-react";
 
-export function VisualsTab() {
+export function VisualsTab({ projectId }: { projectId?: string }) {
+  const { settings, loading, saveStatus, updateSettings } =
+    useProjectSettings(projectId);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="h-[200px] bg-neutral-900/40 border border-neutral-800 rounded-lg animate-pulse" />
+      </div>
+    );
+  }
+
+  const { visuals } = settings;
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      {/* Save Status */}
+      <div className="flex justify-end">
+        <SaveStatusIndicator status={saveStatus} />
+      </div>
+
       <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm">
         <CardHeader>
           <div className="flex items-center gap-3">
@@ -33,7 +51,12 @@ export function VisualsTab() {
                   Image Model
                 </Label>
               </div>
-              <Select defaultValue="flux">
+              <Select
+                value={visuals.imageModel}
+                onValueChange={(val) =>
+                  updateSettings({ visuals: { ...visuals, imageModel: val } })
+                }
+              >
                 <SelectTrigger className="bg-black/40 border-neutral-800 h-12">
                   <SelectValue placeholder="Select image model" />
                 </SelectTrigger>
@@ -60,7 +83,12 @@ export function VisualsTab() {
                   Video Model
                 </Label>
               </div>
-              <Select defaultValue="luma">
+              <Select
+                value={visuals.videoModel}
+                onValueChange={(val) =>
+                  updateSettings({ visuals: { ...visuals, videoModel: val } })
+                }
+              >
                 <SelectTrigger className="bg-black/40 border-neutral-800 h-12">
                   <SelectValue placeholder="Select video model" />
                 </SelectTrigger>

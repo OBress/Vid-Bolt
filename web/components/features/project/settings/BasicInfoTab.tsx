@@ -15,9 +15,34 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Camera, Layers, Wand2 } from "lucide-react";
 
-export function BasicInfoTab() {
+import { useProjectSettings } from "@/hooks/use-project-settings";
+import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
+
+export function BasicInfoTab({ projectId }: { projectId?: string }) {
+  const { settings, loading, saveStatus, updateSettings } =
+    useProjectSettings(projectId);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="h-48 bg-neutral-900/40 border border-neutral-800 rounded-lg animate-pulse" />
+          <div className="h-48 bg-neutral-900/40 border border-neutral-800 rounded-lg animate-pulse" />
+        </div>
+        <div className="h-64 bg-neutral-900/40 border border-neutral-800 rounded-lg animate-pulse" />
+      </div>
+    );
+  }
+
+  const { basic_info } = settings;
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      {/* Save Status */}
+      <div className="flex justify-end">
+        <SaveStatusIndicator status={saveStatus} />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Project Identity */}
         <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm">
@@ -41,7 +66,12 @@ export function BasicInfoTab() {
                 id="project-name"
                 placeholder="Enter project name"
                 className="bg-black/40 border-neutral-800 focus:border-orange-500 transition-colors text-white"
-                defaultValue="My Media Project"
+                value={basic_info.projectName}
+                onChange={(e) =>
+                  updateSettings({
+                    basic_info: { ...basic_info, projectName: e.target.value },
+                  })
+                }
               />
             </div>
 
@@ -51,9 +81,17 @@ export function BasicInfoTab() {
               </Label>
               <div className="flex items-center gap-4">
                 <div className="h-20 w-32 rounded-lg bg-neutral-800 flex items-center justify-center border-2 border-dashed border-neutral-700 hover:border-orange-500/50 transition-colors cursor-pointer group overflow-hidden">
-                  <span className="text-neutral-500 text-xs group-hover:text-neutral-400">
-                    Click to upload
-                  </span>
+                  {basic_info.pictureUrl ? (
+                    <img
+                      src={basic_info.pictureUrl}
+                      alt="Project"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-neutral-500 text-xs group-hover:text-neutral-400">
+                      Click to upload
+                    </span>
+                  )}
                 </div>
                 <Button
                   variant="outline"
@@ -82,7 +120,14 @@ export function BasicInfoTab() {
               <Label className="text-xs text-neutral-400 uppercase font-bold">
                 Content Niche
               </Label>
-              <Select defaultValue="entertainment">
+              <Select
+                value={basic_info.contentNiche}
+                onValueChange={(val) =>
+                  updateSettings({
+                    basic_info: { ...basic_info, contentNiche: val },
+                  })
+                }
+              >
                 <SelectTrigger className="bg-black/40 border-neutral-800">
                   <SelectValue placeholder="Select niche" />
                 </SelectTrigger>
@@ -100,7 +145,14 @@ export function BasicInfoTab() {
               <Label className="text-xs text-neutral-400 uppercase font-bold">
                 Aspect Ratio
               </Label>
-              <Select defaultValue="9-16">
+              <Select
+                value={basic_info.aspectRatio}
+                onValueChange={(val) =>
+                  updateSettings({
+                    basic_info: { ...basic_info, aspectRatio: val },
+                  })
+                }
+              >
                 <SelectTrigger className="bg-black/40 border-neutral-800">
                   <SelectValue placeholder="Select ratio" />
                 </SelectTrigger>
@@ -135,7 +187,14 @@ export function BasicInfoTab() {
                 Automatically validate generated ideas before scriptwriting.
               </p>
             </div>
-            <Switch defaultChecked />
+            <Switch
+              checked={basic_info.autoIdeaVerification}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  basic_info: { ...basic_info, autoIdeaVerification: checked },
+                })
+              }
+            />
           </div>
 
           <div className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-neutral-800/50">
@@ -147,7 +206,17 @@ export function BasicInfoTab() {
                 Verify script flow and tone consistency automatically.
               </p>
             </div>
-            <Switch defaultChecked />
+            <Switch
+              checked={basic_info.autoScriptVerification}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  basic_info: {
+                    ...basic_info,
+                    autoScriptVerification: checked,
+                  },
+                })
+              }
+            />
           </div>
 
           <div className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-neutral-800/50">
@@ -159,7 +228,14 @@ export function BasicInfoTab() {
                 Trigger export immediately after rendering finishes.
               </p>
             </div>
-            <Switch />
+            <Switch
+              checked={basic_info.autoExportToMedia}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  basic_info: { ...basic_info, autoExportToMedia: checked },
+                })
+              }
+            />
           </div>
         </CardContent>
       </Card>

@@ -17,10 +17,25 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Mic2, Play, AudioLines, Settings2, Sparkles } from "lucide-react";
 
-export function VoiceTab() {
+import { useProjectSettings } from "@/hooks/use-project-settings";
+import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
+
+export function VoiceTab({ projectId }: { projectId?: string }) {
+  const { settings, loading, saveStatus, updateSettings } =
+    useProjectSettings(projectId);
   const [testText, setTestText] = useState(
     "Hello! This is a sample text to test the voice synchronization and quality. I hope you like how I sound!"
   );
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="h-[400px] bg-neutral-900/40 border border-neutral-800 rounded-lg animate-pulse" />
+      </div>
+    );
+  }
+
+  const { voice } = settings;
 
   const providers = [
     { id: "elevenlabs", label: "ElevenLabs", icon: Sparkles },
@@ -28,8 +43,17 @@ export function VoiceTab() {
     { id: "inworld", label: "Inworld TTS", icon: Mic2 },
   ];
 
+  const handleVoiceUpdate = (partial: Partial<typeof voice>) => {
+    updateSettings({ voice: { ...voice, ...partial } });
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      {/* Save Status */}
+      <div className="flex justify-end">
+        <SaveStatusIndicator status={saveStatus} />
+      </div>
+
       <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm">
         <CardHeader>
           <div className="flex items-center gap-3">
@@ -40,7 +64,11 @@ export function VoiceTab() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Tabs defaultValue="elevenlabs" className="w-full">
+          <Tabs
+            value={voice.provider}
+            onValueChange={(val: any) => handleVoiceUpdate({ provider: val })}
+            className="w-full"
+          >
             <div className="px-6 border-b border-neutral-800">
               <TabsList className="bg-transparent h-12 p-0 grid grid-cols-3 w-full border-b-0">
                 {providers.map((p) => (
@@ -69,7 +97,12 @@ export function VoiceTab() {
                       <Label className="text-[10px] text-neutral-500 uppercase font-black tracking-widest">
                         Voice Model
                       </Label>
-                      <Select defaultValue="multilingual-v2">
+                      <Select
+                        value={voice.model}
+                        onValueChange={(val) =>
+                          handleVoiceUpdate({ model: val })
+                        }
+                      >
                         <SelectTrigger className="bg-black/40 border-neutral-800">
                           <SelectValue placeholder="Select model" />
                         </SelectTrigger>
@@ -87,7 +120,12 @@ export function VoiceTab() {
                       <Label className="text-[10px] text-neutral-500 uppercase font-black tracking-widest">
                         Voice Name
                       </Label>
-                      <Select defaultValue="adam">
+                      <Select
+                        value={voice.voiceName}
+                        onValueChange={(val) =>
+                          handleVoiceUpdate({ voiceName: val })
+                        }
+                      >
                         <SelectTrigger className="bg-black/40 border-neutral-800">
                           <SelectValue placeholder="Select voice" />
                         </SelectTrigger>
@@ -117,7 +155,12 @@ export function VoiceTab() {
                           Enhance clarity and presence of the voice.
                         </p>
                       </div>
-                      <Switch defaultChecked />
+                      <Switch
+                        checked={voice.speakerBoost}
+                        onCheckedChange={(checked) =>
+                          handleVoiceUpdate({ speakerBoost: checked })
+                        }
+                      />
                     </div>
                   </div>
 
@@ -129,11 +172,14 @@ export function VoiceTab() {
                           Stability
                         </Label>
                         <span className="text-[10px] text-orange-500 font-mono">
-                          50%
+                          {voice.stability}%
                         </span>
                       </div>
                       <Slider
-                        defaultValue={[50]}
+                        value={[voice.stability]}
+                        onValueChange={([val]) =>
+                          handleVoiceUpdate({ stability: val })
+                        }
                         max={100}
                         step={1}
                         className="[&_[role=slider]]:bg-orange-500"
@@ -146,11 +192,14 @@ export function VoiceTab() {
                           Similarity Boost
                         </Label>
                         <span className="text-[10px] text-orange-500 font-mono">
-                          75%
+                          {voice.similarityBoost}%
                         </span>
                       </div>
                       <Slider
-                        defaultValue={[75]}
+                        value={[voice.similarityBoost]}
+                        onValueChange={([val]) =>
+                          handleVoiceUpdate({ similarityBoost: val })
+                        }
                         max={100}
                         step={1}
                         className="[&_[role=slider]]:bg-orange-500"
@@ -163,11 +212,14 @@ export function VoiceTab() {
                           Speaking Speed
                         </Label>
                         <span className="text-[10px] text-orange-500 font-mono">
-                          1.0x
+                          {(voice.speakingSpeed / 100).toFixed(1)}x
                         </span>
                       </div>
                       <Slider
-                        defaultValue={[100]}
+                        value={[voice.speakingSpeed]}
+                        onValueChange={([val]) =>
+                          handleVoiceUpdate({ speakingSpeed: val })
+                        }
                         max={200}
                         step={5}
                         className="[&_[role=slider]]:bg-orange-500"
@@ -180,11 +232,19 @@ export function VoiceTab() {
                           Voice Style
                         </Label>
                         <span className="text-[10px] text-orange-500 font-mono">
-                          Exaggerated
+                          {voice.voiceStyle > 75
+                            ? "Exaggerated"
+                            : voice.voiceStyle > 40
+                            ? "Natural"
+                            : "Subtle"}{" "}
+                          ({voice.voiceStyle}%)
                         </span>
                       </div>
                       <Slider
-                        defaultValue={[80]}
+                        value={[voice.voiceStyle]}
+                        onValueChange={([val]) =>
+                          handleVoiceUpdate({ voiceStyle: val })
+                        }
                         max={100}
                         step={1}
                         className="[&_[role=slider]]:bg-orange-500"
