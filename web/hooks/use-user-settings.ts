@@ -3,7 +3,8 @@ import { UserSettings } from '@/types/settings';
 import { SettingsService } from '@/lib/services/settings-service';
 import { SettingsCache } from '@/lib/cache/settings-cache';
 import { createClient } from '@/lib/supabase/client';
-import { toast } from 'sonner';
+
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 const DEFAULT_USER_SETTINGS: UserSettings = {
   language: 'en',
@@ -14,10 +15,12 @@ export function useUserSettings() {
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_USER_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [userId, setUserId] = useState<string | null>(null);
   
   const supabase = createClient();
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const statusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const loadSettings = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -58,11 +61,17 @@ export function useUserSettings() {
   const updateSettings = useCallback(async (partial: Partial<UserSettings>) => {
     if (!userId) return;
 
+    // Clear any existing status timeout
+    if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
+
     setSettings((prev) => {
       const next = { ...prev, ...partial };
       SettingsCache.set(`user_${userId}`, next);
       return next;
     });
+
+    // Show saving status
+    setSaveStatus('saving');
 
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     
@@ -70,11 +79,22 @@ export function useUserSettings() {
       setSyncing(true);
       try {
         await SettingsService.updateUserSettings(userId, partial);
+        setSyncing(false);
+        setSaveStatus('saved');
+        
+        // Reset to idle after 2 seconds
+        statusTimeoutRef.current = setTimeout(() => {
+          setSaveStatus('idle');
+        }, 2000);
       } catch (err) {
         console.error('Failed to sync user settings:', err);
-        toast.error('Failed to save settings.');
-      } finally {
         setSyncing(false);
+        setSaveStatus('error');
+        
+        // Reset to idle after 3 seconds
+        statusTimeoutRef.current = setTimeout(() => {
+          setSaveStatus('idle');
+        }, 3000);
       }
     }, 1000);
   }, [userId]);
@@ -83,6 +103,7 @@ export function useUserSettings() {
     settings,
     loading,
     syncing,
+    saveStatus,
     updateSettings,
     refresh: loadSettings,
   };

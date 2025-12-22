@@ -18,6 +18,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -39,6 +47,7 @@ export function Sidebar() {
   } = useMediaProjects();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
+  const [sourceProjectId, setSourceProjectId] = useState("default");
   const [creating, setCreating] = useState(false);
 
   // Build dynamic nav items for media projects
@@ -52,9 +61,10 @@ export function Sidebar() {
     if (!newProjectName.trim()) return;
     setCreating(true);
     try {
-      const newProject = await createProject(newProjectName);
+      const newProject = await createProject(newProjectName, sourceProjectId);
       setCreateDialogOpen(false);
       setNewProjectName("");
+      setSourceProjectId("default");
       // Navigate to new project
       router.push(`/command-center/media/${newProject.id}`);
     } catch (err) {
@@ -254,15 +264,44 @@ export function Sidebar() {
               Enter a name for your new media project.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
-            <Input
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              placeholder="E.g. Daily Tech News"
-              className="bg-black border-neutral-800 text-white"
-              autoFocus
-              onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
-            />
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-neutral-500 uppercase">
+                Project Name
+              </Label>
+              <Input
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                placeholder="E.g. Daily Tech News"
+                className="bg-black border-neutral-800 text-white"
+                autoFocus
+                onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-neutral-500 uppercase">
+                Import Settings From
+              </Label>
+              <Select
+                value={sourceProjectId}
+                onValueChange={setSourceProjectId}
+              >
+                <SelectTrigger className="bg-black border-neutral-800 text-white">
+                  <SelectValue placeholder="Standard Settings" />
+                </SelectTrigger>
+                <SelectContent className="bg-neutral-900 border-neutral-800 text-white">
+                  <SelectItem value="default">
+                    Standard Settings (Default)
+                  </SelectItem>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateDialogOpen(false)}>

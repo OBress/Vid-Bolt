@@ -1,23 +1,57 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { User, Globe, LogOut, Trash2, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 import { useUserSettings } from "@/hooks/use-user-settings";
+import { useUserProfile } from "@/hooks/use-user-profile";
+import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 export function AccountTab() {
-  const { settings, loading, updateSettings } = useUserSettings();
+  const {
+    settings,
+    loading: settingsLoading,
+    saveStatus: settingsSaveStatus,
+    updateSettings,
+  } = useUserSettings();
+  const {
+    profile,
+    loading: profileLoading,
+    saveStatus: profileSaveStatus,
+    updateProfile,
+  } = useUserProfile();
   const supabase = createClient();
   const router = useRouter();
+
+  const [name, setName] = useState("");
+
+  // Sync name from profile
+  useEffect(() => {
+    if (profile?.name) {
+      setName(profile.name);
+    }
+  }, [profile?.name]);
+
+  const handleNameChange = (value: string) => {
+    setName(value);
+    updateProfile({ name: value });
+  };
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.push("/auth");
   };
+
+  const loading = settingsLoading || profileLoading;
+
+  // Combine save statuses - show the active one
+  const combinedSaveStatus =
+    profileSaveStatus !== "idle" ? profileSaveStatus : settingsSaveStatus;
 
   if (loading) {
     return (
@@ -33,6 +67,11 @@ export function AccountTab() {
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      {/* Save Status */}
+      <div className="flex justify-end">
+        <SaveStatusIndicator status={combinedSaveStatus} />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Profile Information */}
         <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm">
@@ -45,23 +84,32 @@ export function AccountTab() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-1">
+            <div className="space-y-2">
               <label className="text-xs text-neutral-400 uppercase font-bold">
                 Name
               </label>
-              <p className="text-sm font-medium text-white">User</p>
+              <Input
+                value={name}
+                onChange={(e) => handleNameChange(e.target.value)}
+                placeholder="Enter your display name"
+                className="bg-black/40 border-neutral-700 text-white focus:border-orange-500"
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs text-neutral-400 uppercase font-bold">
                 Username
               </label>
-              <p className="text-sm font-medium text-white">@user</p>
+              <p className="text-sm font-medium text-neutral-500">
+                @{profile?.username || "—"}
+              </p>
             </div>
             <div className="space-y-1">
               <label className="text-xs text-neutral-400 uppercase font-bold">
                 Email
               </label>
-              <p className="text-sm font-medium text-white">user@example.com</p>
+              <p className="text-sm font-medium text-neutral-500">
+                {profile?.email || "—"}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -81,8 +129,16 @@ export function AccountTab() {
               <label className="text-xs text-neutral-400 uppercase font-bold">
                 Current Plan
               </label>
-              <p className="text-sm font-medium text-orange-500 font-bold">
-                STARTER PLAN
+              <p className="text-sm font-medium text-orange-500 font-bold uppercase">
+                {profile?.account_tier || "STARTER"} PLAN
+              </p>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-neutral-400 uppercase font-bold">
+                Credits
+              </label>
+              <p className="text-sm font-medium text-white">
+                {profile?.credits || 0}
               </p>
             </div>
             <div className="space-y-1">

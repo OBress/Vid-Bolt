@@ -17,7 +17,10 @@ interface MediaProjectsContextType {
   projects: MediaProject[];
   loading: boolean;
   error: string | null;
-  createProject: (name: string) => Promise<MediaProject>;
+  createProject: (
+    name: string,
+    sourceProjectId?: string
+  ) => Promise<MediaProject>;
   deleteProject: (projectId: string) => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -59,7 +62,10 @@ export function MediaProjectsProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const createProject = async (name: string): Promise<MediaProject> => {
+  const createProject = async (
+    name: string,
+    sourceProjectId?: string
+  ): Promise<MediaProject> => {
     if (!userId) {
       toast.error("Not authenticated");
       throw new Error("Not authenticated");
@@ -68,40 +74,59 @@ export function MediaProjectsProvider({ children }: { children: ReactNode }) {
     try {
       const newProject = await SettingsService.createMediaProject(userId, name);
 
-      // Create default settings for the new project
-      const defaultSettings = {
-        basic_info: {
-          projectName: name,
-          pictureUrl: null,
-          contentNiche: "general",
-          aspectRatio: "16:9",
-          autoIdeaVerification: false,
-          autoScriptVerification: false,
-          autoExportToMedia: false,
-        },
-        voice: {
-          provider: "elevenlabs" as const,
-          model: "eleven_multilingual_v2",
-          voiceName: "Rachel",
-          speakerBoost: true,
-          stability: 0.5,
-          similarityBoost: 0.75,
-          speakingSpeed: 1.0,
-          voiceStyle: 0,
-        },
-        visuals: {
-          imageModel: "flux",
-          videoModel: "luma",
-        },
-        editing: {},
-        export: {
-          defaultTargets: [],
-        },
-      };
+      let settingsToApply;
+
+      if (sourceProjectId && sourceProjectId !== "default") {
+        const sourceSettings = await SettingsService.getProjectSettings(
+          sourceProjectId
+        );
+        if (sourceSettings) {
+          settingsToApply = {
+            ...sourceSettings,
+            basic_info: {
+              ...sourceSettings.basic_info,
+              projectName: name, // Keep the new name
+            },
+          };
+        }
+      }
+
+      if (!settingsToApply) {
+        // Create default settings for the new project
+        settingsToApply = {
+          basic_info: {
+            projectName: name,
+            pictureUrl: null,
+            contentNiche: "general",
+            aspectRatio: "16:9",
+            autoIdeaVerification: false,
+            autoScriptVerification: false,
+            autoExportToMedia: false,
+          },
+          voice: {
+            provider: "elevenlabs" as const,
+            model: "eleven_multilingual_v2",
+            voiceName: "Rachel",
+            speakerBoost: true,
+            stability: 0.5,
+            similarityBoost: 0.75,
+            speakingSpeed: 1.0,
+            voiceStyle: 0,
+          },
+          visuals: {
+            imageModel: "flux",
+            videoModel: "luma",
+          },
+          editing: {},
+          export: {
+            defaultTargets: [],
+          },
+        };
+      }
 
       await SettingsService.updateProjectSettings(
         newProject.id,
-        defaultSettings
+        settingsToApply
       );
 
       setProjects((prev) => [newProject, ...prev]);

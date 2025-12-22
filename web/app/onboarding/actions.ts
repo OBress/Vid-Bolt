@@ -25,10 +25,10 @@ export async function checkUsernameUnique(username: string) {
     .from('users')
     .select('id')
     .eq('username', username)
-    .single();
+    .maybeSingle();
 
-  if (error && error.code === 'PGRST116') {
-    // Record not found, so username is unique
+  // If no row found, username is unique
+  if (!data) {
     return { unique: true };
   }
   
@@ -75,6 +75,22 @@ export async function completeOnboarding(formData: {
     throw new Error(`CRITICAL_FAILURE: ${error.message}`);
   }
 
-  // 3. Initiate redirection to command center
-  redirect('/command-center/operations');
+  // 3. Initialize user_settings with defaults
+  const { error: settingsError } = await supabase
+    .from('user_settings')
+    .upsert({
+      user_id: user.id,
+      settings: {
+        language: 'en',
+        theme: 'system',
+      }
+    }, { onConflict: 'user_id' });
+
+  if (settingsError) {
+    console.error("Settings initialization error:", settingsError);
+    // Non-critical, continue anyway
+  }
+
+  // 4. Initiate redirection to command center
+  redirect('/command-center');
 }
