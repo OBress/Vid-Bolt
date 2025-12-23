@@ -146,6 +146,24 @@
     background: var(--foreground);
     background-clip: content-box;
   }
+
+  button,
+  [role="button"],
+  a,
+  select,
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role="button"][aria-disabled="true"],
+  select:disabled {
+    cursor: not-allowed;
+  }
+
+  a:not([href]) {
+    cursor: default;
+  }
 }
 
 /* Video Editor Styles */
@@ -339,4 +357,3 @@ input[type="number"]::-webkit-outer-spin-button {
 [data-slot="scroll-area-viewport"] > * {
   display: block !important;
 }
-

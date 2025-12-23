@@ -28,11 +28,12 @@ import {
   XCircle,
   RefreshCw,
   BookOpen,
-  X,
 } from "lucide-react";
 import { createBrowserClient } from "@supabase/ssr";
+import type { Task, TaskStep, WritingTaskOutput } from "@/types/task";
 
-interface Task {
+// Simplified Task interface for UI (subset of full Task type)
+interface TaskDisplay {
   id: string;
   name: string;
   status: "pending" | "running" | "completed" | "failed";
@@ -40,20 +41,13 @@ interface Task {
   current_step: string | null;
   progress_percent: number;
   error_message: string | null;
-}
-
-interface TaskStep {
-  id: string;
-  step_name: string;
-  status: string;
-  phase: string;
+  steps: TaskStep[];
 }
 
 export function DevButton() {
   const [isOpen, setIsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [currentTask, setCurrentTask] = useState<Task | null>(null);
-  const [taskSteps, setTaskSteps] = useState<TaskStep[]>([]);
+  const [currentTask, setCurrentTask] = useState<TaskDisplay | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showStory, setShowStory] = useState(false);
   const [storyContent, setStoryContent] = useState<{
@@ -78,10 +72,12 @@ export function DevButton() {
 
   const fetchTaskDetails = useCallback(
     async (taskId: string) => {
-      // Fetch task
+      // Fetch task with embedded steps
       const { data: task, error: taskError } = await supabase
         .from("tasks")
-        .select("*")
+        .select(
+          "id, name, status, current_phase, current_step, progress_percent, error_message, steps"
+        )
         .eq("id", taskId)
         .single();
 
@@ -90,18 +86,11 @@ export function DevButton() {
         return;
       }
 
-      setCurrentTask(task);
-
-      // Fetch steps
-      const { data: steps } = await supabase
-        .from("task_steps")
-        .select("*")
-        .eq("task_id", taskId)
-        .order("step_order", { ascending: true });
-
-      if (steps) {
-        setTaskSteps(steps);
-      }
+      // Steps are now embedded in the task
+      setCurrentTask({
+        ...task,
+        steps: task.steps || [],
+      });
 
       // Stop polling if completed or failed
       if (task.status === "completed" || task.status === "failed") {
@@ -122,7 +111,7 @@ export function DevButton() {
     return () => clearInterval(interval);
   }, [isGenerating, currentTask?.id, fetchTaskDetails]);
 
-  // Real-time subscription
+  // Real-time subscription - now only subscribing to tasks table
   useEffect(() => {
     if (!currentTask?.id) return;
 
@@ -138,16 +127,7 @@ export function DevButton() {
         },
         () => fetchTaskDetails(currentTask.id)
       )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "task_steps",
-          filter: `task_id=eq.${currentTask.id}`,
-        },
-        () => fetchTaskDetails(currentTask.id)
-      )
+      // No more task_steps subscription needed!
       .subscribe();
 
     return () => {
@@ -159,7 +139,6 @@ export function DevButton() {
     setError(null);
     setIsGenerating(true);
     setCurrentTask(null);
-    setTaskSteps([]);
 
     try {
       const response = await fetch("/api/tasks", {
@@ -180,7 +159,7 @@ export function DevButton() {
       }
 
       // Start polling for this task
-      setCurrentTask({ ...data.task, status: "pending" });
+      setCurrentTask({ ...data.task, status: "pending", steps: [] });
       fetchTaskDetails(data.task.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
@@ -221,19 +200,22 @@ export function DevButton() {
     try {
       const { data, error } = await supabase
         .from("tasks")
-        .select("chapters, final_script")
+        .select("output_data")
         .eq("id", currentTask.id)
         .single();
 
       if (error) throw error;
 
+      // Extract from output_data (new schema)
+      const outputData = data.output_data as WritingTaskOutput | null;
+
       setStoryContent({
-        chapters: (data.chapters || []) as Array<{
+        chapters: (outputData?.chapters || []) as Array<{
           chapterNumber: number;
           title: string;
           content: string;
         }>,
-        finalScript: data.final_script,
+        finalScript: outputData?.final_script || null,
       });
       setShowStory(true);
     } catch (err) {
@@ -243,6 +225,11 @@ export function DevButton() {
       setLoadingStory(false);
     }
   };
+
+  // Sort steps by order for display
+  const sortedSteps = [...(currentTask?.steps || [])].sort(
+    (a, b) => a.order - b.order
+  );
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -389,11 +376,11 @@ export function DevButton() {
                   )}
                 </div>
 
-                {/* Steps List */}
-                {taskSteps.length > 0 && (
+                {/* Steps List - Now reading from task.steps */}
+                {sortedSteps.length > 0 && (
                   <ScrollArea className="h-48">
                     <div className="space-y-1">
-                      {taskSteps.map((step) => (
+                      {sortedSteps.map((step) => (
                         <div
                           key={step.id}
                           className="flex items-center gap-2 p-2 bg-neutral-900/50 rounded text-xs"
@@ -402,9 +389,14 @@ export function DevButton() {
                           <span className="text-neutral-400">
                             [{step.phase}]
                           </span>
-                          <span className="text-neutral-300">
-                            {step.step_name}
+                          <span className="text-neutral-300 flex-1">
+                            {step.name}
                           </span>
+                          {step.token_count && (
+                            <span className="text-neutral-600 text-[10px]">
+                              {step.token_count.toLocaleString()} tokens
+                            </span>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -433,7 +425,6 @@ export function DevButton() {
                       variant="outline"
                       onClick={() => {
                         setCurrentTask(null);
-                        setTaskSteps([]);
                         setError(null);
                         setShowStory(false);
                         setStoryContent(null);

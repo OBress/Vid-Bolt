@@ -42,9 +42,6 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-2">
-        <div className="text-xs text-neutral-500 mr-2">
-          LAST UPDATE: 05/06/2025 20:00 UTC
-        </div>
         <TaskStatusButton />
         <Button
           variant="ghost"
@@ -60,6 +57,9 @@ export function TopBar() {
         >
           <RefreshCw className="w-4 h-4" />
         </Button>
+        <div className="text-xs text-neutral-500 ml-2">
+          LAST UPDATE: 05/06/2025 20:00 UTC
+        </div>
       </div>
     </div>
   );

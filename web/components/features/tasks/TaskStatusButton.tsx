@@ -45,9 +45,20 @@ export function TaskStatusButton() {
     try {
       const {
         data: { user },
+        error: authError,
       } = await supabase.auth.getUser();
 
-      if (!user) return;
+      if (authError) {
+        console.error("Auth error in TaskStatusButton:", authError);
+        return;
+      }
+
+      if (!user) {
+        console.log("No user in TaskStatusButton");
+        return;
+      }
+
+      console.log("Fetching tasks for user:", user.id);
 
       const { data, error } = await supabase
         .from("tasks")
@@ -55,7 +66,6 @@ export function TaskStatusButton() {
           "id, name, type, status, current_phase, current_step, progress_percent, created_at, updated_at"
         )
         .eq("user_id", user.id)
-        .in("status", ["pending", "running", "completed", "failed"])
         .order("created_at", { ascending: false })
         .limit(10);
 
@@ -64,6 +74,7 @@ export function TaskStatusButton() {
         return;
       }
 
+      console.log("Fetched tasks:", data?.length || 0, data);
       setTasks(data || []);
     } catch (err) {
       console.error("Error fetching tasks:", err);
@@ -112,7 +123,10 @@ export function TaskStatusButton() {
     (t) => t.status === "pending" || t.status === "running"
   );
   const recentTasks = tasks.filter(
-    (t) => t.status === "completed" || t.status === "failed"
+    (t) =>
+      t.status === "completed" ||
+      t.status === "failed" ||
+      t.status === "cancelled"
   );
 
   const getStatusIcon = (status: Task["status"]) => {
@@ -123,6 +137,8 @@ export function TaskStatusButton() {
         return <CheckCircle className="w-4 h-4 text-green-500" />;
       case "failed":
         return <XCircle className="w-4 h-4 text-red-500" />;
+      case "cancelled":
+        return <XCircle className="w-4 h-4 text-neutral-500" />;
       case "pending":
         return <Clock className="w-4 h-4 text-neutral-400" />;
       default:
@@ -177,7 +193,7 @@ export function TaskStatusButton() {
           </Button>
         </div>
 
-        <ScrollArea className="max-h-80">
+        <ScrollArea className="h-80 overflow-hidden">
           {loading && tasks.length === 0 ? (
             <div className="p-4 text-center text-neutral-500 text-sm">
               <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />

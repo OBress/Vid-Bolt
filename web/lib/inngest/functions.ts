@@ -1,14 +1,26 @@
 /**
  * Writing Workflow - Inngest Functions
+ * ============================================================================
  * Implements the 3-phase writing process:
  * 1. Preprocessing: Research, Outline, Characters, Settings
  * 2. Writing: Chapter-by-chapter with continuity management
  * 3. Post-Processing: AI cleanup, normalization, formatting
+ * 
+ * Uses consolidated task schema with JSONB steps array.
  */
 
 import { inngest } from "./client";
 import { generateText, generateJSON } from "@/lib/ai/openrouter";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import type { 
+  TaskStep, 
+  TaskPhase, 
+  MasterOutline, 
+  ChapterOutline, 
+  Character, 
+  Setting,
+  WritingTaskOutput,
+} from "@/types/task";
 
 // ============================================================================
 // TYPES
@@ -24,43 +36,122 @@ interface WritingWorkflowInput {
   numberOfChapters?: number;
 }
 
-interface ChapterOutline {
-  chapterNumber: number;
-  title: string;
-  summary: string;
-  keyEvents: string[];
-}
-
-interface MasterOutline {
-  title: string;
-  synopsis: string;
-  chapters: ChapterOutline[];
-}
-
-interface Character {
-  name: string;
-  description: string;
-  role: string;
-  traits: string[];
-}
-
-interface Setting {
-  name: string;
-  description: string;
-  significance: string;
-}
-
 // ============================================================================
-// HELPER FUNCTIONS
+// SUPABASE CLIENT
 // ============================================================================
 
-function getSupabaseServiceClient() {
+let supabaseClient: SupabaseClient | null = null;
+
+function getSupabaseServiceClient(): SupabaseClient {
+  if (supabaseClient) return supabaseClient;
+  
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase config missing");
-  return createClient(url, key);
+  
+  supabaseClient = createClient(url, key);
+  return supabaseClient;
 }
 
+// ============================================================================
+// STEP MANAGEMENT FUNCTIONS (JSONB-based)
+// ============================================================================
+
+/**
+ * Adds a new step to the task's steps array.
+ * Returns the step ID for later updates.
+ */
+async function addTaskStep(
+  taskId: string,
+  phase: TaskPhase,
+  stepName: string,
+  stepOrder: number
+): Promise<string> {
+  const supabase = getSupabaseServiceClient();
+  const stepId = crypto.randomUUID();
+  
+  const newStep: TaskStep = {
+    id: stepId,
+    name: stepName,
+    phase,
+    order: stepOrder,
+    status: 'running',
+    started_at: new Date().toISOString(),
+  };
+  
+  // Use the SQL function to atomically append to steps array
+  const { error } = await supabase.rpc('append_task_step', {
+    p_task_id: taskId,
+    p_step: newStep
+  });
+  
+  if (error) {
+    console.error('Failed to add step:', error);
+    throw new Error(`Failed to add step: ${error.message}`);
+  }
+  
+  return stepId;
+}
+
+/**
+ * Updates a step in the task's steps array.
+ */
+async function updateStepStatus(
+  taskId: string,
+  stepId: string,
+  updates: Partial<TaskStep>
+): Promise<void> {
+  const supabase = getSupabaseServiceClient();
+  
+  const { error } = await supabase.rpc('update_task_step', {
+    p_task_id: taskId,
+    p_step_id: stepId,
+    p_updates: updates
+  });
+  
+  if (error) {
+    console.error('Failed to update step:', error);
+    throw new Error(`Failed to update step: ${error.message}`);
+  }
+}
+
+/**
+ * Marks a step as completed with optional metrics.
+ */
+async function completeStep(
+  taskId: string,
+  stepId: string,
+  tokenCount?: number
+): Promise<void> {
+  await updateStepStatus(taskId, stepId, {
+    status: 'completed',
+    completed_at: new Date().toISOString(),
+    token_count: tokenCount,
+  });
+}
+
+/**
+ * Marks a step as failed with error message.
+ */
+async function failStep(
+  taskId: string,
+  stepId: string,
+  errorMessage: string
+): Promise<void> {
+  await updateStepStatus(taskId, stepId, {
+    status: 'failed',
+    completed_at: new Date().toISOString(),
+    error: errorMessage,
+  });
+}
+
+// ============================================================================
+// TASK UPDATE FUNCTIONS
+// ============================================================================
+
+/**
+ * Updates task status and progress.
+ */
 async function updateTaskStatus(
   taskId: string,
   updates: {
@@ -71,111 +162,62 @@ async function updateTaskStatus(
     error_message?: string;
     started_at?: string;
     completed_at?: string;
-    output_data?: Record<string, unknown>;
   }
-) {
+): Promise<void> {
   const supabase = getSupabaseServiceClient();
-  const { error } = await supabase.from("tasks").update(updates).eq("id", taskId);
+  const { error } = await supabase
+    .from("tasks")
+    .update(updates)
+    .eq("id", taskId);
+  
   if (error) throw new Error(`Failed to update task: ${error.message}`);
 }
 
-async function createTaskStep(
-  taskId: string,
-  phase: string,
-  stepName: string,
-  stepOrder: number
-) {
-  const supabase = getSupabaseServiceClient();
-  const { data, error } = await supabase
-    .from("task_steps")
-    .insert({
-      task_id: taskId,
-      phase,
-      step_name: stepName,
-      step_order: stepOrder,
-      status: "running",
-      started_at: new Date().toISOString(),
-    })
-    .select()
-    .single();
-  if (error) throw new Error(`Failed to create step: ${error.message}`);
-  return data;
-}
-
-async function completeTaskStep(
-  stepId: string,
-  outputData: unknown,
-  tokenCount?: number
-) {
-  const supabase = getSupabaseServiceClient();
-  const { error } = await supabase
-    .from("task_steps")
-    .update({
-      status: "completed",
-      output_data: outputData,
-      token_count: tokenCount,
-      completed_at: new Date().toISOString(),
-    })
-    .eq("id", stepId);
-  if (error) throw new Error(`Failed to complete step: ${error.message}`);
-}
-
 /**
- * Updates story content columns on the tasks table.
- * This consolidates all story elements into a single row.
+ * Updates task output_data with type-specific content.
+ * Merges with existing output_data rather than replacing.
  */
-async function updateTaskContent(
+async function updateTaskOutput(
   taskId: string,
-  updates: {
-    research?: string;
-    master_outline?: object;
-    detailed_outline?: object[];
-    characters?: object[];
-    settings?: object[];
-    chapters?: object[];
-    final_script?: string;
-  }
-) {
+  updates: Partial<WritingTaskOutput>
+): Promise<void> {
   const supabase = getSupabaseServiceClient();
-  const { error } = await supabase.from("tasks").update(updates).eq("id", taskId);
-  if (error) throw new Error(`Failed to update task content: ${error.message}`);
+  
+  const { error } = await supabase.rpc('merge_task_output', {
+    p_task_id: taskId,
+    p_updates: updates
+  });
+  
+  if (error) throw new Error(`Failed to update output: ${error.message}`);
 }
 
 /**
- * Appends a chapter to the existing chapters array.
- * Efficient for progressive chapter writing.
+ * Appends a chapter to the chapters array in output_data.
+ * Uses atomic SQL function to prevent race conditions.
  */
 async function appendChapter(
   taskId: string,
   chapter: { chapterNumber: number; title: string; content: string }
-) {
+): Promise<void> {
   const supabase = getSupabaseServiceClient();
   
-  // Get current chapters
-  const { data: task, error: fetchError } = await supabase
-    .from("tasks")
-    .select("chapters")
-    .eq("id", taskId)
-    .single();
-  
-  if (fetchError) throw new Error(`Failed to fetch task: ${fetchError.message}`);
-  
-  // Handle NULL or invalid chapters - initialize as empty array
-  const currentChapters = Array.isArray(task?.chapters) ? task.chapters : [];
-  const updatedChapters = [...currentChapters, chapter];
-  
-  const { error } = await supabase
-    .from("tasks")
-    .update({ chapters: updatedChapters })
-    .eq("id", taskId);
+  const { error } = await supabase.rpc('append_to_output_array', {
+    p_task_id: taskId,
+    p_key: 'chapters',
+    p_item: chapter
+  });
   
   if (error) throw new Error(`Failed to append chapter: ${error.message}`);
 }
 
+// ============================================================================
+// CONTINUITY STATE FUNCTIONS
+// ============================================================================
+
 async function updateContinuityState(
   taskId: string,
   updates: Record<string, unknown>
-) {
+): Promise<void> {
   const supabase = getSupabaseServiceClient();
   const { error } = await supabase
     .from("continuity_state")
@@ -247,6 +289,30 @@ Spell out numbers and abbreviations for better TTS output.`,
 };
 
 // ============================================================================
+// STEP ORDER CONSTANTS
+// ============================================================================
+
+const STEP_ORDER = {
+  // Preprocessing (1-99)
+  RESEARCH: 1,
+  MASTER_OUTLINE: 2,
+  CHARACTERS: 3,
+  SETTINGS: 4,
+  DETAILED_OUTLINE: 5,
+  
+  // Writing (100-199) - chapters use 100 + chapterNumber
+  CHAPTER_BASE: 100,
+  
+  // Quality checks (200-299) - use 200 + chapterNumber
+  QUALITY_CHECK_BASE: 200,
+  
+  // Postprocessing (300+)
+  AI_CLEANUP: 300,
+  CONTINUITY_CHECK: 301,
+  PHONETIC_NORMALIZATION: 302,
+} as const;
+
+// ============================================================================
 // MAIN WORKFLOW FUNCTION
 // ============================================================================
 
@@ -262,7 +328,7 @@ export const writingWorkflow = inngest.createFunction(
   { event: "writing/workflow.start" },
   async ({ event, step }) => {
     const input = event.data as WritingWorkflowInput;
-    const { taskId, userId, projectId, scriptType, idea, researchEnabled, numberOfChapters = 5 } = input;
+    const { taskId, userId, scriptType, idea, researchEnabled, numberOfChapters = 5 } = input;
 
     // ========================================================================
     // PHASE 1: PREPROCESSING
@@ -282,24 +348,29 @@ export const writingWorkflow = inngest.createFunction(
     let researchData = "";
     if (researchEnabled) {
       researchData = await step.run("research-topic", async () => {
-        const stepRecord = await createTaskStep(taskId, "preprocessing", "Research Topic", 1);
+        const stepId = await addTaskStep(taskId, "preprocessing", "Research Topic", STEP_ORDER.RESEARCH);
         await updateTaskStatus(taskId, { current_step: "Researching topic...", progress_percent: 5 });
 
-        const response = await generateText(
-          userId,
-          PROMPTS.research,
-          `Research the following topic for a ${scriptType} story:\n\n${idea}\n\nProvide relevant facts, interesting angles, and potential plot hooks.`
-        );
+        try {
+          const response = await generateText(
+            userId,
+            PROMPTS.research,
+            `Research the following topic for a ${scriptType} story:\n\n${idea}\n\nProvide relevant facts, interesting angles, and potential plot hooks.`
+          );
 
-        await updateTaskContent(taskId, { research: response.content });
-        await completeTaskStep(stepRecord.id, { research: response.content }, response.usage.totalTokens);
-        return response.content;
+          await updateTaskOutput(taskId, { research: response.content });
+          await completeStep(taskId, stepId, response.usage.totalTokens);
+          return response.content;
+        } catch (error) {
+          await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+          throw error;
+        }
       });
     }
 
     // Step 1.2: Master Outline
     const masterOutline = await step.run("generate-master-outline", async () => {
-      const stepRecord = await createTaskStep(taskId, "preprocessing", "Master Outline", 2);
+      const stepId = await addTaskStep(taskId, "preprocessing", "Master Outline", STEP_ORDER.MASTER_OUTLINE);
       await updateTaskStatus(taskId, { current_step: "Generating master outline...", progress_percent: 15 });
 
       const scriptTypePrompts = {
@@ -308,10 +379,11 @@ export const writingWorkflow = inngest.createFunction(
         kitcon: "This is a Kitcon-style video. Create an engaging hook, build curiosity, and deliver satisfying payoffs.",
       };
 
-      const response = await generateJSON<MasterOutline>(
-        userId,
-        PROMPTS.masterOutline,
-        `Create a master outline for a ${scriptType} story with ${numberOfChapters} chapters.
+      try {
+        const response = await generateJSON<MasterOutline>(
+          userId,
+          PROMPTS.masterOutline,
+          `Create a master outline for a ${scriptType} story with ${numberOfChapters} chapters.
 
 ${scriptTypePrompts[scriptType]}
 
@@ -331,22 +403,27 @@ Return JSON format:
     }
   ]
 }`
-      );
+        );
 
-      await updateTaskContent(taskId, { master_outline: response });
-      await completeTaskStep(stepRecord.id, response);
-      return response;
+        await updateTaskOutput(taskId, { master_outline: response });
+        await completeStep(taskId, stepId);
+        return response;
+      } catch (error) {
+        await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
     });
 
     // Step 1.3: Characters
     const characters = await step.run("generate-characters", async () => {
-      const stepRecord = await createTaskStep(taskId, "preprocessing", "Character Development", 3);
+      const stepId = await addTaskStep(taskId, "preprocessing", "Character Development", STEP_ORDER.CHARACTERS);
       await updateTaskStatus(taskId, { current_step: "Developing characters...", progress_percent: 25 });
 
-      const response = await generateJSON<Character[]>(
-        userId,
-        PROMPTS.characters,
-        `Create characters for this story:
+      try {
+        const response = await generateJSON<Character[]>(
+          userId,
+          PROMPTS.characters,
+          `Create characters for this story:
 
 Title: ${masterOutline.title}
 Synopsis: ${masterOutline.synopsis}
@@ -360,22 +437,27 @@ Create 3-5 main characters with distinct personalities. Return JSON array:
     "traits": ["trait1", "trait2"]
   }
 ]`
-      );
+        );
 
-      await updateTaskContent(taskId, { characters: response });
-      await completeTaskStep(stepRecord.id, response);
-      return response;
+        await updateTaskOutput(taskId, { characters: response });
+        await completeStep(taskId, stepId);
+        return response;
+      } catch (error) {
+        await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
     });
 
     // Step 1.4: Settings
     const settings = await step.run("generate-settings", async () => {
-      const stepRecord = await createTaskStep(taskId, "preprocessing", "Setting Development", 4);
+      const stepId = await addTaskStep(taskId, "preprocessing", "Setting Development", STEP_ORDER.SETTINGS);
       await updateTaskStatus(taskId, { current_step: "Creating settings...", progress_percent: 35 });
 
-      const response = await generateJSON<Setting[]>(
-        userId,
-        PROMPTS.settings,
-        `Create settings/locations for this story:
+      try {
+        const response = await generateJSON<Setting[]>(
+          userId,
+          PROMPTS.settings,
+          `Create settings/locations for this story:
 
 Title: ${masterOutline.title}
 Synopsis: ${masterOutline.synopsis}
@@ -388,22 +470,27 @@ Create 2-4 key locations. Return JSON array:
     "significance": "Why this place matters to the story"
   }
 ]`
-      );
+        );
 
-      await updateTaskContent(taskId, { settings: response });
-      await completeTaskStep(stepRecord.id, response);
-      return response;
+        await updateTaskOutput(taskId, { settings: response });
+        await completeStep(taskId, stepId);
+        return response;
+      } catch (error) {
+        await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
     });
 
     // Step 1.5: Detailed Chapter Outline
     const detailedOutline = await step.run("detailed-chapter-outline", async () => {
-      const stepRecord = await createTaskStep(taskId, "preprocessing", "Detailed Chapter Outline", 5);
+      const stepId = await addTaskStep(taskId, "preprocessing", "Detailed Chapter Outline", STEP_ORDER.DETAILED_OUTLINE);
       await updateTaskStatus(taskId, { current_step: "Creating detailed chapter outline...", progress_percent: 45 });
 
-      const response = await generateJSON<ChapterOutline[] | MasterOutline>(
-        userId,
-        PROMPTS.chapterOutline,
-        `Expand the master outline into detailed chapter breakdowns.
+      try {
+        const response = await generateJSON<ChapterOutline[] | MasterOutline>(
+          userId,
+          PROMPTS.chapterOutline,
+          `Expand the master outline into detailed chapter breakdowns.
 
 Master Outline: ${JSON.stringify(masterOutline)}
 Characters: ${JSON.stringify(characters)}
@@ -420,38 +507,41 @@ Return ONLY a JSON array of chapters in this exact format:
     "keyEvents": ["Event 1", "Event 2", "Event 3", "Event 4", "Event 5"]
   }
 ]`
-      );
+        );
 
-      // Handle both array and object responses
-      let chapters: ChapterOutline[];
-      if (Array.isArray(response)) {
-        chapters = response;
-      } else if (response && typeof response === 'object' && 'chapters' in response) {
-        // AI returned full object with chapters property
-        chapters = (response as MasterOutline).chapters;
-      } else {
-        throw new Error(`Unexpected response format: ${JSON.stringify(response).substring(0, 200)}`);
+        // Handle both array and object responses
+        let chapters: ChapterOutline[];
+        if (Array.isArray(response)) {
+          chapters = response;
+        } else if (response && typeof response === 'object' && 'chapters' in response) {
+          chapters = (response as MasterOutline).chapters;
+        } else {
+          throw new Error(`Unexpected response format: ${JSON.stringify(response).substring(0, 200)}`);
+        }
+
+        if (!chapters || chapters.length === 0) {
+          throw new Error(`No chapters found in response`);
+        }
+
+        console.log(`Generated detailed outline with ${chapters.length} chapters`);
+        
+        await updateTaskOutput(taskId, { detailed_outline: chapters });
+        await completeStep(taskId, stepId);
+
+        // Initialize continuity state
+        await updateContinuityState(taskId, {
+          total_chapters: chapters.length,
+          current_chapter: 0,
+          story_synopsis: masterOutline.synopsis,
+          characters: characters,
+          settings: settings,
+        });
+
+        return chapters;
+      } catch (error) {
+        await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
       }
-
-      if (!chapters || chapters.length === 0) {
-        throw new Error(`No chapters found in response`);
-      }
-
-      console.log(`Generated detailed outline with ${chapters.length} chapters`);
-      
-      await updateTaskContent(taskId, { detailed_outline: chapters });
-      await completeTaskStep(stepRecord.id, chapters);
-
-      // Initialize continuity state
-      await updateContinuityState(taskId, {
-        total_chapters: chapters.length,
-        current_chapter: 0,
-        story_synopsis: masterOutline.synopsis,
-        characters: characters,
-        settings: settings,
-      });
-
-      return chapters;
     });
 
     // ========================================================================
@@ -483,20 +573,21 @@ Return ONLY a JSON array of chapters in this exact format:
       console.log(`Processing chapter ${chapterNum}/${detailedOutline.length}: ${chapterOutline?.title || 'untitled'}`);
 
       const chapterContent = await step.run(`write-chapter-${chapterNum}`, async () => {
-        const stepRecord = await createTaskStep(taskId, "writing", `Write Chapter ${chapterNum}`, 10 + i);
+        const stepId = await addTaskStep(taskId, "writing", `Write Chapter ${chapterNum}`, STEP_ORDER.CHAPTER_BASE + chapterNum);
         await updateTaskStatus(taskId, {
           current_step: `Writing chapter ${chapterNum} of ${detailedOutline.length}...`,
           progress_percent: Math.round(50 + i * progressPerChapter),
         });
 
-        // Get continuity state
-        const continuity = await getContinuityState(taskId);
-        const previousChapters = chapters.slice(-2).join("\n\n---\n\n"); // Last 2 chapters for context
+        try {
+          // Get continuity state
+          const continuity = await getContinuityState(taskId);
+          const previousChapters = chapters.slice(-2).join("\n\n---\n\n"); // Last 2 chapters for context
 
-        const response = await generateText(
-          userId,
-          PROMPTS.writing,
-          `Write chapter ${chapterNum}: "${chapterOutline.title}"
+          const response = await generateText(
+            userId,
+            PROMPTS.writing,
+            `Write chapter ${chapterNum}: "${chapterOutline.title}"
 
 STORY CONTEXT:
 - Synopsis: ${continuity?.story_synopsis || masterOutline.synopsis}
@@ -515,23 +606,27 @@ ${previousChapters ? `PREVIOUS CONTEXT (for continuity):\n${previousChapters.sub
 
 Write the full chapter with engaging prose, vivid descriptions, and sharp dialogue.
 End with a hook to keep readers interested in the next chapter.`
-        );
+          );
 
-        // Append chapter to the chapters array
-        await appendChapter(taskId, {
-          chapterNumber: chapterNum,
-          title: chapterOutline.title,
-          content: response.content,
-        });
+          // Append chapter to the chapters array in output_data
+          await appendChapter(taskId, {
+            chapterNumber: chapterNum,
+            title: chapterOutline.title,
+            content: response.content,
+          });
 
-        // Update continuity for next chapter
-        await updateContinuityState(taskId, {
-          current_chapter: chapterNum,
-          previous_chapter_summary: `Chapter ${chapterNum}: ${chapterOutline.summary}`,
-        });
+          // Update continuity for next chapter
+          await updateContinuityState(taskId, {
+            current_chapter: chapterNum,
+            previous_chapter_summary: `Chapter ${chapterNum}: ${chapterOutline.summary}`,
+          });
 
-        await completeTaskStep(stepRecord.id, { length: response.content.length }, response.usage.totalTokens);
-        return response.content;
+          await completeStep(taskId, stepId, response.usage.totalTokens);
+          return response.content;
+        } catch (error) {
+          await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+          throw error;
+        }
       });
 
       chapters.push(chapterContent);
@@ -539,20 +634,25 @@ End with a hook to keep readers interested in the next chapter.`
       // Quality check every few chapters
       if (chapterNum % 3 === 0 || chapterNum === detailedOutline.length) {
         await step.run(`quality-check-${chapterNum}`, async () => {
-          const stepRecord = await createTaskStep(taskId, "writing", `Quality Check (Chapter ${chapterNum})`, 100 + i);
+          const stepId = await addTaskStep(taskId, "writing", `Quality Check (Chapter ${chapterNum})`, STEP_ORDER.QUALITY_CHECK_BASE + chapterNum);
           
-          const response = await generateText(
-            userId,
-            PROMPTS.qualityCheck,
-            `Review the following chapter for quality:
+          try {
+            const response = await generateText(
+              userId,
+              PROMPTS.qualityCheck,
+              `Review the following chapter for quality:
 
 ${chapterContent.substring(0, 3000)}...
 
 Is this engaging? Are there any issues with pacing, tone, or logic?
 Provide a brief assessment (1-2 sentences).`
-          );
+            );
 
-          await completeTaskStep(stepRecord.id, { assessment: response.content });
+            await completeStep(taskId, stepId, response.usage.totalTokens);
+          } catch (error) {
+            // Quality check failures are non-fatal
+            await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+          }
         });
       }
     }
@@ -570,7 +670,6 @@ Provide a brief assessment (1-2 sentences).`
     });
 
     // Step 3.1: Fetch all chapters from tasks table (in case memory was lost)
-    // Uses in-memory chapters if available, otherwise fetches from DB
     const allChapters = await step.run("fetch-chapters", async () => {
       // If we have chapters in memory from the writing phase, use those
       if (chapters.length > 0) {
@@ -583,7 +682,7 @@ Provide a brief assessment (1-2 sentences).`
       const supabase = getSupabaseServiceClient();
       const { data: task, error } = await supabase
         .from("tasks")
-        .select("chapters")
+        .select("output_data")
         .eq("id", taskId)
         .single();
 
@@ -591,11 +690,12 @@ Provide a brief assessment (1-2 sentences).`
         throw new Error(`Failed to fetch task: ${error.message}`);
       }
 
-      // Validate and extract chapters
-      const chaptersData = task?.chapters as Array<{ chapterNumber: number; title: string; content: string }> | null;
+      // Extract chapters from output_data
+      const outputData = task?.output_data as WritingTaskOutput | null;
+      const chaptersData = outputData?.chapters;
       
       if (!chaptersData || !Array.isArray(chaptersData) || chaptersData.length === 0) {
-        console.error("Chapters data:", JSON.stringify(chaptersData));
+        console.error("Output data:", JSON.stringify(outputData));
         throw new Error(`No chapters found in task. The workflow may have been interrupted before any chapters were written.`);
       }
 
@@ -607,140 +707,150 @@ Provide a brief assessment (1-2 sentences).`
 
     // Step 3.2: AI Cleanup (process each chapter individually)
     const cleanedChapters = await step.run("ai-cleanup", async () => {
-      const stepRecord = await createTaskStep(taskId, "postprocessing", "AI Phrase Cleanup", 200);
+      const stepId = await addTaskStep(taskId, "postprocessing", "AI Phrase Cleanup", STEP_ORDER.AI_CLEANUP);
       await updateTaskStatus(taskId, { current_step: "Removing AI-isms...", progress_percent: 92 });
 
-      const cleaned: string[] = [];
-      
-      for (let i = 0; i < allChapters.length; i++) {
-        const chapter = allChapters[i];
+      try {
+        const cleaned: string[] = [];
         
-        // Skip if chapter is empty
-        if (!chapter || chapter.trim().length === 0) {
-          cleaned.push("");
-          continue;
-        }
-
-        // Process chapter in chunks if too long (to avoid context window issues)
-        const maxChunkSize = 6000;
-        if (chapter.length > maxChunkSize) {
-          const chunkCount = Math.ceil(chapter.length / maxChunkSize);
-          const chapterChunks: string[] = [];
+        for (let i = 0; i < allChapters.length; i++) {
+          const chapter = allChapters[i];
           
-          for (let j = 0; j < chunkCount; j++) {
-            const chunkStart = j * maxChunkSize;
-            const chunk = chapter.substring(chunkStart, chunkStart + maxChunkSize);
+          // Skip if chapter is empty
+          if (!chapter || chapter.trim().length === 0) {
+            cleaned.push("");
+            continue;
+          }
+
+          // Process chapter in chunks if too long (to avoid context window issues)
+          const maxChunkSize = 6000;
+          if (chapter.length > maxChunkSize) {
+            const chunkCount = Math.ceil(chapter.length / maxChunkSize);
+            const chapterChunks: string[] = [];
             
-            const response = await generateText(
-              userId,
-              PROMPTS.aiCleanup,
-              `Clean up the following text section, removing AI-like patterns while preserving the content exactly. 
+            for (let j = 0; j < chunkCount; j++) {
+              const chunkStart = j * maxChunkSize;
+              const chunk = chapter.substring(chunkStart, chunkStart + maxChunkSize);
+              
+              const response = await generateText(
+                userId,
+                PROMPTS.aiCleanup,
+                `Clean up the following text section, removing AI-like patterns while preserving the content exactly. 
 DO NOT summarize or shorten - return the full cleaned text.
 
 TEXT TO CLEAN:
 ${chunk}`
-            );
-            chapterChunks.push(response.content);
-          }
-          
-          cleaned.push(chapterChunks.join(""));
-        } else {
-          const response = await generateText(
-            userId,
-            PROMPTS.aiCleanup,
-            `Clean up the following text, removing AI-like patterns while preserving the content exactly.
+              );
+              chapterChunks.push(response.content);
+            }
+            
+            cleaned.push(chapterChunks.join(""));
+          } else {
+            const response = await generateText(
+              userId,
+              PROMPTS.aiCleanup,
+              `Clean up the following text, removing AI-like patterns while preserving the content exactly.
 DO NOT summarize or shorten - return the full cleaned text.
 
 TEXT TO CLEAN:
 ${chapter}`
-          );
-          cleaned.push(response.content);
+            );
+            cleaned.push(response.content);
+          }
         }
-      }
 
-      await completeTaskStep(stepRecord.id, { 
-        originalChapters: allChapters.length, 
-        cleanedChapters: cleaned.length,
-        totalLength: cleaned.join("").length 
-      });
-      
-      return cleaned;
+        await completeStep(taskId, stepId);
+        return cleaned;
+      } catch (error) {
+        await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
     });
 
     // Step 3.3: Final Continuity Check (just verify, don't modify)
     await step.run("final-continuity-check", async () => {
-      const stepRecord = await createTaskStep(taskId, "postprocessing", "Continuity Check", 201);
+      const stepId = await addTaskStep(taskId, "postprocessing", "Continuity Check", STEP_ORDER.CONTINUITY_CHECK);
       await updateTaskStatus(taskId, { current_step: "Checking continuity...", progress_percent: 95 });
 
-      // Take a sample from cleaned chapters for continuity check
-      const sampleText = cleanedChapters.slice(0, 2).join("\n\n---\n\n").substring(0, 5000);
+      try {
+        // Take a sample from cleaned chapters for continuity check
+        const sampleText = cleanedChapters.slice(0, 2).join("\n\n---\n\n").substring(0, 5000);
 
-      const response = await generateText(
-        userId,
-        "You are a continuity editor. Briefly identify any major plot holes or inconsistencies. Be concise.",
-        `Review this story excerpt for continuity issues:\n\n${sampleText}\n\nList any issues found (or state 'No major issues found').`
-      );
+        await generateText(
+          userId,
+          "You are a continuity editor. Briefly identify any major plot holes or inconsistencies. Be concise.",
+          `Review this story excerpt for continuity issues:\n\n${sampleText}\n\nList any issues found (or state 'No major issues found').`
+        );
 
-      await completeTaskStep(stepRecord.id, { issues: response.content });
+        await completeStep(taskId, stepId);
+      } catch (error) {
+        // Continuity check failures are non-fatal
+        await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+      }
     });
 
     // Step 3.4: Phonetic Normalization (process each chapter individually)
     const normalizedScript = await step.run("phonetic-normalization", async () => {
-      const stepRecord = await createTaskStep(taskId, "postprocessing", "Phonetic Normalization", 202);
+      const stepId = await addTaskStep(taskId, "postprocessing", "Phonetic Normalization", STEP_ORDER.PHONETIC_NORMALIZATION);
       await updateTaskStatus(taskId, { current_step: "Optimizing for TTS...", progress_percent: 97 });
 
-      const normalized: string[] = [];
-      
-      for (let i = 0; i < cleanedChapters.length; i++) {
-        const chapter = cleanedChapters[i];
+      try {
+        const normalized: string[] = [];
         
-        // Skip if chapter is empty
-        if (!chapter || chapter.trim().length === 0) {
-          normalized.push("");
-          continue;
-        }
-
-        // Process in chunks if too long
-        const maxChunkSize = 6000;
-        if (chapter.length > maxChunkSize) {
-          const chunkCount = Math.ceil(chapter.length / maxChunkSize);
-          const chapterChunks: string[] = [];
+        for (let i = 0; i < cleanedChapters.length; i++) {
+          const chapter = cleanedChapters[i];
           
-          for (let j = 0; j < chunkCount; j++) {
-            const chunkStart = j * maxChunkSize;
-            const chunk = chapter.substring(chunkStart, chunkStart + maxChunkSize);
+          // Skip if chapter is empty
+          if (!chapter || chapter.trim().length === 0) {
+            normalized.push("");
+            continue;
+          }
+
+          // Process in chunks if too long
+          const maxChunkSize = 6000;
+          if (chapter.length > maxChunkSize) {
+            const chunkCount = Math.ceil(chapter.length / maxChunkSize);
+            const chapterChunks: string[] = [];
             
+            for (let j = 0; j < chunkCount; j++) {
+              const chunkStart = j * maxChunkSize;
+              const chunk = chapter.substring(chunkStart, chunkStart + maxChunkSize);
+              
+              const response = await generateText(
+                userId,
+                PROMPTS.phoneticNormalization,
+                `Optimize this text section for text-to-speech. Return the complete optimized text:
+
+${chunk}`
+              );
+              chapterChunks.push(response.content);
+            }
+            
+            normalized.push(chapterChunks.join(""));
+          } else {
             const response = await generateText(
               userId,
               PROMPTS.phoneticNormalization,
-              `Optimize this text section for text-to-speech. Return the complete optimized text:
-
-${chunk}`
-            );
-            chapterChunks.push(response.content);
-          }
-          
-          normalized.push(chapterChunks.join(""));
-        } else {
-          const response = await generateText(
-            userId,
-            PROMPTS.phoneticNormalization,
-            `Optimize this text for text-to-speech. Return the complete optimized text:
+              `Optimize this text for text-to-speech. Return the complete optimized text:
 
 ${chapter}`
-          );
-          normalized.push(response.content);
+            );
+            normalized.push(response.content);
+          }
         }
-      }
 
-      // Combine all chapters into final script
-      const finalScript = normalized.join("\n\n---\n\n");
-      
-      // Save the final script to the task
-      await updateTaskContent(taskId, { final_script: finalScript });
-      await completeTaskStep(stepRecord.id, { length: finalScript.length, chapters: normalized.length });
-      
-      return finalScript;
+        // Combine all chapters into final script
+        const finalScript = normalized.join("\n\n---\n\n");
+        
+        // Save the final script to output_data
+        await updateTaskOutput(taskId, { final_script: finalScript });
+        await completeStep(taskId, stepId);
+        
+        return finalScript;
+      } catch (error) {
+        await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
     });
 
     // ========================================================================
@@ -753,10 +863,6 @@ ${chapter}`
         current_step: "Workflow completed!",
         progress_percent: 100,
         completed_at: new Date().toISOString(),
-        output_data: {
-          chaptersWritten: allChapters.length,
-          finalScriptLength: normalizedScript.length,
-        },
       });
     });
 

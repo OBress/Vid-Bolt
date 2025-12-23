@@ -52,6 +52,77 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
 
 
 
+CREATE OR REPLACE FUNCTION "public"."append_task_step"("p_task_id" "uuid", "p_step" "jsonb") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+  UPDATE public.tasks 
+  SET 
+    steps = COALESCE(steps, '[]'::jsonb) || p_step,
+    updated_at = now()
+  WHERE id = p_task_id;
+  
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Task not found: %', p_task_id;
+  END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."append_task_step"("p_task_id" "uuid", "p_step" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+  UPDATE public.tasks
+  SET 
+    output_data = jsonb_set(
+      COALESCE(output_data, '{}'::jsonb),
+      ARRAY[p_key],
+      COALESCE(output_data->p_key, '[]'::jsonb) || p_item
+    ),
+    updated_at = now()
+  WHERE id = p_task_id;
+  
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Task not found: %', p_task_id;
+  END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" STABLE
+    AS $$
+DECLARE
+  result JSONB;
+BEGIN
+  SELECT jsonb_build_object(
+    'total', COUNT(*),
+    'pending', COUNT(*) FILTER (WHERE step->>'status' = 'pending'),
+    'running', COUNT(*) FILTER (WHERE step->>'status' = 'running'),
+    'completed', COUNT(*) FILTER (WHERE step->>'status' = 'completed'),
+    'failed', COUNT(*) FILTER (WHERE step->>'status' = 'failed'),
+    'skipped', COUNT(*) FILTER (WHERE step->>'status' = 'skipped')
+  )
+  INTO result
+  FROM jsonb_array_elements(
+    (SELECT COALESCE(steps, '[]'::jsonb) FROM public.tasks WHERE id = p_task_id)
+  ) AS step;
+  
+  RETURN COALESCE(result, '{"total": 0, "pending": 0, "running": 0, "completed": 0, "failed": 0, "skipped": 0}'::jsonb);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
@@ -77,6 +148,63 @@ $$;
 
 
 ALTER FUNCTION "public"."handle_updated_at"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+  UPDATE public.tasks
+  SET 
+    output_data = COALESCE(output_data, '{}'::jsonb) || p_updates,
+    updated_at = now()
+  WHERE id = p_task_id;
+  
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Task not found: %', p_task_id;
+  END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  updated_steps JSONB;
+BEGIN
+  -- Build updated steps array
+  SELECT jsonb_agg(
+    CASE 
+      WHEN step->>'id' = p_step_id 
+      THEN step || p_updates
+      ELSE step
+    END
+    ORDER BY (step->>'order')::int
+  )
+  INTO updated_steps
+  FROM jsonb_array_elements(
+    (SELECT COALESCE(steps, '[]'::jsonb) FROM public.tasks WHERE id = p_task_id)
+  ) AS step;
+  
+  -- Update the task
+  UPDATE public.tasks
+  SET 
+    steps = COALESCE(updated_steps, '[]'::jsonb),
+    updated_at = now()
+  WHERE id = p_task_id;
+  
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Task not found: %', p_task_id;
+  END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."update_updated_at_column"() RETURNS "trigger"
@@ -190,9 +318,11 @@ CREATE TABLE IF NOT EXISTS "public"."tasks" (
     "settings" "jsonb" DEFAULT '[]'::"jsonb",
     "chapters" "jsonb" DEFAULT '[]'::"jsonb",
     "final_script" "text",
-    CONSTRAINT "tasks_current_phase_check" CHECK (("current_phase" = ANY (ARRAY['preprocessing'::"text", 'writing'::"text", 'postprocessing'::"text"]))),
+    "steps" "jsonb" DEFAULT '[]'::"jsonb",
+    CONSTRAINT "tasks_current_phase_check" CHECK ((("current_phase" IS NULL) OR ("current_phase" = ANY (ARRAY['preprocessing'::"text", 'writing'::"text", 'postprocessing'::"text", 'audio_generation'::"text", 'audio_processing'::"text", 'image_generation'::"text", 'video_generation'::"text", 'compositing'::"text", 'encoding'::"text", 'uploading'::"text"])))),
     CONSTRAINT "tasks_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
-    CONSTRAINT "tasks_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'running'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"])))
+    CONSTRAINT "tasks_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'running'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"]))),
+    CONSTRAINT "tasks_type_check" CHECK (("type" = ANY (ARRAY['writing'::"text", 'writing_workflow'::"text", 'audio'::"text", 'video'::"text", 'export'::"text"])))
 );
 
 
@@ -224,6 +354,10 @@ COMMENT ON COLUMN "public"."tasks"."chapters" IS 'JSON array: [{chapterNumber, t
 
 
 COMMENT ON COLUMN "public"."tasks"."final_script" IS 'Final processed script ready for TTS (plain text)';
+
+
+
+COMMENT ON COLUMN "public"."tasks"."steps" IS 'JSONB array of task steps: [{id, name, phase, order, status, started_at, completed_at, duration_ms, token_count, error}]';
 
 
 
@@ -364,6 +498,14 @@ CREATE INDEX "idx_tasks_has_final_script" ON "public"."tasks" USING "btree" ("us
 
 
 
+CREATE INDEX "idx_tasks_input_data" ON "public"."tasks" USING "gin" ("input_data" "jsonb_path_ops");
+
+
+
+CREATE INDEX "idx_tasks_output_data" ON "public"."tasks" USING "gin" ("output_data" "jsonb_path_ops");
+
+
+
 CREATE INDEX "idx_tasks_project_id" ON "public"."tasks" USING "btree" ("project_id");
 
 
@@ -372,11 +514,19 @@ CREATE INDEX "idx_tasks_status" ON "public"."tasks" USING "btree" ("status");
 
 
 
+CREATE INDEX "idx_tasks_steps" ON "public"."tasks" USING "gin" ("steps" "jsonb_path_ops");
+
+
+
 CREATE INDEX "idx_tasks_user_id" ON "public"."tasks" USING "btree" ("user_id");
 
 
 
 CREATE INDEX "idx_tasks_user_status" ON "public"."tasks" USING "btree" ("user_id", "status");
+
+
+
+CREATE INDEX "idx_tasks_user_type" ON "public"."tasks" USING "btree" ("user_id", "type");
 
 
 
@@ -697,6 +847,24 @@ GRANT USAGE ON SCHEMA "public" TO "service_role";
 
 
 
+GRANT ALL ON FUNCTION "public"."append_task_step"("p_task_id" "uuid", "p_step" "jsonb") TO "anon";
+GRANT ALL ON FUNCTION "public"."append_task_step"("p_task_id" "uuid", "p_step" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."append_task_step"("p_task_id" "uuid", "p_step" "jsonb") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") TO "anon";
+GRANT ALL ON FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "anon";
 GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "service_role";
@@ -706,6 +874,18 @@ GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "service_role";
 GRANT ALL ON FUNCTION "public"."handle_updated_at"() TO "anon";
 GRANT ALL ON FUNCTION "public"."handle_updated_at"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."handle_updated_at"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "anon";
+GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") TO "anon";
+GRANT ALL ON FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") TO "service_role";
 
 
 

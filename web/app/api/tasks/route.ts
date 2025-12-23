@@ -51,10 +51,12 @@ export async function POST(request: NextRequest) {
       .insert({
         user_id: user.id,
         project_id: projectId || null,
-        type: "writing_workflow",
+        type: "writing",  // Using new consolidated type
         name: `Writing: ${idea.substring(0, 50)}...`,
         status: "pending",
+        steps: [],  // Initialize empty steps array
         input_data: { scriptType, idea, researchEnabled, numberOfChapters },
+        output_data: {},  // Initialize empty output
       })
       .select()
       .single();
@@ -94,6 +96,7 @@ export async function GET(request: NextRequest) {
     const userId = searchParams.get("userId");
     const status = searchParams.get("status");
     const limit = parseInt(searchParams.get("limit") || "10", 10);
+    const includeSteps = searchParams.get("includeSteps") === "true";
 
     if (!userId) {
       return NextResponse.json({ error: "userId is required" }, { status: 400 });
@@ -107,9 +110,14 @@ export async function GET(request: NextRequest) {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Include steps in response if requested (for detailed task views)
+    const selectFields = includeSteps 
+      ? "id, name, type, status, current_phase, current_step, progress_percent, steps, created_at, updated_at"
+      : "id, name, type, status, current_phase, current_step, progress_percent, created_at, updated_at";
+
     let query = supabase
       .from("tasks")
-      .select("id, name, type, status, current_phase, current_step, progress_percent, created_at, updated_at")
+      .select(selectFields)
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(limit);
