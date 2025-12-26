@@ -96,6 +96,32 @@ $$;
 ALTER FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") RETURNS TABLE("id" "uuid", "name" "text", "status" "text", "current_stage" "text", "current_step" "text", "progress_percent" integer, "updated_at" timestamp with time zone)
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        vp.id,
+        vp.name,
+        vp.status,
+        vp.current_stage,
+        vp.current_step,
+        vp.progress_percent,
+        vp.updated_at
+    FROM public.video_projects vp
+    WHERE 
+        vp.user_id = p_user_id
+        AND vp.status IN ('draft', 'processing', 'failed')
+        AND vp.current_stage != 'completed'
+    ORDER BY vp.updated_at DESC;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" STABLE
     AS $$
@@ -148,6 +174,29 @@ $$;
 
 
 ALTER FUNCTION "public"."handle_updated_at"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+    UPDATE public.video_projects
+    SET 
+        script_task_id = CASE WHEN p_task_type = 'script' THEN p_task_id ELSE script_task_id END,
+        audio_task_id = CASE WHEN p_task_type = 'audio' THEN p_task_id ELSE audio_task_id END,
+        video_task_id = CASE WHEN p_task_type = 'video' THEN p_task_id ELSE video_task_id END,
+        export_task_id = CASE WHEN p_task_type = 'export' THEN p_task_id ELSE export_task_id END,
+        updated_at = now()
+    WHERE id = p_video_id;
+    
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Video project not found: %', p_video_id;
+    END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") RETURNS "void"
@@ -218,6 +267,39 @@ $$;
 
 
 ALTER FUNCTION "public"."update_updated_at_column"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+    UPDATE public.video_projects
+    SET 
+        current_stage = p_current_stage,
+        current_step = p_current_step,
+        progress_percent = p_progress_percent,
+        updated_at = now(),
+        -- Auto-set status to processing if not already completed/failed
+        status = CASE 
+            WHEN status = 'draft' THEN 'processing'
+            WHEN status IN ('completed', 'failed', 'cancelled') THEN status
+            ELSE 'processing'
+        END,
+        -- Auto-set completed_at when stage is 'completed'
+        completed_at = CASE
+            WHEN p_current_stage = 'completed' THEN now()
+            ELSE completed_at
+        END
+    WHERE id = p_video_id;
+    
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Video project not found: %', p_video_id;
+    END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) OWNER TO "postgres";
 
 SET default_tablespace = '';
 
@@ -407,6 +489,53 @@ CREATE TABLE IF NOT EXISTS "public"."users" (
 ALTER TABLE "public"."users" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."video_projects" (
+    "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "project_id" "uuid",
+    "name" "text" NOT NULL,
+    "description" "text",
+    "status" "text" DEFAULT 'draft'::"text" NOT NULL,
+    "current_stage" "text" DEFAULT 'idea'::"text" NOT NULL,
+    "current_step" "text",
+    "progress_percent" integer DEFAULT 0 NOT NULL,
+    "script_task_id" "uuid",
+    "audio_task_id" "uuid",
+    "video_task_id" "uuid",
+    "export_task_id" "uuid",
+    "idea" "text",
+    "script_content" "text",
+    "audio_url" "text",
+    "video_url" "text",
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "completed_at" timestamp with time zone,
+    CONSTRAINT "video_projects_current_stage_check" CHECK (("current_stage" = ANY (ARRAY['idea'::"text", 'script'::"text", 'audio'::"text", 'video'::"text", 'export'::"text", 'completed'::"text"]))),
+    CONSTRAINT "video_projects_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
+    CONSTRAINT "video_projects_status_check" CHECK (("status" = ANY (ARRAY['draft'::"text", 'processing'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"])))
+);
+
+
+ALTER TABLE "public"."video_projects" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."video_projects" IS 'Individual video projects tracked through the production pipeline';
+
+
+
+COMMENT ON COLUMN "public"."video_projects"."status" IS 'Overall video status: draft, processing, completed, failed, cancelled';
+
+
+
+COMMENT ON COLUMN "public"."video_projects"."current_stage" IS 'Current pipeline stage: idea, script, audio, video, export, completed';
+
+
+
+COMMENT ON COLUMN "public"."video_projects"."metadata" IS 'Flexible JSONB storage for video-specific data';
+
+
+
 ALTER TABLE ONLY "public"."continuity_state"
     ADD CONSTRAINT "continuity_state_pkey" PRIMARY KEY ("id");
 
@@ -482,6 +611,11 @@ ALTER TABLE ONLY "public"."users"
 
 
 
+ALTER TABLE ONLY "public"."video_projects"
+    ADD CONSTRAINT "video_projects_pkey" PRIMARY KEY ("id");
+
+
+
 CREATE INDEX "idx_task_steps_status" ON "public"."task_steps" USING "btree" ("status");
 
 
@@ -530,6 +664,34 @@ CREATE INDEX "idx_tasks_user_type" ON "public"."tasks" USING "btree" ("user_id",
 
 
 
+CREATE INDEX "idx_video_projects_created_at" ON "public"."video_projects" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_video_projects_current_stage" ON "public"."video_projects" USING "btree" ("current_stage");
+
+
+
+CREATE INDEX "idx_video_projects_metadata" ON "public"."video_projects" USING "gin" ("metadata" "jsonb_path_ops");
+
+
+
+CREATE INDEX "idx_video_projects_project_id" ON "public"."video_projects" USING "btree" ("project_id");
+
+
+
+CREATE INDEX "idx_video_projects_status" ON "public"."video_projects" USING "btree" ("status");
+
+
+
+CREATE INDEX "idx_video_projects_user_id" ON "public"."video_projects" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_video_projects_user_status" ON "public"."video_projects" USING "btree" ("user_id", "status");
+
+
+
 CREATE OR REPLACE TRIGGER "set_updated_at_continuity_state" BEFORE UPDATE ON "public"."continuity_state" FOR EACH ROW EXECUTE FUNCTION "public"."handle_updated_at"();
 
 
@@ -547,6 +709,10 @@ CREATE OR REPLACE TRIGGER "set_updated_at_tasks" BEFORE UPDATE ON "public"."task
 
 
 CREATE OR REPLACE TRIGGER "set_updated_at_user_settings" BEFORE UPDATE ON "public"."user_settings" FOR EACH ROW EXECUTE FUNCTION "public"."handle_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "set_updated_at_video_projects" BEFORE UPDATE ON "public"."video_projects" FOR EACH ROW EXECUTE FUNCTION "public"."handle_updated_at"();
 
 
 
@@ -599,6 +765,36 @@ ALTER TABLE ONLY "public"."users"
 
 
 
+ALTER TABLE ONLY "public"."video_projects"
+    ADD CONSTRAINT "video_projects_audio_task_id_fkey" FOREIGN KEY ("audio_task_id") REFERENCES "public"."tasks"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."video_projects"
+    ADD CONSTRAINT "video_projects_export_task_id_fkey" FOREIGN KEY ("export_task_id") REFERENCES "public"."tasks"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."video_projects"
+    ADD CONSTRAINT "video_projects_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."media_projects"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."video_projects"
+    ADD CONSTRAINT "video_projects_script_task_id_fkey" FOREIGN KEY ("script_task_id") REFERENCES "public"."tasks"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."video_projects"
+    ADD CONSTRAINT "video_projects_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."video_projects"
+    ADD CONSTRAINT "video_projects_video_task_id_fkey" FOREIGN KEY ("video_task_id") REFERENCES "public"."tasks"("id") ON DELETE SET NULL;
+
+
+
 CREATE POLICY "Users can insert own keys" ON "public"."user_api_keys" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
 
 
@@ -635,6 +831,10 @@ CREATE POLICY "Users can manage their own tasks" ON "public"."tasks" USING (("au
 
 
 
+CREATE POLICY "Users can manage their own video projects" ON "public"."video_projects" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
+
+
+
 CREATE POLICY "Users can update own keys" ON "public"."user_api_keys" FOR UPDATE USING (("auth"."uid"() = "user_id"));
 
 
@@ -654,6 +854,12 @@ CREATE POLICY "Users can view own profile" ON "public"."users" FOR SELECT USING 
 CREATE POLICY "Users can view steps for their own tasks" ON "public"."task_steps" USING ((EXISTS ( SELECT 1
    FROM "public"."tasks"
   WHERE (("tasks"."id" = "task_steps"."task_id") AND ("tasks"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "Users can view videos in owned media projects" ON "public"."video_projects" FOR SELECT USING ((("project_id" IS NULL) OR (EXISTS ( SELECT 1
+   FROM "public"."media_projects"
+  WHERE (("media_projects"."id" = "video_projects"."project_id") AND ("media_projects"."user_id" = "auth"."uid"()))))));
 
 
 
@@ -679,6 +885,9 @@ ALTER TABLE "public"."user_settings" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."users" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."video_projects" ENABLE ROW LEVEL SECURITY;
 
 
 
@@ -859,6 +1068,12 @@ GRANT ALL ON FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_k
 
 
 
+GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "anon";
 GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "service_role";
@@ -877,6 +1092,12 @@ GRANT ALL ON FUNCTION "public"."handle_updated_at"() TO "service_role";
 
 
 
+GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "anon";
 GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "service_role";
@@ -892,6 +1113,12 @@ GRANT ALL ON FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id
 GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "anon";
 GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) TO "anon";
+GRANT ALL ON FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) TO "service_role";
 
 
 
@@ -955,6 +1182,12 @@ GRANT ALL ON TABLE "public"."user_settings" TO "service_role";
 GRANT ALL ON TABLE "public"."users" TO "anon";
 GRANT ALL ON TABLE "public"."users" TO "authenticated";
 GRANT ALL ON TABLE "public"."users" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."video_projects" TO "anon";
+GRANT ALL ON TABLE "public"."video_projects" TO "authenticated";
+GRANT ALL ON TABLE "public"."video_projects" TO "service_role";
 
 
 

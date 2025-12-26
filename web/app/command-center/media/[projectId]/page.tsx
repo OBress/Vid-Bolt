@@ -3,7 +3,7 @@
 import { use, useState, useRef, useCallback, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Video, BarChart2, Settings, Hash, Plus } from "lucide-react";
+import { Video, BarChart2, Settings, Hash, Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/layout/SidebarContext";
 import { VideoCard } from "@/components/features/project/VideoCard";
@@ -11,8 +11,18 @@ import { AnalyticsTab } from "@/components/features/project/AnalyticsTab";
 import { SettingsTab } from "@/components/features/project/SettingsTab";
 import { RandomTab } from "@/components/features/project/RandomTab";
 import { VideoCreationWizard } from "@/components/video-creation/VideoCreationWizard";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 import { useMediaProjects } from "@/hooks/use-media-projects";
+import { useVideos } from "@/hooks/use-videos";
 import { PageHeader } from "@/components/shared/PageHeader";
 
 interface AnimationOrigin {
@@ -28,6 +38,7 @@ interface WizardState {
   isClosing: boolean;
   origin: AnimationOrigin | null;
   targetVideoIndex: number | null;
+  videoId: string | null;
 }
 
 export default function ProjectPage({
@@ -44,6 +55,18 @@ export default function ProjectPage({
   const { collapse } = useSidebar();
   const { projects } = useMediaProjects();
 
+  const [isNameDialogOpen, setIsNameDialogOpen] = useState(false);
+  const [newVideoName, setNewVideoName] = useState("");
+  const [isCreatingVideo, setIsCreatingVideo] = useState(false);
+
+  // Fetch videos for this project
+  const {
+    videos,
+    isLoading: videosLoading,
+    fetchVideos,
+    createVideo,
+  } = useVideos({ projectId });
+
   // Get actual project name from context
   const project = projects.find((p) => p.id === projectId);
   const projectTitle = project?.name || "Loading...";
@@ -54,6 +77,7 @@ export default function ProjectPage({
     isClosing: false,
     origin: null,
     targetVideoIndex: null,
+    videoId: null,
   });
 
   // Sync active tab state if URL changes
@@ -86,25 +110,60 @@ export default function ProjectPage({
   };
 
   const handleNewVideo = useCallback(() => {
-    if (!newVideoButtonRef.current) return;
-    const origin = getElementOrigin(newVideoButtonRef.current);
-    collapse();
-    setWizardState({
-      isOpen: true,
-      isAnimating: true,
-      isClosing: false,
-      origin,
-      targetVideoIndex: null,
-    });
-    setTimeout(() => {
-      setWizardState((prev) => ({ ...prev, isAnimating: false }));
-    }, 400);
-  }, [collapse]);
+    setNewVideoName("");
+    setIsNameDialogOpen(true);
+  }, []);
+
+  const handleStartWizard = useCallback(async () => {
+    if (!newVideoName.trim() || !newVideoButtonRef.current) return;
+
+    setIsCreatingVideo(true);
+    try {
+      // Create video record immediately
+      const video = await createVideo({
+        name: newVideoName,
+        project_id: projectId,
+      });
+
+      if (!video) throw new Error("Failed to create video record");
+
+      setIsNameDialogOpen(false);
+      const origin = getElementOrigin(newVideoButtonRef.current);
+      collapse();
+
+      setWizardState({
+        isOpen: true,
+        isAnimating: true,
+        isClosing: false,
+        origin,
+        targetVideoIndex: null,
+        videoId: video.id,
+      });
+
+      setTimeout(() => {
+        setWizardState((prev) => ({ ...prev, isAnimating: false }));
+      }, 400);
+
+      // Clear name for next time
+      setNewVideoName("");
+    } catch (err) {
+      console.error("Error creating video:", err);
+    } finally {
+      setIsCreatingVideo(false);
+    }
+  }, [collapse, newVideoName, projectId, createVideo]);
 
   const handleVideoClick = useCallback(
     (index: number) => {
+      const video = videos.filter((v) =>
+        showFinished
+          ? v.status === "completed"
+          : v.status !== "completed" && v.status !== "cancelled"
+      )[index];
+
       const videoCard = videoCardRefs.current[index];
-      if (!videoCard) return;
+      if (!videoCard || !video) return;
+
       const origin = getElementOrigin(videoCard);
       collapse();
       setWizardState({
@@ -113,12 +172,13 @@ export default function ProjectPage({
         isClosing: false,
         origin,
         targetVideoIndex: index,
+        videoId: video.id,
       });
       setTimeout(() => {
         setWizardState((prev) => ({ ...prev, isAnimating: false }));
       }, 400);
     },
-    [collapse]
+    [collapse, videos, showFinished]
   );
 
   const handleWizardBack = useCallback(() => {
@@ -143,20 +203,27 @@ export default function ProjectPage({
         isClosing: false,
         origin: null,
         targetVideoIndex: null,
+        videoId: null,
       });
     }, 350);
   }, [wizardState.targetVideoIndex]);
 
-  const handleWizardComplete = useCallback((videoId: string) => {
-    console.log("Video created:", videoId);
-    setWizardState({
-      isOpen: false,
-      isAnimating: false,
-      isClosing: false,
-      origin: null,
-      targetVideoIndex: null,
-    });
-  }, []);
+  const handleWizardComplete = useCallback(
+    (videoId: string) => {
+      console.log("Video created:", videoId);
+      // Refresh videos list
+      fetchVideos();
+      setWizardState({
+        isOpen: false,
+        isAnimating: false,
+        isClosing: false,
+        origin: null,
+        targetVideoIndex: null,
+        videoId: null,
+      });
+    },
+    [fetchVideos]
+  );
 
   const tabs = [
     { id: "videos", label: "Videos", icon: Video },
@@ -266,16 +333,59 @@ export default function ProjectPage({
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {[1, 2, 3, 4].map((i, index) => (
-                    <VideoCard
-                      key={i}
-                      index={index}
-                      ref={(el) => {
-                        videoCardRefs.current[index] = el;
-                      }}
-                      onClick={() => handleVideoClick(index)}
-                    />
-                  ))}
+                  {videosLoading ? (
+                    <div className="col-span-full py-20 text-center">
+                      <Loader2 className="w-8 h-8 animate-spin text-orange-500 mx-auto mb-4" />
+                      <p className="text-neutral-500 text-sm">
+                        Loading videos...
+                      </p>
+                    </div>
+                  ) : videos.filter((v) =>
+                      showFinished
+                        ? v.status === "completed"
+                        : v.status !== "completed" && v.status !== "cancelled"
+                    ).length > 0 ? (
+                    videos
+                      .filter((v) =>
+                        showFinished
+                          ? v.status === "completed"
+                          : v.status !== "completed" && v.status !== "cancelled"
+                      )
+                      .map((video, index) => (
+                        <div
+                          key={video.id}
+                          ref={(el) => {
+                            videoCardRefs.current[index] = el;
+                          }}
+                        >
+                          <VideoCard
+                            title={video.name}
+                            status={video.status}
+                            progress={video.progress_percent}
+                            stage={video.current_stage}
+                            onClick={() => handleVideoClick(index)}
+                          />
+                        </div>
+                      ))
+                  ) : (
+                    <div className="col-span-full py-20 text-center border border-dashed border-neutral-800 rounded-lg">
+                      <p className="text-neutral-500 text-sm mb-4">
+                        {showFinished
+                          ? "No finished videos yet."
+                          : "No videos in progress. Start by creating your first one!"}
+                      </p>
+                      {!showFinished && (
+                        <Button
+                          onClick={handleNewVideo}
+                          variant="outline"
+                          className="border-orange-500/50 text-orange-500 hover:bg-orange-500/10"
+                        >
+                          <Plus className="w-4 h-4 mr-2" />
+                          Create Video
+                        </Button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </TabsContent>
 
@@ -308,11 +418,61 @@ export default function ProjectPage({
         >
           <VideoCreationWizard
             projectId={projectId}
+            videoId={wizardState.videoId}
             onComplete={handleWizardComplete}
             onBack={handleWizardBack}
           />
         </div>
       )}
+
+      <Dialog open={isNameDialogOpen} onOpenChange={setIsNameDialogOpen}>
+        <DialogContent className="bg-neutral-950 border-neutral-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold uppercase tracking-tighter">
+              Create New Video
+            </DialogTitle>
+            <DialogDescription className="text-neutral-400">
+              Enter a name for your new video project.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              value={newVideoName}
+              onChange={(e) => setNewVideoName(e.target.value)}
+              placeholder="E.g. The Future of AI"
+              className="bg-black border-neutral-800 text-white"
+              autoFocus
+              onKeyDown={(e) =>
+                e.key === "Enter" &&
+                newVideoName.trim() &&
+                !isCreatingVideo &&
+                handleStartWizard()
+              }
+              disabled={isCreatingVideo}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setIsNameDialogOpen(false)}
+              disabled={isCreatingVideo}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleStartWizard}
+              disabled={!newVideoName.trim() || isCreatingVideo}
+              className="bg-orange-500 hover:bg-orange-600 min-w-[100px]"
+            >
+              {isCreatingVideo ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Continue"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <style jsx>{`
         @keyframes expand-in {

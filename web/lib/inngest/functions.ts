@@ -30,6 +30,7 @@ interface WritingWorkflowInput {
   taskId: string;
   userId: string;
   projectId?: string;
+  videoId?: string;  // NEW: Optional video project ID for tracking
   scriptType: "top_10" | "long_form" | "kitcon";
   idea: string;
   researchEnabled?: boolean;
@@ -328,7 +329,16 @@ export const writingWorkflow = inngest.createFunction(
   { event: "writing/workflow.start" },
   async ({ event, step }) => {
     const input = event.data as WritingWorkflowInput;
-    const { taskId, userId, scriptType, idea, researchEnabled, numberOfChapters = 5 } = input;
+    const { taskId, userId, videoId, scriptType, idea, researchEnabled, numberOfChapters = 5 } = input;
+
+    // Link task to video project if videoId provided
+    if (videoId) {
+      await step.run("link-task-to-video", async () => {
+        const { linkTaskToVideo, updateVideoProgress } = await import("@/lib/services/video-service");
+        await linkTaskToVideo(videoId, taskId, "script");
+        await updateVideoProgress(videoId, "script", "Starting script generation", 5);
+      });
+    }
 
     // ========================================================================
     // PHASE 1: PREPROCESSING
@@ -554,6 +564,12 @@ Return ONLY a JSON array of chapters in this exact format:
         current_step: "Beginning writing phase...",
         progress_percent: 50,
       });
+      
+      // Update video progress if tracking
+      if (videoId) {
+        const { updateVideoProgress } = await import("@/lib/services/video-service");
+        await updateVideoProgress(videoId, "script", "Writing chapters", 50);
+      }
     });
 
     // Validate detailedOutline before writing phase
@@ -864,6 +880,13 @@ ${chapter}`
         progress_percent: 100,
         completed_at: new Date().toISOString(),
       });
+      
+      // Update video project if tracking
+      if (videoId) {
+        const { updateVideoContent, updateVideoProgress } = await import("@/lib/services/video-service");
+        await updateVideoContent(videoId, { script_content: normalizedScript });
+        await updateVideoProgress(videoId, "audio", "Script completed, ready for audio", 100);
+      }
     });
 
     return {
@@ -875,5 +898,397 @@ ${chapter}`
   }
 );
 
+// ============================================================================
+// IDEA EXPANSION WORKFLOW
+// ============================================================================
+
+interface IdeaExpansionInput {
+  taskId: string;
+  userId: string;
+  videoId: string;
+  idea: string;
+}
+
+const IDEA_EXPANSION_PROMPT = `You are a creative content strategist specializing in video content.
+Your job is to take a simple idea and expand it into a compelling, detailed video concept.
+
+Create an expansion that includes:
+1. A refined, attention-grabbing title
+2. A compelling hook that will immediately capture viewer attention
+3. Key points to cover (3-5 main topics)
+4. Potential visual elements or B-roll suggestions
+5. Target audience identification
+6. Estimated video length recommendation
+
+Be creative, engaging, and specific. Make the concept feel professional and well-thought-out.`;
+
+export const ideaExpansion = inngest.createFunction(
+  {
+    id: "idea-expansion",
+    retries: 3,
+    concurrency: {
+      limit: 10,
+      key: "event.data.userId",
+    },
+  },
+  { event: "idea/expand.start" },
+  async ({ event, step }) => {
+    const input = event.data as IdeaExpansionInput;
+    const { taskId, userId, videoId, idea } = input;
+
+    // Update video progress
+    await step.run("start-expansion", async () => {
+      const { updateVideoProgress } = await import("@/lib/services/video-service");
+      await updateVideoProgress(videoId, "idea", "Expanding your idea", 10);
+      
+      await updateTaskStatus(taskId, {
+        status: "running",
+        current_phase: "preprocessing",
+        current_step: "Analyzing idea...",
+        progress_percent: 10,
+        started_at: new Date().toISOString(),
+      });
+    });
+
+    // Step 1: Analyze the idea
+    const stepId1 = await step.run("analyze-idea-step", async () => {
+      return await addTaskStep(taskId, "preprocessing", "Analyze Idea", 1);
+    });
+
+    await step.run("update-analyzing", async () => {
+      await updateTaskStatus(taskId, {
+        current_step: "Analyzing idea structure...",
+        progress_percent: 25,
+      });
+    });
+
+    // Step 2: Expand the idea
+    const expandedIdea = await step.run("expand-idea", async () => {
+      await completeStep(taskId, stepId1);
+      
+      const stepId2 = await addTaskStep(taskId, "preprocessing", "Expand Concept", 2);
+      await updateTaskStatus(taskId, {
+        current_step: "Generating expanded concept...",
+        progress_percent: 50,
+      });
+
+      try {
+        const response = await generateText(
+          userId,
+          IDEA_EXPANSION_PROMPT,
+          `Expand this video idea into a complete concept:\n\n"${idea}"\n\nProvide a detailed, engaging expansion that would excite a content creator.`
+        );
+
+        await completeStep(taskId, stepId2, response.usage.totalTokens);
+        return response.content;
+      } catch (error) {
+        await failStep(taskId, stepId2, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
+    });
+
+    // Step 3: Finalize and save
+    await step.run("finalize-expansion", async () => {
+      const stepId3 = await addTaskStep(taskId, "preprocessing", "Finalize Expansion", 3);
+      await updateTaskStatus(taskId, {
+        current_step: "Finalizing expansion...",
+        progress_percent: 80,
+      });
+
+      // Update task with expanded idea
+      await updateTaskOutput(taskId, { expanded_idea: expandedIdea });
+      
+      // Update video project
+      const supabase = getSupabaseServiceClient();
+      await supabase
+        .from("video_projects")
+        .update({
+          metadata: { expanded_idea: expandedIdea },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", videoId);
+
+      await completeStep(taskId, stepId3);
+    });
+
+    // Complete workflow
+    await step.run("complete-expansion", async () => {
+      const { updateVideoProgress } = await import("@/lib/services/video-service");
+      await updateVideoProgress(videoId, "idea", "Idea expanded", 100);
+      
+      await updateTaskStatus(taskId, {
+        status: "completed",
+        current_step: "Idea expansion complete!",
+        progress_percent: 100,
+        completed_at: new Date().toISOString(),
+      });
+    });
+
+    return {
+      success: true,
+      taskId,
+      videoId,
+      expandedIdea,
+    };
+  }
+);
+
+// ============================================================================
+// AUDIO GENERATION WORKFLOW
+// ============================================================================
+
+interface AudioWorkflowInput {
+  taskId: string;
+  userId: string;
+  videoId: string;
+  script: string;
+  voiceProvider: 'elevenlabs' | 'genai' | 'inworld';
+  voiceModel?: string;
+  voiceSettings?: {
+    speakingRate?: number;
+    stability?: number;
+    similarityBoost?: number;
+  };
+}
+
+const AUDIO_STEP_ORDER = {
+  SPLIT_TEXT: 1,
+  TTS_BASE: 10, // Chunk generation uses 10 + chunkIndex
+  UPLOAD_BASE: 100, // Uploads use 100 + chunkIndex
+  FINALIZE: 200,
+} as const;
+
+export const audioWorkflow = inngest.createFunction(
+  {
+    id: "audio-workflow",
+    retries: 3,
+    concurrency: {
+      limit: 5,
+      key: "event.data.userId",
+    },
+  },
+  { event: "audio/generate.start" },
+  async ({ event, step }) => {
+    const input = event.data as AudioWorkflowInput;
+    const { taskId, userId, videoId, script, voiceProvider, voiceModel, voiceSettings } = input;
+
+    // Link task to video project
+    await step.run("link-task-to-video", async () => {
+      const { linkTaskToVideo, updateVideoProgress } = await import("@/lib/services/video-service");
+      await linkTaskToVideo(videoId, taskId, "audio");
+      await updateVideoProgress(videoId, "audio", "Starting audio generation", 5);
+    });
+
+    // Start audio generation
+    await step.run("start-audio-generation", async () => {
+      await updateTaskStatus(taskId, {
+        status: "running",
+        current_phase: "audio_generation",
+        current_step: "Preparing script for audio...",
+        progress_percent: 5,
+        started_at: new Date().toISOString(),
+      });
+    });
+
+    // Step 1: Split script into chunks
+    const chunks = await step.run("split-script-into-chunks", async () => {
+      const stepId = await addTaskStep(taskId, "audio_generation", "Split Script", AUDIO_STEP_ORDER.SPLIT_TEXT);
+      await updateTaskStatus(taskId, { current_step: "Splitting script into chunks...", progress_percent: 10 });
+
+      try {
+        const { splitTextIntoChunks, getChunkStats } = await import("@/lib/utils/text-chunking");
+        const textChunks = splitTextIntoChunks(script, 200);
+        const stats = getChunkStats(textChunks);
+
+        console.log(`Split script into ${stats.totalChunks} chunks, estimated duration: ${stats.estimatedTotalDuration}s`);
+
+        await completeStep(taskId, stepId);
+        return textChunks;
+      } catch (error) {
+        await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
+    });
+
+    // Step 2: Generate TTS for each chunk
+    // Note: Inngest serializes step results to JSON, so we use base64 strings instead of Buffer
+    const audioResults: Array<{
+      chunkIndex: number;
+      audioBase64: string; // Base64-encoded audio data
+      durationSeconds: number;
+    }> = [];
+
+    const progressPerChunk = 60 / chunks.length; // 60% of progress for TTS generation
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+
+      const audioResult = await step.run(`generate-tts-chunk-${i}`, async () => {
+        const stepId = await addTaskStep(taskId, "audio_generation", `Generate Audio (Chunk ${i + 1})`, AUDIO_STEP_ORDER.TTS_BASE + i);
+        await updateTaskStatus(taskId, {
+          current_step: `Generating audio for chunk ${i + 1} of ${chunks.length}...`,
+          progress_percent: Math.round(15 + i * progressPerChunk),
+        });
+
+        try {
+          // Only Inworld is implemented currently
+          if (voiceProvider !== 'inworld') {
+            throw new Error(`Voice provider '${voiceProvider}' is not yet implemented. Currently only 'inworld' is supported.`);
+          }
+
+          const { generateSpeech } = await import("@/lib/services/inworld-tts");
+          const result = await generateSpeech(userId, chunk.text, {
+            voiceId: voiceModel,
+            speakingRate: voiceSettings?.speakingRate,
+          });
+
+          await completeStep(taskId, stepId);
+
+          // Serialize Buffer to base64 for Inngest step serialization
+          return {
+            chunkIndex: chunk.index,
+            audioBase64: result.audioBuffer.toString('base64'),
+            durationSeconds: result.durationSeconds,
+          };
+        } catch (error) {
+          await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+          throw error;
+        }
+      });
+
+      audioResults.push(audioResult);
+    }
+
+
+    // Step 3: Upload audio chunks to R2
+    await step.run("start-upload-phase", async () => {
+      await updateTaskStatus(taskId, {
+        current_phase: "audio_processing",
+        current_step: "Uploading audio files...",
+        progress_percent: 75,
+      });
+
+      // Update video progress
+      const { updateVideoProgress } = await import("@/lib/services/video-service");
+      await updateVideoProgress(videoId, "audio", "Uploading audio files", 75);
+    });
+
+    const uploadedChunks: Array<{
+      chunkIndex: number;
+      url: string;
+      durationSeconds: number;
+    }> = [];
+
+    const uploadProgressPerChunk = 15 / audioResults.length;
+
+    for (const audio of audioResults) {
+      const uploadResult = await step.run(`upload-chunk-${audio.chunkIndex}`, async () => {
+        const stepId = await addTaskStep(taskId, "audio_processing", `Upload Chunk ${audio.chunkIndex + 1}`, AUDIO_STEP_ORDER.UPLOAD_BASE + audio.chunkIndex);
+
+        try {
+          const { uploadAudioBuffer, generateAudioKey, isR2Configured } = await import("@/lib/services/r2-storage");
+
+          // Check if R2 is configured
+          if (!isR2Configured()) {
+            throw new Error("R2 storage is not configured. Please set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, and R2_PUBLIC_URL environment variables.");
+          }
+
+          const key = generateAudioKey(userId, videoId, audio.chunkIndex, "mp3");
+          // Decode base64 back to Buffer for upload
+          const audioBuffer = Buffer.from(audio.audioBase64, 'base64');
+          const result = await uploadAudioBuffer(audioBuffer, key, "audio/mpeg");
+
+          await completeStep(taskId, stepId);
+
+          return {
+            chunkIndex: audio.chunkIndex,
+            url: result.url,
+            durationSeconds: audio.durationSeconds,
+          };
+        } catch (error) {
+          await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+          throw error;
+        }
+      });
+
+      uploadedChunks.push(uploadResult);
+
+      await step.run(`update-upload-progress-${audio.chunkIndex}`, async () => {
+        await updateTaskStatus(taskId, {
+          current_step: `Uploaded chunk ${audio.chunkIndex + 1} of ${audioResults.length}...`,
+          progress_percent: Math.round(75 + audio.chunkIndex * uploadProgressPerChunk),
+        });
+      });
+    }
+
+    // Step 4: Finalize and update video project
+    const finalResult = await step.run("finalize-audio", async () => {
+      const stepId = await addTaskStep(taskId, "audio_processing", "Finalize Audio", AUDIO_STEP_ORDER.FINALIZE);
+      await updateTaskStatus(taskId, { current_step: "Finalizing audio...", progress_percent: 95 });
+
+      try {
+        // Calculate total duration
+        const totalDuration = uploadedChunks.reduce((sum, chunk) => sum + chunk.durationSeconds, 0);
+
+        // For now, use the first chunk as the main audio URL
+        // In a full implementation, we would merge all chunks
+        const primaryAudioUrl = uploadedChunks.length > 0 ? uploadedChunks[0].url : null;
+
+        // Update task output with audio data
+        const supabase = getSupabaseServiceClient();
+        await supabase.rpc('merge_task_output', {
+          p_task_id: taskId,
+          p_updates: {
+            tts_chunks: uploadedChunks.map(c => ({
+              chapterNumber: c.chunkIndex,
+              url: c.url,
+              duration_seconds: c.durationSeconds,
+            })),
+            total_duration_seconds: totalDuration,
+            final_audio: primaryAudioUrl,
+          },
+        });
+
+        await completeStep(taskId, stepId);
+
+        return {
+          totalDuration,
+          chunkCount: uploadedChunks.length,
+          primaryAudioUrl,
+        };
+      } catch (error) {
+        await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
+    });
+
+    // Complete workflow
+    await step.run("complete-workflow", async () => {
+      await updateTaskStatus(taskId, {
+        status: "completed",
+        current_step: "Audio generation complete!",
+        progress_percent: 100,
+        completed_at: new Date().toISOString(),
+      });
+
+      // Update video project with audio URL
+      const { updateVideoContent, updateVideoProgress } = await import("@/lib/services/video-service");
+      if (finalResult.primaryAudioUrl) {
+        await updateVideoContent(videoId, { audio_url: finalResult.primaryAudioUrl });
+      }
+      await updateVideoProgress(videoId, "video", "Audio completed, ready for video generation", 100);
+    });
+
+    return {
+      success: true,
+      taskId,
+      videoId,
+      totalDuration: finalResult.totalDuration,
+      chunkCount: finalResult.chunkCount,
+      audioUrl: finalResult.primaryAudioUrl,
+    };
+  }
+);
+
 // Export all functions for the Inngest serve handler
-export const functions = [writingWorkflow];
+export const functions = [writingWorkflow, ideaExpansion, audioWorkflow];

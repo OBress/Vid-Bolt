@@ -8,31 +8,45 @@ import { useMediaProjects } from "@/hooks/use-media-projects";
 import { useMemo } from "react";
 import { TaskStatusButton } from "@/components/features/tasks/TaskStatusButton";
 import { DevButton } from "@/components/features/dev/DevButton";
+import { useNavigationStore } from "@/store/use-navigation-store";
 
 export function TopBar() {
   const pathname = usePathname();
   const { projects } = useMediaProjects();
+  const { currentVideoName } = useNavigationStore();
 
   // Extract project name if on a media project page
   const displayLabel = useMemo(() => {
     const mediaMatch = pathname.match(/\/command-center\/media\/([^\/]+)/);
+    let label = "";
+
     if (mediaMatch) {
       const projectId = mediaMatch[1];
       const project = projects.find((p) => p.id === projectId);
-      if (project) {
-        return project.name.toUpperCase();
-      }
-      return "MEDIA PROJECT";
+      label = project ? project.name.toUpperCase() : "MEDIA PROJECT";
+    } else {
+      label = getActiveLabel(pathname);
     }
-    return getActiveLabel(pathname);
-  }, [pathname, projects]);
+
+    if (currentVideoName) {
+      return (
+        <>
+          {label} /{" "}
+          <span className="text-orange-500">
+            {currentVideoName.toUpperCase()}
+          </span>
+        </>
+      );
+    }
+
+    return <span className="text-orange-500">{label}</span>;
+  }, [pathname, projects, currentVideoName]);
 
   return (
     <div className="h-16 bg-neutral-800 border-b border-neutral-700 flex items-center justify-between px-6">
       <div className="flex items-center gap-4">
         <div className="text-sm text-neutral-400">
-          COMMAND CENTER /{" "}
-          <span className="text-orange-500">{displayLabel}</span>
+          COMMAND CENTER / {displayLabel}
         </div>
       </div>
 

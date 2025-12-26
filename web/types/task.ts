@@ -117,6 +117,8 @@ export interface WritingTaskInput {
 }
 
 export interface WritingTaskOutput {
+  /** Expanded idea from idea expansion workflow */
+  expanded_idea?: string;
   research?: string;
   master_outline?: MasterOutline;
   detailed_outline?: ChapterOutline[];

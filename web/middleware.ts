@@ -11,6 +11,10 @@ export async function middleware(request: NextRequest) {
     nextUrl.pathname === '/login' ||
     nextUrl.pathname.startsWith('/api/inngest')
   ) {
+    // Inngest requests don't need Supabase session logic and should be served as-is
+    if (nextUrl.pathname.startsWith('/api/inngest')) {
+      return NextResponse.next()
+    }
     return await updateSession(request)
   }
 
