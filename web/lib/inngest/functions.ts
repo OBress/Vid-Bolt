@@ -1110,23 +1110,28 @@ export const audioWorkflow = inngest.createFunction(
       }
     });
 
-    // Step 2: Generate TTS for each chunk
-    // Note: Inngest serializes step results to JSON, so we use base64 strings instead of Buffer
-    const audioResults: Array<{
+    // Step 2: Generate TTS and upload each chunk immediately
+    // IMPORTANT: We do NOT store base64 data in step results to avoid Inngest's 32MB state limit
+    // Each step generates audio and uploads it to R2 in one operation, only returning the URL
+    const uploadedChunks: Array<{
       chunkIndex: number;
-      audioBase64: string; // Base64-encoded audio data
+      url: string;
       durationSeconds: number;
     }> = [];
 
-    const progressPerChunk = 60 / chunks.length; // 60% of progress for TTS generation
+    // Track failed chunks for logging
+    const failedChunkIndices: number[] = [];
+
+    const progressPerChunk = 80 / chunks.length; // 80% of progress for TTS generation + upload
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
 
-      const audioResult = await step.run(`generate-tts-chunk-${i}`, async () => {
-        const stepId = await addTaskStep(taskId, "audio_generation", `Generate Audio (Chunk ${i + 1})`, AUDIO_STEP_ORDER.TTS_BASE + i);
+      // Combined generate + upload step to avoid storing base64 in state
+      const chunkResult = await step.run(`process-chunk-${i}`, async () => {
+        const stepId = await addTaskStep(taskId, "audio_generation", `Process Chunk ${i + 1}`, AUDIO_STEP_ORDER.TTS_BASE + i);
         await updateTaskStatus(taskId, {
-          current_step: `Generating audio for chunk ${i + 1} of ${chunks.length}...`,
+          current_step: `Processing chunk ${i + 1} of ${chunks.length} (generating + uploading)...`,
           progress_percent: Math.round(15 + i * progressPerChunk),
         });
 
@@ -1136,89 +1141,60 @@ export const audioWorkflow = inngest.createFunction(
             throw new Error(`Voice provider '${voiceProvider}' is not yet implemented. Currently only 'inworld' is supported.`);
           }
 
+          // Step 2a: Generate TTS
           const { generateSpeech } = await import("@/lib/services/inworld-tts");
-          const result = await generateSpeech(userId, chunk.text, {
+          const ttsResult = await generateSpeech(userId, chunk.text, {
             voiceId: voiceModel,
             speakingRate: voiceSettings?.speakingRate,
           });
 
-          await completeStep(taskId, stepId);
-
-          // Serialize Buffer to base64 for Inngest step serialization
-          return {
-            chunkIndex: chunk.index,
-            audioBase64: result.audioBuffer.toString('base64'),
-            durationSeconds: result.durationSeconds,
-          };
-        } catch (error) {
-          await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
-          throw error;
-        }
-      });
-
-      audioResults.push(audioResult);
-    }
-
-
-    // Step 3: Upload audio chunks to R2
-    await step.run("start-upload-phase", async () => {
-      await updateTaskStatus(taskId, {
-        current_phase: "audio_processing",
-        current_step: "Uploading audio files...",
-        progress_percent: 75,
-      });
-
-      // Update video progress
-      const { updateVideoProgress } = await import("@/lib/services/video-service");
-      await updateVideoProgress(videoId, "audio", "Uploading audio files", 75);
-    });
-
-    const uploadedChunks: Array<{
-      chunkIndex: number;
-      url: string;
-      durationSeconds: number;
-    }> = [];
-
-    const uploadProgressPerChunk = 15 / audioResults.length;
-
-    for (const audio of audioResults) {
-      const uploadResult = await step.run(`upload-chunk-${audio.chunkIndex}`, async () => {
-        const stepId = await addTaskStep(taskId, "audio_processing", `Upload Chunk ${audio.chunkIndex + 1}`, AUDIO_STEP_ORDER.UPLOAD_BASE + audio.chunkIndex);
-
-        try {
+          // Step 2b: Upload to R2 immediately (don't store base64 in state!)
           const { uploadAudioBuffer, generateAudioKey, isR2Configured } = await import("@/lib/services/r2-storage");
 
-          // Check if R2 is configured
           if (!isR2Configured()) {
             throw new Error("R2 storage is not configured. Please set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, and R2_PUBLIC_URL environment variables.");
           }
 
-          const key = generateAudioKey(userId, videoId, audio.chunkIndex, "mp3");
-          // Decode base64 back to Buffer for upload
-          const audioBuffer = Buffer.from(audio.audioBase64, 'base64');
-          const result = await uploadAudioBuffer(audioBuffer, key, "audio/mpeg");
+          const key = generateAudioKey(userId, videoId, chunk.index, "mp3");
+          const uploadResult = await uploadAudioBuffer(ttsResult.audioBuffer, key, "audio/mpeg");
 
           await completeStep(taskId, stepId);
 
+          // Return only URL and duration - NO base64 data in state!
           return {
-            chunkIndex: audio.chunkIndex,
-            url: result.url,
-            durationSeconds: audio.durationSeconds,
+            success: true,
+            chunkIndex: chunk.index,
+            url: uploadResult.url,
+            durationSeconds: ttsResult.durationSeconds,
           };
         } catch (error) {
+          // Mark step as failed but DON'T throw - allows workflow to continue
           await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
-          throw error;
+          console.error(`Chunk ${i} failed, continuing:`, error);
+          
+          return {
+            success: false,
+            chunkIndex: chunk.index,
+            url: null,
+            durationSeconds: 0,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          };
         }
       });
 
-      uploadedChunks.push(uploadResult);
-
-      await step.run(`update-upload-progress-${audio.chunkIndex}`, async () => {
-        await updateTaskStatus(taskId, {
-          current_step: `Uploaded chunk ${audio.chunkIndex + 1} of ${audioResults.length}...`,
-          progress_percent: Math.round(75 + audio.chunkIndex * uploadProgressPerChunk),
+      if (chunkResult.success && chunkResult.url) {
+        uploadedChunks.push({
+          chunkIndex: chunkResult.chunkIndex,
+          url: chunkResult.url,
+          durationSeconds: chunkResult.durationSeconds,
         });
-      });
+      } else {
+        failedChunkIndices.push(chunkResult.chunkIndex);
+      }
+    }
+
+    if (failedChunkIndices.length > 0) {
+      console.warn(`${failedChunkIndices.length} chunks failed: ${failedChunkIndices.join(', ')}`);
     }
 
     // Step 4: Finalize and update video project

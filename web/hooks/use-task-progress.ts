@@ -12,6 +12,8 @@ interface UseTaskProgressOptions {
   onError?: (error: string) => void;
   /** Whether to start polling immediately (default: true) */
   autoStart?: boolean;
+  /** Maximum retries for transient errors (default: 5) */
+  maxRetries?: number;
 }
 
 interface UseTaskProgressReturn {
@@ -36,6 +38,7 @@ interface UseTaskProgressReturn {
 /**
  * Hook for polling task progress from the API.
  * Automatically polls until task completes, fails, or is cancelled.
+ * Includes retry logic for transient errors.
  */
 export function useTaskProgress(
   taskId: string | null,
@@ -46,28 +49,33 @@ export function useTaskProgress(
     onComplete,
     onError,
     autoStart = true,
+    maxRetries = 5,
   } = options;
 
   const [task, setTask] = useState<Task | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   
   // Use refs to avoid stale closures
   const onCompleteRef = useRef(onComplete);
   const onErrorRef = useRef(onError);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const taskIdRef = useRef(taskId);
   
   // Keep refs up to date
   useEffect(() => {
     onCompleteRef.current = onComplete;
     onErrorRef.current = onError;
-  }, [onComplete, onError]);
+    taskIdRef.current = taskId;
+  }, [onComplete, onError, taskId]);
 
-  const fetchTask = useCallback(async () => {
-    if (!taskId) return null;
+  const fetchTask = useCallback(async (): Promise<Task | null> => {
+    const currentTaskId = taskIdRef.current;
+    if (!currentTaskId) return null;
 
     try {
-      const response = await fetch(`/api/tasks/${taskId}`);
+      const response = await fetch(`/api/tasks/${currentTaskId}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -77,10 +85,10 @@ export function useTaskProgress(
       return data.task as Task;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      setError(errorMessage);
+      console.warn(`Task fetch error (will retry): ${errorMessage}`);
       return null;
     }
-  }, [taskId]);
+  }, []);
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current) {
@@ -94,10 +102,21 @@ export function useTaskProgress(
     const fetchedTask = await fetchTask();
     
     if (!fetchedTask) {
-      stopPolling();
+      // Transient error - increment retry count instead of stopping
+      setRetryCount((prev) => {
+        const newCount = prev + 1;
+        if (newCount >= maxRetries) {
+          console.error(`Max retries (${maxRetries}) reached, stopping polling`);
+          setError("Failed to fetch task after multiple retries");
+          stopPolling();
+        }
+        return newCount;
+      });
       return;
     }
 
+    // Reset retry count on successful fetch
+    setRetryCount(0);
     setTask(fetchedTask);
     setError(null);
 
@@ -123,20 +142,28 @@ export function useTaskProgress(
       setError("Task was cancelled");
       return;
     }
-  }, [fetchTask, stopPolling]);
+  }, [fetchTask, stopPolling, maxRetries]);
 
   const startPolling = useCallback(() => {
-    if (!taskId || isPolling) return;
+    const currentTaskId = taskIdRef.current;
+    if (!currentTaskId) return;
+
+    // Clear any existing interval first
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
 
     setIsPolling(true);
     setError(null);
+    setRetryCount(0);
     
     // Fetch immediately
     poll();
     
     // Then poll at interval
     intervalRef.current = setInterval(poll, pollInterval);
-  }, [taskId, isPolling, poll, pollInterval]);
+  }, [poll, pollInterval]);
 
   // Auto-start polling when taskId changes
   useEffect(() => {
@@ -144,13 +171,39 @@ export function useTaskProgress(
       // Reset state for new task
       setTask(null);
       setError(null);
-      startPolling();
+      setRetryCount(0);
+      
+      // Stop any existing polling
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      
+      // Start polling with a small delay to ensure state is settled
+      const startTimer = setTimeout(() => {
+        setIsPolling(true);
+        poll();
+        intervalRef.current = setInterval(poll, pollInterval);
+      }, 50);
+
+      return () => {
+        clearTimeout(startTimer);
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+        setIsPolling(false);
+      };
     }
 
     return () => {
-      stopPolling();
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      setIsPolling(false);
     };
-  }, [taskId, autoStart]); // Intentionally omit startPolling and stopPolling
+  }, [taskId, autoStart, poll, pollInterval]);
 
   // Cleanup on unmount
   useEffect(() => {

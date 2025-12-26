@@ -3,10 +3,13 @@
 import { ArrowRight, Clapperboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Editor from "@/features/editor";
+import type { AudioChunk } from "@/components/video-creation/VideoCreationWizard";
 
 interface StepEditorProps {
   videoId: string;
   projectId: string;
+  audioUrl?: string | null;
+  audioChunks?: AudioChunk[];
   onContinue: () => void;
   onBack: () => void;
   isLocked?: boolean;
@@ -16,10 +19,21 @@ interface StepEditorProps {
 export function StepEditor({
   videoId,
   projectId,
+  audioUrl,
+  audioChunks,
   onContinue,
   isLocked,
   lockedMessage,
 }: StepEditorProps) {
+  // Debug logging
+  console.log("[StepEditor Debug] Props received:", {
+    videoId,
+    projectId,
+    audioUrl,
+    audioChunksCount: audioChunks?.length || 0,
+    audioChunks,
+  });
+
   return (
     <div
       className={`dark flex flex-col h-full w-full bg-background ${
@@ -56,7 +70,12 @@ export function StepEditor({
 
       {/* Full-bleed Editor with dark theme wrapper */}
       <div className="flex-1 overflow-hidden bg-background">
-        <Editor tempId={videoId} id={projectId} />
+        <Editor
+          tempId={videoId}
+          id={projectId}
+          audioUrl={audioUrl}
+          audioChunks={audioChunks}
+        />
       </div>
     </div>
   );

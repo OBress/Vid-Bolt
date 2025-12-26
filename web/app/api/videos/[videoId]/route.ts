@@ -72,7 +72,25 @@ export async function GET(
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ video });
+    // Fetch audio chunks from linked audio task if available
+    let audioChunks: Array<{ chapterNumber: number; url: string; duration_seconds?: number }> = [];
+    
+    if (video.audio_task_id) {
+      const { data: task } = await supabase
+        .from("tasks")
+        .select("output_data")
+        .eq("id", video.audio_task_id)
+        .single();
+      
+      if (task?.output_data) {
+        const outputData = task.output_data as { tts_chunks?: Array<{ chapterNumber: number; url: string; duration_seconds?: number }> };
+        if (outputData.tts_chunks && Array.isArray(outputData.tts_chunks)) {
+          audioChunks = outputData.tts_chunks;
+        }
+      }
+    }
+
+    return NextResponse.json({ video, audioChunks });
   } catch (error) {
     console.error("Failed to get video:", error);
     return NextResponse.json(
@@ -130,7 +148,7 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/videos/[videoId] - Delete video (soft delete by setting status to cancelled)
+// DELETE /api/videos/[videoId] - Delete video with full cleanup (R2 + DB)
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ videoId: string }> }
@@ -144,41 +162,81 @@ export async function DELETE(
       return NextResponse.json({ error: authError }, { status: 401 });
     }
 
-    const { searchParams } = new URL(request.url);
-    const hard = searchParams.get("hard") === "true";
-
     const supabase = getServiceClient();
 
-    if (hard) {
-      // Hard delete - permanently remove the record
-      const { error } = await supabase
-        .from("video_projects")
-        .delete()
-        .eq("id", videoId)
-        .eq("user_id", user.id);
+    // First, fetch the video to verify ownership and get linked task IDs
+    const { data: video, error: fetchError } = await supabase
+      .from("video_projects")
+      .select("*")
+      .eq("id", videoId)
+      .eq("user_id", user.id)
+      .single();
 
-      if (error) {
-        console.error("Failed to delete video:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+    if (fetchError || !video) {
+      if (fetchError?.code === "PGRST116") {
+        return NextResponse.json({ error: "Video not found" }, { status: 404 });
       }
-    } else {
-      // Soft delete - set status to cancelled
-      const { error } = await supabase
-        .from("video_projects")
-        .update({
-          status: "cancelled",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", videoId)
-        .eq("user_id", user.id);
+      console.error("Failed to fetch video for deletion:", fetchError);
+      return NextResponse.json({ error: fetchError?.message || "Video not found" }, { status: 500 });
+    }
 
-      if (error) {
-        console.error("Failed to cancel video:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+    // Clean up R2 storage files
+    let r2CleanupResult = { deleted: 0, errors: [] as string[] };
+    try {
+      const { deleteFilesWithPrefix, isR2Configured } = await import("@/lib/services/r2-storage");
+      
+      if (isR2Configured()) {
+        // Delete all audio files for this video: audio/{userId}/{videoId}/
+        const prefix = `audio/${user.id}/${videoId}/`;
+        r2CleanupResult = await deleteFilesWithPrefix(prefix);
+        
+        if (r2CleanupResult.errors.length > 0) {
+          console.warn("Some R2 files failed to delete:", r2CleanupResult.errors);
+        }
+        console.log(`Deleted ${r2CleanupResult.deleted} R2 files for video ${videoId}`);
+      }
+    } catch (r2Error) {
+      // Log but don't fail the deletion if R2 cleanup fails
+      console.error("R2 cleanup error (continuing with DB deletion):", r2Error);
+    }
+
+    // Delete linked tasks (if any)
+    const taskIds = [
+      video.script_task_id,
+      video.audio_task_id,
+      video.video_task_id,
+      video.export_task_id,
+    ].filter(Boolean);
+
+    if (taskIds.length > 0) {
+      const { error: tasksError } = await supabase
+        .from("tasks")
+        .delete()
+        .in("id", taskIds);
+
+      if (tasksError) {
+        console.warn("Failed to delete linked tasks:", tasksError);
+        // Continue with video deletion even if task deletion fails
       }
     }
 
-    return NextResponse.json({ success: true, id: videoId });
+    // Delete the video record
+    const { error: deleteError } = await supabase
+      .from("video_projects")
+      .delete()
+      .eq("id", videoId)
+      .eq("user_id", user.id);
+
+    if (deleteError) {
+      console.error("Failed to delete video:", deleteError);
+      return NextResponse.json({ error: deleteError.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      id: videoId,
+      r2FilesDeleted: r2CleanupResult.deleted,
+    });
   } catch (error) {
     console.error("Failed to delete video:", error);
     return NextResponse.json(
@@ -187,3 +245,4 @@ export async function DELETE(
     );
   }
 }
+

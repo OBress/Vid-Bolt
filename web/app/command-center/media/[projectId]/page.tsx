@@ -359,11 +359,14 @@ export default function ProjectPage({
                           }}
                         >
                           <VideoCard
+                            videoId={video.id}
                             title={video.name}
                             status={video.status}
                             progress={video.progress_percent}
                             stage={video.current_stage}
+                            updatedAt={video.updated_at}
                             onClick={() => handleVideoClick(index)}
+                            onDelete={fetchVideos}
                           />
                         </div>
                       ))

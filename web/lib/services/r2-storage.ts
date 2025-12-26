@@ -5,7 +5,7 @@
  * Used for storing TTS audio files and other media assets.
  */
 
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 
 // Initialize S3 client for R2
 let s3Client: S3Client | null = null;
@@ -159,4 +159,55 @@ export function isR2Configured(): boolean {
     process.env.R2_BUCKET_NAME &&
     process.env.R2_PUBLIC_URL
   );
+}
+
+/**
+ * Delete all files under a given prefix from R2 storage.
+ * Used to clean up all files for a video project (e.g., audio/{userId}/{videoId}/).
+ * 
+ * @param prefix - The prefix (folder path) to delete all files from
+ * @returns Object with count of deleted files and any errors encountered
+ */
+export async function deleteFilesWithPrefix(prefix: string): Promise<{ deleted: number; errors: string[] }> {
+  const client = getS3Client();
+  const bucketName = getBucketName();
+  
+  let deleted = 0;
+  const errors: string[] = [];
+  let continuationToken: string | undefined;
+  
+  try {
+    // List and delete files in batches
+    do {
+      const listCommand = new ListObjectsV2Command({
+        Bucket: bucketName,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      });
+      
+      const listResponse = await client.send(listCommand);
+      
+      if (listResponse.Contents) {
+        for (const object of listResponse.Contents) {
+          if (object.Key) {
+            try {
+              await deleteFile(object.Key);
+              deleted++;
+            } catch (err) {
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              errors.push(`Failed to delete ${object.Key}: ${errorMessage}`);
+            }
+          }
+        }
+      }
+      
+      continuationToken = listResponse.NextContinuationToken;
+    } while (continuationToken);
+    
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    errors.push(`Failed to list objects with prefix ${prefix}: ${errorMessage}`);
+  }
+  
+  return { deleted, errors };
 }

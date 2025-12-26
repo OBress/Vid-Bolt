@@ -12,13 +12,22 @@ import { StepExport } from "./steps/StepExport";
 import { LoadingStep } from "./LoadingStep";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
 import { useVideos } from "@/hooks/use-videos";
+import { Loader2 } from "lucide-react";
 import type { WritingTaskOutput } from "@/types/task";
+import type { VideoStage, VideoProject } from "@/types/video";
+
+export interface AudioChunk {
+  chapterNumber: number;
+  url: string;
+  duration_seconds?: number;
+}
 
 export interface WizardState {
   prompt: string;
   expandedIdea: string;
   script: string;
   audioUrl: string | null;
+  audioChunks: AudioChunk[];
   avScript: { timestamp: string; visual: string; audio: string }[];
   videoId: string | null;
   expandTaskId: string | null;
@@ -34,11 +43,24 @@ const STEPS = [
   { id: 4, label: "Script", type: "loading" },
   { id: 5, label: "Edit", type: "review" },
   { id: 6, label: "Media", type: "loading" },
-  { id: 7, label: "Verify", type: "review" },
-  { id: 8, label: "Generate", type: "loading" }, // New: Generate video assets
-  { id: 9, label: "Editor", type: "editor" },
+  { id: 7, label: "Editor", type: "editor" }, // Video editor with auto-placed audio
+  { id: 8, label: "Generate", type: "loading" }, // Generate video assets
+  { id: 9, label: "Fine Tune", type: "editor" }, // Final editing pass
   { id: 10, label: "Export", type: "final" },
 ] as const;
+
+// Helper function to map video stage to wizard step number
+function stageToStepNumber(stage: VideoStage): number {
+  const stageMapping: Record<VideoStage, number> = {
+    idea: 1, // Step 1: Idea input
+    script: 5, // Step 5: Script edit/review (after writing is done)
+    audio: 7, // Step 7: AV verification (after audio is done)
+    video: 9, // Step 9: Editor
+    export: 10, // Step 10: Export
+    completed: 10, // Step 10: Export (if completed, show export)
+  };
+  return stageMapping[stage] || 1;
+}
 
 // Helper function to generate a fallback script when workflow fails
 function generateFallbackScript(prompt: string): string {
@@ -94,6 +116,7 @@ export function VideoCreationWizard({
     expandedIdea: "",
     script: "",
     audioUrl: null,
+    audioChunks: [],
     avScript: [],
     videoId: initialVideoId,
     expandTaskId: null,
@@ -101,11 +124,61 @@ export function VideoCreationWizard({
     audioTaskId: null,
   });
 
-  // No longer syncing name with store here as it will be done via TopBar elsewhere or handled via DB
+  // Load existing video data when resuming
+  const [isLoadingVideo, setIsLoadingVideo] = useState(false);
+
   useEffect(() => {
-    if (initialVideoId) {
-      updateState({ videoId: initialVideoId });
+    async function loadVideoData() {
+      if (!initialVideoId) return;
+
+      setIsLoadingVideo(true);
+      try {
+        const response = await fetch(`/api/videos/${initialVideoId}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+          console.error("Failed to load video:", data.error);
+          return;
+        }
+
+        const video: VideoProject = data.video;
+
+        // Determine the correct step based on current_stage
+        const targetStep = stageToStepNumber(video.current_stage);
+
+        // Get expanded idea from metadata if available
+        const expandedIdea = (video.metadata as any)?.expanded_idea || "";
+
+        // Update state with loaded video data
+        setState({
+          prompt: video.idea || "",
+          expandedIdea: expandedIdea,
+          script: video.script_content || "",
+          audioUrl: video.audio_url || null,
+          audioChunks: data.audioChunks || [],
+          avScript: (video.metadata as any)?.avScript || [],
+          videoId: video.id,
+          expandTaskId: null,
+          writeTaskId: null,
+          audioTaskId: null,
+        });
+
+        // Set the current step and max reached step
+        // For resumed videos, maxStepReached should be at least the target step
+        setCurrentStep(targetStep);
+        setMaxStepReached(targetStep);
+
+        console.log(
+          `Resumed video at step ${targetStep} (stage: ${video.current_stage})`
+        );
+      } catch (err) {
+        console.error("Error loading video data:", err);
+      } finally {
+        setIsLoadingVideo(false);
+      }
     }
+
+    loadVideoData();
   }, [initialVideoId]);
 
   const updateState = useCallback((updates: Partial<WizardState>) => {
@@ -178,13 +251,16 @@ export function VideoCreationWizard({
                   );
                 }
 
-                // Store task ID and advance
-                updateState({ expandTaskId: data.taskId });
+                // Store task ID and advance with delay to ensure state is set
+                if (data.taskId) {
+                  setState((prev) => ({ ...prev, expandTaskId: data.taskId }));
+                  await new Promise((resolve) => setTimeout(resolve, 50));
+                }
                 advanceToStep(2);
               } catch (err) {
                 console.error("Failed to start expansion:", err);
                 // Still advance but without task ID (will use fallback)
-                updateState({ expandTaskId: null });
+                setState((prev) => ({ ...prev, expandTaskId: null }));
                 advanceToStep(2);
               } finally {
                 setIsSaving(false);
@@ -248,8 +324,13 @@ export function VideoCreationWizard({
                   );
                   const data = await response.json();
 
-                  if (response.ok) {
-                    updateState({ writeTaskId: data.taskId });
+                  if (response.ok && data.taskId) {
+                    // Update state and advance in a way that ensures taskId is set first
+                    setState((prev) => ({ ...prev, writeTaskId: data.taskId }));
+                    // Use Promise + setTimeout to wait for React's state update batch
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                    advanceToStep(4);
+                    return;
                   } else {
                     console.error(
                       "Failed to start script writing:",
@@ -260,6 +341,7 @@ export function VideoCreationWizard({
                   console.error("Failed to start script writing:", err);
                 }
               }
+              // Fallback: advance without taskId (will use timer-based progress)
               advanceToStep(4);
             }}
             onBack={() => goToStep(1)}
@@ -341,10 +423,13 @@ export function VideoCreationWizard({
                   }
 
                   console.log("Audio generation started:", data);
-                  updateState({ audioTaskId: data.taskId });
+                  if (data.taskId) {
+                    setState((prev) => ({ ...prev, audioTaskId: data.taskId }));
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                  }
                 } catch (err) {
                   console.error("Failed to start audio generation:", err);
-                  updateState({ audioTaskId: null });
+                  setState((prev) => ({ ...prev, audioTaskId: null }));
                 } finally {
                   setIsSaving(false);
                 }
@@ -369,12 +454,17 @@ export function VideoCreationWizard({
             ]}
             taskId={state.audioTaskId}
             onComplete={(output) => {
-              // Use audio URL from task output or fallback
+              // Use audio data from task output
               const audioOutput = output as any;
               const audioUrl =
                 audioOutput?.final_audio || "/placeholder-audio.mp3";
+
+              // Extract audio chunks if available
+              const audioChunks: AudioChunk[] = audioOutput?.tts_chunks || [];
+
               updateState({
                 audioUrl,
+                audioChunks,
                 avScript: [
                   {
                     timestamp: "0:00-0:15",
@@ -420,6 +510,7 @@ export function VideoCreationWizard({
               // Use fallback and continue
               updateState({
                 audioUrl: "/placeholder-audio.mp3",
+                audioChunks: [],
                 avScript: [
                   {
                     timestamp: "0:00-0:15",
@@ -445,10 +536,12 @@ export function VideoCreationWizard({
         );
       case 7:
         return (
-          <Step4AVVerification
+          <StepEditor
+            videoId={state.videoId!}
+            projectId={projectId}
             audioUrl={state.audioUrl}
-            avScript={state.avScript}
-            onConfirm={() => advanceToStep(8)} // Go to Generate step
+            audioChunks={state.audioChunks}
+            onContinue={() => advanceToStep(8)} // Go to Generate step
             onBack={() => goToStep(5)}
             {...lock}
           />
@@ -502,7 +595,7 @@ export function VideoCreationWizard({
   };
 
   // Check if current step is editor (needs full width and height)
-  const isEditorStep = currentStep === 9;
+  const isEditorStep = currentStep === 7 || currentStep === 9;
 
   return (
     <div
@@ -522,7 +615,14 @@ export function VideoCreationWizard({
       </div>
 
       {/* Step content */}
-      {isEditorStep ? (
+      {isLoadingVideo ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <Loader2 className="w-8 h-8 animate-spin text-orange-500 mx-auto" />
+            <p className="text-neutral-400">Loading video...</p>
+          </div>
+        </div>
+      ) : isEditorStep ? (
         <div className="flex-1 overflow-hidden">{renderStep()}</div>
       ) : (
         <div className="flex-1 overflow-hidden">

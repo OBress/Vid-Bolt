@@ -7,11 +7,30 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
+  Info,
+  Trash2,
 } from "lucide-react";
-import { forwardRef } from "react";
+import { forwardRef, useState } from "react";
 import type { VideoStatus, VideoStage } from "@/types/video";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface VideoCardProps {
+  videoId: string;
   title: string;
   status: VideoStatus;
   progress: number;
@@ -20,6 +39,7 @@ interface VideoCardProps {
   duration?: string;
   updatedAt?: string;
   onClick: () => void;
+  onDelete?: (videoId: string) => void;
 }
 
 const statusConfig: Record<
@@ -64,10 +84,51 @@ const stageLabels: Record<VideoStage, string> = {
 
 export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
   (
-    { title, status, progress, stage, thumbnailUrl, duration, onClick },
+    {
+      videoId,
+      title,
+      status,
+      progress,
+      stage,
+      thumbnailUrl,
+      duration,
+      updatedAt,
+      onClick,
+      onDelete,
+    },
     ref
   ) => {
+    const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+    const [deleteConfirmName, setDeleteConfirmName] = useState("");
+    const [isDeleting, setIsDeleting] = useState(false);
+
     const statusInfo = statusConfig[status] || statusConfig.draft;
+
+    const handleDelete = async () => {
+      if (deleteConfirmName !== title) return;
+
+      setIsDeleting(true);
+      try {
+        const response = await fetch(`/api/videos/${videoId}`, {
+          method: "DELETE",
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || "Failed to delete video");
+        }
+
+        setIsDeleteDialogOpen(false);
+        setDeleteConfirmName("");
+        onDelete?.(videoId);
+      } catch (error) {
+        console.error("Failed to delete video:", error);
+        // Could add toast notification here
+      } finally {
+        setIsDeleting(false);
+      }
+    };
 
     return (
       <div
@@ -121,8 +182,172 @@ export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
             >
               {title}
             </span>
-            <MoreVertical className="w-3.5 h-3.5 text-neutral-600 hover:text-white" />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  onClick={(e) => e.stopPropagation()}
+                  className="p-1 hover:bg-neutral-800 rounded-md transition-colors"
+                >
+                  <MoreVertical className="w-3.5 h-3.5 text-neutral-600 hover:text-white" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="bg-neutral-900 border-neutral-800 text-white w-40"
+                onCloseAutoFocus={(e) => e.preventDefault()}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsDetailsOpen(true);
+                  }}
+                  className="gap-2 cursor-pointer focus:bg-neutral-800 focus:text-white"
+                >
+                  <Info className="w-4 h-4" />
+                  <span>Details</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsDeleteDialogOpen(true);
+                  }}
+                  className="gap-2 cursor-pointer focus:bg-red-500/10 focus:text-red-500 text-red-500"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
+
+          {/* Details Dialog */}
+          <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
+            <DialogContent
+              className="bg-neutral-950 border-neutral-800 text-white max-w-md"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DialogHeader>
+                <DialogTitle className="text-xl font-bold uppercase tracking-tight flex items-center gap-2">
+                  <Info className="w-5 h-5 text-orange-500" />
+                  Video Details
+                </DialogTitle>
+                <DialogDescription className="text-neutral-400">
+                  Technical details and metadata for this video.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-4 space-y-4">
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <span className="text-neutral-500">Name</span>
+                  <span className="col-span-2 text-neutral-200">{title}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <span className="text-neutral-500">Status</span>
+                  <span className={`col-span-2 capitalize ${statusInfo.color}`}>
+                    {statusInfo.label}
+                  </span>
+                </div>
+                {stage && (
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <span className="text-neutral-500">Current Stage</span>
+                    <span className="col-span-2 text-neutral-200">
+                      {stageLabels[stage]}
+                    </span>
+                  </div>
+                )}
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <span className="text-neutral-500">Progress</span>
+                  <span className="col-span-2 text-neutral-200">
+                    {progress}%
+                  </span>
+                </div>
+                {duration && (
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <span className="text-neutral-500">Duration</span>
+                    <span className="col-span-2 text-neutral-200">
+                      {duration}
+                    </span>
+                  </div>
+                )}
+                {updatedAt && (
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <span className="text-neutral-500">Last Updated</span>
+                    <span className="col-span-2 text-neutral-200">
+                      {new Date(updatedAt).toLocaleString()}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  className="bg-orange-500 border-none text-white hover:bg-orange-600"
+                  onClick={() => setIsDetailsOpen(false)}
+                >
+                  Close
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Delete Dialog */}
+          <Dialog
+            open={isDeleteDialogOpen}
+            onOpenChange={(open) => {
+              setIsDeleteDialogOpen(open);
+              if (!open) setDeleteConfirmName("");
+            }}
+          >
+            <DialogContent
+              className="bg-neutral-950 border-neutral-800 text-white max-w-md"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DialogHeader>
+                <DialogTitle className="text-xl font-bold uppercase tracking-tight flex items-center gap-2">
+                  <Trash2 className="w-5 h-5 text-red-500" />
+                  Delete Video
+                </DialogTitle>
+                <DialogDescription className="text-neutral-400">
+                  This action cannot be undone. Please type{" "}
+                  <span className="text-white font-mono bg-neutral-800 px-1 rounded">
+                    {title}
+                  </span>{" "}
+                  to confirm.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-4">
+                <Input
+                  value={deleteConfirmName}
+                  onChange={(e) => setDeleteConfirmName(e.target.value)}
+                  placeholder="Enter video name"
+                  className="bg-black border-neutral-800 text-white focus:ring-red-500 focus:border-red-500"
+                  autoFocus
+                  disabled={isDeleting}
+                />
+              </div>
+              <DialogFooter className="gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => setIsDeleteDialogOpen(false)}
+                  className="text-neutral-400 hover:text-white"
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={deleteConfirmName !== title || isDeleting}
+                  className="bg-red-600 hover:bg-red-700 text-white border-none disabled:opacity-50 disabled:bg-neutral-800 min-w-[120px]"
+                  onClick={handleDelete}
+                >
+                  {isDeleting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    "Delete Video"
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <div
             className={`flex items-center gap-2 text-[10px] ${statusInfo.color}`}
           >
