@@ -8,6 +8,7 @@
  */
 
 import { getInworldApiKey } from "./api-keys";
+import { WordTimestamp } from "@/types/task";
 
 const INWORLD_TTS_API_URL = "https://api.inworld.ai/tts/v1/voice";
 
@@ -21,6 +22,7 @@ export interface TTSResult {
   audioBuffer: Buffer;
   durationSeconds: number;
   mimeType: string;
+  wordTimestamps?: WordTimestamp[];
 }
 
 const DEFAULT_OPTIONS: Required<TTSOptions> = {
@@ -57,6 +59,7 @@ export async function generateSpeech(
         text,
         voiceId: config.voiceId,
         modelId: config.modelId,
+        timestampType: "WORD",
       }),
     });
 
@@ -74,6 +77,17 @@ export async function generateSpeech(
     // Decode base64 audio content
     const audioBuffer = Buffer.from(result.audioContent, "base64");
 
+    // Parse timestamps if available
+    let wordTimestamps: WordTimestamp[] | undefined;
+    if (result.timestampInfo?.wordAlignment) {
+      const { words, wordStartTimeSeconds, wordEndTimeSeconds } = result.timestampInfo.wordAlignment;
+      wordTimestamps = words.map((word: string, i: number) => ({
+        word,
+        start_seconds: wordStartTimeSeconds[i],
+        end_seconds: wordEndTimeSeconds[i],
+      }));
+    }
+
     // Estimate duration: MP3 at ~128kbps = ~16KB per second
     const estimatedDuration = audioBuffer.length / 16000;
 
@@ -81,6 +95,7 @@ export async function generateSpeech(
       audioBuffer,
       durationSeconds: estimatedDuration,
       mimeType: "audio/mpeg",
+      wordTimestamps,
     };
   } catch (error) {
     console.error("Inworld TTS error:", error);

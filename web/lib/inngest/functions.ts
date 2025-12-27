@@ -1117,6 +1117,7 @@ export const audioWorkflow = inngest.createFunction(
       chunkIndex: number;
       url: string;
       durationSeconds: number;
+      wordTimestamps?: import("@/types/task").WordTimestamp[];
     }> = [];
 
     // Track failed chunks for logging
@@ -1166,6 +1167,7 @@ export const audioWorkflow = inngest.createFunction(
             chunkIndex: chunk.index,
             url: uploadResult.url,
             durationSeconds: ttsResult.durationSeconds,
+            wordTimestamps: ttsResult.wordTimestamps,
           };
         } catch (error) {
           // Mark step as failed but DON'T throw - allows workflow to continue
@@ -1177,6 +1179,7 @@ export const audioWorkflow = inngest.createFunction(
             chunkIndex: chunk.index,
             url: null,
             durationSeconds: 0,
+            wordTimestamps: [],
             error: error instanceof Error ? error.message : 'Unknown error',
           };
         }
@@ -1187,6 +1190,7 @@ export const audioWorkflow = inngest.createFunction(
           chunkIndex: chunkResult.chunkIndex,
           url: chunkResult.url,
           durationSeconds: chunkResult.durationSeconds,
+          wordTimestamps: chunkResult.wordTimestamps,
         });
       } else {
         failedChunkIndices.push(chunkResult.chunkIndex);
@@ -1219,6 +1223,7 @@ export const audioWorkflow = inngest.createFunction(
               chapterNumber: c.chunkIndex,
               url: c.url,
               duration_seconds: c.durationSeconds,
+              word_timestamps: c.wordTimestamps,
             })),
             total_duration_seconds: totalDuration,
             final_audio: primaryAudioUrl,
@@ -1227,10 +1232,27 @@ export const audioWorkflow = inngest.createFunction(
 
         await completeStep(taskId, stepId);
 
+        // Consolidate all word timestamps with absolute offsets
+        const allWordTimestamps: import("@/types/task").WordTimestamp[] = [];
+        let timeOffset = 0;
+        for (const chunk of uploadedChunks.sort((a, b) => (a.chunkIndex || 0) - (b.chunkIndex || 0))) {
+          if (chunk.wordTimestamps) {
+            for (const wt of chunk.wordTimestamps) {
+              allWordTimestamps.push({
+                ...wt,
+                start_seconds: wt.start_seconds + timeOffset,
+                end_seconds: wt.end_seconds + timeOffset,
+              });
+            }
+          }
+          timeOffset += chunk.durationSeconds;
+        }
+
         return {
           totalDuration,
           chunkCount: uploadedChunks.length,
           primaryAudioUrl,
+          allWordTimestamps,
         };
       } catch (error) {
         await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
@@ -1247,11 +1269,24 @@ export const audioWorkflow = inngest.createFunction(
         completed_at: new Date().toISOString(),
       });
 
-      // Update video project with audio URL
+      // Update video project with audio URL and word timestamps
       const { updateVideoContent, updateVideoProgress } = await import("@/lib/services/video-service");
+      const updates: any = {};
+      
       if (finalResult.primaryAudioUrl) {
-        await updateVideoContent(videoId, { audio_url: finalResult.primaryAudioUrl });
+        updates.audio_url = finalResult.primaryAudioUrl;
       }
+      
+      if (finalResult.allWordTimestamps && finalResult.allWordTimestamps.length > 0) {
+        updates.metadata = {
+          word_timestamps: finalResult.allWordTimestamps
+        };
+      }
+      
+      if (Object.keys(updates).length > 0) {
+        await updateVideoContent(videoId, updates);
+      }
+      
       await updateVideoProgress(videoId, "video", "Audio completed, ready for video generation", 100);
     });
 

@@ -219,6 +219,26 @@ $$;
 ALTER FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+  UPDATE public.video_projects
+  SET 
+    metadata = COALESCE(metadata, '{}'::jsonb) || p_updates,
+    updated_at = now()
+  WHERE id = p_video_id;
+  
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Video project not found: %', p_video_id;
+  END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
@@ -1101,6 +1121,12 @@ GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task
 GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "anon";
 GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") TO "anon";
+GRANT ALL ON FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") TO "service_role";
 
 
 

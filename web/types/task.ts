@@ -109,6 +109,12 @@ export interface Chapter {
   content: string;
 }
 
+export interface WordTimestamp {
+  word: string;
+  start_seconds: number;
+  end_seconds: number;
+}
+
 export interface WritingTaskInput {
   scriptType: 'top_10' | 'long_form' | 'kitcon';
   idea: string;
@@ -137,6 +143,7 @@ export interface AudioChunk {
   url: string;
   duration_seconds?: number;
   file_size_bytes?: number;
+  word_timestamps?: WordTimestamp[];
 }
 
 export interface AudioTaskInput {

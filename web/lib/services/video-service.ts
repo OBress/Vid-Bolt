@@ -88,21 +88,39 @@ export async function updateVideoContent(
     script_content?: string;
     audio_url?: string;
     video_url?: string;
+    metadata?: any;
   }
 ): Promise<void> {
   const supabase = getServiceClient();
+  const { metadata, ...otherUpdates } = updates;
 
-  const { error } = await supabase
-    .from("video_projects")
-    .update({
-      ...updates,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", videoId);
+  // 1. Update regular fields
+  if (Object.keys(otherUpdates).length > 0) {
+    const { error } = await supabase
+      .from("video_projects")
+      .update({
+        ...otherUpdates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", videoId);
 
-  if (error) {
-    console.error("Failed to update video content:", error);
-    throw new Error(`Failed to update video content: ${error.message}`);
+    if (error) {
+      console.error("Failed to update video content:", error);
+      throw new Error(`Failed to update video content: ${error.message}`);
+    }
+  }
+
+  // 2. Merge metadata if provided
+  if (metadata) {
+    const { error } = await supabase.rpc("merge_video_metadata", {
+      p_video_id: videoId,
+      p_updates: metadata,
+    });
+
+    if (error) {
+      console.error("Failed to merge video metadata:", error);
+      throw new Error(`Failed to merge video metadata: ${error.message}`);
+    }
   }
 }
 
