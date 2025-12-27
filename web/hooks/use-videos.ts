@@ -47,6 +47,7 @@ export function useVideos(options: UseVideosOptions = {}): UseVideosReturn {
     getUser();
   }, [supabase]);
 
+  // Fetch videos
   const fetchVideos = useCallback(async () => {
     const currentUserId = userIdRef.current || userId;
     if (!currentUserId) return;
@@ -76,6 +77,57 @@ export function useVideos(options: UseVideosOptions = {}): UseVideosReturn {
       setIsLoading(false);
     }
   }, [userId, projectId, status, stage, limit]);
+
+  // Realtime subscription
+  useEffect(() => {
+    const currentUserId = userIdRef.current || userId;
+    if (!currentUserId) return;
+
+    // Create a channel for realtime updates
+    const channel = supabase
+      .channel('videos-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'videos',
+          filter: projectId ? `project_id=eq.${projectId}` : `user_id=eq.${currentUserId}`,
+        },
+        (payload) => {
+          console.log('Realtime update:', payload);
+
+          if (payload.eventType === 'INSERT') {
+            const newVideo = payload.new as VideoProject;
+            // Only add if it matches our filters (basic client-side check)
+            if (status && newVideo.status !== status) return;
+            if (stage && newVideo.current_stage !== stage) return;
+            
+            setVideos((prev) => [newVideo, ...prev]);
+          } else if (payload.eventType === 'UPDATE') {
+            const updatedVideo = payload.new as VideoProject;
+            
+            setVideos((prev) => {
+              // If it no longer matches filters (e.g. status changed and we are filtering by status), remove it
+              if (status && updatedVideo.status !== status) {
+                 return prev.filter(v => v.id !== updatedVideo.id);
+              }
+              if (stage && updatedVideo.current_stage !== stage) {
+                 return prev.filter(v => v.id !== updatedVideo.id);
+              }
+              return prev.map((v) => (v.id === updatedVideo.id ? updatedVideo : v));
+            });
+          } else if (payload.eventType === 'DELETE') {
+             setVideos((prev) => prev.filter((v) => v.id !== payload.old.id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, projectId, userId, status, stage]);
 
   const createVideo = useCallback(async (input: CreateVideoInput): Promise<VideoProject | null> => {
     // Get userId fresh from supabase if not available in state

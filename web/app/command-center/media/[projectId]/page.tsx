@@ -97,6 +97,7 @@ export default function ProjectPage({
   };
 
   const newVideoButtonRef = useRef<HTMLButtonElement>(null);
+  const finishedButtonRef = useRef<HTMLButtonElement>(null);
   const videoCardRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const getElementOrigin = (element: HTMLElement): AnimationOrigin => {
@@ -211,16 +212,34 @@ export default function ProjectPage({
   const handleWizardComplete = useCallback(
     (videoId: string) => {
       console.log("Video created:", videoId);
-      // Refresh videos list
-      fetchVideos();
-      setWizardState({
-        isOpen: false,
-        isAnimating: false,
-        isClosing: false,
-        origin: null,
-        targetVideoIndex: null,
-        videoId: null,
-      });
+
+      // Animate towards the finished button
+      const targetOrigin = finishedButtonRef.current
+        ? getElementOrigin(finishedButtonRef.current)
+        : null;
+
+      setWizardState((prev) => ({
+        ...prev,
+        isClosing: true,
+        isAnimating: true,
+        origin: targetOrigin,
+      }));
+
+      // Wait for animation then refresh
+      setTimeout(() => {
+        setWizardState({
+          isOpen: false,
+          isAnimating: false,
+          isClosing: false,
+          origin: null,
+          targetVideoIndex: null,
+          videoId: null,
+        });
+
+        // Refresh list and optionally switch to finished view to show the new video
+        fetchVideos();
+        // user requested movement towards finished button, so maybe we switch tab or just show it went there
+      }, 350);
     },
     [fetchVideos]
   );
@@ -314,6 +333,7 @@ export default function ProjectPage({
                       Unfinished
                     </button>
                     <button
+                      ref={finishedButtonRef}
                       onClick={() => setShowFinished(true)}
                       className={`flex-1 px-4 py-1.5 rounded-full text-[10px] font-bold tracking-widest uppercase transition-all duration-300 relative z-10 ${
                         showFinished

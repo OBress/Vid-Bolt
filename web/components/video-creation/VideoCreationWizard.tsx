@@ -44,9 +44,7 @@ const STEPS = [
   { id: 5, label: "Edit", type: "review" },
   { id: 6, label: "Media", type: "loading" },
   { id: 7, label: "Editor", type: "editor" }, // Video editor with auto-placed audio
-  { id: 8, label: "Generate", type: "loading" }, // Generate video assets
-  { id: 9, label: "Fine Tune", type: "editor" }, // Final editing pass
-  { id: 10, label: "Export", type: "final" },
+  { id: 8, label: "Export", type: "final" },
 ] as const;
 
 // Helper function to map video stage to wizard step number
@@ -54,10 +52,10 @@ function stageToStepNumber(stage: VideoStage): number {
   const stageMapping: Record<VideoStage, number> = {
     idea: 1, // Step 1: Idea input
     script: 5, // Step 5: Script edit/review (after writing is done)
-    audio: 7, // Step 7: AV verification (after audio is done)
-    video: 9, // Step 9: Editor
-    export: 10, // Step 10: Export
-    completed: 10, // Step 10: Export (if completed, show export)
+    audio: 7, // Step 7: Editor (after audio is done)
+    video: 8, // Step 8: Export (skip generate/fine-tune)
+    export: 8, // Step 8: Export
+    completed: 8, // Step 8: Export (if completed, show export)
   };
   return stageMapping[stage] || 1;
 }
@@ -541,51 +539,27 @@ export function VideoCreationWizard({
             projectId={projectId}
             audioUrl={state.audioUrl}
             audioChunks={state.audioChunks}
-            onContinue={() => advanceToStep(8)} // Go to Generate step
+            onContinue={() => advanceToStep(8)} // Go to Export step
             onBack={() => goToStep(5)}
             {...lock}
           />
         );
       case 8:
-        // New Generate step - assembling video assets
-        return (
-          <LoadingStep
-            title="Generating Video"
-            subtitle="Assembling all media into the editor..."
-            steps={[
-              "Initializing video project",
-              "Importing audio tracks",
-              "Loading visual assets",
-              "Placing elements on timeline",
-              "Applying transitions & effects",
-              "Rendering preview frames",
-              "Finalizing project",
-            ]}
-            onComplete={() => {
-              const videoId = `video-${Date.now()}`;
-              updateState({ videoId });
-              advanceToStep(9);
-            }}
-            duration={4000}
-          />
-        );
-      case 9:
-        return (
-          <StepEditor
-            videoId={state.videoId!}
-            projectId={projectId}
-            onContinue={() => advanceToStep(10)}
-            onBack={() => goToStep(7)}
-            {...lock}
-          />
-        );
-      case 10:
         return (
           <StepExport
             videoId={state.videoId!}
             projectId={projectId}
-            onBack={() => goToStep(9)}
-            onClose={onBack}
+            onBack={() => goToStep(7)}
+            onClose={async () => {
+              if (state.videoId) {
+                try {
+                  await updateVideo(state.videoId, { status: "completed" });
+                } catch (err) {
+                  console.error("Failed to mark video as completed:", err);
+                }
+              }
+              onComplete(state.videoId!);
+            }}
             {...lock}
           />
         );
@@ -595,7 +569,7 @@ export function VideoCreationWizard({
   };
 
   // Check if current step is editor (needs full width and height)
-  const isEditorStep = currentStep === 7 || currentStep === 9;
+  const isEditorStep = currentStep === 7;
 
   return (
     <div
