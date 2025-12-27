@@ -20,6 +20,7 @@ export interface AudioChunk {
   chapterNumber: number;
   url: string;
   duration_seconds?: number;
+  text?: string;
 }
 
 export interface WizardState {

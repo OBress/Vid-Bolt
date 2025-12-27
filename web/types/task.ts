@@ -144,6 +144,7 @@ export interface AudioChunk {
   duration_seconds?: number;
   file_size_bytes?: number;
   word_timestamps?: WordTimestamp[];
+  text?: string;
 }
 
 export interface AudioTaskInput {

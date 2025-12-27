@@ -82,6 +82,7 @@ interface AudioChunk {
   chapterNumber: number;
   url: string;
   duration_seconds?: number;
+  text?: string;
 }
 
 const Editor = ({
@@ -221,7 +222,9 @@ const Editor = ({
             src: chunk.url,
           },
           name: `Audio ${chunk.chapterNumber + 1}`,
-          metadata: {},
+          metadata: {
+            text: chunk.text,
+          },
         });
 
         itemIds.push(id);

@@ -1118,6 +1118,7 @@ export const audioWorkflow = inngest.createFunction(
       url: string;
       durationSeconds: number;
       wordTimestamps?: import("@/types/task").WordTimestamp[];
+      text?: string;
     }> = [];
 
     // Track failed chunks for logging
@@ -1168,6 +1169,7 @@ export const audioWorkflow = inngest.createFunction(
             url: uploadResult.url,
             durationSeconds: ttsResult.durationSeconds,
             wordTimestamps: ttsResult.wordTimestamps,
+            text: chunk.text,
           };
         } catch (error) {
           // Mark step as failed but DON'T throw - allows workflow to continue
@@ -1191,6 +1193,7 @@ export const audioWorkflow = inngest.createFunction(
           url: chunkResult.url,
           durationSeconds: chunkResult.durationSeconds,
           wordTimestamps: chunkResult.wordTimestamps,
+          text: chunk.text,
         });
       } else {
         failedChunkIndices.push(chunkResult.chunkIndex);
@@ -1224,6 +1227,7 @@ export const audioWorkflow = inngest.createFunction(
               url: c.url,
               duration_seconds: c.durationSeconds,
               word_timestamps: c.wordTimestamps,
+              text: c.text,
             })),
             total_duration_seconds: totalDuration,
             final_audio: primaryAudioUrl,
