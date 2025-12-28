@@ -5,7 +5,12 @@ import Navbar from "./navbar";
 import useTimelineEvents from "./hooks/use-timeline-events";
 import Scene from "./scene";
 import { SceneRef } from "./scene/scene.types";
-import StateManager, { DESIGN_LOAD, ADD_ITEMS } from "@designcombo/state";
+import StateManager, {
+  DESIGN_LOAD,
+  ADD_ITEMS,
+  LAYER_DELETE,
+  HISTORY_RESET,
+} from "@designcombo/state";
 import { generateId } from "@designcombo/timeline";
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
@@ -121,6 +126,9 @@ const Editor = ({
   const { setCompactFonts, setFonts } = useDataState();
 
   useEffect(() => {
+    // Force a complete reset of the state manager before loading design
+    // This clears any corrupted tracks from previous sessions/HMR
+    dispatch(HISTORY_RESET);
     dispatch(DESIGN_LOAD, { payload: design });
   }, []);
 
@@ -134,9 +142,47 @@ const Editor = ({
       trackItemsMapSize: Object.keys(trackItemsMap).length,
     });
 
-    // Skip if already placed or timeline not ready
+    // STABILIZATION FIX (V3 - FINAL):
+    // 1. Get current tracks and items.
+    // 2. Find audio tracks that actually have items.
+    // 3. If at least one valid audio track with items exists, we are done. Skip init.
+    // 4. If multiple audio tracks exist (even empty), skip init to avoid infinite loop.
+    // 5. Only initialize if ZERO audio tracks exist.
+    const { tracks } = useStore.getState();
+    const audioTracks = tracks.filter((t) => t.type === "audio");
+
+    // Check if ANY audio track has items
+    const audioTracksWithItems = audioTracks.filter((t) => t.items.length > 0);
+
+    console.log("[Editor Audio Debug] Audio State Check:", {
+      audioTracksCount: audioTracks.length,
+      audioTracksWithItems: audioTracksWithItems.length,
+      trackItemsMapSize: Object.keys(trackItemsMap).length,
+    });
+
+    // If we have any audio tracks (with or without items), mark as placed and skip.
+    // This breaks the infinite loop caused by empty track shells.
+    if (audioTracks.length > 0) {
+      if (!audioPlaced) setAudioPlaced(true);
+      if (audioTracksWithItems.length > 0) {
+        console.log(
+          "[Editor Audio Debug] Skipping - valid audio track already exists with",
+          audioTracksWithItems[0].items.length,
+          "items"
+        );
+      } else {
+        console.log(
+          "[Editor Audio Debug] Skipping - empty audio track shells exist, not reinitializing to avoid loop. Manual refresh may be needed."
+        );
+      }
+      return;
+    }
+
+    // Skip if already placed (local guard) or timeline not ready
     if (audioPlaced) {
-      console.log("[Editor Audio Debug] Skipping - audio already placed");
+      console.log(
+        "[Editor Audio Debug] Skipping - audio already placed (local flag)"
+      );
       return;
     }
 
@@ -188,71 +234,80 @@ const Editor = ({
     // Mark as placed immediately to prevent duplicate attempts
     setAudioPlaced(true);
 
-    // Wait for timeline to fully initialize, then add all audio items at once
-    setTimeout(() => {
-      // Create track items array with sequential positioning
-      const trackItems: Array<{
-        id: string;
-        type: string;
-        display: { from: number; to: number };
-        trim: { from: number; to: number };
-        details: { src: string };
-        name: string;
-        metadata: Record<string, unknown>;
-      }> = [];
-      const itemIds: string[] = [];
-      let currentPosition = 0;
-
-      for (const chunk of sortedChunks) {
-        const id = generateId();
-        const durationMs = (chunk.duration_seconds || 10) * 1000;
-
-        trackItems.push({
-          id,
-          type: "audio",
-          display: {
-            from: currentPosition,
-            to: currentPosition + durationMs,
-          },
-          trim: {
-            from: 0,
-            to: durationMs,
-          },
-          details: {
-            src: chunk.url,
-          },
-          name: `Audio ${chunk.chapterNumber + 1}`,
-          metadata: {
-            text: chunk.text,
-          },
-        });
-
-        itemIds.push(id);
-        currentPosition += durationMs;
-      }
-
-      console.log(
-        `[Editor Audio Debug] Adding ${trackItems.length} audio items to single track (total ${currentPosition}ms)`
-      );
-
-      // Use ADD_ITEMS to batch add all audio to ONE track
-      dispatch(ADD_ITEMS, {
-        payload: {
-          trackItems,
-          tracks: [
-            {
-              id: generateId(),
-              items: itemIds,
-              type: "audio",
-              name: "Generated Audio",
-            },
-          ],
+    // Build all track items with sequential timing based on duration_seconds
+    let currentTime = 0;
+    const trackItems = sortedChunks.map((chunk, index) => {
+      const id = generateId();
+      const durationMs = (chunk.duration_seconds || 5) * 1000; // Default 5 seconds if no duration
+      const item = {
+        id,
+        type: "audio" as const,
+        name: `Audio ${chunk.chapterNumber + 1}`,
+        display: {
+          from: currentTime,
+          to: currentTime + durationMs,
         },
-      });
+        // trim is required by the timeline Audio class
+        trim: {
+          from: 0,
+          to: durationMs,
+        },
+        // duration is required by the timeline Audio class
+        duration: durationMs,
+        details: {
+          src: chunk.url,
+        },
+        metadata: {
+          text: chunk.text,
+        },
+      };
+      console.log(
+        `[Editor Audio Debug] Building audio chunk ${index + 1}/${
+          sortedChunks.length
+        }: from=${currentTime}ms, to=${currentTime + durationMs}ms`
+      );
+      currentTime += durationMs;
+      return item;
+    });
 
-      console.log("[Editor Audio Debug] All audio items added to single track");
-    }, 500);
-  }, [audioChunks, audioUrl, timeline, trackItemsMap, audioPlaced]);
+    // DEBUG: Log full structure of first item to understand expected format
+    if (trackItems.length > 0) {
+      console.log(
+        "[Editor Audio Debug] First trackItem full structure:",
+        JSON.stringify(trackItems[0], null, 2)
+      );
+    }
+
+    // Dispatch single ADD_ITEMS with one track containing all audio items
+    const trackId = generateId();
+
+    // DEBUG: Log the full payload being sent
+    console.log("[Editor Audio Debug] ADD_ITEMS payload:", {
+      trackItemsCount: trackItems.length,
+      trackId: trackId,
+      firstItemId: trackItems[0]?.id,
+      lastItemId: trackItems[trackItems.length - 1]?.id,
+    });
+
+    dispatch(ADD_ITEMS, {
+      payload: {
+        trackItems,
+        tracks: [
+          {
+            id: trackId,
+            items: trackItems.map((item) => item.id),
+            type: "audio",
+            name: "Audio",
+          },
+        ],
+      },
+    });
+
+    console.log(
+      `[Editor Audio Debug] Added ${sortedChunks.length} audio items to single track ${trackId}`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioChunks, audioUrl, timeline, audioPlaced]);
 
   useEffect(() => {
     setCompactFonts(getCompactFontData(FONTS));

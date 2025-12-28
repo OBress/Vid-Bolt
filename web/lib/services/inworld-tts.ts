@@ -26,8 +26,8 @@ export interface TTSResult {
 }
 
 const DEFAULT_OPTIONS: Required<TTSOptions> = {
-  modelId: "inworld-tts-1",
-  voiceId: "Ashley", // Default voice
+  modelId: "inworld-tts-1-max", // Enforce robust model
+  voiceId: "Hades", // Enforce Hades voice
   speakingRate: 1.0,
 };
 

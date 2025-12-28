@@ -13,8 +13,56 @@ export const useStateManagerEvents = (stateManager: StateManager) => {
 
   // Handle track item updates
   const handleTrackItemUpdate = useCallback(() => {
+    // NOTE: We removed the isRegenerating block because the timeline canvas
+    // needs state manager updates to render. Instead, we rely on the corruption
+    // guard below to skip only bad updates.
+    
     const currentState = stateManager.getState();
     const mergedTrackItemsDeatilsMap = currentState.trackItemsMap;
+    
+    // DEBUG: Log what the state manager is returning
+    console.log("[StateManager Debug] handleTrackItemUpdate called:", {
+      duration: currentState.duration,
+      trackItemsCount: Object.keys(mergedTrackItemsDeatilsMap).length,
+      tracksCount: currentState.tracks?.length,
+      trackItemIds: currentState.trackItemIds?.slice(0, 5),
+    });
+    
+    // GUARD: Skip setState if state manager data is corrupted
+    // This happens when EDIT_OBJECT or other events corrupt the internal state
+    const itemCount = Object.keys(mergedTrackItemsDeatilsMap).length;
+    const tracksCount = currentState.tracks?.length || 0;
+    
+    // Check for corruption indicators:
+    // 1. NaN duration
+    // 2. More tracks than items (should be 1 track with many items, not many tracks with 1 item each)
+    // 3. Items with bad display properties
+    const isCorrupted = 
+      !Number.isFinite(currentState.duration) ||
+      (tracksCount > 1 && tracksCount >= itemCount * 0.5);
+    
+    if (isCorrupted) {
+      console.warn("[StateManager Debug] SKIPPING corrupted state update:", {
+        duration: currentState.duration,
+        tracksCount,
+        itemCount,
+        reason: !Number.isFinite(currentState.duration) ? "NaN duration" : "Too many tracks"
+      });
+      return; // Skip the setState to preserve current valid state
+    }
+    
+    // Check for items with missing/bad display properties
+    const allItems = Object.values(mergedTrackItemsDeatilsMap);
+    const badItems = allItems.filter(item => 
+      !item.display || 
+      typeof item.display.from !== 'number' || 
+      typeof item.display.to !== 'number'
+    );
+    if (badItems.length > 0) {
+      console.warn("[StateManager Debug] SKIPPING - items have bad display properties:", badItems.length);
+      return; // Skip the setState to preserve current valid state
+    }
+    
     const filterTrakcItems = Object.values(mergedTrackItemsDeatilsMap).filter(
       (item) => {
         return item.type === "video" || item.type === "audio";
@@ -26,6 +74,19 @@ export const useStateManagerEvents = (stateManager: StateManager) => {
     audioDataManager.validateUpdateItems(
       filterTrakcItems as (ITrackItem & (IVideo | IAudio))[]
     );
+    
+    // DEBUG: Log the actual data to understand corruption
+    console.log("[StateManager Debug] Setting Zustand state with:", {
+      duration: currentState.duration,
+      trackItemsCount: Object.keys(currentState.trackItemsMap).length,
+      tracks: currentState.tracks?.map(t => ({
+        id: t.id,
+        type: t.type,
+        itemsCount: t.items?.length || 0,
+      })),
+      sampleItem: Object.values(currentState.trackItemsMap)[0],
+    });
+    
     setState({
       duration: currentState.duration,
       trackItemsMap: currentState.trackItemsMap
@@ -35,6 +96,18 @@ export const useStateManagerEvents = (stateManager: StateManager) => {
   const handleAddRemoveItems = useCallback(() => {
     const currentState = stateManager.getState();
     const mergedTrackItemsDeatilsMap = currentState.trackItemsMap;
+
+    // DEBUG: Log what we're receiving from state manager after ADD_ITEMS
+    console.log("[StateManager Debug] handleAddRemoveItems called:", {
+      tracksCount: currentState.tracks?.length,
+      trackItemIdsCount: currentState.trackItemIds?.length,
+      trackItemsMapCount: Object.keys(mergedTrackItemsDeatilsMap).length,
+      tracks: currentState.tracks?.map(t => ({
+        id: t.id,
+        type: t.type,
+        itemsCount: t.items?.length || 0,
+      })),
+    });
 
     const filterTrakcItems = Object.values(mergedTrackItemsDeatilsMap).filter(
       (item) => {

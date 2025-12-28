@@ -45,6 +45,10 @@ interface ITimelineStore {
   };
   viewTimeline: boolean;
   setViewTimeline: (viewTimeline: boolean) => void;
+  
+  // Flag to block state manager updates during regeneration
+  isRegenerating: boolean;
+  setIsRegenerating: (value: boolean) => void;
 }
 
 const useStore = create<ITimelineStore>((set) => ({
@@ -87,6 +91,10 @@ const useStore = create<ITimelineStore>((set) => ({
   transitionsMap: {},
   trackItemsMap: {},
   sceneMoveableRef: null,
+
+  // Regeneration lock flag
+  isRegenerating: false,
+  setIsRegenerating: (value: boolean) => set({ isRegenerating: value }),
 
   setTimeline: (timeline: Timeline) =>
     set(() => ({

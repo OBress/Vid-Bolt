@@ -4,7 +4,7 @@ import {
   ACTIVE_SPLIT,
   LAYER_CLONE,
   LAYER_DELETE,
-  TIMELINE_SCALE_CHANGED
+  TIMELINE_SCALE_CHANGED,
 } from "@designcombo/state";
 import { PLAYER_PAUSE, PLAYER_PLAY } from "../constants/events";
 import { frameToTimeString, getCurrentTime, timeToString } from "../utils/time";
@@ -14,7 +14,7 @@ import {
   getFitZoomLevel,
   getNextZoomLevel,
   getPreviousZoomLevel,
-  getZoomByIndex
+  getZoomByIndex,
 } from "../utils/timeline";
 import { useCurrentPlayerFrame } from "../hooks/use-current-frame";
 import { Slider } from "@/components/ui/slider";
@@ -97,16 +97,16 @@ const Header = () => {
     dispatch(ACTIVE_SPLIT, {
       payload: {},
       options: {
-        time: getCurrentTime()
-      }
+        time: getCurrentTime(),
+      },
     });
   };
 
   const changeScale = (scale: ITimelineScaleState) => {
     dispatch(TIMELINE_SCALE_CHANGED, {
       payload: {
-        scale
-      }
+        scale,
+      },
     });
   };
 
@@ -140,7 +140,7 @@ const Header = () => {
       style={{
         position: "relative",
         height: "50px",
-        flex: "none"
+        flex: "none",
       }}
     >
       <div
@@ -149,7 +149,7 @@ const Header = () => {
           height: 50,
           width: "100%",
           display: "flex",
-          alignItems: "center"
+          alignItems: "center",
         }}
       >
         <div
@@ -160,7 +160,7 @@ const Header = () => {
             gridTemplateColumns: isLargeScreen
               ? "1fr 260px 1fr"
               : "1fr 1fr 1fr",
-            alignItems: "center"
+            alignItems: "center",
           }}
         >
           <div className="flex px-2">
@@ -239,29 +239,31 @@ const Header = () => {
                 alignItems: "center",
                 gridTemplateColumns: "54px 4px 54px",
                 paddingTop: "2px",
-                justifyContent: "center"
+                justifyContent: "center",
               }}
             >
               <div
                 className="font-medium text-zinc-200"
                 style={{
                   display: "flex",
-                  justifyContent: "center"
+                  justifyContent: "center",
                 }}
-                data-current-time={currentFrame / fps}
+                data-current-time={currentFrame / (fps || 30)}
                 id="video-current-time"
               >
-                {frameToTimeString({ frame: currentFrame }, { fps })}
+                {frameToTimeString({ frame: currentFrame }, { fps: fps || 30 })}
               </div>
               <span className="px-1">|</span>
               <div
                 className="text-muted-foreground hidden lg:block"
                 style={{
                   display: "flex",
-                  justifyContent: "center"
+                  justifyContent: "center",
                 }}
               >
-                {timeToString({ time: duration })}
+                {Number.isFinite(duration)
+                  ? timeToString({ time: duration })
+                  : "00:00"}
               </div>
             </div>
           </div>
@@ -280,7 +282,7 @@ const Header = () => {
 const ZoomControl = ({
   scale,
   onChangeTimelineScale,
-  duration
+  duration,
 }: {
   scale: ITimelineScaleState;
   onChangeTimelineScale: (scale: ITimelineScaleState) => void;

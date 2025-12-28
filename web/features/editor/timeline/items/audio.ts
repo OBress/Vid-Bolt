@@ -139,8 +139,12 @@ class Audio extends Trimmable {
       this.offscreenCanvas.width !== this.width ||
       this.offscreenCanvas.height !== this.height
     ) {
-      this.offscreenCanvas.width = this.width;
-      this.offscreenCanvas.height = this.height;
+      if (Number.isFinite(this.width) && this.width >= 0) {
+          this.offscreenCanvas.width = this.width;
+      }
+      if (Number.isFinite(this.height) && this.height >= 0) {
+          this.offscreenCanvas.height = this.height;
+      }
       this.isDirty = true;
     }
   }
