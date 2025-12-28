@@ -540,7 +540,21 @@ export function VideoCreationWizard({
             projectId={projectId}
             audioUrl={state.audioUrl}
             audioChunks={state.audioChunks}
-            onContinue={() => advanceToStep(8)} // Go to Export step
+            onContinue={async () => {
+              // Persist the step navigation to the database
+              if (state.videoId) {
+                try {
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ current_stage: "video" }),
+                  });
+                } catch (err) {
+                  console.error("Failed to save step:", err);
+                }
+              }
+              advanceToStep(8);
+            }}
             onBack={() => goToStep(5)}
             {...lock}
           />
@@ -550,7 +564,21 @@ export function VideoCreationWizard({
           <StepExport
             videoId={state.videoId!}
             projectId={projectId}
-            onBack={() => goToStep(7)}
+            onBack={async () => {
+              // Persist the step navigation to the database
+              if (state.videoId) {
+                try {
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ current_stage: "audio" }),
+                  });
+                } catch (err) {
+                  console.error("Failed to save step:", err);
+                }
+              }
+              goToStep(7);
+            }}
             onClose={async () => {
               if (state.videoId) {
                 try {

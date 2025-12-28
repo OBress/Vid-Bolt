@@ -512,13 +512,15 @@ class Video extends Trimmable {
     const canvasWidth = canvasEl?.clientWidth;
     const scrollLeft = this.scrollLeft;
     if (!canvasWidth) return 0;
+    // Guard against undefined left during initial render
+    const left = this.left ?? 0;
     const timelineWidth = canvasWidth;
     const cutFromBottomEdge = Math.max(
-      timelineWidth - (this.width + this.left + scrollLeft),
+      timelineWidth - (this.width + left + scrollLeft),
       0
     );
     const visibleHeight = Math.min(
-      timelineWidth - this.left - scrollLeft,
+      timelineWidth - left - scrollLeft,
       timelineWidth
     );
 
@@ -527,7 +529,9 @@ class Video extends Trimmable {
 
   // Calculate the width that is not visible on the screen measured from the left
   public calculateOffscreenWidth({ scrollLeft }: { scrollLeft: number }) {
-    const offscreenWidth = Math.min(this.left + scrollLeft, 0);
+    // Guard against undefined left during initial render
+    const left = this.left ?? 0;
+    const offscreenWidth = Math.min(left + scrollLeft, 0);
 
     return Math.abs(offscreenWidth);
   }

@@ -73,7 +73,9 @@ class Audio extends Trimmable {
     this.renderToOffscreen();
 
     // Draw only the visible portion
-    const displayFromInUnits = timeMsToUnits(this.display!.from, this.tScale);
+    // Guard against undefined display during initial render
+    if (!this.display) return;
+    const displayFromInUnits = timeMsToUnits(this.display.from, this.tScale);
     const scrollLeft = this.scrollLeft + displayFromInUnits;
     const visibleStart = Math.max(0, -scrollLeft) - CANVAS_SAFE_DRAWING;
     ctx.drawImage(
@@ -197,7 +199,9 @@ class Audio extends Trimmable {
   }
 
   public calculateOffscreenWidth({ scrollLeft }: { scrollLeft: number }) {
-    const offscreenWidth = Math.min(this.left + scrollLeft, 0);
+    // Guard against undefined left during initial render
+    const left = this.left ?? 0;
+    const offscreenWidth = Math.min(left + scrollLeft, 0);
 
     return Math.abs(offscreenWidth);
   }
@@ -216,7 +220,9 @@ class Audio extends Trimmable {
 
     const ctx = this.offscreenCtx;
     // Calculate visible range
-    const displayFromInUnits = timeMsToUnits(this.display!.from, this.tScale);
+    // Guard against undefined display during initial render
+    if (!this.display) return;
+    const displayFromInUnits = timeMsToUnits(this.display.from, this.tScale);
     const scrollLeft = this.scrollLeft + displayFromInUnits;
     // Calculate the offset caused by the trimming
     const trimFromSize = timeMsToUnits(

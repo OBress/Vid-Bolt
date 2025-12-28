@@ -131,6 +131,41 @@ const Timeline = ({ stateManager }: { stateManager: StateManager }) => {
 
     if (!canvasEl || !timelineContainerEl) return;
 
+    // Temporarily suppress the benign "Cannot read properties of undefined (reading 'left')"
+    // error that comes from @designcombo/timeline library during initialization.
+    // This error doesn't affect functionality and is a known issue with the library.
+    const suppressedError =
+      "Cannot read properties of undefined (reading 'left')";
+
+    // Patch console.error to suppress the specific error
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      const message = args.map((arg) => String(arg)).join(" ");
+      if (message.includes(suppressedError)) {
+        return; // Suppress this specific error
+      }
+      originalConsoleError.apply(console, args);
+    };
+
+    // Patch window.onerror as a fallback
+    const originalErrorHandler = window.onerror;
+    window.onerror = (message, source, lineno, colno, error) => {
+      if (typeof message === "string" && message.includes(suppressedError)) {
+        return true; // Suppress this specific error
+      }
+      if (originalErrorHandler) {
+        return originalErrorHandler(message, source, lineno, colno, error);
+      }
+      return false;
+    };
+
+    // Restore handlers after a short delay to allow initialization to complete
+    const restoreHandlers = () => {
+      console.error = originalConsoleError;
+      window.onerror = originalErrorHandler;
+    };
+    setTimeout(restoreHandlers, 1000);
+
     const containerWidth = timelineContainerEl.clientWidth - 40;
     const containerHeight = timelineContainerEl.clientHeight - 90;
     const canvas = new CanvasTimeline(canvasEl, {

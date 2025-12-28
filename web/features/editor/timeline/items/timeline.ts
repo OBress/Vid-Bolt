@@ -51,9 +51,11 @@ class Timeline extends TimelineBase {
     this.setActiveTrackItemCoords();
     this.onScrollChange();
 
+    // Guard against undefined spacing during initial render
+    const spacingLeft = this.spacing?.left ?? 0;
     this.onScroll?.({
       scrollTop: limitedPos.y,
-      scrollLeft: limitedPos.x - this.spacing.left
+      scrollLeft: limitedPos.x - spacingLeft
     });
   }
 
@@ -77,9 +79,11 @@ class Timeline extends TimelineBase {
   }): void {
     const vt = this.viewportTransform; // Create a shallow copy
     let hasChanged = false;
+    // Guard against undefined spacing during initial render
+    const spacingLeft = this.spacing?.left ?? 0;
 
     if (typeof scrollLeft === "number") {
-      vt[4] = -scrollLeft + this.spacing.left;
+      vt[4] = -scrollLeft + spacingLeft;
       hasChanged = true;
     }
     if (typeof scrollTop === "number") {

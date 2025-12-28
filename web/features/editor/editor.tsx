@@ -109,7 +109,8 @@ const Editor = ({
   const { activeIds, trackItemsMap, transitionsMap } = useStore();
   const [loaded, setLoaded] = useState(false);
   const [trackItem, setTrackItem] = useState<ITrackItem | null>(null);
-  const [audioPlaced, setAudioPlaced] = useState(false);
+  // Use ref instead of state to prevent race conditions - refs update synchronously
+  const audioPlacedRef = useRef(false);
   const {
     setTrackItem: setLayoutTrackItem,
     setFloatingControl,
@@ -135,7 +136,7 @@ const Editor = ({
   // Auto-place audio chunks on timeline when available
   useEffect(() => {
     console.log("[Editor Audio Debug] Effect triggered:", {
-      audioPlaced,
+      audioPlaced: audioPlacedRef.current,
       hasTimeline: !!timeline,
       audioChunksCount: audioChunks?.length || 0,
       audioUrl,
@@ -163,7 +164,7 @@ const Editor = ({
     // If we have any audio tracks (with or without items), mark as placed and skip.
     // This breaks the infinite loop caused by empty track shells.
     if (audioTracks.length > 0) {
-      if (!audioPlaced) setAudioPlaced(true);
+      if (!audioPlacedRef.current) audioPlacedRef.current = true;
       if (audioTracksWithItems.length > 0) {
         console.log(
           "[Editor Audio Debug] Skipping - valid audio track already exists with",
@@ -179,7 +180,7 @@ const Editor = ({
     }
 
     // Skip if already placed (local guard) or timeline not ready
-    if (audioPlaced) {
+    if (audioPlacedRef.current) {
       console.log(
         "[Editor Audio Debug] Skipping - audio already placed (local flag)"
       );
@@ -231,8 +232,8 @@ const Editor = ({
       "chunks"
     );
 
-    // Mark as placed immediately to prevent duplicate attempts
-    setAudioPlaced(true);
+    // Mark as placed immediately to prevent duplicate attempts (ref is synchronous)
+    audioPlacedRef.current = true;
 
     // Build all track items with sequential timing based on duration_seconds
     let currentTime = 0;
@@ -307,7 +308,7 @@ const Editor = ({
       `[Editor Audio Debug] Added ${sortedChunks.length} audio items to single track ${trackId}`
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioChunks, audioUrl, timeline, audioPlaced]);
+  }, [audioChunks, audioUrl, timeline]);
 
   useEffect(() => {
     setCompactFonts(getCompactFontData(FONTS));
