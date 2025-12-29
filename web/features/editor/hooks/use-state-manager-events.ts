@@ -35,11 +35,11 @@ export const useStateManagerEvents = (stateManager: StateManager) => {
     
     // Check for corruption indicators:
     // 1. NaN duration
-    // 2. More tracks than items (should be 1 track with many items, not many tracks with 1 item each)
-    // 3. Items with bad display properties
+    // 2. WAY too many tracks compared to items (e.g., each item on its own track)
+    //    But allow legitimate multi-track scenarios (audio + visuals = 2 tracks)
     const isCorrupted = 
       !Number.isFinite(currentState.duration) ||
-      (tracksCount > 1 && tracksCount >= itemCount * 0.5);
+      (tracksCount > 5 && tracksCount >= itemCount * 0.5);
     
     if (isCorrupted) {
       console.warn("[StateManager Debug] SKIPPING corrupted state update:", {
@@ -97,16 +97,21 @@ export const useStateManagerEvents = (stateManager: StateManager) => {
     const currentState = stateManager.getState();
     const mergedTrackItemsDeatilsMap = currentState.trackItemsMap;
 
-    // DEBUG: Log what we're receiving from state manager after ADD_ITEMS
-    console.log("[StateManager Debug] handleAddRemoveItems called:", {
+    // DEBUG: Detailed logging for diagnosing multi-track issues
+    console.log("[StateManager DEBUG] handleAddRemoveItems called:", {
       tracksCount: currentState.tracks?.length,
       trackItemIdsCount: currentState.trackItemIds?.length,
       trackItemsMapCount: Object.keys(mergedTrackItemsDeatilsMap).length,
-      tracks: currentState.tracks?.map(t => ({
-        id: t.id,
-        type: t.type,
-        itemsCount: t.items?.length || 0,
-      })),
+    });
+    
+    // Log each track with its type and item count
+    currentState.tracks?.forEach((track, i) => {
+      console.log(`[StateManager DEBUG] Track ${i}:`, {
+        id: track.id,
+        type: track.type,
+        itemsCount: track.items?.length || 0,
+        firstItemId: track.items?.[0],
+      });
     });
 
     const filterTrakcItems = Object.values(mergedTrackItemsDeatilsMap).filter(
@@ -117,6 +122,9 @@ export const useStateManagerEvents = (stateManager: StateManager) => {
     audioDataManager.validateUpdateItems(
       filterTrakcItems as (ITrackItem & (IVideo | IAudio))[]
     );
+    
+    console.log("[StateManager DEBUG] Setting state with tracks:", currentState.tracks?.length);
+    
     setState({
       trackItemsMap: currentState.trackItemsMap,
       trackItemIds: currentState.trackItemIds,

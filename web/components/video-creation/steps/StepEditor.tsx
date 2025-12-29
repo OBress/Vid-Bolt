@@ -3,13 +3,17 @@
 import { ArrowRight, Clapperboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Editor from "@/features/editor";
-import type { AudioChunk } from "@/components/video-creation/VideoCreationWizard";
+import type {
+  AudioChunk,
+  ShotEvent,
+} from "@/components/video-creation/VideoCreationWizard";
 
 interface StepEditorProps {
   videoId: string;
   projectId: string;
   audioUrl?: string | null;
   audioChunks?: AudioChunk[];
+  shotList?: ShotEvent[];
   onContinue: () => void;
   onBack: () => void;
   isLocked?: boolean;
@@ -21,6 +25,7 @@ export function StepEditor({
   projectId,
   audioUrl,
   audioChunks,
+  shotList,
   onContinue,
   isLocked,
   lockedMessage,
@@ -31,6 +36,7 @@ export function StepEditor({
     projectId,
     audioUrl,
     audioChunksCount: audioChunks?.length || 0,
+    shotListCount: shotList?.length || 0,
     audioChunks,
   });
 
@@ -75,6 +81,7 @@ export function StepEditor({
           id={projectId}
           audioUrl={audioUrl}
           audioChunks={audioChunks}
+          shotList={shotList}
         />
       </div>
     </div>

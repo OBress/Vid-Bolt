@@ -215,7 +215,25 @@ export interface VideoTaskOutput {
     resolution: string;
     file_size_bytes: number;
   };
+  /** Shot list from AV script analysis */
+  shot_list?: Array<{
+    segment_index: number;
+    start_seconds: number;
+    end_seconds: number;
+    duration_seconds: number;
+    content_type: 'list-item' | 'comparison' | 'concept' | 'transition' | 'emotional-beat';
+    text: string;
+    visual_prompt?: string;
+  }>;
+  /** Content analysis from script */
+  content_analysis?: {
+    lists_count: number;
+    comparisons_count: number;
+    transitions_count: number;
+    emotional_beats_count: number;
+  };
 }
+
 
 // ============================================================================
 // EXPORT WORKFLOW TYPES

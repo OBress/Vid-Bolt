@@ -90,16 +90,34 @@ interface AudioChunk {
   text?: string;
 }
 
+// Shot event type for visual placeholders
+interface ShotEvent {
+  segment_index: number;
+  start_seconds: number;
+  end_seconds: number;
+  duration_seconds: number;
+  content_type:
+    | "list-item"
+    | "comparison"
+    | "concept"
+    | "transition"
+    | "emotional-beat";
+  text: string;
+  visual_prompt?: string;
+}
+
 const Editor = ({
   tempId,
   id,
   audioUrl,
   audioChunks,
+  shotList,
 }: {
   tempId?: string;
   id?: string;
   audioUrl?: string | null;
   audioChunks?: AudioChunk[];
+  shotList?: ShotEvent[];
 }) => {
   const [projectName, setProjectName] = useState<string>("Untitled video");
   const { scene } = useSceneStore();
@@ -163,18 +181,51 @@ const Editor = ({
 
     // If we have any audio tracks (with or without items), mark as placed and skip.
     // This breaks the infinite loop caused by empty track shells.
+    // HOWEVER: On remount (step navigation), we need to re-dispatch items to the new canvas.
     if (audioTracks.length > 0) {
-      if (!audioPlacedRef.current) audioPlacedRef.current = true;
+      // Check if we've already dispatched in THIS mount cycle
+      if (audioPlacedRef.current) {
+        console.log(
+          "[Editor Audio Debug] Skipping - already dispatched in this session"
+        );
+        return;
+      }
+
+      // Mark as placed for this mount cycle
+      audioPlacedRef.current = true;
+
       if (audioTracksWithItems.length > 0) {
         console.log(
-          "[Editor Audio Debug] Skipping - valid audio track already exists with",
+          "[Editor Audio Debug] Store has audio track with",
           audioTracksWithItems[0].items.length,
-          "items"
+          "items - re-dispatching to canvas"
         );
-      } else {
-        console.log(
-          "[Editor Audio Debug] Skipping - empty audio track shells exist, not reinitializing to avoid loop. Manual refresh may be needed."
+
+        // Re-dispatch existing items to the new canvas
+        // Get the full track items from the store
+        const existingAudioItems = Object.values(trackItemsMap).filter(
+          (item) => item.type === "audio"
         );
+
+        if (existingAudioItems.length > 0) {
+          console.log(
+            "[Editor Audio Debug] Re-dispatching",
+            existingAudioItems.length,
+            "audio items to canvas with ALL tracks"
+          );
+
+          // IMPORTANT: Include ALL tracks (audio + visual) to prevent overwriting
+          dispatch(ADD_ITEMS, {
+            payload: {
+              trackItems: existingAudioItems,
+              tracks: tracks.map((t) => ({
+                id: t.id,
+                items: t.items,
+                type: t.type,
+              })),
+            },
+          });
+        }
       }
       return;
     }
@@ -309,6 +360,194 @@ const Editor = ({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioChunks, audioUrl, timeline]);
+
+  // Visual placeholder placement ref
+  const visualsPlacedRef = useRef(false);
+
+  // Auto-place visual placeholders on timeline when shot list is available
+  useEffect(() => {
+    console.log("[Editor Visual DEBUG] Effect triggered:", {
+      visualsPlaced: visualsPlacedRef.current,
+      hasTimeline: !!timeline,
+      shotListCount: shotList?.length || 0,
+      shotListSample: shotList?.[0],
+    });
+
+    // Skip if already placed or no timeline
+    if (visualsPlacedRef.current) {
+      console.log(
+        "[Editor Visual DEBUG] Skipping - visuals already placed (ref=true)"
+      );
+      return;
+    }
+
+    if (!timeline) {
+      console.log("[Editor Visual DEBUG] Skipping - timeline not ready");
+      return;
+    }
+
+    if (!shotList || shotList.length === 0) {
+      console.log("[Editor Visual DEBUG] Skipping - no shot list available");
+      return;
+    }
+
+    // Check if visual tracks already exist in store
+    const { tracks, trackItemsMap: storeTrackItemsMap } = useStore.getState();
+    console.log("[Editor Visual DEBUG] Current tracks in store:", {
+      totalTracks: tracks.length,
+      trackTypes: tracks.map((t) => t.type),
+    });
+
+    const visualTracks = tracks.filter(
+      (t) => t.type === "image" || t.type === "video"
+    );
+
+    // If visual tracks exist, check if we need to re-dispatch
+    if (visualTracks.length > 0) {
+      // Check if we've already dispatched in THIS mount cycle
+      if (visualsPlacedRef.current) {
+        console.log(
+          "[Editor Visual DEBUG] Skipping - already dispatched in this session"
+        );
+        return;
+      }
+
+      // Mark as placed for this mount cycle
+      visualsPlacedRef.current = true;
+
+      console.log(
+        "[Editor Visual DEBUG] Store has visual tracks - re-dispatching to canvas"
+      );
+
+      // Re-dispatch existing items to the new canvas
+      const existingVisualItems = Object.values(storeTrackItemsMap).filter(
+        (item) => item.type === "image" || item.type === "video"
+      );
+
+      if (existingVisualItems.length > 0) {
+        console.log(
+          "[Editor Visual DEBUG] Re-dispatching",
+          existingVisualItems.length,
+          "visual items to canvas"
+        );
+
+        // Include all tracks (both audio and visual) to preserve them
+        dispatch(ADD_ITEMS, {
+          payload: {
+            trackItems: existingVisualItems,
+            tracks: tracks.map((t) => ({
+              id: t.id,
+              items: t.items,
+              type: t.type,
+            })),
+          },
+        });
+      }
+      return;
+    }
+
+    // Wait for audio track to be placed before adding visuals
+    // This prevents race condition where visuals overwrite audio
+    const audioTracks = tracks.filter((t) => t.type === "audio");
+    if (audioTracks.length === 0 && audioChunks && audioChunks.length > 0) {
+      console.log(
+        "[Editor Visual DEBUG] Audio track not ready yet, waiting 500ms before retrying..."
+      );
+      // Don't mark as placed yet - schedule a retry
+      setTimeout(() => {
+        visualsPlacedRef.current = false; // Reset to allow retry
+      }, 500);
+      return;
+    }
+
+    // Mark as placed immediately
+    visualsPlacedRef.current = true;
+
+    console.log(
+      `[Editor Visual DEBUG] Placing ${shotList.length} visual placeholders`
+    );
+
+    // Color mapping for content types
+    const contentTypeColors: Record<string, string> = {
+      "list-item": "#f97316", // orange
+      comparison: "#8b5cf6", // purple
+      concept: "#3b82f6", // blue
+      transition: "#22c55e", // green
+      "emotional-beat": "#ef4444", // red
+    };
+
+    // Build visual track items from shot list
+    const trackItems = shotList.map((shot) => {
+      const id = generateId();
+      const color = contentTypeColors[shot.content_type] || "#6b7280";
+
+      // Create an SVG data URL as placeholder - much more reliable than external APIs
+      const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080"><rect fill="${color}" width="1920" height="1080"/><text x="960" y="540" text-anchor="middle" fill="white" font-size="48" font-family="sans-serif">Shot ${shot.segment_index}</text></svg>`;
+      const dataUrl = `data:image/svg+xml,${encodeURIComponent(svgContent)}`;
+
+      return {
+        id,
+        type: "image" as const,
+        name: `Shot ${shot.segment_index}`,
+        display: {
+          from: shot.start_seconds * 1000,
+          to: shot.end_seconds * 1000,
+        },
+        trim: {
+          from: 0,
+          to: shot.duration_seconds * 1000,
+        },
+        duration: shot.duration_seconds * 1000,
+        details: {
+          src: dataUrl,
+        },
+        metadata: {
+          shotIndex: shot.segment_index,
+          contentType: shot.content_type,
+          visualPrompt: shot.visual_prompt || shot.text,
+          text: shot.text,
+        },
+      };
+    });
+
+    // Dispatch visual placeholders to a new track
+    // IMPORTANT: Include ALL existing tracks to prevent replacement
+    const trackId = generateId();
+    const existingTracks = tracks.map((t) => ({
+      id: t.id,
+      items: t.items,
+      type: t.type,
+    }));
+
+    console.log("[Editor Visual DEBUG] ADD_ITEMS payload:", {
+      trackItemsCount: trackItems.length,
+      newTrackId: trackId,
+      existingTracksCount: existingTracks.length,
+      existingTrackTypes: existingTracks.map((t) => t.type),
+    });
+
+    // Combine existing tracks with new visual track
+    const allTracks = [
+      ...existingTracks,
+      {
+        id: trackId,
+        items: trackItems.map((item) => item.id),
+        type: "image",
+      },
+    ];
+
+    dispatch(ADD_ITEMS, {
+      payload: {
+        trackItems,
+        tracks: allTracks,
+      },
+    });
+
+    console.log(
+      `[Editor Visual DEBUG] Added ${shotList.length} visual placeholders to track ${trackId}. Total tracks now: ${allTracks.length}`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shotList, timeline]);
 
   useEffect(() => {
     setCompactFonts(getCompactFontData(FONTS));

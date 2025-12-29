@@ -1,38 +1,108 @@
+/**
+ * Visual Prompt Generator
+ * ============================================================================
+ * Generates AI image prompts for video segments based on content type.
+ * Each content type has a distinct visual style approach.
+ */
 
-import { ShotEvent } from "./types";
+import { ShotEvent, ContentType } from "./types";
 import { generateJSON } from "@/lib/ai/openrouter";
+
+// ============================================================================
+// CONTENT-TYPE SPECIFIC PROMPTS
+// ============================================================================
+
+const CONTENT_TYPE_GUIDANCE: Record<ContentType, string> = {
+  'list-item': `For LIST ITEMS:
+- Focus tightly on the SPECIFIC item mentioned
+- Make it visually DISTINCT from adjacent items
+- Use clear, simple compositions
+- Single subject, minimal background
+- High contrast, eye-catching colors
+Example: "gold Olympic medal on black velvet" or "athlete crossing finish line"`,
+
+  'comparison': `For COMPARISONS:
+- Create clear VISUAL CONTRAST between compared elements
+- Use split compositions or stark differences
+- Emphasize the difference being discussed
+- Consider before/after or side-by-side concepts
+Example: "cluttered chaotic desk" vs "minimal organized workspace"`,
+
+  'concept': `For CONCEPT EXPLANATIONS:
+- Rich, DETAILED scene that rewards longer viewing
+- Multiple elements working together
+- Atmospheric and immersive
+- Deep compositions with foreground and background
+Example: "sprawling coral reef ecosystem teeming with colorful fish, shafts of sunlight penetrating crystal blue water"`,
+
+  'transition': `For TRANSITIONS:
+- Neutral or bridging imagery
+- Motion or transformation themes
+- Abstract or environmental scenes
+- Smooth, calming visuals
+Example: "time-lapse of clouds moving across sky" or "waves gently lapping on shore"`,
+
+  'emotional-beat': `For EMOTIONAL/IMPACTFUL MOMENTS:
+- Evocative, atmospheric imagery
+- Strong mood and lighting
+- Let the visual BREATHE
+- Cinematic quality
+Example: "silhouette of person standing alone on cliff edge at sunset, contemplative mood"`,
+};
 
 const VISUAL_PROMPT_SYSTEM = `You are a visual director for video content.
 Your job is to generate specific, vivid image prompts for video segments.
 
-Input: Use the 'content_type' and 'text' of the segment to determine the imagery.
-- list-item: Focus tightly on the specific item mentioned. Distinct from others.
-- comparison: Create clear visual contrast between the two sides.
-- concept: Rich, detailed scene.
-- emotional-beat: Atmospheric, evocative lighting/mood.
-- transition: Bridges scenes (e.g., clouds, blurs, motion).
+CRITICAL RULES:
+1. NO text on screen - just visuals
+2. Each image must be DISTINCT and SPECIFIC
+3. Match the visual style to the content type
+4. Use cinematic, professional imagery
+5. Be concise but descriptive (1-2 sentences max)
 
-Output: specific image descriptions (no text on screen, just visuals).
+For adjacent list items, ensure VISUAL VARIETY - each should be clearly different.
+
+${Object.entries(CONTENT_TYPE_GUIDANCE).map(([type, guidance]) => guidance).join('\n\n')}
 `;
 
-export async function generateVisualPrompts(userId: string, segments: ShotEvent[]): Promise<ShotEvent[]> {
+// ============================================================================
+// MAIN GENERATION FUNCTION
+// ============================================================================
+
+/**
+ * Generate visual prompts for an array of shot events.
+ * Uses AI to create content-type-appropriate image descriptions.
+ */
+export async function generateVisualPrompts(
+  userId: string, 
+  segments: ShotEvent[]
+): Promise<ShotEvent[]> {
   if (segments.length === 0) return [];
 
-  // We process in batches or all at once depending on length. For now, all at once is likely fine for typical scripts.
-  
   try {
+    // Prepare input with context about adjacent segments for variety
     const segmentsInput = segments.map((s, i) => ({
-        index: i,
-        type: s.content_type,
-        text: s.text
+      index: i,
+      type: s.content_type,
+      text: s.text,
+      duration: s.duration_seconds,
+      // Provide context about adjacent segments for variety
+      prev_type: i > 0 ? segments[i - 1].content_type : null,
+      next_type: i < segments.length - 1 ? segments[i + 1].content_type : null,
     }));
 
-    const response = await generateJSON<{ prompts: { index: number, visual_description: string }[] }>(
-        userId,
-        VISUAL_PROMPT_SYSTEM,
-        `Generate visual prompts for these video segments:
+    const response = await generateJSON<{ prompts: { index: number; visual_description: string }[] }>(
+      userId,
+      VISUAL_PROMPT_SYSTEM,
+      `Generate visual prompts for these ${segments.length} video segments:
 
 ${JSON.stringify(segmentsInput, null, 2)}
+
+IMPORTANT:
+- For list-item segments, each item must have a VISUALLY DISTINCT prompt
+- Match the style and detail level to the content type
+- Keep prompts concise (1-2 sentences)
+- No text overlays, just imagery
 
 Return JSON:
 {
@@ -44,28 +114,65 @@ Return JSON:
 
     // Merge results back
     if (response.prompts && Array.isArray(response.prompts)) {
-        response.prompts.forEach(p => {
-            if (segments[p.index]) {
-                segments[p.index].visual_prompt = p.visual_description;
-            }
-        });
+      response.prompts.forEach(p => {
+        if (segments[p.index]) {
+          segments[p.index].visual_prompt = p.visual_description;
+        }
+      });
     }
 
-    // Fill in any missing ones with basic fallback
+    // Fill in any missing ones with content-type-specific fallback
     segments.forEach(s => {
-        if (!s.visual_prompt) {
-            s.visual_prompt = `Cinematic shot related to: ${s.text}`;
-        }
+      if (!s.visual_prompt) {
+        s.visual_prompt = generateFallbackPrompt(s);
+      }
     });
 
     return segments;
 
   } catch (error) {
-      console.error("Failed to generate visual prompts:", error);
-      // Fallback
-      segments.forEach(s => {
-          s.visual_prompt = `Cinematic shot representing: ${s.text}`;
-      });
-      return segments;
+    console.error("Failed to generate visual prompts:", error);
+    
+    // Fallback: generate basic prompts for all segments
+    segments.forEach(s => {
+      s.visual_prompt = generateFallbackPrompt(s);
+    });
+    
+    return segments;
   }
+}
+
+/**
+ * Generate a fallback prompt based on content type and text.
+ */
+function generateFallbackPrompt(segment: ShotEvent): string {
+  const text = segment.text.trim();
+  const firstWords = text.split(' ').slice(0, 6).join(' ');
+  
+  switch (segment.content_type) {
+    case 'list-item':
+      return `Clear, focused shot representing: ${firstWords}`;
+    
+    case 'comparison':
+      return `Contrasting visual scene for: ${firstWords}`;
+    
+    case 'concept':
+      return `Rich, detailed cinematic scene illustrating: ${firstWords}`;
+    
+    case 'transition':
+      return `Smooth transitional imagery with gentle motion`;
+    
+    case 'emotional-beat':
+      return `Atmospheric, evocative scene with dramatic lighting: ${firstWords}`;
+    
+    default:
+      return `Cinematic shot representing: ${firstWords}`;
+  }
+}
+
+/**
+ * Generate a single visual prompt for a segment (for testing/preview).
+ */
+export function generateQuickPrompt(segment: ShotEvent): string {
+  return generateFallbackPrompt(segment);
 }
