@@ -124,7 +124,9 @@ const Editor = ({
 
   const sceneRef = useRef<SceneRef>(null);
   const { timeline, playerRef } = useStore();
-  const { activeIds, trackItemsMap, transitionsMap } = useStore();
+  // IMPORTANT: Subscribe to 'tracks' so we re-render when tracks are added/removed
+  // This fixes the race condition where Visual effect runs before Audio effect's dispatch updates the store
+  const { activeIds, trackItemsMap, transitionsMap, tracks } = useStore();
   const [loaded, setLoaded] = useState(false);
   const [trackItem, setTrackItem] = useState<ITrackItem | null>(null);
   // Use ref instead of state to prevent race conditions - refs update synchronously
@@ -144,97 +146,74 @@ const Editor = ({
 
   const { setCompactFonts, setFonts } = useDataState();
 
+  // Use ref instead of state to prevent race conditions
+  const visualsPlacedRef = useRef(false);
+  const syncedRef = useRef(false);
+
+  // SYNC FIX: Restoration of persistent state on remount
+  // This replaces the manual reset + re-dispatch logic which was causing duplicates
   useEffect(() => {
-    // Force a complete reset of the state manager before loading design
-    // This clears any corrupted tracks from previous sessions/HMR
-    dispatch(HISTORY_RESET);
-    dispatch(DESIGN_LOAD, { payload: design });
-  }, []);
+    if (!timeline) return;
+
+    // Check if we have persistent state
+    const state = useStore.getState();
+    const hasTracks = state.tracks && state.tracks.length > 0;
+
+    if (hasTracks && !syncedRef.current) {
+      console.log(
+        "[Editor Sync] Persistent state found, reloading design to ensure canvas sync..."
+      );
+
+      // Construct design object from current persistent state
+      // We use DESIGN_LOAD because it fully replaces the state, preventing duplication
+      const designToLoad = {
+        id: design.id,
+        fps: state.fps,
+        duration: state.duration,
+        size: state.size,
+        tracks: state.tracks,
+        trackItemsMap: state.trackItemsMap,
+        transitionsMap: state.transitionsMap,
+        trackItemIds: state.trackItemIds,
+      };
+
+      dispatch(DESIGN_LOAD, { payload: designToLoad });
+
+      // Mark as synced and placed so other effects don't duplicate
+      syncedRef.current = true;
+      audioPlacedRef.current = true;
+      visualsPlacedRef.current = true;
+    }
+  }, [timeline]);
 
   // Auto-place audio chunks on timeline when available
   useEffect(() => {
+    // If we already synced from persistent state, skip placement
+    if (syncedRef.current) return;
+
     console.log("[Editor Audio Debug] Effect triggered:", {
       audioPlaced: audioPlacedRef.current,
       hasTimeline: !!timeline,
       audioChunksCount: audioChunks?.length || 0,
-      audioUrl,
-      trackItemsMapSize: Object.keys(trackItemsMap).length,
+      tracksCount: Object.keys(trackItemsMap).length,
     });
 
-    // STABILIZATION FIX (V3 - FINAL):
-    // 1. Get current tracks and items.
-    // 2. Find audio tracks that actually have items.
-    // 3. If at least one valid audio track with items exists, we are done. Skip init.
-    // 4. If multiple audio tracks exist (even empty), skip init to avoid infinite loop.
-    // 5. Only initialize if ZERO audio tracks exist.
     const { tracks } = useStore.getState();
     const audioTracks = tracks.filter((t) => t.type === "audio");
 
-    // Check if ANY audio track has items
-    const audioTracksWithItems = audioTracks.filter((t) => t.items.length > 0);
-
-    console.log("[Editor Audio Debug] Audio State Check:", {
-      audioTracksCount: audioTracks.length,
-      audioTracksWithItems: audioTracksWithItems.length,
-      trackItemsMapSize: Object.keys(trackItemsMap).length,
-    });
-
-    // If we have any audio tracks (with or without items), mark as placed and skip.
-    // This breaks the infinite loop caused by empty track shells.
-    // HOWEVER: On remount (step navigation), we need to re-dispatch items to the new canvas.
+    // Check if audio tracks already exist (and we missed the sync?)
     if (audioTracks.length > 0) {
-      // Check if we've already dispatched in THIS mount cycle
-      if (audioPlacedRef.current) {
+      if (!audioPlacedRef.current) {
         console.log(
-          "[Editor Audio Debug] Skipping - already dispatched in this session"
+          "[Editor Audio Debug] Audio tracks exist, marking as placed."
         );
-        return;
-      }
-
-      // Mark as placed for this mount cycle
-      audioPlacedRef.current = true;
-
-      if (audioTracksWithItems.length > 0) {
-        console.log(
-          "[Editor Audio Debug] Store has audio track with",
-          audioTracksWithItems[0].items.length,
-          "items - re-dispatching to canvas"
-        );
-
-        // Re-dispatch existing items to the new canvas
-        // Get the full track items from the store
-        const existingAudioItems = Object.values(trackItemsMap).filter(
-          (item) => item.type === "audio"
-        );
-
-        if (existingAudioItems.length > 0) {
-          console.log(
-            "[Editor Audio Debug] Re-dispatching",
-            existingAudioItems.length,
-            "audio items to canvas with ALL tracks"
-          );
-
-          // IMPORTANT: Include ALL tracks (audio + visual) to prevent overwriting
-          dispatch(ADD_ITEMS, {
-            payload: {
-              trackItems: existingAudioItems,
-              tracks: tracks.map((t) => ({
-                id: t.id,
-                items: t.items,
-                type: t.type,
-              })),
-            },
-          });
-        }
+        audioPlacedRef.current = true;
       }
       return;
     }
 
     // Skip if already placed (local guard) or timeline not ready
     if (audioPlacedRef.current) {
-      console.log(
-        "[Editor Audio Debug] Skipping - audio already placed (local flag)"
-      );
       return;
     }
 
@@ -242,17 +221,6 @@ const Editor = ({
       console.log("[Editor Audio Debug] Skipping - timeline not ready");
       return;
     }
-
-    // Log existing audio tracks for debugging
-    const existingAudioTracks = Object.values(trackItemsMap).filter(
-      (item) => item.type === "audio"
-    );
-    console.log(
-      "[Editor Audio Debug] Existing audio tracks:",
-      existingAudioTracks.length,
-      existingAudioTracks.map((t) => (t.details as any)?.src?.substring(0, 50))
-    );
-    // NOTE: We no longer skip here - we want to add our audio chunks even if there's existing audio
 
     // Build the audio track items from chunks
     if (!audioChunks || audioChunks.length === 0) {
@@ -361,25 +329,17 @@ const Editor = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioChunks, audioUrl, timeline]);
 
-  // Visual placeholder placement ref
-  const visualsPlacedRef = useRef(false);
-
   // Auto-place visual placeholders on timeline when shot list is available
   useEffect(() => {
+    // If we already synced from persistent state, skip placement
+    if (syncedRef.current) return;
+
     console.log("[Editor Visual DEBUG] Effect triggered:", {
       visualsPlaced: visualsPlacedRef.current,
       hasTimeline: !!timeline,
       shotListCount: shotList?.length || 0,
-      shotListSample: shotList?.[0],
+      tracksCount: tracks.length, // Log tracks count from prop
     });
-
-    // Skip if already placed or no timeline
-    if (visualsPlacedRef.current) {
-      console.log(
-        "[Editor Visual DEBUG] Skipping - visuals already placed (ref=true)"
-      );
-      return;
-    }
 
     if (!timeline) {
       console.log("[Editor Visual DEBUG] Skipping - timeline not ready");
@@ -391,72 +351,47 @@ const Editor = ({
       return;
     }
 
-    // Check if visual tracks already exist in store
-    const { tracks, trackItemsMap: storeTrackItemsMap } = useStore.getState();
-    console.log("[Editor Visual DEBUG] Current tracks in store:", {
-      totalTracks: tracks.length,
-      trackTypes: tracks.map((t) => t.type),
-    });
-
+    // Check if visual tracks ALREADY exist
     const visualTracks = tracks.filter(
       (t) => t.type === "image" || t.type === "video"
     );
 
-    // If visual tracks exist, check if we need to re-dispatch
     if (visualTracks.length > 0) {
-      // Check if we've already dispatched in THIS mount cycle
-      if (visualsPlacedRef.current) {
+      // If tracks exist, we assume they are correct (either from Sync or previous placement)
+      // Just update our ref to match reality
+      if (!visualsPlacedRef.current) {
         console.log(
-          "[Editor Visual DEBUG] Skipping - already dispatched in this session"
+          "[Editor Visual DEBUG] Visual tracks found, marking as placed."
         );
-        return;
+        visualsPlacedRef.current = true;
       }
+      return;
+    }
 
-      // Mark as placed for this mount cycle
-      visualsPlacedRef.current = true;
-
-      console.log(
-        "[Editor Visual DEBUG] Store has visual tracks - re-dispatching to canvas"
-      );
-
-      // Re-dispatch existing items to the new canvas
-      const existingVisualItems = Object.values(storeTrackItemsMap).filter(
-        (item) => item.type === "image" || item.type === "video"
-      );
-
-      if (existingVisualItems.length > 0) {
-        console.log(
-          "[Editor Visual DEBUG] Re-dispatching",
-          existingVisualItems.length,
-          "visual items to canvas"
-        );
-
-        // Include all tracks (both audio and visual) to preserve them
-        dispatch(ADD_ITEMS, {
-          payload: {
-            trackItems: existingVisualItems,
-            tracks: tracks.map((t) => ({
-              id: t.id,
-              items: t.items,
-              type: t.type,
-            })),
-          },
-        });
-      }
+    // If we have a local ref saying we placed them, but they aren't in the store...
+    // Then something went wrong (e.g. state reset), so we should probably allow placement again?
+    // BUT we must be careful of race conditions.
+    // For now, respect the ref to avoid infinite loops, unless we are sure.
+    if (visualsPlacedRef.current) {
+      // double check if maybe they were just added?
+      // If they are missing key logic, we might need to reset ref?
+      // For safety, let's Stick to "skip if ref is true" to prevent dups.
       return;
     }
 
     // Wait for audio track to be placed before adding visuals
     // This prevents race condition where visuals overwrite audio
     const audioTracks = tracks.filter((t) => t.type === "audio");
-    if (audioTracks.length === 0 && audioChunks && audioChunks.length > 0) {
+
+    // Only wait if there are actual audio chunks/url we expect to place
+    const expectingAudio =
+      (audioChunks && audioChunks.length > 0) || !!audioUrl;
+
+    if (audioTracks.length === 0 && expectingAudio) {
       console.log(
-        "[Editor Visual DEBUG] Audio track not ready yet, waiting 500ms before retrying..."
+        "[Editor Visual DEBUG] Audio track not ready yet. Waiting for store update..."
       );
-      // Don't mark as placed yet - schedule a retry
-      setTimeout(() => {
-        visualsPlacedRef.current = false; // Reset to allow retry
-      }, 500);
+      // No timeout needed! React will re-render this effect when 'tracks' changes
       return;
     }
 
@@ -481,9 +416,11 @@ const Editor = ({
       const id = generateId();
       const color = contentTypeColors[shot.content_type] || "#6b7280";
 
-      // Create an SVG data URL as placeholder - much more reliable than external APIs
-      const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080"><rect fill="${color}" width="1920" height="1080"/><text x="960" y="540" text-anchor="middle" fill="white" font-size="48" font-family="sans-serif">Shot ${shot.segment_index}</text></svg>`;
-      const dataUrl = `data:image/svg+xml,${encodeURIComponent(svgContent)}`;
+      // Use a simple 1x1 transparent PNG as placeholder to avoid decode errors
+      // The timeline will show the track item - actual images will be generated later
+      // This is a 1x1 transparent PNG encoded as base64
+      const transparentPng =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
       return {
         id,
@@ -499,11 +436,13 @@ const Editor = ({
         },
         duration: shot.duration_seconds * 1000,
         details: {
-          src: dataUrl,
+          src: transparentPng,
+          // Store the color in metadata for potential future use
         },
         metadata: {
           shotIndex: shot.segment_index,
           contentType: shot.content_type,
+          color: color,
           visualPrompt: shot.visual_prompt || shot.text,
           text: shot.text,
         },
@@ -512,8 +451,10 @@ const Editor = ({
 
     // Dispatch visual placeholders to a new track
     // IMPORTANT: Include ALL existing tracks to prevent replacement
+    // We re-read tracks from store to ensure we have the absolute latest state (including just-added audio)
     const trackId = generateId();
-    const existingTracks = tracks.map((t) => ({
+    // Use the tracks from prop which is latest from store
+    const existingTracksPayload = tracks.map((t) => ({
       id: t.id,
       items: t.items,
       type: t.type,
@@ -522,13 +463,13 @@ const Editor = ({
     console.log("[Editor Visual DEBUG] ADD_ITEMS payload:", {
       trackItemsCount: trackItems.length,
       newTrackId: trackId,
-      existingTracksCount: existingTracks.length,
-      existingTrackTypes: existingTracks.map((t) => t.type),
+      existingTracksCount: existingTracksPayload.length,
+      existingTrackTypes: existingTracksPayload.map((t) => t.type),
     });
 
     // Combine existing tracks with new visual track
     const allTracks = [
-      ...existingTracks,
+      ...existingTracksPayload,
       {
         id: trackId,
         items: trackItems.map((item) => item.id),
@@ -546,8 +487,8 @@ const Editor = ({
     console.log(
       `[Editor Visual DEBUG] Added ${shotList.length} visual placeholders to track ${trackId}. Total tracks now: ${allTracks.length}`
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shotList, timeline]);
+    // Add 'tracks' to dependency array to trigger re-run when Audio effect adds tracks
+  }, [shotList, timeline, tracks, audioChunks, audioUrl]);
 
   useEffect(() => {
     setCompactFonts(getCompactFontData(FONTS));
