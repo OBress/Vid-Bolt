@@ -6,7 +6,7 @@ import Opacity from "./common/opacity";
 import Rounded from "./common/radius";
 import AspectRatio from "./common/aspect-ratio";
 import { Button } from "@/components/ui/button";
-import { Crop } from "lucide-react";
+import { Crop, RefreshCcw, Sparkles } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { dispatch } from "@designcombo/events";
 import { EDIT_OBJECT } from "@designcombo/state";
@@ -15,10 +15,12 @@ import Brightness from "./common/brightness";
 import useLayoutStore from "../store/use-layout-store";
 import { Label } from "@/components/ui/label";
 import { Animations } from "./common/animations";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 
 const BasicImage = ({
   trackItem,
-  type
+  type,
 }: {
   trackItem: ITrackItem & IImage;
   type?: string;
@@ -26,8 +28,17 @@ const BasicImage = ({
   const showAll = !type;
   const [properties, setProperties] = useState(trackItem);
   const { setCropTarget } = useLayoutStore();
+
+  // Local state for the media tab
+  const [prompt, setPrompt] = useState(
+    trackItem.metadata?.visualPrompt || trackItem.metadata?.text || ""
+  );
+
   useEffect(() => {
     setProperties(trackItem);
+    setPrompt(
+      trackItem.metadata?.visualPrompt || trackItem.metadata?.text || ""
+    );
   }, [trackItem]);
 
   const onChangeBorderWidth = (v: number) => {
@@ -35,18 +46,18 @@ const BasicImage = ({
       payload: {
         [trackItem.id]: {
           details: {
-            borderWidth: v
-          }
-        }
-      }
+            borderWidth: v,
+          },
+        },
+      },
     });
     setProperties((prev) => {
       return {
         ...prev,
         details: {
           ...prev.details,
-          borderWidth: v
-        }
+          borderWidth: v,
+        },
       };
     });
   };
@@ -56,18 +67,18 @@ const BasicImage = ({
       payload: {
         [trackItem.id]: {
           details: {
-            borderColor: v
-          }
-        }
-      }
+            borderColor: v,
+          },
+        },
+      },
     });
     setProperties((prev) => {
       return {
         ...prev,
         details: {
           ...prev.details,
-          borderColor: v
-        }
+          borderColor: v,
+        },
       };
     });
   };
@@ -77,18 +88,18 @@ const BasicImage = ({
       payload: {
         [trackItem.id]: {
           details: {
-            opacity: v
-          }
-        }
-      }
+            opacity: v,
+          },
+        },
+      },
     });
     setProperties((prev) => {
       return {
         ...prev,
         details: {
           ...prev.details,
-          opacity: v
-        }
+          opacity: v,
+        },
       };
     });
   };
@@ -98,18 +109,18 @@ const BasicImage = ({
       payload: {
         [trackItem.id]: {
           details: {
-            blur: v
-          }
-        }
-      }
+            blur: v,
+          },
+        },
+      },
     });
     setProperties((prev) => {
       return {
         ...prev,
         details: {
           ...prev.details,
-          blur: v
-        }
+          blur: v,
+        },
       };
     });
   };
@@ -118,18 +129,18 @@ const BasicImage = ({
       payload: {
         [trackItem.id]: {
           details: {
-            brightness: v
-          }
-        }
-      }
+            brightness: v,
+          },
+        },
+      },
     });
     setProperties((prev) => {
       return {
         ...prev,
         details: {
           ...prev.details,
-          brightness: v
-        }
+          brightness: v,
+        },
       };
     });
   };
@@ -139,18 +150,18 @@ const BasicImage = ({
       payload: {
         [trackItem.id]: {
           details: {
-            borderRadius: v
-          }
-        }
-      }
+            borderRadius: v,
+          },
+        },
+      },
     });
     setProperties((prev) => {
       return {
         ...prev,
         details: {
           ...prev.details,
-          borderRadius: v
-        }
+          borderRadius: v,
+        },
       };
     });
   };
@@ -160,10 +171,10 @@ const BasicImage = ({
       payload: {
         [trackItem.id]: {
           details: {
-            boxShadow: boxShadow
-          }
-        }
-      }
+            boxShadow: boxShadow,
+          },
+        },
+      },
     });
 
     setProperties((prev) => {
@@ -171,8 +182,8 @@ const BasicImage = ({
         ...prev,
         details: {
           ...prev.details,
-          boxShadow
-        }
+          boxShadow,
+        },
       };
     });
   };
@@ -192,7 +203,7 @@ const BasicImage = ({
             <Crop size={18} />
           </Button>
         </div>
-      )
+      ),
     },
     {
       key: "basic",
@@ -219,11 +230,11 @@ const BasicImage = ({
             value={properties.details.brightness ?? 100}
           />
         </div>
-      )
+      ),
     },
     {
       key: "animations",
-      component: <Animations trackItem={trackItem} properties={properties} />
+      component: <Animations trackItem={trackItem} properties={properties} />,
     },
 
     {
@@ -236,7 +247,7 @@ const BasicImage = ({
           valueBorderWidth={properties.details.borderWidth as number}
           valueBorderColor={properties.details.borderColor as string}
         />
-      )
+      ),
     },
     {
       key: "shadow",
@@ -249,27 +260,82 @@ const BasicImage = ({
               color: "transparent",
               x: 0,
               y: 0,
-              blur: 0
+              blur: 0,
             }
           }
         />
-      )
-    }
+      ),
+    },
   ];
+
   return (
-    <div className="flex flex-1 flex-col">
-      <div className="text-text-primary flex h-12 flex-none items-center px-4 text-sm font-medium">
-        Image
-      </div>
-      <ScrollArea className="h-full">
-        <div className="flex flex-col gap-2 px-4 py-4">
-          {components
-            .filter((comp) => showAll || comp.key === type)
-            .map((comp) => (
-              <React.Fragment key={comp.key}>{comp.component}</React.Fragment>
-            ))}
+    <div className="flex flex-1 flex-col h-full">
+      <Tabs defaultValue="media" className="w-full flex-1 flex flex-col">
+        <div className="px-4 pt-4">
+          <TabsList className="w-full grid grid-cols-2">
+            <TabsTrigger value="media">Image</TabsTrigger>
+            <TabsTrigger value="properties">Properties</TabsTrigger>
+          </TabsList>
         </div>
-      </ScrollArea>
+
+        <TabsContent value="media" className="flex-1 mt-0">
+          <ScrollArea className="h-full">
+            <div className="flex flex-col gap-4 px-4 py-4">
+              {/* Reference Image Section - Optional */}
+              <div className="flex flex-col gap-2">
+                <Label className="text-xs font-semibold text-muted-foreground">
+                  Image Source
+                </Label>
+                <div className="w-full aspect-video rounded-md border border-dashed border-border flex items-center justify-center bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer min-h-[150px] relative overflow-hidden group">
+                  {trackItem.details.src ? (
+                    <img
+                      src={trackItem.details.src}
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      Click to upload reference
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Prompt Section */}
+              <div className="flex flex-col gap-2">
+                <Label className="text-xs font-semibold text-muted-foreground">
+                  Prompt
+                </Label>
+                <Textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  className="min-h-[100px] resize-none text-xs"
+                  placeholder="Describe the image..."
+                />
+              </div>
+
+              {/* Regenerate Button */}
+              <Button className="w-full gap-2">
+                <RefreshCcw size={16} />
+                Regenerate
+              </Button>
+            </div>
+          </ScrollArea>
+        </TabsContent>
+
+        <TabsContent value="properties" className="flex-1 mt-0">
+          <ScrollArea className="h-full">
+            <div className="flex flex-col gap-2 px-4 py-4">
+              {components
+                .filter((comp) => showAll || comp.key === type)
+                .map((comp) => (
+                  <React.Fragment key={comp.key}>
+                    {comp.component}
+                  </React.Fragment>
+                ))}
+            </div>
+          </ScrollArea>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

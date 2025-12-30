@@ -1409,6 +1409,7 @@ export const avScriptWorkflow = inngest.createFunction(
           content_type: s.content_type,
           text: s.text,
           visual_prompt: s.visual_prompt,
+          media_type: s.media_type,
         })),
         content_analysis: {
           lists_count: analysis.lists.length,

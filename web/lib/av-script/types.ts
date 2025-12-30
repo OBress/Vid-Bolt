@@ -65,6 +65,9 @@ export interface ShotEvent {
   /** Content type classification */
   content_type: ContentType;
   
+  /** Media type classification */
+  media_type?: 'image' | 'video';
+  
   /** Transcript text for this segment */
   text: string;
   

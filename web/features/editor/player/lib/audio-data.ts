@@ -23,6 +23,7 @@ export class AudioDataManager {
 
   private async loadAudioData(src: string, id: string): Promise<void> {
     try {
+      if (src.includes("data:image")) return;
       console.log("Loading audio data for", src);
       const data = await getAudioData(src);
       this.audioDatas[id] = {

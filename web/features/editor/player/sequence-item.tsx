@@ -29,6 +29,7 @@ import {
   Text,
   Video,
   WaveAudioBars,
+  VideoPlaceholder,
 } from "./items";
 import { SequenceItemOptions } from "./base-sequence";
 
@@ -45,9 +46,28 @@ export const SequenceItem: Record<
   shape: (item, options) => (
     <Shape key={item.id} item={item as IShape} options={options} />
   ),
-  video: (item, options) => (
-    <Video key={item.id} item={item as IVideo} options={options} />
-  ),
+  video: (item, options) => {
+    const src = item.details.src;
+    // Check if source is an image (data URI or file extension)
+    // Also handling green visual placeholders if they come in non-standard formats
+    const isImage =
+      src?.startsWith("data:image/") ||
+      src?.match(/\.(jpeg|jpg|png|gif|webp|svg)$/i) ||
+      // Fallback: If it's a blob url and loaded as image in other places,
+      // we might need a metadata flag, but for now assuming if it's not mp4 it might be image
+      (src && !src.endsWith(".mp4") && !src.startsWith("data:video/"));
+
+    if (isImage) {
+      return (
+        <VideoPlaceholder
+          key={item.id}
+          item={item as unknown as IVideo}
+          options={options}
+        />
+      );
+    }
+    return <Video key={item.id} item={item as IVideo} options={options} />;
+  },
   audio: (item, options) => (
     <Audio key={item.id} item={item as IAudio} options={options} />
   ),

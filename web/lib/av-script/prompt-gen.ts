@@ -51,14 +51,18 @@ Example: "silhouette of person standing alone on cliff edge at sunset, contempla
 };
 
 const VISUAL_PROMPT_SYSTEM = `You are a visual director for video content.
-Your job is to generate specific, vivid image prompts for video segments.
+Your job is to generate specific, vivid image prompts for video segments and decide whether they should be static IMAGES or short VIDEO clips.
 
 CRITICAL RULES:
 1. NO text on screen - just visuals
-2. Each image must be DISTINCT and SPECIFIC
+2. Each image/video must be DISTINCT and SPECIFIC
 3. Match the visual style to the content type
 4. Use cinematic, professional imagery
 5. Be concise but descriptive (1-2 sentences max)
+6. DECIDE MEDIA TYPE:
+   - "image" for: Static concepts, list items, specific objects, freeze frames
+   - "video" for: Transitions, emotional beats relying on movement, comparisons showing change, action
+   - Default to "image" if unsure, use "video" sparingly for maximum impact
 
 For adjacent list items, ensure VISUAL VARIETY - each should be clearly different.
 
@@ -91,10 +95,10 @@ export async function generateVisualPrompts(
       next_type: i < segments.length - 1 ? segments[i + 1].content_type : null,
     }));
 
-    const response = await generateJSON<{ prompts: { index: number; visual_description: string }[] }>(
+    const response = await generateJSON<{ prompts: { index: number; visual_description: string; media_type: 'image' | 'video' }[] }>(
       userId,
       VISUAL_PROMPT_SYSTEM,
-      `Generate visual prompts for these ${segments.length} video segments:
+      `Generate visual prompts and media types for these ${segments.length} video segments:
 
 ${JSON.stringify(segmentsInput, null, 2)}
 
@@ -103,11 +107,12 @@ IMPORTANT:
 - Match the style and detail level to the content type
 - Keep prompts concise (1-2 sentences)
 - No text overlays, just imagery
+- Determine "media_type": "image" or "video"
 
 Return JSON:
 {
   "prompts": [
-    { "index": 0, "visual_description": "A detailed description..." }
+    { "index": 0, "visual_description": "A detailed description...", "media_type": "image" }
   ]
 }`
     );
@@ -117,6 +122,7 @@ Return JSON:
       response.prompts.forEach(p => {
         if (segments[p.index]) {
           segments[p.index].visual_prompt = p.visual_description;
+          segments[p.index].media_type = p.media_type || 'image';
         }
       });
     }
@@ -125,6 +131,9 @@ Return JSON:
     segments.forEach(s => {
       if (!s.visual_prompt) {
         s.visual_prompt = generateFallbackPrompt(s);
+      }
+      if (!s.media_type) {
+         s.media_type = generateFallbackMediaType(s);
       }
     });
 
@@ -136,6 +145,7 @@ Return JSON:
     // Fallback: generate basic prompts for all segments
     segments.forEach(s => {
       s.visual_prompt = generateFallbackPrompt(s);
+      s.media_type = generateFallbackMediaType(s);
     });
     
     return segments;
@@ -167,6 +177,26 @@ function generateFallbackPrompt(segment: ShotEvent): string {
     
     default:
       return `Cinematic shot representing: ${firstWords}`;
+  }
+}
+
+/**
+ * Generate a fallback media type based on content type.
+ */
+function generateFallbackMediaType(segment: ShotEvent): 'image' | 'video' {
+  switch (segment.content_type) {
+    case 'transition':
+      return 'video'; // Transitions are inherently moving
+    case 'emotional-beat':
+      return 'video'; // Emotional beats often need subtle motion
+    case 'comparison':
+       return 'video'; // Comparisons often benefit from motion/change
+    case 'list-item':
+      return 'image'; // List items are usually static/distinct
+    case 'concept':
+      return 'image'; // Concepts can be complex static scenes
+    default:
+      return 'image';
   }
 }
 

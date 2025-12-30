@@ -156,6 +156,11 @@ class Video extends Trimmable {
 
     // Dynamically import MP4Clip only on the client side
     if (typeof window !== "undefined") {
+      // If src is an image data URI, skip MP4Clip initialization
+      if (this.src.includes("data:image")) {
+        this.clip = null;
+        return;
+      }
       try {
         const { MP4Clip } = await import("@designcombo/frames");
         this.clip = new MP4Clip(stream);

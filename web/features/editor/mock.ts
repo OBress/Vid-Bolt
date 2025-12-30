@@ -4,8 +4,8 @@ export const design = {
     "fps": 30,
     "tracks": [],
     "size": {
-        "width": 1080,
-        "height": 1920
+        "width": 1920,
+        "height": 1080
     },
     "trackItemIds": [],
     "transitionsMap": {},

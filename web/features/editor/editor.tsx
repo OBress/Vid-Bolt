@@ -39,8 +39,8 @@ import { design } from "./mock";
 
 const stateManager = new StateManager({
   size: {
-    width: 1080,
-    height: 1920,
+    width: 1920,
+    height: 1080,
   },
 });
 
@@ -102,6 +102,7 @@ interface ShotEvent {
     | "concept"
     | "transition"
     | "emotional-beat";
+  media_type?: "image" | "video";
   text: string;
   visual_prompt?: string;
 }
@@ -411,20 +412,55 @@ const Editor = ({
       "emotional-beat": "#ef4444", // red
     };
 
+    // Content type to visual type mapping
+    // If media_type is provided (from new API), use it. Otherwise fallback to basic mapping.
+    const getVisualType = (shot: ShotEvent): "image" | "video" => {
+      // Use explicit media_type if available
+      if (shot.media_type === "image" || shot.media_type === "video") {
+        return shot.media_type;
+      }
+
+      // Fallback based on content type if no media_type provided
+      switch (shot.content_type) {
+        case "transition":
+        case "emotional-beat":
+          return "video";
+        default:
+          return "image";
+      }
+    };
+
     // Build visual track items from shot list
     const trackItems = shotList.map((shot) => {
       const id = generateId();
       const color = contentTypeColors[shot.content_type] || "#6b7280";
+      const visualType = getVisualType(shot);
 
-      // Use a simple 1x1 transparent PNG as placeholder to avoid decode errors
-      // The timeline will show the track item - actual images will be generated later
-      // This is a 1x1 transparent PNG encoded as base64
+      // Use a simple 1x1 transparent PNG as placeholder for images
+      // and a minimal valid empty MP4 for video items
       const transparentPng =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
+      // Minimal valid empty MP4 (black frame, silent)
+      const emptyMp4 =
+        "data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAAVhZGF0AF3gAAAAAAAAAAAAIiBtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAEAAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAIGdHJhawAAAFx0a2hkAAAADwAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAQAAAAAAvQAAAAEAAAAAAAEAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAQAAAAGibWRpYQAAACBtZGh0AAAAAAAAAAAAAAAAAAAAGUAAAAyAAAAAAAABLihoZGwAAAAAdmNndAAAAAAAAAAAAAAAAFZpZGVvSGFuZGxlcgAAAAF9bWluZgAAABR2bWhkAAAAAQAAAAAAAAAAAAAAJGRpbmYAAAAcYnJlZgAAAAAAAAAAdXJsIAAAAAEAAAAAAAAAbHN0YmwAAABXc3RzZAAAAAAAAAABAAAAh2F2YzEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAQABAAAAAAABAAAAAAAAAAAAAAAIAAAACAAAAAAAAAAAAAAAIGF2Y0MAQ//+AAAAAAAdYXZjQwBD//4AAO68gAAAAAEAABXgR5YAAAAJc3R0cwAAAAAAAAABAAAAAQAAABBzY3R0AAAAAAAAAAEAAAABAAAAFHN0c3oAAAAAAAAAAQAAAFAAAAAcc3RjbwAAAAAAAAABAAAAQAAAAAAAAAACAAAAA";
+
+      const source = transparentPng;
+
+      const itemDetails: any = {
+        src: source,
+      };
+
+      // Add specific details for video to ensure player can initialize
+      if (visualType === "video") {
+        itemDetails.volume = 0;
+        itemDetails.width = 1920;
+        itemDetails.height = 1080;
+      }
+
       return {
         id,
-        type: "image" as const,
+        type: visualType,
         name: `Shot ${shot.segment_index}`,
         display: {
           from: shot.start_seconds * 1000,
@@ -435,19 +471,43 @@ const Editor = ({
           to: shot.duration_seconds * 1000,
         },
         duration: shot.duration_seconds * 1000,
-        details: {
-          src: transparentPng,
-          // Store the color in metadata for potential future use
-        },
+        details: itemDetails,
         metadata: {
           shotIndex: shot.segment_index,
           contentType: shot.content_type,
+          mediaType: visualType,
           color: color,
           visualPrompt: shot.visual_prompt || shot.text,
           text: shot.text,
         },
       };
     });
+
+    // Group items by type to put on separate tracks if desired, OR keep on one track
+    // For now, keep on one track but setting correct type allows the Sidebar to show correct tabs
+    // Note: Timeline might need mixed track support or we separate them?
+    // The current implementation puts them all on one track defined as "image" type
+    // We should probably verify if we can mix types on a track.
+    // If not, we might need multiple tracks or a generic "visual" track type.
+    // Let's assume for now we put them on a single track but the ITEM ID determines the control
+
+    // IMPORTANT: The track definition below sets type: "image".
+    // If we have mixed content, this "track type" usually defaults the behavior.
+    // However, the *item* type (`visualType`) is what `ActiveControlItem` uses to render components.
+    // Let's check if we need to change the track type to something generic or if "image" is fine for mixed.
+    // Looking at Timeline implementation usually tracks are typed, but items override.
+    // Let's stick to adding them to the track, but update the track logic if needed.
+
+    // If we need strict track separation:
+    const imageItems = trackItems.filter((i) => i.type === "image");
+    const videoItems = trackItems.filter((i) => i.type === "video");
+
+    // Logic below dispatches them all together.
+    // Let's update the track type to be generic if possible, or just keep "image" as the container
+    // usually "visual" or "video" is the generic type.
+
+    // We will dispatch them all on one track for layout stability,
+    // assuming the renderer handles mixed item types on a track (standard in many timelines).
 
     // Dispatch visual placeholders to a new track
     // IMPORTANT: Include ALL existing tracks to prevent replacement

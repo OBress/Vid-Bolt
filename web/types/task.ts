@@ -222,6 +222,7 @@ export interface VideoTaskOutput {
     end_seconds: number;
     duration_seconds: number;
     content_type: 'list-item' | 'comparison' | 'concept' | 'transition' | 'emotional-beat';
+    media_type?: 'image' | 'video';
     text: string;
     visual_prompt?: string;
   }>;

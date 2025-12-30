@@ -3,13 +3,12 @@
 import { use, useState, useRef, useCallback, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Video, BarChart2, Settings, Hash, Plus, Loader2 } from "lucide-react";
+import { Video, BarChart2, Settings, Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/layout/SidebarContext";
 import { VideoCard } from "@/components/features/project/VideoCard";
 import { AnalyticsTab } from "@/components/features/project/AnalyticsTab";
 import { SettingsTab } from "@/components/features/project/SettingsTab";
-import { RandomTab } from "@/components/features/project/RandomTab";
 import { VideoCreationWizard } from "@/components/video-creation/VideoCreationWizard";
 import {
   Dialog,
@@ -248,7 +247,6 @@ export default function ProjectPage({
     { id: "videos", label: "Videos", icon: Video },
     { id: "analytics", label: "Analytics", icon: BarChart2 },
     { id: "settings", label: "Settings", icon: Settings },
-    { id: "random", label: "Random", icon: Hash },
   ];
 
   const getTransformStyle = () => {
@@ -418,10 +416,6 @@ export default function ProjectPage({
 
               <TabsContent value="settings" className="mt-0 outline-none">
                 <SettingsTab projectId={projectId} />
-              </TabsContent>
-
-              <TabsContent value="random" className="mt-0 outline-none">
-                <RandomTab />
               </TabsContent>
             </div>
           </Tabs>
