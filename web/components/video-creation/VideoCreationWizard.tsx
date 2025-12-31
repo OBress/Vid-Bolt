@@ -682,6 +682,8 @@ export function VideoCreationWizard({
           <StepExport
             videoId={state.videoId!}
             projectId={projectId}
+            audioChunks={state.audioChunks}
+            shotList={state.shotList}
             onBack={async () => {
               // Persist the step navigation to the database
               if (state.videoId) {
@@ -702,7 +704,7 @@ export function VideoCreationWizard({
                 try {
                   await updateVideo(state.videoId, { status: "completed" });
                 } catch (err) {
-                  console.error("Failed to mark video as completed:", err);
+                  console.error("Failed to mark video as completed:");
                 }
               }
               onComplete(state.videoId!);

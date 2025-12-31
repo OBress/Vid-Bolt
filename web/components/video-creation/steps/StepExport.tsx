@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Share2,
   Clapperboard,
@@ -17,6 +17,11 @@ import {
   getAssetCounts,
   estimateExportSize,
 } from "@/lib/export";
+import { generateId } from "@designcombo/timeline";
+import type {
+  AudioChunk,
+  ShotEvent,
+} from "@/components/video-creation/VideoCreationWizard";
 
 // DaVinci Resolve icon
 const DaVinciIcon = () => <Clapperboard className="w-5 h-5" />;
@@ -26,6 +31,8 @@ interface StepExportProps {
   projectId: string;
   onBack: () => void;
   onClose: () => void;
+  audioChunks?: AudioChunk[];
+  shotList?: ShotEvent[];
   isLocked?: boolean;
   lockedMessage?: string;
 }
@@ -37,6 +44,8 @@ export function StepExport({
   projectId,
   onBack,
   onClose,
+  audioChunks,
+  shotList,
   isLocked,
   lockedMessage,
 }: StepExportProps) {
@@ -45,11 +54,200 @@ export function StepExport({
   const [exportMessage, setExportMessage] = useState("");
   const [exportError, setExportError] = useState<string | null>(null);
 
+  // Track if we've already populated the store to prevent duplicate dispatches
+  const hasPopulatedRef = useRef(false);
+
   // Get timeline data from editor store
-  const { trackItemsMap, tracks, duration, fps, size } = useStore();
+  const { trackItemsMap, tracks, duration, fps, size, timeline } = useStore();
 
   // Get video name from navigation store
   const { currentVideoName } = useNavigationStore();
+
+  // Populate the store with track items if it's empty (direct navigation to export page)
+  useEffect(() => {
+    // Skip if we've already populated or if store already has items
+    if (hasPopulatedRef.current) return;
+
+    const existingItems = Object.keys(trackItemsMap).length;
+    if (existingItems > 0) {
+      console.log("[StepExport] Store already has items, skipping population");
+      hasPopulatedRef.current = true;
+      return;
+    }
+
+    // Check if we have data to populate
+    const hasAudioChunks = audioChunks && audioChunks.length > 0;
+    const hasShotList = shotList && shotList.length > 0;
+
+    if (!hasAudioChunks && !hasShotList) {
+      console.log("[StepExport] No audio chunks or shot list to populate");
+      return;
+    }
+
+    console.log("[StepExport] Populating store with track items:", {
+      audioChunksCount: audioChunks?.length || 0,
+      shotListCount: shotList?.length || 0,
+    });
+
+    // Mark as populated immediately to prevent duplicate attempts
+    hasPopulatedRef.current = true;
+
+    // Build audio track items
+    const audioTrackItems: any[] = [];
+    let currentTime = 0;
+
+    if (hasAudioChunks) {
+      const sortedChunks = [...audioChunks].sort(
+        (a, b) => a.chapterNumber - b.chapterNumber
+      );
+
+      for (const chunk of sortedChunks) {
+        const id = generateId();
+        const durationMs = (chunk.duration_seconds || 5) * 1000;
+
+        audioTrackItems.push({
+          id,
+          type: "audio" as const,
+          name: `Audio ${chunk.chapterNumber + 1}`,
+          display: {
+            from: currentTime,
+            to: currentTime + durationMs,
+          },
+          trim: {
+            from: 0,
+            to: durationMs,
+          },
+          duration: durationMs,
+          details: {
+            src: chunk.url,
+          },
+          metadata: {
+            text: chunk.text,
+          },
+        });
+
+        currentTime += durationMs;
+      }
+    }
+
+    // Build visual track items from shot list
+    const visualTrackItems: any[] = [];
+
+    if (hasShotList) {
+      const contentTypeColors: Record<string, string> = {
+        "list-item": "#f97316",
+        comparison: "#8b5cf6",
+        concept: "#3b82f6",
+        transition: "#22c55e",
+        "emotional-beat": "#ef4444",
+      };
+
+      const getVisualType = (shot: ShotEvent): "image" | "video" => {
+        // media_type may be present in runtime data but not in the type definition
+        const mediaType = (shot as any).media_type;
+        if (mediaType === "image" || mediaType === "video") {
+          return mediaType;
+        }
+        switch (shot.content_type) {
+          case "transition":
+          case "emotional-beat":
+            return "video";
+          default:
+            return "image";
+        }
+      };
+
+      const transparentPng =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+      for (const shot of shotList) {
+        const id = generateId();
+        const color = contentTypeColors[shot.content_type] || "#6b7280";
+        const visualType = getVisualType(shot);
+
+        const itemDetails: any = { src: transparentPng };
+        if (visualType === "video") {
+          itemDetails.volume = 0;
+          itemDetails.width = 1920;
+          itemDetails.height = 1080;
+        }
+
+        visualTrackItems.push({
+          id,
+          type: visualType,
+          name: `Shot ${shot.segment_index}`,
+          display: {
+            from: shot.start_seconds * 1000,
+            to: shot.end_seconds * 1000,
+          },
+          trim: {
+            from: 0,
+            to: shot.duration_seconds * 1000,
+          },
+          duration: shot.duration_seconds * 1000,
+          details: itemDetails,
+          metadata: {
+            shotIndex: shot.segment_index,
+            contentType: shot.content_type,
+            mediaType: visualType,
+            color: color,
+            visualPrompt: shot.visual_prompt || shot.text,
+            text: shot.text,
+          },
+        });
+      }
+    }
+
+    // Build tracks array
+    const tracksToAdd: any[] = [];
+
+    if (audioTrackItems.length > 0) {
+      const audioTrackId = generateId();
+      tracksToAdd.push({
+        id: audioTrackId,
+        items: audioTrackItems.map((item) => item.id),
+        type: "audio",
+        name: "Audio",
+      });
+    }
+
+    if (visualTrackItems.length > 0) {
+      const visualTrackId = generateId();
+      tracksToAdd.push({
+        id: visualTrackId,
+        items: visualTrackItems.map((item) => item.id),
+        type: "image",
+        name: "Visuals",
+      });
+    }
+
+    const allItems = [...audioTrackItems, ...visualTrackItems];
+
+    if (allItems.length > 0) {
+      // Build trackItemsMap from allItems
+      const newTrackItemsMap: Record<string, any> = {};
+      for (const item of allItems) {
+        newTrackItemsMap[item.id] = item;
+      }
+
+      // Calculate total duration
+      const maxEndTime = Math.max(
+        ...allItems.map((item) => item.display?.to || 0)
+      );
+
+      // Directly update the zustand store (bypassing event dispatch system)
+      useStore.setState({
+        trackItemsMap: newTrackItemsMap,
+        tracks: tracksToAdd,
+        trackItemIds: allItems.map((item) => item.id),
+        duration: maxEndTime,
+      });
+
+      console.log(
+        `[StepExport] Directly updated store with ${allItems.length} items in ${tracksToAdd.length} tracks`
+      );
+    }
+  }, [audioChunks, shotList, trackItemsMap]);
 
   // Calculate asset counts and estimated size
   const assetCounts = getAssetCounts(trackItemsMap);
