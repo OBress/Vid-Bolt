@@ -38,6 +38,7 @@ interface VideoCardProps {
   thumbnailUrl?: string;
   duration?: string;
   updatedAt?: string;
+  currentStep?: string | null;
   onClick: () => void;
   onDelete?: (videoId: string) => void;
 }
@@ -93,6 +94,7 @@ export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
       thumbnailUrl,
       duration,
       updatedAt,
+      currentStep,
       onClick,
       onDelete,
     },
@@ -103,7 +105,27 @@ export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
     const [deleteConfirmName, setDeleteConfirmName] = useState("");
     const [isDeleting, setIsDeleting] = useState(false);
 
-    const statusInfo = statusConfig[status] || statusConfig.draft;
+    // Determine if actively processing based on currentStep
+    // Only show processing UI when there's an active step that's not a completion message
+    const completionMessages = [
+      "complete",
+      "completed",
+      "finished",
+      "done",
+      "workflow completed",
+    ];
+    const isActivelyProcessing =
+      status === "processing" &&
+      currentStep &&
+      !completionMessages.some((msg) =>
+        currentStep.toLowerCase().includes(msg)
+      ) &&
+      progress < 100;
+
+    // Use draft status if not actively processing but status is still "processing"
+    const effectiveStatus =
+      status === "processing" && !isActivelyProcessing ? "draft" : status;
+    const statusInfo = statusConfig[effectiveStatus] || statusConfig.draft;
 
     const handleDelete = async () => {
       if (deleteConfirmName !== title) return;
@@ -149,7 +171,7 @@ export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
           )}
 
           {/* Progress bar for processing videos */}
-          {status === "processing" && (
+          {isActivelyProcessing && (
             <div className="absolute bottom-0 left-0 right-0 h-1 bg-neutral-700">
               <div
                 className="h-full bg-orange-500 transition-all duration-300"
@@ -353,7 +375,7 @@ export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
           >
             {statusInfo.icon}
             <span>{statusInfo.label}</span>
-            {status === "processing" && (
+            {isActivelyProcessing && (
               <span className="text-neutral-500">({progress}%)</span>
             )}
           </div>

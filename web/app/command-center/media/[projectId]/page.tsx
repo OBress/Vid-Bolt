@@ -383,6 +383,10 @@ export default function ProjectPage({
                             progress={video.progress_percent}
                             stage={video.current_stage}
                             updatedAt={video.updated_at}
+                            currentStep={video.current_step}
+                            thumbnailUrl={
+                              (video.metadata as any)?.thumbnail_url
+                            }
                             onClick={() => handleVideoClick(index)}
                             onDelete={fetchVideos}
                           />
@@ -393,7 +397,7 @@ export default function ProjectPage({
                       <p className="text-neutral-500 text-sm mb-4">
                         {showFinished
                           ? "No finished videos yet."
-                          : "No videos in progress. Start by creating your first one!"}
+                          : "No videos in progress."}
                       </p>
                       {!showFinished && (
                         <Button
