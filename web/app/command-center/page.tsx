@@ -5,8 +5,6 @@ import { useRouter } from "next/navigation";
 import { AgentAllocationCard } from "@/components/features/command-center/AgentAllocationCard";
 import { ActivityLogCard } from "@/components/features/command-center/ActivityLogCard";
 import { EncryptedChatCard } from "@/components/features/command-center/EncryptedChatCard";
-import { MissionActivityChart } from "@/components/features/command-center/MissionActivityChart";
-import { MissionInformationCard } from "@/components/features/command-center/MissionInformationCard";
 import { useMediaProjects } from "@/hooks/use-media-projects";
 import { Plus, Loader2, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -117,7 +115,6 @@ export default function CommandCenterPage() {
         )}
       </div>
 
-      {/* Main Dashboard Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-4">
           <AgentAllocationCard />
@@ -127,12 +124,6 @@ export default function CommandCenterPage() {
         </div>
         <div className="lg:col-span-4">
           <EncryptedChatCard />
-        </div>
-        <div className="lg:col-span-8">
-          <MissionActivityChart />
-        </div>
-        <div className="lg:col-span-4">
-          <MissionInformationCard />
         </div>
       </div>
 

@@ -199,50 +199,52 @@ export function generateFCPXML(options: FCPXMLOptions): string {
   }
   resourcesXml += `    </resources>\n`;
 
-  // Build spine (timeline) with clips
+  // Map items to lanes based on tracks
+  const itemLaneMap = new Map<string, number>();
+  let videoLaneCount = 0;
+  let audioLaneCount = 0;
+
+  // We assign lanes based on track type and order
+  tracks.forEach((track) => {
+    if (track.type === "video" || track.type === "image") {
+      videoLaneCount++;
+      track.items.forEach((itemId) => itemLaneMap.set(itemId, videoLaneCount));
+    } else if (track.type === "audio") {
+      audioLaneCount++;
+      track.items.forEach((itemId) => itemLaneMap.set(itemId, -audioLaneCount));
+    }
+  });
+
+  // Build spine (timeline) with a baseline gap
+  // Using a gap at lane 0 that spans the whole project duration provides a consistent anchor
+  // for all other clips, ensuring they stay on their assigned lanes.
   let spineXml = `                    <spine>\n`;
-  
-  // Sort track items by display.from (start time)
-  const sortedItems = Object.entries(trackItems)
-    .filter(([_, item]) => ["video", "audio", "image"].includes(item.type))
-    .sort((a, b) => {
-      const aFrom = a[1].display?.from || 0;
-      const bFrom = b[1].display?.from || 0;
-      return aFrom - bFrom;
-    });
+  spineXml += `                        <gap offset="0s" duration="${durationTime}" name="Baseline">\n`;
 
-  // Separate video/image and audio tracks
-  const videoItems = sortedItems.filter(([_, item]) => item.type === "video" || item.type === "image");
-  const audioItems = sortedItems.filter(([_, item]) => item.type === "audio");
+  // Filter and sort track items that actually exist in the mapping
+  const itemsToExport = Object.entries(trackItems)
+    .filter(([id, item]) => ["video", "audio", "image"].includes(item.type) && itemLaneMap.has(id));
 
-  // Add video/image clips to main spine
-  for (const [id, item] of videoItems) {
+  for (const [id, item] of itemsToExport) {
     const assetId = assetIdMap.get(id);
-    if (!assetId) continue;
-
-    const startTime = (item.display?.from || 0) / 1000; // Convert ms to seconds
-    const endTime = (item.display?.to || 0) / 1000;
-    const clipDuration = endTime - startTime;
-    
-    // Trim points (if any)
-    const trimStart = (item.trim?.from || 0) / 1000;
-    
-    spineXml += `                        <asset-clip ref="${assetId}" offset="${secondsToFCPTime(startTime, frameRate)}" duration="${secondsToFCPTime(clipDuration, frameRate)}" start="${secondsToFCPTime(trimStart, frameRate)}" name="${escapeXml(item.name || id)}"/>\n`;
-  }
-
-  // Add audio clips as attached clips (lane -1)
-  for (const [id, item] of audioItems) {
-    const assetId = assetIdMap.get(id);
-    if (!assetId) continue;
+    const lane = itemLaneMap.get(id);
+    if (!assetId || lane === undefined) continue;
 
     const startTime = (item.display?.from || 0) / 1000;
     const endTime = (item.display?.to || 0) / 1000;
     const clipDuration = endTime - startTime;
     const trimStart = (item.trim?.from || 0) / 1000;
-    
-    spineXml += `                        <asset-clip ref="${assetId}" lane="-1" offset="${secondsToFCPTime(startTime, frameRate)}" duration="${secondsToFCPTime(clipDuration, frameRate)}" start="${secondsToFCPTime(trimStart, frameRate)}" name="${escapeXml(item.name || id)}"/>\n`;
+
+    spineXml += `                            <asset-clip ref="${assetId}" lane="${lane}" offset="${secondsToFCPTime(
+      startTime,
+      frameRate
+    )}" duration="${secondsToFCPTime(clipDuration, frameRate)}" start="${secondsToFCPTime(
+      trimStart,
+      frameRate
+    )}" name="${escapeXml(item.name || id)}"/>\n`;
   }
 
+  spineXml += `                        </gap>\n`;
   spineXml += `                    </spine>\n`;
 
   // Build full FCPXML document

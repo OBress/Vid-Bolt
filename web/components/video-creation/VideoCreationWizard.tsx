@@ -140,6 +140,13 @@ export function VideoCreationWizard({
     audioTaskId: null,
   });
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      setCurrentVideoName(null);
+    };
+  }, [setCurrentVideoName]);
+
   // Load existing video data when resuming
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
 
@@ -182,6 +189,9 @@ export function VideoCreationWizard({
           writeTaskId: null,
           audioTaskId: null,
         });
+
+        // Set the video name in the navigation store
+        setCurrentVideoName(video.name);
 
         // Set the current step and max reached step
         // For resumed videos, maxStepReached should be at least the target step

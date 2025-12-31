@@ -48,7 +48,7 @@ export function TopBar() {
   }, []);
 
   // Extract project name if on a media project page
-  const displayLabel = useMemo(() => {
+  const { label, displayLabel } = useMemo(() => {
     const mediaMatch = pathname.match(/\/command-center\/media\/([^\/]+)/);
     let label = "";
 
@@ -61,24 +61,34 @@ export function TopBar() {
     }
 
     if (currentVideoName) {
-      return (
-        <>
-          {label} /{" "}
-          <span className="text-orange-500">
-            {currentVideoName.toUpperCase()}
-          </span>
-        </>
-      );
+      return {
+        label,
+        displayLabel: (
+          <>
+            {label} /{" "}
+            <span className="text-orange-500">
+              {currentVideoName.toUpperCase()}
+            </span>
+          </>
+        ),
+      };
     }
 
-    return <span className="text-orange-500">{label}</span>;
+    return {
+      label,
+      displayLabel: <span className="text-orange-500">{label}</span>,
+    };
   }, [pathname, projects, currentVideoName]);
 
   return (
     <div className="h-16 bg-neutral-800 border-b border-neutral-700 flex items-center justify-between px-6">
       <div className="flex items-center gap-4">
         <div className="text-sm text-neutral-400">
-          COMMAND CENTER / {displayLabel}
+          {label === "COMMAND CENTER" ? (
+            displayLabel
+          ) : (
+            <>COMMAND CENTER / {displayLabel}</>
+          )}
         </div>
       </div>
 
