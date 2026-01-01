@@ -20,17 +20,27 @@ import type { ScriptGenre, ConfidenceLevel } from './types';
 export const WORDS_PER_MINUTE = 150;
 
 /**
- * Beat duration limits in seconds
- * // CUSTOMIZABLE: Store in user_settings.script_beat_duration
+ * Section word limits
+ * // CUSTOMIZABLE: Store in user_settings.script_section_limits
  * 
- * OPTIMIZATION: Longer beats = fewer LLM calls, more coherent sections.
- * Each beat should cover a single topic/section to minimize transitions.
- * At 150 WPM: 300 sec = ~750 words, 600 sec = ~1500 words
+ * DYNAMIC ALLOCATION: Sections vary in length based on content needs.
+ * The AI decides how many sections and how long each should be.
+ * These are hard limits to maintain quality.
+ */
+export const SECTION_WORD_LIMITS = {
+  minWords: 300,    // Min words per section (too short = fragmented)
+  maxWords: 2000,   // Max words per section (too long = quality degrades)
+  idealWords: 800,  // Sweet spot for quality writing
+};
+
+/**
+ * Beat duration limits in seconds (derived from word limits)
+ * Kept for backward compatibility
  */
 export const BEAT_DURATION = {
-  minSeconds: 120,   // 2 min = ~300 words min
-  maxSeconds: 600,   // 10 min = ~1500 words max (well under 2k limit)
-  defaultSeconds: 300, // 5 min = ~750 words per beat - sweet spot for quality
+  minSeconds: Math.round((SECTION_WORD_LIMITS.minWords / WORDS_PER_MINUTE) * 60),   // ~120 sec
+  maxSeconds: Math.round((SECTION_WORD_LIMITS.maxWords / WORDS_PER_MINUTE) * 60),   // ~800 sec
+  defaultSeconds: Math.round((SECTION_WORD_LIMITS.idealWords / WORDS_PER_MINUTE) * 60), // ~320 sec
 };
 
 /**

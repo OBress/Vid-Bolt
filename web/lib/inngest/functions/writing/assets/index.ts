@@ -58,8 +58,8 @@ export async function generateAssetRegistry(
 
   const genreConfig = GENRE_CONFIG[genre];
 
-  // Extract entities from spine and dossier
-  const entities = extractEntities(spine, dossier);
+  // Extract entities from spine, dossier, AND topic (to ensure main subject is captured)
+  const entities = extractEntities(spine, dossier, topic);
 
   console.log(`[Assets] Found ${entities.people.length} people, ${entities.locations.length} locations, ${entities.objects.length} objects`);
 
@@ -105,14 +105,28 @@ interface ExtractedEntities {
 }
 
 /**
- * Extract entities from spine and dossier
+ * Extract entities from spine, dossier, and topic
+ * CRITICAL: Must capture ALL characters including the main subject
  */
-function extractEntities(spine: Spine, dossier: ResearchDossier | null): ExtractedEntities {
+function extractEntities(spine: Spine, dossier: ResearchDossier | null, topic?: string): ExtractedEntities {
   const people = new Map<string, { role: string; details: string; beatIndices: number[] }>();
   const locations = new Map<string, { type: string; details: string; beatIndices: number[] }>();
   const objects = new Map<string, { type: string; details: string; beatIndices: number[] }>();
 
-  // Extract from dossier entities
+  // 1. CRITICAL: Extract main subject from topic (e.g., "Jamie Dimon" from "The story of Jamie Dimon")
+  if (topic) {
+    const mainSubject = extractMainSubjectFromTopic(topic);
+    if (mainSubject) {
+      people.set(mainSubject, { 
+        role: 'Main Subject', 
+        details: `The primary focus of this video about "${topic}"`,
+        beatIndices: spine.beats.map(b => b.index) // Appears in all beats
+      });
+      console.log(`[Assets] Extracted main subject: "${mainSubject}"`);
+    }
+  }
+
+  // 2. Extract from dossier entities
   if (dossier) {
     for (const entity of dossier.entities) {
       if (entity.type === 'person') {
@@ -124,27 +138,52 @@ function extractEntities(spine: Spine, dossier: ResearchDossier | null): Extract
           locations.set(entity.name, { type: 'location', details: entity.details, beatIndices: [] });
         }
       } else if (entity.type === 'organization') {
-        // Organizations might have locations
         if (!locations.has(entity.name)) {
           locations.set(entity.name, { type: 'organization', details: entity.details, beatIndices: [] });
         }
       }
     }
+
+    // 3. Extract people from quotes (quote speakers are always characters)
+    for (const quote of dossier.quotes) {
+      if (quote.speaker && !people.has(quote.speaker)) {
+        people.set(quote.speaker, { 
+          role: quote.speakerTitle || 'Quoted in video', 
+          details: `Speaker of quote: "${quote.quote.substring(0, 50)}..."`,
+          beatIndices: [] 
+        });
+      }
+    }
   }
 
-  // Scan spine for entity mentions and determine beat appearances
+  // 4. Scan spine content summaries for proper names (capitalized words that might be people)
   for (const beat of spine.beats) {
-    const content = beat.contentSummary.toLowerCase();
+    const content = beat.contentSummary;
     
-    // Check which entities appear in this beat
+    // Find potential proper names (capitalized words, excluding common words)
+    const potentialNames = extractProperNames(content);
+    for (const name of potentialNames) {
+      if (!people.has(name) && name.length > 2) {
+        // Only add if it looks like a person's name (has space or is a single capitalized word)
+        if (name.includes(' ') || /^[A-Z][a-z]+$/.test(name)) {
+          people.set(name, { 
+            role: 'Mentioned in story', 
+            details: `Appears in: "${content.substring(0, 100)}..."`,
+            beatIndices: [beat.index] 
+          });
+        }
+      }
+    }
+    
+    // Track beat appearances for existing entities
     for (const [name, data] of people) {
-      if (content.includes(name.toLowerCase())) {
+      if (content.toLowerCase().includes(name.toLowerCase()) && !data.beatIndices.includes(beat.index)) {
         data.beatIndices.push(beat.index);
       }
     }
     
     for (const [name, data] of locations) {
-      if (content.includes(name.toLowerCase())) {
+      if (content.toLowerCase().includes(name.toLowerCase()) && !data.beatIndices.includes(beat.index)) {
         data.beatIndices.push(beat.index);
       }
     }
@@ -170,6 +209,55 @@ function extractEntities(spine: Spine, dossier: ResearchDossier | null): Extract
       beatIndices: data.beatIndices,
     })),
   };
+}
+
+/**
+ * Extract the main subject from a topic string
+ * Examples: "Jamie Dimon" from "The story of Jamie Dimon", "Elon Musk" from "How Elon Musk became..."
+ */
+function extractMainSubjectFromTopic(topic: string): string | null {
+  // Common patterns for extracting the main subject
+  const patterns = [
+    /(?:story of|biography of|about|profile of|life of|rise of|fall of|how)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
+    /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:'s|\s*:|\s*-|\s+story|\s+biography)/i,
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+(?:documentary|story|biography|profile)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = topic.match(pattern);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  // Fallback: find the first proper name (two or more capitalized words together)
+  const properNameMatch = topic.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/);
+  if (properNameMatch) {
+    return properNameMatch[1];
+  }
+
+  return null;
+}
+
+/**
+ * Extract potential proper names from text
+ */
+function extractProperNames(text: string): string[] {
+  const names: string[] = [];
+  
+  // Match full names (First Last) or (First Middle Last)
+  const fullNamePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/g;
+  let match;
+  while ((match = fullNamePattern.exec(text)) !== null) {
+    const name = match[1];
+    // Exclude common phrases that look like names
+    const excluded = ['The', 'In The', 'At The', 'By The', 'For The', 'This Is', 'Here Is'];
+    if (!excluded.some(e => name.startsWith(e))) {
+      names.push(name);
+    }
+  }
+  
+  return [...new Set(names)];
 }
 
 // ============================================================================

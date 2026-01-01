@@ -69,9 +69,10 @@ export async function expandSingleBeat(
   const { beat, beatIndex, totalBeats, dossier, bannedPhrases, genre, spine, allPreviousBeats, userId, continuityState } = context;
   const enableQualityReview = context.enableQualityReview !== false;
 
-  // Calculate target word count for this beat
+  // Use dynamic targetWords from spine if available, otherwise calculate from duration
   const beatDurationSeconds = beat.timing.durationSeconds;
-  const targetWords = Math.round((beatDurationSeconds / 60) * WORDS_PER_MINUTE);
+  const targetWords = (beat as any).targetWords 
+    || Math.round((beatDurationSeconds / 60) * WORDS_PER_MINUTE);
 
   // Build rich writing context
   const writingContext = buildWritingContext(

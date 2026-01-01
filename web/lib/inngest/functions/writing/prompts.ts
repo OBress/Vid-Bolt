@@ -199,17 +199,26 @@ UNACCEPTABLE (cut or merge):
 - "This provides context"
 - "This is related to the topic"
 
-## SECTION/BEAT DEFINITION
-A section is 2-10 MINUTES (~300-1500 words) containing:
-- A COMPLETE narrative movement (setup → development → mini-payoff)
-- Clear purpose in the overall story arc
-- At least one moment of "oh, interesting!" for the viewer
-- A reason for the viewer to keep watching to the NEXT section
+## DYNAMIC SECTION ALLOCATION
+Sections vary in length based on what the content NEEDS, not a fixed formula.
 
-IMPORTANT: Prefer FEWER, LONGER sections:
-- 5 min video: 2-3 sections max
-- 10 min video: 3-5 sections max  
-- 30 min video: 6-10 sections max
+**WORD LIMITS PER SECTION:**
+- MINIMUM: 300 words (anything shorter should be merged into adjacent section)
+- MAXIMUM: 2000 words (anything longer MUST be split - quality degrades beyond this)
+- SWEET SPOT: 500-1200 words per section
+
+**DYNAMIC SIZING:**
+- Hook section might be 400 words (quick punch)
+- Main development section might be 1500 words (lots to cover)
+- Climax might be 800 words (focused intensity)
+- Resolution might be 300 words (brief wrap-up)
+
+**DETERMINE SECTION COUNT BY CONTENT:**
+- How many distinct "chapters" does this story naturally have?
+- Where are the natural break points?
+- Each section should cover ONE complete idea/phase
+
+DO NOT use a fixed formula. Let the story's natural structure dictate sections.
 
 ## STORY-FIRST STRUCTURE
 - **Section 1 (HOOK + PROMISE)**: Within 30 seconds, viewer knows: (a) what this is about, (b) why it's fascinating, (c) what they'll learn. Open a compelling question.

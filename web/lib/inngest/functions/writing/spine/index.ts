@@ -149,13 +149,19 @@ async function generateBeatSpecs(
 ${dossier.quotes.length > 0 ? `- Key quotes: ${dossier.quotes.slice(0, 2).map(q => `[${q.id}] "${q.quote.substring(0, 50)}..." - ${q.speaker}`).join('\n  ')}` : ''}` 
     : '\nNo research dossier available - using AI knowledge only.';
 
-  const userPrompt = `Generate a beat-by-beat structure for this video:
+  const userPrompt = `Generate a section-by-section structure for this video:
 
 TOPIC: ${topic}
 ${options.angle ? `ANGLE: ${options.angle}` : ''}
 GENRE: ${genre}
 TARGET DURATION: ${Math.round(durationDecision.recommendedDurationSeconds / 60)} minutes
-TARGET BEAT COUNT: ${durationDecision.beatCount}
+TARGET TOTAL WORDS: ~${durationDecision.targetWordCount} words
+
+SECTION WORD LIMITS:
+- Each section must be 300-2000 words
+- Sections can vary in length based on content needs
+- Hook might be short (400 words), main development longer (1500 words)
+- Let the story's natural structure determine section count and lengths
 
 ${dossierContext}
 
@@ -165,15 +171,16 @@ ${genreTemplate.requirements.join('\n')}
 ${options.mustInclude?.length ? `MUST INCLUDE: ${options.mustInclude.join(', ')}` : ''}
 ${options.mustAvoid?.length ? `MUST AVOID: ${options.mustAvoid.join(', ')}` : ''}
 
-Generate exactly ${durationDecision.beatCount} beats. Return as JSON:
+Determine the optimal number of sections based on the story's natural structure. Return as JSON:
 {
   "beats": [
     {
       "index": 0,
-      "type": "hook|setup|information|evidence|transition|escalation|climax|resolution|callback|pattern_interrupt",
+      "type": "hook|setup|development|evidence|escalation|climax|resolution|callback",
       "section": "Opening|Act 1|Act 2|Act 3|Conclusion",
-      "contentSummary": "2-4 sentences describing this beat",
-      "keyPoints": ["Point 1", "Point 2"],
+      "targetWords": 800,
+      "contentSummary": "3-5 sentences describing this section in detail",
+      "keyPoints": ["Point 1", "Point 2", "Point 3"],
       "factIds": ["FACT-001"],
       "quoteIds": [],
       "toneEnergy": {
@@ -181,7 +188,7 @@ Generate exactly ${durationDecision.beatCount} beats. Return as JSON:
         "pacing": "slow|medium|fast",
         "energyRelativeToPrevious": "lower|same|higher"
       },
-      "engagementFunction": "Why viewer keeps watching"
+      "engagementFunction": "Why viewer keeps watching through this section"
     }
   ]
 }`;
