@@ -15,7 +15,7 @@
 // ENUMS & CONSTANTS
 // ============================================================================
 
-export const TASK_TYPES = ['writing', 'audio', 'video', 'export'] as const;
+export const TASK_TYPES = ['writing', 'audio', 'video', 'export', 'universal_script'] as const;
 export type TaskType = typeof TASK_TYPES[number];
 
 export const TASK_STATUSES = ['pending', 'running', 'completed', 'failed', 'cancelled'] as const;
@@ -39,6 +39,13 @@ export const TASK_PHASES = [
   // Export phases
   'encoding',
   'uploading',
+  // Universal Scrip phases
+  'research',
+  'scoping', 
+  'spine',
+  'assets',
+  'expansion',
+  'assembly',
 ] as const;
 export type TaskPhase = typeof TASK_PHASES[number];
 
@@ -268,6 +275,54 @@ export interface ExportTaskOutput {
 }
 
 // ============================================================================
+// UNIVERSAL SCRIPT WORKFLOW TYPES
+// ============================================================================
+
+export interface UniversalScriptTaskInput {
+  topic: string;
+  genre: 'documentary' | 'educational' | 'narrative_fiction' | 'historical_fiction' | 'opinion_essay' | 'tutorial' | 'news';
+  durationRange: { minMinutes: number; maxMinutes: number };
+  researchToggle: 'full' | 'light' | 'off';
+  angle?: string;
+  mustInclude?: string[];
+  mustAvoid?: string[];
+  sourcePreferences?: string;
+}
+
+// Simplified version of the detailed types for the global task interface
+export interface UniversalScriptTaskOutput {
+  researchDossier?: any; // Detailed types in writing/types.ts
+  durationDecision?: {
+    recommendedDurationSeconds: number;
+    targetWordCount: number;
+    beatCount: number;
+    reasoning: string;
+  };
+  spine?: {
+    beatCount: number;
+    totalDurationSeconds: number;
+    sections: Array<{ name: string; startBeatIndex: number; endBeatIndex: number }>;
+    beats: Array<{ index: number; contentSummary: string; classification: { type: string } }>;
+  };
+  assetRegistry?: {
+    characters: Array<{ id: string; name: string; role: string }>;
+    locations: Array<{ id: string; name: string }>;
+    objects: Array<{ id: string; name: string }>;
+  };
+  expandedBeats?: Array<{
+    beatIndex: number;
+    narration: string;
+    wordCount: number;
+    visualCallouts: Array<{ assetId: string; context: string }>;
+  }>;
+  finalScript?: string;
+  qualityValidation?: {
+    passed: boolean;
+    issues?: string[]; // Simplified
+  };
+}
+
+// ============================================================================
 // UNION TYPES
 // ============================================================================
 
@@ -276,6 +331,7 @@ export type TaskInput =
   | AudioTaskInput 
   | VideoTaskInput 
   | ExportTaskInput
+  | UniversalScriptTaskInput
   | Record<string, unknown>;  // Fallback for extensibility
 
 export type TaskOutput = 
@@ -283,6 +339,7 @@ export type TaskOutput =
   | AudioTaskOutput 
   | VideoTaskOutput 
   | ExportTaskOutput
+  | UniversalScriptTaskOutput
   | Record<string, unknown>;  // Fallback for extensibility
 
 // ============================================================================
@@ -352,6 +409,7 @@ export type WritingTask = Task<WritingTaskInput, WritingTaskOutput>;
 export type AudioTask = Task<AudioTaskInput, AudioTaskOutput>;
 export type VideoTask = Task<VideoTaskInput, VideoTaskOutput>;
 export type ExportTask = Task<ExportTaskInput, ExportTaskOutput>;
+export type UniversalScriptTask = Task<UniversalScriptTaskInput, UniversalScriptTaskOutput>;
 
 // ============================================================================
 // TYPE GUARDS
@@ -373,6 +431,10 @@ export function isExportTask(task: Task): task is ExportTask {
   return task.type === 'export';
 }
 
+export function isUniversalScriptTask(task: Task): task is UniversalScriptTask {
+  return task.type === 'universal_script';
+}
+
 export function isWritingOutput(output: TaskOutput): output is WritingTaskOutput {
   return 'chapters' in output || 'final_script' in output || 'master_outline' in output;
 }
@@ -387,6 +449,10 @@ export function isVideoOutput(output: TaskOutput): output is VideoTaskOutput {
 
 export function isExportOutput(output: TaskOutput): output is ExportTaskOutput {
   return 'rendered_files' in output || 'uploads' in output;
+}
+
+export function isUniversalScriptOutput(output: TaskOutput): output is UniversalScriptTaskOutput {
+  return 'spine' in output || 'researchDossier' in output || 'assetRegistry' in output;
 }
 
 // ============================================================================

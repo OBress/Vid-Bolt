@@ -13,11 +13,36 @@ export interface OpenRouterMessage {
   content: string;
 }
 
+/**
+ * Web search plugin configuration
+ */
+export interface WebSearchPlugin {
+  id: 'web';
+  engine?: 'native' | 'exa';
+  maxResults?: number; // Defaults to 5
+  searchPrompt?: string;
+}
+
+/**
+ * URL citation from web search results
+ */
+export interface UrlCitation {
+  url: string;
+  title: string;
+  content?: string;
+  startIndex?: number;
+  endIndex?: number;
+}
+
 export interface OpenRouterConfig {
   model?: string;
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+  /** Enable web search by setting to true or providing plugin config */
+  webSearch?: boolean | WebSearchPlugin;
+  /** Web search context size for native search */
+  webSearchContextSize?: 'low' | 'medium' | 'high';
 }
 
 export interface OpenRouterResponse {
@@ -28,6 +53,8 @@ export interface OpenRouterResponse {
     completionTokens: number;
     totalTokens: number;
   };
+  /** URL citations from web search (if web search was enabled) */
+  citations?: UrlCitation[];
 }
 
 const DEFAULT_CONFIG: OpenRouterConfig = {
@@ -81,6 +108,38 @@ export async function callOpenRouter(
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
+      // Build request body with optional web search
+      const requestBody: Record<string, unknown> = {
+        model: mergedConfig.model,
+        messages,
+        temperature: mergedConfig.temperature,
+        max_tokens: mergedConfig.maxTokens,
+        top_p: mergedConfig.topP,
+      };
+
+      // Add web search if enabled
+      if (mergedConfig.webSearch) {
+        if (typeof mergedConfig.webSearch === 'boolean') {
+          // Simple :online suffix approach - append to model
+          requestBody.model = `${mergedConfig.model}:online`;
+        } else {
+          // Full plugin configuration
+          requestBody.plugins = [{
+            id: mergedConfig.webSearch.id,
+            engine: mergedConfig.webSearch.engine,
+            max_results: mergedConfig.webSearch.maxResults,
+            search_prompt: mergedConfig.webSearch.searchPrompt,
+          }];
+        }
+      }
+
+      // Add web search context size if specified
+      if (mergedConfig.webSearchContextSize) {
+        requestBody.web_search_options = {
+          search_context_size: mergedConfig.webSearchContextSize,
+        };
+      }
+
       const response = await fetch(OPENROUTER_API_URL, {
         method: "POST",
         headers: {
@@ -89,13 +148,7 @@ export async function callOpenRouter(
           "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
           "X-Title": "Vid-Bolt",
         },
-        body: JSON.stringify({
-          model: mergedConfig.model,
-          messages,
-          temperature: mergedConfig.temperature,
-          max_tokens: mergedConfig.maxTokens,
-          top_p: mergedConfig.topP,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       // Get raw text first to handle HTML error pages
@@ -133,6 +186,28 @@ export async function callOpenRouter(
         throw new Error("Invalid response from OpenRouter API - no content in response");
       }
 
+      // Extract citations from annotations if present (web search results)
+      const annotations = choice.message.annotations as Array<{
+        type: string;
+        url_citation?: {
+          url: string;
+          title: string;
+          content?: string;
+          start_index?: number;
+          end_index?: number;
+        };
+      }> | undefined;
+
+      const citations = annotations
+        ?.filter((a) => a.type === 'url_citation' && a.url_citation)
+        .map((a) => ({
+          url: a.url_citation!.url,
+          title: a.url_citation!.title,
+          content: a.url_citation!.content,
+          startIndex: a.url_citation!.start_index,
+          endIndex: a.url_citation!.end_index,
+        }));
+
       return {
         content: choice.message.content,
         model: data.model || mergedConfig.model!,
@@ -141,6 +216,7 @@ export async function callOpenRouter(
           completionTokens: data.usage?.completion_tokens || 0,
           totalTokens: data.usage?.total_tokens || 0,
         },
+        citations,
       };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -212,6 +288,82 @@ export async function generateJSON<T = unknown>(
     }
 
     return JSON.parse(content.trim()) as T;
+  } catch {
+    throw new Error(`Failed to parse JSON response: ${response.content.substring(0, 200)}`);
+  }
+}
+
+/**
+ * Generate text with web search enabled for research purposes.
+ * Automatically includes URL citations from search results.
+ */
+export async function generateWithWebSearch(
+  userId: string,
+  systemPrompt: string,
+  userPrompt: string,
+  options: {
+    maxResults?: number;
+    searchContextSize?: 'low' | 'medium' | 'high';
+  } = {}
+): Promise<OpenRouterResponse> {
+  return callOpenRouter(
+    userId,
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    {
+      webSearch: true,
+      webSearchContextSize: options.searchContextSize || 'medium',
+      temperature: 0.5, // Lower temperature for factual research
+    }
+  );
+}
+
+/**
+ * Generate JSON with web search enabled.
+ * Useful for structured research output with citations.
+ */
+export async function generateJSONWithWebSearch<T = unknown>(
+  userId: string,
+  systemPrompt: string,
+  userPrompt: string,
+  options: {
+    maxResults?: number;
+    searchContextSize?: 'low' | 'medium' | 'high';
+  } = {}
+): Promise<{ data: T; citations: UrlCitation[] }> {
+  const jsonSystemPrompt = `${systemPrompt}\n\nIMPORTANT: You must respond with valid JSON only. No markdown, no code blocks, just raw JSON.`;
+
+  const response = await callOpenRouter(
+    userId,
+    [
+      { role: "system", content: jsonSystemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    {
+      webSearch: true,
+      webSearchContextSize: options.searchContextSize || 'medium',
+      temperature: 0.3,
+    }
+  );
+
+  try {
+    let content = response.content.trim();
+    if (content.startsWith("```json")) {
+      content = content.slice(7);
+    }
+    if (content.startsWith("```")) {
+      content = content.slice(3);
+    }
+    if (content.endsWith("```")) {
+      content = content.slice(0, -3);
+    }
+
+    return {
+      data: JSON.parse(content.trim()) as T,
+      citations: response.citations || [],
+    };
   } catch {
     throw new Error(`Failed to parse JSON response: ${response.content.substring(0, 200)}`);
   }
