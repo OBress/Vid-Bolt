@@ -133,13 +133,21 @@ export async function updateTaskStatus(
     completed_at?: string;
   }
 ): Promise<void> {
+  console.log(`[shared:updateTaskStatus] Updating task ${taskId}:`, JSON.stringify(updates));
+  
   const supabase = getSupabaseServiceClient();
-  const { error } = await supabase
+  const { error, data } = await supabase
     .from("tasks")
     .update(updates)
-    .eq("id", taskId);
+    .eq("id", taskId)
+    .select('id, status, progress_percent');
   
-  if (error) throw new Error(`Failed to update task: ${error.message}`);
+  if (error) {
+    console.error(`[shared:updateTaskStatus] FAILED for task ${taskId}:`, error);
+    throw new Error(`Failed to update task: ${error.message}`);
+  }
+  
+  console.log(`[shared:updateTaskStatus] SUCCESS for task ${taskId}:`, JSON.stringify(data));
 }
 
 /**

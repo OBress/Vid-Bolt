@@ -22,11 +22,15 @@ export const WORDS_PER_MINUTE = 150;
 /**
  * Beat duration limits in seconds
  * // CUSTOMIZABLE: Store in user_settings.script_beat_duration
+ * 
+ * OPTIMIZATION: Longer beats = fewer LLM calls, more coherent sections.
+ * Each beat should cover a single topic/section to minimize transitions.
+ * At 150 WPM: 300 sec = ~750 words, 600 sec = ~1500 words
  */
 export const BEAT_DURATION = {
-  minSeconds: 15,
-  maxSeconds: 60,
-  defaultSeconds: 30,
+  minSeconds: 120,   // 2 min = ~300 words min
+  maxSeconds: 600,   // 10 min = ~1500 words max (well under 2k limit)
+  defaultSeconds: 300, // 5 min = ~750 words per beat - sweet spot for quality
 };
 
 /**
@@ -125,6 +129,78 @@ export const CONFIDENCE_ASSIGNMENT_RULES = {
   conflicted: { sourcesDisagree: true },
   unverified: { couldNotVerify: true },
 };
+
+// ============================================================================
+// WORD REPLACEMENTS
+// ============================================================================
+
+/**
+ * Words that AI models tend to overuse and their natural alternatives.
+ * Used both in prompts (as instructions) and for post-generation checking.
+ * // CUSTOMIZABLE: Store in user_settings.script_word_replacements
+ */
+export const WORD_REPLACEMENTS: Record<string, string[]> = {
+  // Movement/Action words
+  'delve': ['explore', 'examine', 'investigate', 'look into', 'dig into'],
+  'delving': ['exploring', 'examining', 'investigating', 'looking into'],
+  'embark': ['start', 'begin', 'set out', 'kick off', 'launch'],
+  'embarking': ['starting', 'beginning', 'setting out'],
+  'unfold': ['happen', 'develop', 'take place', 'occur', 'play out'],
+  'unfolding': ['happening', 'developing', 'taking place'],
+  
+  // Figurative/Abstract words
+  'landscape': ['situation', 'environment', 'field', 'scene', 'world'],
+  'tapestry': ['mix', 'combination', 'blend', 'fabric', 'patchwork'],
+  'intricate': ['complex', 'detailed', 'elaborate', 'complicated'],
+  'nestled': ['located', 'situated', 'tucked', 'sitting', 'placed'],
+  'realm': ['area', 'field', 'domain', 'world', 'sphere'],
+  'plethora': ['many', 'lots of', 'abundance', 'wealth of', 'range of'],
+  'myriad': ['many', 'countless', 'numerous', 'a range of', 'variety of'],
+  
+  // Business/Formal jargon
+  'pivotal': ['key', 'crucial', 'critical', 'important', 'vital'],
+  'paradigm': ['model', 'framework', 'approach', 'way of thinking'],
+  'synergy': ['combination', 'collaboration', 'working together'],
+  'leverage': ['use', 'utilize', 'take advantage of', 'apply'],
+  'facilitate': ['help', 'enable', 'make possible', 'allow', 'support'],
+  'juxtaposition': ['contrast', 'comparison', 'tension', 'difference'],
+  
+  // Generic emphasis words
+  'testament': ['proof', 'evidence', 'sign', 'indicator', 'example'],
+  'underscore': ['highlight', 'emphasize', 'show', 'reveal', 'demonstrate'],
+  'nuanced': ['subtle', 'complex', 'layered', 'sophisticated'],
+  'robust': ['strong', 'solid', 'reliable', 'sturdy', 'healthy'],
+  'holistic': ['complete', 'whole', 'comprehensive', 'overall'],
+  
+  // Hyperbolic words
+  'exponential': ['rapid', 'dramatic', 'massive', 'significant'],
+  'unprecedented': ['rare', 'unusual', 'never-before-seen', 'first-ever', 'historic'],
+  'unparalleled': ['unmatched', 'exceptional', 'unique', 'remarkable'],
+  'groundbreaking': ['innovative', 'pioneering', 'revolutionary', 'new'],
+  'cutting-edge': ['advanced', 'modern', 'latest', 'state-of-the-art'],
+  'game-changing': ['transformative', 'significant', 'major', 'important'],
+  
+  // Transition/Flow words  
+  'seamlessly': ['smoothly', 'easily', 'naturally', 'effortlessly'],
+  'intertwined': ['connected', 'linked', 'tied together', 'interlocked'],
+  'catalyst': ['trigger', 'spark', 'cause', 'driver'],
+  'cornerstone': ['foundation', 'basis', 'key element', 'pillar'],
+  
+  // Common AI-isms
+  'captivating': ['interesting', 'engaging', 'compelling', 'fascinating'],
+  'meticulous': ['careful', 'thorough', 'detailed', 'precise'],
+  'profound': ['deep', 'significant', 'important', 'major'],
+  'poignant': ['moving', 'touching', 'emotional', 'affecting'],
+  'enigmatic': ['mysterious', 'puzzling', 'cryptic', 'unclear'],
+  'ubiquitous': ['common', 'widespread', 'everywhere', 'prevalent'],
+};
+
+/**
+ * Get word replacement suggestions
+ */
+export function getWordReplacements(word: string): string[] | undefined {
+  return WORD_REPLACEMENTS[word.toLowerCase()];
+}
 
 // ============================================================================
 // BANNED PHRASES

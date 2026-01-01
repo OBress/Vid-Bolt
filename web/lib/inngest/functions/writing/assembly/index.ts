@@ -22,6 +22,7 @@ import {
   formatFinalOutput,
   type FormattingOptions,
 } from './output-formatter';
+import { smoothTransitions as aiSmoothTransitions } from './transition-smoother';
 
 // ============================================================================
 // TYPES
@@ -68,12 +69,16 @@ export async function assembleScript(
 
   console.log(`[Assembly] Starting assembly of ${expandedBeats.length} beats`);
 
-  // Step 1: Concatenate beats into raw script
-  const rawScript = concatenateBeats(expandedBeats);
-  console.log(`[Assembly] Raw script: ${rawScript.length} characters`);
+  // Step 1: AI-powered transition smoothing
+  console.log('[Assembly] Running AI transition smoother...');
+  const transitionResult = await aiSmoothTransitions(userId, expandedBeats, spine);
+  const smoothedBeats = transitionResult.smoothedBeats;
+  console.log(`[Assembly] Transitions fixed: ${transitionResult.transitionsFixed}, avg score: ${transitionResult.averageTransitionScore.toFixed(1)}/10`);
 
-  // Step 2: Smooth transitions between beats
-  const smoothedScript = smoothTransitions(rawScript, expandedBeats);
+  // Step 2: Concatenate smoothed beats into script
+  const rawScript = concatenateBeats(smoothedBeats);
+  const smoothedScript = cleanupWhitespace(rawScript);
+  console.log(`[Assembly] Final script: ${smoothedScript.length} characters`);
 
   // Step 3: Validate quality
   console.log('[Assembly] Running quality validation...');
@@ -124,18 +129,18 @@ function concatenateBeats(beats: ExpandedBeat[]): string {
 }
 
 /**
- * Smooth transitions between beats
+ * Clean up whitespace in script
  */
-function smoothTransitions(rawScript: string, beats: ExpandedBeat[]): string {
-  let script = rawScript;
+function cleanupWhitespace(script: string): string {
+  let cleaned = script;
 
   // Clean up excessive whitespace (more than 2 newlines -> 2 newlines)
-  script = script.replace(/\n{3,}/g, '\n\n');
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
   
   // Clean up multiple spaces (but preserve newlines)
-  script = script.replace(/[ \t]{2,}/g, ' ');
+  cleaned = cleaned.replace(/[ \t]{2,}/g, ' ');
 
-  return script.trim();
+  return cleaned.trim();
 }
 
 // ============================================================================

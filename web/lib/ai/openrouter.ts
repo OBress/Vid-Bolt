@@ -64,6 +64,16 @@ const DEFAULT_CONFIG: OpenRouterConfig = {
   topP: 0.95
 };
 
+/** Quality review model - smarter, used for script quality assessment */
+export const QUALITY_REVIEW_MODEL = "google/gemini-3-pro-preview";
+
+/** Config preset for quality review calls */
+export const QUALITY_REVIEW_CONFIG: Partial<OpenRouterConfig> = {
+  model: QUALITY_REVIEW_MODEL,
+  temperature: 0.3, // Lower temp for consistent scoring
+  maxTokens: 4096,
+};
+
 /**
  * Get the OpenRouter API key from Supabase for a given user.
  * Uses the service role client to bypass RLS.

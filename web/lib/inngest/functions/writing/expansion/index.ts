@@ -77,7 +77,7 @@ export async function expandSpineToScript(
       // Get relevant assets for this beat
       const relevantAssets = getRelevantAssets(beat, assetRegistry, dossier);
 
-      // Build expansion context
+      // Build expansion context with enhanced parameters
       const context: BeatExpansionContext = {
         userId,
         beat,
@@ -89,6 +89,12 @@ export async function expandSpineToScript(
         dossier,
         bannedPhrases,
         genre,
+        // Enhanced context for quality review
+        spine,
+        allPreviousBeats: [...expandedBeats],
+        // OPTIMIZATION: Disable quality review to reduce LLM calls from 2-4 to 1 per beat
+        // The improved prompts with 4-layer governance handle quality inline
+        enableQualityReview: false,
       };
 
       // Expand the beat
@@ -113,6 +119,18 @@ export async function expandSpineToScript(
   const totalWordCount = expandedBeats.reduce((sum, b) => sum + b.wordCount, 0);
 
   console.log(`[Expansion] Complete: ${totalWordCount} total words across ${expandedBeats.length} beats`);
+
+  // Batch rate all beats in a single efficient LLM call
+  console.log(`[Expansion] Running batch quality rating...`);
+  const { batchRateBeats } = await import('./quality-reviewer');
+  const ratingResult = await batchRateBeats(userId, expandedBeats);
+  
+  // Assign scores to each beat
+  expandedBeats.forEach((beat, i) => {
+    beat.qualityScore = ratingResult.scores[i] ?? 5;
+  });
+  
+  console.log(`[Expansion] Batch rating complete: avg score ${ratingResult.averageScore.toFixed(1)}/10`);
 
   return {
     expandedBeats,

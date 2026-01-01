@@ -34,6 +34,7 @@ import {
   Users,
   MapPin,
   Layout,
+  Copy,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { createBrowserClient } from "@supabase/ssr";
@@ -106,6 +107,7 @@ interface UniversalScriptOutput {
     beatIndex: number;
     narration: string;
     wordCount: number;
+    qualityScore?: number;
   }>;
   finalScript?: string;
   qualityValidation?: {
@@ -170,6 +172,10 @@ export function UniversalScriptTester({
   // Poll for task updates
   const fetchTaskStatus = useCallback(
     async (id: string, isCompletionCheck = false) => {
+      console.log(
+        `[UI:Poll] Fetching status for task ${id} (isCompletionCheck: ${isCompletionCheck})`
+      );
+
       // 1. First poll only for status (lightweight)
       const { data: statusData, error: statusError } = await supabase
         .from("tasks")
@@ -180,9 +186,11 @@ export function UniversalScriptTester({
         .single();
 
       if (statusError) {
-        console.error("Failed to fetch task status:", statusError);
+        console.error("[UI:Poll] Failed to fetch task status:", statusError);
         return;
       }
+
+      console.log(`[UI:Poll] Raw DB response:`, JSON.stringify(statusData));
 
       setTaskStatus(statusData.status);
       setProgress(statusData.progress_percent || 0);
@@ -190,11 +198,12 @@ export function UniversalScriptTester({
       setCurrentStep(statusData.current_step);
 
       // Debug logging
-      console.log("Task Update:", {
+      console.log("[UI:Poll] Task Update:", {
         id,
         status: statusData.status,
         progress: statusData.progress_percent,
         phase: statusData.current_phase,
+        step: statusData.current_step,
       });
 
       // 2. If complete, fetch the heavy output data
@@ -202,7 +211,9 @@ export function UniversalScriptTester({
         statusData.status === "completed" ||
         statusData.progress_percent === 100
       ) {
-        console.log("Task completed, fetching full output...");
+        console.log(
+          `[UI:Poll] Task appears COMPLETED (status=${statusData.status}, progress=${statusData.progress_percent}). Fetching full output...`
+        );
 
         const { data: outputData, error: outputError } = await supabase
           .from("tasks")
@@ -211,19 +222,36 @@ export function UniversalScriptTester({
           .single();
 
         if (outputError) {
-          console.error("Failed to fetch output data:", outputError);
+          console.error("[UI:Poll] Failed to fetch output data:", outputError);
           return;
         }
 
+        console.log(
+          `[UI:Poll] Output data fetched, has output_data: ${!!outputData?.output_data}, keys: ${
+            outputData?.output_data
+              ? Object.keys(outputData.output_data).join(", ")
+              : "none"
+          }`
+        );
+
         if (outputData?.output_data) {
-          console.log("Output data loaded successfully");
+          console.log(
+            "[UI:Poll] SUCCESS - Setting output and stopping generation"
+          );
           setOutput(outputData.output_data as UniversalScriptOutput);
           setIsGenerating(false);
           setTaskStatus("completed");
+        } else {
+          console.warn(
+            "[UI:Poll] output_data is empty/null despite completed status!"
+          );
         }
       } else if (statusData.status === "failed") {
+        console.log(`[UI:Poll] Task FAILED: ${statusData.error_message}`);
         setError(statusData.error_message || "Task failed");
         setIsGenerating(false);
+      } else {
+        console.log(`[UI:Poll] Task still running, will poll again...`);
       }
     },
     [supabase]
@@ -231,13 +259,27 @@ export function UniversalScriptTester({
 
   // Polling effect
   useEffect(() => {
-    if (!isGenerating || !taskId) return;
+    if (!isGenerating || !taskId) {
+      console.log(
+        `[UI:Poll] Polling disabled - isGenerating: ${isGenerating}, taskId: ${taskId}`
+      );
+      return;
+    }
+
+    console.log(`[UI:Poll] Starting polling interval for task ${taskId}`);
+
+    // Immediately fetch once
+    fetchTaskStatus(taskId);
 
     const interval = setInterval(() => {
+      console.log(`[UI:Poll] Interval tick - fetching status...`);
       fetchTaskStatus(taskId);
     }, 2000);
 
-    return () => clearInterval(interval);
+    return () => {
+      console.log(`[UI:Poll] Cleaning up polling interval`);
+      clearInterval(interval);
+    };
   }, [isGenerating, taskId, fetchTaskStatus]);
 
   const startGeneration = async () => {
@@ -584,47 +626,122 @@ export function UniversalScriptTester({
                 </TabsTrigger>
               </TabsList>
 
-              {/* Script Tab */}
+              {/* Script Tab - Beat-by-Beat View */}
               <TabsContent value="script" className="flex-1 overflow-y-auto">
                 <div className="bg-neutral-900 rounded-lg p-6 min-h-full">
-                  <h3 className="text-lg font-bold text-white mb-4">
-                    Final Script
-                  </h3>
-                  {output.finalScript ? (
-                    <div className="font-serif leading-relaxed">
-                      {output.finalScript
-                        .replace(/\\n/g, "\n") // Handle potential escaped newlines
-                        .split("\n")
-                        .map((line, i) => {
-                          const trimmed = line.trim();
-                          if (!trimmed) return <div key={i} className="h-4" />;
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-4">
+                      <h3 className="text-lg font-bold text-white">
+                        Script by Beats
+                      </h3>
+                      {output.expandedBeats && (
+                        <div className="text-sm text-neutral-500">
+                          {output.expandedBeats.length} beats •{" "}
+                          {output.expandedBeats.reduce(
+                            (sum, b) => sum + b.wordCount,
+                            0
+                          )}{" "}
+                          words
+                        </div>
+                      )}
+                    </div>
+                    {(output.expandedBeats || output.finalScript) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const fullScript = output.expandedBeats
+                            ? output.expandedBeats
+                                .map((b) => b.narration)
+                                .join("\n\n---\n\n")
+                            : output.finalScript || "";
+                          navigator.clipboard.writeText(fullScript);
+                          alert("Script copied to clipboard!");
+                        }}
+                        className="gap-2"
+                      >
+                        <Copy className="w-4 h-4" />
+                        Copy Story
+                      </Button>
+                    )}
+                  </div>
 
-                          // Check for headers (uppercase or markdown style)
-                          const isHeader =
-                            /^[#*]+|^\s*[A-Z][A-Z\s0-9]+:?$/.test(trimmed) &&
-                            trimmed.length < 100 &&
-                            trimmed.length > 3;
+                  {output.expandedBeats && output.expandedBeats.length > 0 ? (
+                    <div className="space-y-6">
+                      {output.expandedBeats.map((beat, i) => {
+                        const score = beat.qualityScore ?? 0;
+                        const scoreColor =
+                          score >= 8
+                            ? "text-green-400 bg-green-500/20"
+                            : score >= 6
+                            ? "text-yellow-400 bg-yellow-500/20"
+                            : "text-red-400 bg-red-500/20";
 
-                          return (
-                            <p
-                              key={i}
-                              className={`
-                                ${
-                                  isHeader
-                                    ? "text-lg font-bold text-white mt-8 mb-4 sans-serif"
-                                    : "text-neutral-300 text-base mb-2"
-                                }
-                                ${
-                                  trimmed.startsWith("[")
-                                    ? "text-neutral-500 italic"
-                                    : ""
-                                }
-                              `}
-                            >
-                              {trimmed}
-                            </p>
-                          );
-                        })}
+                        return (
+                          <div
+                            key={beat.beatIndex}
+                            className="border border-neutral-800 rounded-lg overflow-hidden"
+                          >
+                            {/* Beat Header */}
+                            <div className="bg-neutral-800/50 px-4 py-3 flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <span className="text-sm font-bold text-white">
+                                  Beat {beat.beatIndex + 1}
+                                </span>
+                                <span className="text-xs text-neutral-500">
+                                  {beat.wordCount} words
+                                </span>
+                              </div>
+                              <div
+                                className={`px-2 py-1 rounded text-sm font-bold ${scoreColor}`}
+                              >
+                                {score > 0 ? `${score}/10` : "N/A"}
+                              </div>
+                            </div>
+
+                            {/* Beat Content */}
+                            <div className="p-4">
+                              <div className="font-serif text-neutral-300 leading-relaxed whitespace-pre-wrap">
+                                {beat.narration
+                                  .replace(/\\n/g, "\n")
+                                  .split("\n")
+                                  .map((line, j) => {
+                                    const trimmed = line.trim();
+                                    if (!trimmed)
+                                      return <div key={j} className="h-3" />;
+                                    return (
+                                      <p
+                                        key={j}
+                                        className={`mb-2 ${
+                                          trimmed.startsWith("[")
+                                            ? "text-neutral-500 italic text-sm"
+                                            : ""
+                                        }`}
+                                      >
+                                        {trimmed}
+                                      </p>
+                                    );
+                                  })}
+                              </div>
+
+                              {/* Score Warning */}
+                              {score > 0 && score < 8 && (
+                                <div className="mt-4 pt-3 border-t border-neutral-700">
+                                  <p className="text-xs text-yellow-400">
+                                    ⚠️ This beat scored below 8. Consider manual
+                                    review for AI-isms, repetition, or weak
+                                    transitions.
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : output.finalScript ? (
+                    <div className="font-serif leading-relaxed text-neutral-300 whitespace-pre-wrap">
+                      {output.finalScript.replace(/\\n/g, "\n")}
                     </div>
                   ) : (
                     <p className="text-neutral-500">No script generated.</p>

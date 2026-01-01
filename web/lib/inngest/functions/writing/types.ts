@@ -397,6 +397,8 @@ export interface Beat {
  * Complete spine structure
  */
 export interface Spine {
+  /** Video/script title */
+  title?: string;
   /** Total beat count */
   beatCount: number;
   /** Total duration in seconds */
@@ -669,6 +671,9 @@ export interface ExpandedBeat {
   
   /** Facts used (for verification) */
   factsUsed: string[];
+  
+  /** Quality review score (1-10) */
+  qualityScore?: number;
 }
 
 /**
@@ -689,6 +694,14 @@ export interface ContinuityState {
   establishedTone: string;
   /** Facts used (to avoid repetition) */
   usedFactIds: string[];
+  
+  // Language pattern tracking for repetition prevention
+  /** Distinctive phrases already used */
+  usedPhrases: string[];
+  /** Sentence openers already used (first 3 words) */
+  usedOpeners: string[];
+  /** Transition phrases already used */
+  usedTransitions: string[];
 }
 
 // ============================================================================

@@ -9,6 +9,11 @@ import type {
   ExpandedBeat, 
   ContinuityState,
 } from '../types';
+import {
+  extractDistinctivePhrases,
+  extractSentenceOpeners,
+  extractTransitionPhrases,
+} from './context-builder';
 
 // ============================================================================
 // TYPES
@@ -40,6 +45,10 @@ export function initializeContinuityState(
     narrativePromises: [],
     establishedTone: '',
     usedFactIds: [],
+    // Language pattern tracking
+    usedPhrases: [],
+    usedOpeners: [],
+    usedTransitions: [],
   };
 
   return {
@@ -60,6 +69,11 @@ export function updateContinuityState(
   beat: Beat,
   expandedBeat: ExpandedBeat
 ): void {
+  // Extract language patterns from the beat
+  const newPhrases = extractDistinctivePhrases(expandedBeat.narration);
+  const newOpeners = extractSentenceOpeners(expandedBeat.narration);
+  const newTransitions = extractTransitionPhrases(expandedBeat.narration);
+
   const newState: ContinuityState = {
     ...tracker.currentState,
     
@@ -95,6 +109,22 @@ export function updateContinuityState(
       ...tracker.currentState.usedFactIds,
       ...expandedBeat.factsUsed,
     ],
+
+    // Track language patterns for repetition prevention
+    usedPhrases: [
+      ...tracker.currentState.usedPhrases,
+      ...newPhrases,
+    ].slice(-50), // Keep last 50 phrases
+    
+    usedOpeners: [
+      ...tracker.currentState.usedOpeners,
+      ...newOpeners,
+    ].slice(-30), // Keep last 30 openers
+    
+    usedTransitions: [
+      ...tracker.currentState.usedTransitions,
+      ...newTransitions,
+    ].slice(-20), // Keep last 20 transitions
   };
 
   tracker.currentState = newState;

@@ -1,7 +1,7 @@
 /**
  * Beat Writer
  * ============================================================================
- * Expands individual beats into full narration scripts.
+ * Expands individual beats into full narration scripts with quality assurance.
  */
 
 import { generateText } from '@/lib/ai/openrouter';
@@ -14,10 +14,18 @@ import type {
   CharacterProfile,
   LocationProfile,
   ObjectProfile,
+  Spine,
 } from '../types';
 import { UNIVERSAL_PROMPTS } from '../prompts';
 import { countWords } from '../utils';
 import { WORDS_PER_MINUTE } from '../config';
+import { buildWritingContext, formatContextForPrompt, type WritingContext } from './context-builder';
+import { 
+  reviewBeatQuality, 
+  rewriteBeat, 
+  MAX_REWRITE_ATTEMPTS,
+  type BeatReviewContext,
+} from './quality-reviewer';
 
 // ============================================================================
 // TYPES
@@ -40,6 +48,12 @@ export interface BeatExpansionContext {
   dossier: ResearchDossier | null;
   bannedPhrases: string[];
   genre: ScriptGenre;
+  /** Full spine for video skeleton context */
+  spine: Spine;
+  /** All previously expanded beats for continuity */
+  allPreviousBeats: ExpandedBeat[];
+  /** Enable quality review loop (default: true) */
+  enableQualityReview?: boolean;
 }
 
 // ============================================================================
@@ -47,19 +61,28 @@ export interface BeatExpansionContext {
 // ============================================================================
 
 /**
- * Expand a single beat into full narration
+ * Expand a single beat into full narration with quality review
  */
 export async function expandSingleBeat(
   context: BeatExpansionContext
 ): Promise<ExpandedBeat> {
-  const { beat, beatIndex, totalBeats, dossier, bannedPhrases, genre } = context;
+  const { beat, beatIndex, totalBeats, dossier, bannedPhrases, genre, spine, allPreviousBeats, userId, continuityState } = context;
+  const enableQualityReview = context.enableQualityReview !== false;
 
   // Calculate target word count for this beat
   const beatDurationSeconds = beat.timing.durationSeconds;
   const targetWords = Math.round((beatDurationSeconds / 60) * WORDS_PER_MINUTE);
 
-  // Build the prompt with all context
-  const prompt = buildBeatExpansionPrompt(context, targetWords);
+  // Build rich writing context
+  const writingContext = buildWritingContext(
+    spine,
+    beatIndex,
+    allPreviousBeats,
+    continuityState
+  );
+
+  // Build the prompt with enhanced context
+  const prompt = buildEnhancedBeatPrompt(context, targetWords, writingContext);
 
   // Generate the narration
   const response = await generateText(
@@ -74,13 +97,78 @@ export async function expandSingleBeat(
     prompt
   );
 
-  const narration = response.content.trim();
-  const wordCount = countWords(narration);
+  let narration = response.content.trim();
+  let wordCount = countWords(narration);
 
   // Extract visual callouts from narration (looking for [CHAR-001] style tags)
-  const visualCallouts = extractVisualCallouts(narration, context.relevantAssets);
+  let visualCallouts = extractVisualCallouts(narration, context.relevantAssets);
 
-  // Build expanded beat
+  // Quality review loop (if enabled)
+  if (enableQualityReview) {
+    const previousBeatsContext = allPreviousBeats
+      .slice(-3)
+      .map(b => b.narration.substring(0, 300))
+      .join('\n---\n');
+
+    const reviewContext: BeatReviewContext = {
+      userId,
+      beatNarration: narration,
+      beatIndex,
+      previousBeatsContext,
+      continuityState,
+      genre,
+    };
+
+    let reviewResult = await reviewBeatQuality(reviewContext);
+    let rewriteAttempts = 0;
+    let finalScore = reviewResult.score;
+
+    while (!reviewResult.passed && rewriteAttempts < MAX_REWRITE_ATTEMPTS) {
+      console.log(`[BeatWriter] Beat ${beatIndex + 1} requires rewrite (score: ${reviewResult.score}/10, attempt ${rewriteAttempts + 1})`);
+      
+      narration = await rewriteBeat(
+        userId,
+        narration,
+        reviewResult,
+        previousBeatsContext,
+        continuityState
+      );
+      
+      wordCount = countWords(narration);
+      visualCallouts = extractVisualCallouts(narration, context.relevantAssets);
+      
+      // Re-review the rewritten beat
+      reviewContext.beatNarration = narration;
+      reviewResult = await reviewBeatQuality(reviewContext);
+      finalScore = reviewResult.score;
+      rewriteAttempts++;
+    }
+
+    if (reviewResult.passed) {
+      console.log(`[BeatWriter] Beat ${beatIndex + 1} PASSED quality review (score: ${reviewResult.score}/10)`);
+    } else {
+      console.log(`[BeatWriter] Beat ${beatIndex + 1} proceeding after ${rewriteAttempts} rewrites (final score: ${reviewResult.score}/10)`);
+    }
+
+    // Build expanded beat with quality score
+    return {
+      beatIndex,
+      narration,
+      visualCallouts,
+      audioNotes: {
+        musicMood: beat.toneEnergy.mood,
+        ambientSounds: inferAmbientSounds(context.relevantAssets),
+      },
+      pacingNotes: {
+        emphases: beat.keyPoints.slice(0, 3),
+      },
+      wordCount,
+      factsUsed: beat.researchReferences.factIds,
+      qualityScore: finalScore,
+    };
+  }
+
+  // Build expanded beat without quality review (no score)
   return {
     beatIndex,
     narration,
@@ -98,13 +186,14 @@ export async function expandSingleBeat(
 }
 
 /**
- * Build the complete prompt for beat expansion
+ * Build the enhanced prompt for beat expansion with full context
  */
-function buildBeatExpansionPrompt(
+function buildEnhancedBeatPrompt(
   context: BeatExpansionContext,
-  targetWords: number
+  targetWords: number,
+  writingContext: WritingContext
 ): string {
-  const { beat, previousBeatEnding, continuityState, relevantAssets, dossier, bannedPhrases, genre } = context;
+  const { beat, previousBeatEnding, continuityState, relevantAssets, dossier, bannedPhrases } = context;
 
   // Build research references section
   let researchSection = '';
@@ -185,11 +274,46 @@ TRANSITIONS:
 From previous: ${beat.transitions.fromPrevious}
 To next: ${beat.transitions.toNext}
 
-BANNED PHRASES (do not use):
+=== FORBIDDEN WORDS - SUBSTITUTE THESE ===
+NEVER use these words. Use the alternatives instead:
+- delve/delving → explore, examine, investigate, dig into
+- embark → start, begin, set out, kick off
+- landscape (figurative) → situation, environment, field
+- tapestry → mix, blend, combination
+- intricate → complex, detailed, elaborate
+- nestled → located, situated, tucked
+- realm → area, field, domain, world
+- plethora/myriad → many, numerous, lots of
+- pivotal → key, crucial, critical
+- testament → proof, evidence, indicator
+- unprecedented → rare, unusual, first-ever
+- seamlessly → smoothly, naturally, easily
+
+=== BANNED PHRASES ===
 ${bannedPhrases.slice(0, 10).join(', ')}
 
-Target approximately ${targetWords} words. Write compelling, natural narration.
-Include [ASSET-ID] tags (e.g., [CHAR-001], [LOC-001]) where visuals should change.`;
+=== AVOID REPETITION ===
+DO NOT use these phrases (already used in previous beats):
+${continuityState.usedPhrases?.slice(0, 15).join(', ') || 'None yet'}
+
+=== TTS PHONETIC NORMALIZATION ===
+Write for text-to-speech output:
+- Spell out numbers: "fifteen million" not "15 million"
+- Spell out dates: "January fifteenth, nineteen ninety-nine" not "January 15, 1999"
+- Clarify homographs: use "red" for past-tense read, "led" for the metal lead
+- Avoid abbreviations: "doctor" not "Dr.", "versus" not "vs."
+
+${formatContextForPrompt(writingContext)}
+
+=== CRITICAL REQUIREMENTS (read last - these are most important) ===
+Target: ~${targetWords} words exactly.
+1. Make the transition from previous beat feel SEAMLESS and natural
+2. Use ZERO forbidden words - substitute with alternatives
+3. Vary sentence openers - no two consecutive sentences start the same way
+4. Include [ASSET-ID] tags where visuals should change
+5. Write for the EAR - this will be spoken aloud
+6. Use contractions naturally (don't, can't, it's, that's)
+7. Be SPECIFIC with details, not vague or generalized`;
 }
 
 /**

@@ -323,11 +323,15 @@ export const universalScriptWorkflow = inngest.createFunction(
       // =========================================================================
       // FINALIZE
       // =========================================================================
-      await step.run('finalize', async () => {
-        // Save output to task
-        const supabase = getSupabaseServiceClient();
+      console.log(`[UniversalScript:Finalize] ENTERING finalize step for task ${taskId}`);
+      console.log(`[UniversalScript:Finalize] finalScript length: ${finalScript?.length || 0} chars`);
+      console.log(`[UniversalScript:Finalize] expandedBeats count: ${expandedBeats?.length || 0}`);
+      
+      // Prepare output inside the step (this gets cached, which is fine)
+      const output = await step.run('finalize', async (): Promise<UniversalScriptOutput> => {
+        console.log(`[UniversalScript:Finalize] INSIDE step.run - preparing output data`);
         
-        const output: UniversalScriptOutput = {
+        const outputData: UniversalScriptOutput = {
           researchDossier: researchDossier || undefined,
           durationDecision: durationDecision!,
           spine: spine!,
@@ -353,21 +357,37 @@ export const universalScriptWorkflow = inngest.createFunction(
           ),
         };
 
-        // Update task with the output
-        const { error } = await supabase
-          .from('tasks')
-          .update({ 
-            output_data: output,
-            status: 'completed',
-            progress_percent: 100,
-            completed_at: new Date().toISOString(),
-          })
-          .eq('id', taskId);
-
-        if (error) throw new Error(`Failed to save output: ${error.message}`);
-
-        console.log(`[UniversalScript] Workflow completed for task ${taskId}`);
+        console.log(`[UniversalScript:Finalize] Output prepared, finalScript: ${outputData.finalScript?.length || 0} chars`);
+        return outputData;
       });
+      
+      console.log(`[UniversalScript:Finalize] Step complete, now updating DB (this runs every time, not cached)`);
+      
+      // DB UPDATE HAPPENS OUTSIDE THE STEP - this ensures it runs every time the function is invoked
+      // even when steps return cached results
+      const supabase = getSupabaseServiceClient();
+      
+      console.log(`[UniversalScript:Finalize] Attempting DB update for task ${taskId}...`);
+      const { error, data } = await supabase
+        .from('tasks')
+        .update({ 
+          output_data: output,
+          status: 'completed',
+          progress_percent: 100,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', taskId)
+        .select('id, status, progress_percent');
+
+      console.log(`[UniversalScript:Finalize] DB update result - error: ${error?.message || 'none'}, data: ${JSON.stringify(data)}`);
+
+      if (error) {
+        console.error(`[UniversalScript:Finalize] DB UPDATE FAILED:`, error);
+        throw new Error(`Failed to save output: ${error.message}`);
+      }
+
+      console.log(`[UniversalScript:Finalize] SUCCESS - task ${taskId} updated to completed`);
+      console.log(`[UniversalScript] Workflow completed for task ${taskId}`);
 
       return {
         success: true,
