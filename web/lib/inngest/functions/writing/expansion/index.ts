@@ -116,21 +116,45 @@ export async function expandSpineToScript(
   }
 
   // Calculate total word count
-  const totalWordCount = expandedBeats.reduce((sum, b) => sum + b.wordCount, 0);
+  let totalWordCount = expandedBeats.reduce((sum, b) => sum + b.wordCount, 0);
 
   console.log(`[Expansion] Complete: ${totalWordCount} total words across ${expandedBeats.length} beats`);
 
   // Batch rate all beats in a single efficient LLM call
   console.log(`[Expansion] Running batch quality rating...`);
-  const { batchRateBeats } = await import('./quality-reviewer');
+  const { batchRateBeats, rewriteLowScorers } = await import('./quality-reviewer');
   const ratingResult = await batchRateBeats(userId, expandedBeats);
   
   // Assign scores to each beat
   expandedBeats.forEach((beat, i) => {
-    beat.qualityScore = ratingResult.scores[i] ?? 5;
+    beat.qualityScore = ratingResult.scores[i] ?? 6;
   });
   
   console.log(`[Expansion] Batch rating complete: avg score ${ratingResult.averageScore.toFixed(1)}/10`);
+
+  // Rewrite sections that scored below threshold (uses gemini-3-pro)
+  console.log(`[Expansion] Checking for sections needing rewrite...`);
+  const rewriteResults = await rewriteLowScorers(
+    userId,
+    expandedBeats,
+    continuityTracker.currentState
+  );
+  
+  // Apply rewrites and update word counts
+  let rewriteCount = 0;
+  rewriteResults.forEach((result, i) => {
+    if (result.wasRewritten) {
+      expandedBeats[i].narration = result.narration;
+      expandedBeats[i].qualityScore = result.qualityScore;
+      expandedBeats[i].wordCount = result.narration.split(/\s+/).length;
+      rewriteCount++;
+    }
+  });
+  
+  if (rewriteCount > 0) {
+    totalWordCount = expandedBeats.reduce((sum, b) => sum + b.wordCount, 0);
+    console.log(`[Expansion] Rewrote ${rewriteCount} sections. New total: ${totalWordCount} words`);
+  }
 
   return {
     expandedBeats,

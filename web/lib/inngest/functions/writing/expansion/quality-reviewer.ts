@@ -440,62 +440,195 @@ export async function batchRateBeats(
 
   // Build a compact representation of all beats
   const beatsText = beats
-    .map((b, i) => `--- BEAT ${i + 1} ---\n${b.narration.substring(0, 500)}${b.narration.length > 500 ? '...' : ''}`)
+    .map((b, i) => `--- SECTION ${i + 1} ---\n${b.narration.substring(0, 800)}${b.narration.length > 800 ? '...' : ''}`)
     .join('\n\n');
 
-  const userPrompt = `Rate these ${beats.length} beats:\n\n${beatsText}\n\nReturn JSON array of ${beats.length} scores:`;
+  const systemPrompt = `You are a script quality rater. Rate each section on a 1-10 scale based on:
+- Natural language (no AI-isms like "delve", "tapestry", "unprecedented", "journey")  
+- Engagement (keeps viewer watching)
+- Flow (smooth transitions, varied sentences)
+- Specificity (concrete details, not vague generalities)
+
+Be strict but fair. Score meanings:
+- 9-10: Exceptional, publish-ready
+- 7-8: Good, minor improvements possible
+- 5-6: Mediocre, needs work
+- 1-4: Poor, major issues
+
+You MUST return ONLY a JSON array of numbers, nothing else.
+Example for 3 sections: [7, 8, 6]`;
+
+  const userPrompt = `Rate these ${beats.length} sections and return ONLY a JSON array of ${beats.length} scores:\n\n${beatsText}`;
 
   try {
     const config: OpenRouterConfig = {
       model: BATCH_RATING_MODEL,
-      temperature: 0.1, // Low temp for consistent scoring
-      maxTokens: 256, // Just need a small array
+      temperature: 0.1,
+      maxTokens: 256,
     };
 
-    const response = await generateJSON(
+    const response = await generateText(
       userId,
-      BATCH_RATING_PROMPT,
+      systemPrompt,
       userPrompt,
       config
-    ) as { data: unknown };
+    );
 
-    // Parse the scores array
+    console.log(`[BatchRating] Raw response: ${response.content.substring(0, 200)}`);
+
+    // Parse the scores array from the response
     let scores: number[] = [];
-    const data = response.data as any;
+    const content = response.content.trim();
     
-    if (Array.isArray(data)) {
-      scores = data.map((s: any) => {
-        const num = Number(s);
-        return isNaN(num) ? 5 : Math.min(10, Math.max(1, num));
-      });
-    } else if (data && typeof data === 'object') {
-      // Handle case where it returns {scores: [...]}
-      const arr = data.scores || data.ratings || Object.values(data);
-      if (Array.isArray(arr)) {
-        scores = arr.map((s: any) => {
-          const num = Number(s);
-          return isNaN(num) ? 5 : Math.min(10, Math.max(1, num));
+    // Try to extract JSON array from response
+    const arrayMatch = content.match(/\[[\d\s,\.]+\]/);
+    if (arrayMatch) {
+      try {
+        const parsed = JSON.parse(arrayMatch[0]);
+        if (Array.isArray(parsed)) {
+          scores = parsed.map((s: any) => {
+            const num = Math.round(Number(s));
+            return isNaN(num) ? 6 : Math.min(10, Math.max(1, num));
+          });
+        }
+      } catch (e) {
+        console.log('[BatchRating] JSON parse failed, trying fallback');
+      }
+    }
+    
+    // Fallback: extract numbers from the response
+    if (scores.length === 0) {
+      const numbers = content.match(/\d+/g);
+      if (numbers) {
+        scores = numbers.slice(0, beats.length).map(n => {
+          const num = parseInt(n, 10);
+          return isNaN(num) || num > 10 ? 6 : Math.min(10, Math.max(1, num));
         });
       }
     }
 
     // Ensure we have the right number of scores
     while (scores.length < beats.length) {
-      scores.push(5); // Default to 5 if missing
+      scores.push(6); // Default to 6 if missing (meh)
     }
     scores = scores.slice(0, beats.length);
 
     const averageScore = scores.reduce((a, b) => a + b, 0) / scores.length;
 
-    console.log(`[BatchRating] Complete: avg ${averageScore.toFixed(1)}/10, scores: [${scores.join(', ')}]`);
+    console.log(`[BatchRating] Parsed scores: [${scores.join(', ')}], avg: ${averageScore.toFixed(1)}/10`);
 
     return { scores, averageScore };
 
   } catch (error) {
     console.error('[BatchRating] Error rating beats:', error);
-    // Return default scores on error
-    const defaultScores = beats.map(() => 5);
-    return { scores: defaultScores, averageScore: 5 };
+    // Return default scores on error (6 = needs review)
+    const defaultScores = beats.map(() => 6);
+    return { scores: defaultScores, averageScore: 6 };
   }
 }
 
+// ============================================================================
+// BATCH REWRITE FOR LOW SCORERS
+// ============================================================================
+
+const REWRITE_THRESHOLD = 7; // Rewrite sections scoring below this
+
+/**
+ * Rewrite sections that scored below threshold using gemini-3-pro
+ */
+export async function rewriteLowScorers(
+  userId: string,
+  beats: Array<{ beatIndex: number; narration: string; qualityScore?: number }>,
+  continuityState: ContinuityState
+): Promise<Array<{ beatIndex: number; narration: string; qualityScore: number; wasRewritten: boolean }>> {
+  const results = [...beats].map(b => ({ ...b, qualityScore: b.qualityScore ?? 6, wasRewritten: false }));
+  
+  // Find sections that need rewriting
+  const lowScorers = results.filter(b => b.qualityScore < REWRITE_THRESHOLD);
+  
+  if (lowScorers.length === 0) {
+    console.log('[Rewrite] All sections passed threshold, no rewrites needed');
+    return results;
+  }
+  
+  console.log(`[Rewrite] ${lowScorers.length} sections scored below ${REWRITE_THRESHOLD}, rewriting...`);
+  
+  for (const section of lowScorers) {
+    const idx = section.beatIndex;
+    console.log(`[Rewrite] Rewriting section ${idx + 1} (score: ${section.qualityScore}/10)`);
+    
+    try {
+      const rewritten = await rewriteSingleSection(
+        userId,
+        section.narration,
+        section.qualityScore,
+        continuityState
+      );
+      
+      // Update the result
+      const resultIdx = results.findIndex(r => r.beatIndex === idx);
+      if (resultIdx !== -1) {
+        results[resultIdx].narration = rewritten;
+        results[resultIdx].qualityScore = Math.min(10, section.qualityScore + 2); // Assume improvement
+        results[resultIdx].wasRewritten = true;
+      }
+      
+      console.log(`[Rewrite] Section ${idx + 1} rewritten successfully`);
+    } catch (error) {
+      console.error(`[Rewrite] Failed to rewrite section ${idx + 1}:`, error);
+    }
+  }
+  
+  return results;
+}
+
+/**
+ * Rewrite a single section using gemini-3-pro
+ */
+async function rewriteSingleSection(
+  userId: string,
+  narration: string,
+  score: number,
+  continuityState: ContinuityState
+): Promise<string> {
+  const systemPrompt = `You are an expert script editor. Improve this documentary script section.
+
+ISSUES TO FIX (scored ${score}/10):
+- Remove AI-isms: delve, tapestry, intricate, unprecedented, journey, nestled, realm
+- Add specific details and concrete examples
+- Vary sentence structure and length
+- Make it conversational but authoritative
+- Ensure smooth flow between ideas
+
+RULES:
+1. Keep the same facts, key points, and overall message
+2. Keep approximately the same length
+3. Write for the EAR (spoken aloud), not the eye
+4. Use contractions naturally
+5. Preserve any [ASSET-ID] tags exactly
+
+Return ONLY the improved narration, no explanations.`;
+
+  const userPrompt = `ORIGINAL SECTION (${score}/10):
+${narration}
+
+PHRASES ALREADY USED (avoid):
+${continuityState.usedPhrases?.slice(0, 10).join(', ') || 'None'}
+
+Write the improved version:`;
+
+  const config: OpenRouterConfig = {
+    model: QUALITY_REVIEW_MODEL, // gemini-3-pro
+    temperature: 0.7,
+    maxTokens: 4096,
+  };
+
+  const response = await generateText(
+    userId,
+    systemPrompt,
+    userPrompt,
+    config
+  );
+
+  return response.content.trim();
+}
