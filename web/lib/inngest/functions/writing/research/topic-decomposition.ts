@@ -61,19 +61,23 @@ export interface TopicDecomposition {
  * @param userId - User ID for API calls
  * @param topic - The topic to decompose
  * @param angle - Optional specific angle/thesis to focus on
+ * @param isDeepResearch - Whether to perform deep research (more questions, recent focus)
  * @returns Array of research questions
  */
 export async function decomposeTopicIntoQuestions(
   userId: string,
   topic: string,
-  angle?: string
+  angle: string | undefined,
+  isDeepResearch: boolean = false
 ): Promise<ResearchQuestion[]> {
   const userPrompt = `Decompose this topic into researchable questions:
 
 TOPIC: ${topic}
 ${angle ? `ANGLE/FOCUS: ${angle}` : ''}
+${isDeepResearch ? 'MODE: DEEP RESEARCH (Focus on recent events, breaking news, and comprehensive coverage)' : ''}
 
 Generate a comprehensive set of research questions that will help create an authoritative, well-researched video script.
+${isDeepResearch ? 'Since this is a DEEP RESEARCH request, please generate MORE questions (20-30) and focus heavily on locating the most recent developments, multiple perspectives, and primary sources.' : ''}
 
 Return as JSON:
 {
@@ -90,7 +94,7 @@ Return as JSON:
   "keyEntities": ["Person 1", "Location 1", "Organization 1"]
 }
 
-Generate 10-20 questions covering all categories. Prioritize unique angles and less-known facts.`;
+Generate ${isDeepResearch ? '20-30' : '10-20'} questions covering all categories. Prioritize unique angles and less-known facts.`;
 
   try {
     const response = await generateJSON<TopicDecomposition>(
