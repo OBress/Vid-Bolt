@@ -50,7 +50,7 @@ export function Step1PromptInput({
       <div className="text-center space-y-3">
         <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-orange-500 text-xs font-mono uppercase tracking-widest">
           <Sparkles className="w-3 h-3" />
-          Step 1 of 10
+          Step 1 of 5
         </div>
         <h2 className="text-3xl font-bold tracking-tight">
           What's your video about?

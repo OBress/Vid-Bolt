@@ -3,17 +3,12 @@
 import { useState, useCallback, useEffect } from "react";
 import { WizardProgress } from "./WizardProgress";
 import { useNavigationStore } from "@/store/use-navigation-store";
-import { Step1PromptInput } from "./steps/Step1PromptInput";
-import { Step2IdeaReview } from "./steps/Step2IdeaReview";
-import { Step3ScriptReview } from "./steps/Step3ScriptReview";
-import { Step4AVVerification } from "./steps/Step4AVVerification";
+import { Step4UniversalScript } from "./steps/Step4UniversalScript";
 import { StepEditor } from "./steps/StepEditor";
 import { StepExport } from "./steps/StepExport";
-import { LoadingStep } from "./LoadingStep";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
 import { useVideos } from "@/hooks/use-videos";
 import { Loader2 } from "lucide-react";
-import type { WritingTaskOutput } from "@/types/task";
 import type { VideoStage, VideoProject } from "@/types/video";
 
 export interface AudioChunk {
@@ -38,6 +33,21 @@ export interface ShotEvent {
   visual_prompt?: string;
 }
 
+// Type for universal script output
+interface UniversalScriptOutput {
+  researchDossier?: any;
+  spine?: any;
+  assetRegistry?: any;
+  expandedBeats?: Array<{
+    beatIndex: number;
+    narration: string;
+    wordCount: number;
+    qualityScore?: number;
+  }>;
+  finalScript?: string;
+  qualityValidation?: any;
+}
+
 export interface WizardState {
   prompt: string;
   expandedIdea: string;
@@ -50,29 +60,27 @@ export interface WizardState {
   expandTaskId: string | null;
   writeTaskId: string | null;
   audioTaskId: string | null;
+  // Universal script output
+  universalScriptOutput: UniversalScriptOutput | null;
 }
 
-// Step configuration for the wizard - 10 steps
+// Step configuration for the wizard - 4 steps
 const STEPS = [
-  { id: 1, label: "Idea", type: "input" },
-  { id: 2, label: "Expand", type: "loading" },
-  { id: 3, label: "Review", type: "review" },
-  { id: 4, label: "Script", type: "loading" },
-  { id: 5, label: "Edit", type: "review" },
-  { id: 6, label: "Media", type: "loading" },
-  { id: 7, label: "Editor", type: "editor" }, // Video editor with auto-placed audio
-  { id: 8, label: "Export", type: "final" },
+  { id: 1, label: "Script", type: "script" }, // Universal script generation
+  { id: 2, label: "Media", type: "loading" }, // Audio generation
+  { id: 3, label: "Editor", type: "editor" }, // Video editor
+  { id: 4, label: "Export", type: "final" }, // Export
 ] as const;
 
 // Helper function to map video stage to wizard step number
 function stageToStepNumber(stage: VideoStage): number {
   const stageMapping: Record<VideoStage, number> = {
-    idea: 1, // Step 1: Idea input
-    script: 5, // Step 5: Script edit/review (after writing is done)
-    audio: 7, // Step 7: Editor (after audio is done)
-    video: 8, // Step 8: Export (skip generate/fine-tune)
-    export: 8, // Step 8: Export
-    completed: 8, // Step 8: Export (if completed, show export)
+    idea: 1, // Step 1: Script (start here)
+    script: 1, // Step 1: Script
+    audio: 3, // Step 3: Editor (after audio is done)
+    video: 4, // Step 4: Export
+    export: 4, // Step 4: Export
+    completed: 4, // Step 4: Export (if completed, show export)
   };
   return stageMapping[stage] || 1;
 }
@@ -138,6 +146,7 @@ export function VideoCreationWizard({
     expandTaskId: null,
     writeTaskId: null,
     audioTaskId: null,
+    universalScriptOutput: null,
   });
 
   // Cleanup on unmount
@@ -188,6 +197,8 @@ export function VideoCreationWizard({
           expandTaskId: null,
           writeTaskId: null,
           audioTaskId: null,
+          universalScriptOutput:
+            (video.metadata as any)?.universalScriptOutput || null,
         });
 
         // Set the video name in the navigation store
@@ -246,196 +257,37 @@ export function VideoCreationWizard({
 
     switch (currentStep) {
       case 1:
+        // Step 1: Universal Script Generation
         return (
-          <Step1PromptInput
-            value={state.prompt}
-            onChange={(prompt) => updateState({ prompt })}
-            onSubmit={async () => {
-              console.log("Step1 onSubmit: Updating video idea");
+          <Step4UniversalScript
+            videoId={state.videoId!}
+            initialTopic={state.prompt}
+            onComplete={async (scriptOutput) => {
+              // Extract script from expanded beats or final script
+              const script = scriptOutput.expandedBeats
+                ? scriptOutput.expandedBeats
+                    .map((b) => b.narration)
+                    .join("\n\n")
+                : scriptOutput.finalScript || "";
 
-              if (!state.videoId) {
-                console.error("No videoId found in state!");
-                return;
-              }
-
-              setIsSaving(true);
-              try {
-                // Update video with idea
-                await updateVideo(state.videoId, {
-                  idea: state.prompt,
-                  current_stage: "idea",
-                });
-
-                // Trigger idea expansion workflow
-                const response = await fetch(
-                  `/api/videos/${state.videoId}/expand`,
-                  {
-                    method: "POST",
-                  }
-                );
-                const data = await response.json();
-
-                if (!response.ok) {
-                  throw new Error(
-                    data.error || "Failed to start idea expansion"
-                  );
-                }
-
-                // Store task ID and advance with delay to ensure state is set
-                if (data.taskId) {
-                  setState((prev) => ({ ...prev, expandTaskId: data.taskId }));
-                  await new Promise((resolve) => setTimeout(resolve, 50));
-                }
-                advanceToStep(2);
-              } catch (err) {
-                console.error("Failed to start expansion:", err);
-                // Still advance but without task ID (will use fallback)
-                setState((prev) => ({ ...prev, expandTaskId: null }));
-                advanceToStep(2);
-              } finally {
-                setIsSaving(false);
-              }
-            }}
-            {...lock}
-          />
-        );
-      case 2:
-        return (
-          <AsyncLoadingStep
-            title="Expanding Your Idea"
-            subtitle="AI is analyzing and enhancing your concept..."
-            steps={[
-              "Analyzing prompt structure",
-              "Researching topic context",
-              "Generating expanded concept",
-              "Optimizing for engagement",
-            ]}
-            taskId={state.expandTaskId}
-            onComplete={(output: WritingTaskOutput) => {
-              // Use expanded idea from task output or fallback
-              const expandedIdea =
-                output.expanded_idea ||
-                `Enhanced Version of: "${state.prompt}"\n\nThis video will explore the fascinating world of ${state.prompt}. We'll break down the key concepts, provide real-world examples, and deliver actionable insights that viewers can apply immediately.\n\nKey Points:\n• Introduction to the core concept\n• Three main supporting arguments\n• Real-world case studies\n• Actionable takeaways for the audience`;
-
-              updateState({ expandedIdea });
-              advanceToStep(3);
-            }}
-            onError={(error) => {
-              console.error("Idea expansion failed:", error);
-              // Use fallback and continue
+              // Save the script and update state
               updateState({
-                expandedIdea: `Enhanced Version of: "${state.prompt}"\n\nThis video will explore the fascinating world of ${state.prompt}. We'll break down the key concepts, provide real-world examples, and deliver actionable insights that viewers can apply immediately.\n\nKey Points:\n• Introduction to the core concept\n• Three main supporting arguments\n• Real-world case studies\n• Actionable takeaways for the audience`,
+                script,
+                universalScriptOutput: scriptOutput,
               });
-              advanceToStep(3);
-            }}
-            fallbackDuration={3000}
-          />
-        );
-      case 3:
-        return (
-          <Step2IdeaReview
-            expandedIdea={state.expandedIdea}
-            onChange={(expandedIdea: string) => updateState({ expandedIdea })}
-            onConfirm={async () => {
-              // Trigger script writing workflow
+
+              // Persist to database
               if (state.videoId) {
                 try {
-                  const response = await fetch(
-                    `/api/videos/${state.videoId}/write`,
-                    {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        expandedIdea: state.expandedIdea,
-                        scriptType: "long_form",
-                        numberOfChapters: 1,
-                      }),
-                    }
-                  );
-                  const data = await response.json();
-
-                  if (response.ok && data.taskId) {
-                    // Update state and advance in a way that ensures taskId is set first
-                    setState((prev) => ({ ...prev, writeTaskId: data.taskId }));
-                    // Use Promise + setTimeout to wait for React's state update batch
-                    await new Promise((resolve) => setTimeout(resolve, 50));
-                    advanceToStep(4);
-                    return;
-                  } else {
-                    console.error(
-                      "Failed to start script writing:",
-                      data.error
-                    );
-                  }
-                } catch (err) {
-                  console.error("Failed to start script writing:", err);
-                }
-              }
-              // Fallback: advance without taskId (will use timer-based progress)
-              advanceToStep(4);
-            }}
-            onBack={() => goToStep(1)}
-            {...lock}
-          />
-        );
-      case 4:
-        return (
-          <AsyncLoadingStep
-            title="Writing Script"
-            subtitle="AI is crafting your complete video script..."
-            steps={[
-              "Structuring narrative arc",
-              "Writing introduction hook",
-              "Developing main content",
-              "Crafting conclusion",
-              "Optimizing for retention",
-            ]}
-            taskId={state.writeTaskId}
-            onComplete={(output: WritingTaskOutput) => {
-              // Use final script from task output or fallback
-              const script =
-                output.final_script ||
-                output.chapters?.map((c) => c.content).join("\n\n---\n\n") ||
-                generateFallbackScript(state.prompt);
-
-              updateState({ script });
-
-              // Also update video project with the script
-              if (state.videoId) {
-                fetch(`/api/videos/${state.videoId}`, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ script_content: script }),
-                }).catch((err) => console.error("Failed to save script:", err));
-              }
-
-              advanceToStep(5);
-            }}
-            onError={(error) => {
-              console.error("Script writing failed:", error);
-              // Use fallback script and continue
-              updateState({ script: generateFallbackScript(state.prompt) });
-              advanceToStep(5);
-            }}
-            fallbackDuration={4000}
-          />
-        );
-      case 5:
-        return (
-          <Step3ScriptReview
-            script={state.script}
-            onChange={(script: string) => updateState({ script })}
-            onConfirm={async () => {
-              if (state.videoId) {
-                setIsSaving(true);
-                try {
-                  // Save the script and update stage to audio
                   await fetch(`/api/videos/${state.videoId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                      script_content: state.script,
+                      script_content: script,
                       current_stage: "audio",
+                      metadata: {
+                        universalScriptOutput: scriptOutput,
+                      },
                     }),
                   });
 
@@ -446,32 +298,24 @@ export function VideoCreationWizard({
                   );
                   const data = await response.json();
 
-                  if (!response.ok) {
-                    throw new Error(
-                      data.error || "Failed to start audio generation"
-                    );
-                  }
-
-                  console.log("Audio generation started:", data);
                   if (data.taskId) {
                     setState((prev) => ({ ...prev, audioTaskId: data.taskId }));
                     await new Promise((resolve) => setTimeout(resolve, 50));
                   }
                 } catch (err) {
-                  console.error("Failed to start audio generation:", err);
-                  setState((prev) => ({ ...prev, audioTaskId: null }));
-                } finally {
-                  setIsSaving(false);
+                  console.error("Failed to save script or start audio:", err);
                 }
               }
-              advanceToStep(6);
+
+              advanceToStep(2);
             }}
-            onBack={() => goToStep(3)}
+            onBack={onBack}
             {...lock}
           />
         );
-      case 6:
-        // Combined Media step - Audio + AV generation
+
+      case 2:
+        // Step 2: Media Generation (Audio + AV)
         return (
           <AsyncLoadingStep
             title="Generating Audio"
@@ -619,7 +463,7 @@ export function VideoCreationWizard({
                   },
                 ],
               });
-              advanceToStep(7);
+              advanceToStep(3);
             }}
             onError={(error) => {
               console.error("Audio generation failed:", error);
@@ -645,12 +489,14 @@ export function VideoCreationWizard({
                   },
                 ],
               });
-              advanceToStep(7);
+              advanceToStep(3);
             }}
             fallbackDuration={8000}
           />
         );
-      case 7:
+
+      case 3:
+        // Step 3: Video Editor
         return (
           <StepEditor
             videoId={state.videoId!}
@@ -671,13 +517,15 @@ export function VideoCreationWizard({
                   console.error("Failed to save step:", err);
                 }
               }
-              advanceToStep(8);
+              advanceToStep(4);
             }}
-            onBack={() => goToStep(5)}
+            onBack={() => goToStep(1)}
             {...lock}
           />
         );
-      case 8:
+
+      case 4:
+        // Step 4: Export
         return (
           <StepExport
             videoId={state.videoId!}
@@ -697,7 +545,7 @@ export function VideoCreationWizard({
                   console.error("Failed to save step:", err);
                 }
               }
-              goToStep(7);
+              goToStep(3);
             }}
             onClose={async () => {
               if (state.videoId) {
@@ -712,13 +560,14 @@ export function VideoCreationWizard({
             {...lock}
           />
         );
+
       default:
         return null;
     }
   };
 
   // Check if current step is editor (needs full width and height)
-  const isEditorStep = currentStep === 7;
+  const isEditorStep = currentStep === 3;
 
   return (
     <div

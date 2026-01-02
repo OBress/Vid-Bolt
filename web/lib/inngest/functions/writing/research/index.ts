@@ -5,17 +5,16 @@
  * Uses OpenRouter web search for real-time fact gathering and verification.
  */
 
-import { generateWithWebSearch, generateJSONWithWebSearch } from '@/lib/ai/openrouter';
+
 import type { 
   ResearchDossier, 
   ScriptGenre, 
   ResearchToggle,
-  UniversalScriptInput,
 } from '../types';
 import { GENRE_CONFIG } from '../config';
-import { UNIVERSAL_PROMPTS } from '../prompts';
+
 import { decomposeTopicIntoQuestions, type ResearchQuestion } from './topic-decomposition';
-import { extractAndVerifyFacts, type ExtractedFacts } from './fact-extraction';
+import { extractAndVerifyFacts } from './fact-extraction';
 import { assembleDossier } from './dossier';
 
 // ============================================================================
