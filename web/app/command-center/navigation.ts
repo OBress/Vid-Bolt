@@ -49,6 +49,11 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "General Settings",
         href: "/command-center/settings/general",
       },
+      {
+        id: "niche-manager",
+        label: "Niche Manager",
+        href: "/command-center/settings/niche-manager",
+      },
     ],
   },
 ];
