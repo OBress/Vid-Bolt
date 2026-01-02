@@ -40,11 +40,15 @@ export interface ExtractedFacts {
   allCitations: SourceCitation[];
   /** Research gaps identified */
   gaps: string[];
+  /** Raw source content for deep research (when LLM has no prior knowledge) */
+  rawSourceContent?: string[];
 }
 
 export interface ExtractionOptions {
   /** Whether this is light (verification only) research */
   isLightResearch?: boolean;
+  /** Whether this is deep research for current events (maximum extraction) */
+  isDeepResearch?: boolean;
   /** Source preferences from user */
   sourcePreferences?: string;
 }
@@ -68,7 +72,7 @@ export async function extractAndVerifyFacts(
   questions: ResearchQuestion[],
   options: ExtractionOptions = {}
 ): Promise<ExtractedFacts> {
-  const { isLightResearch = false, sourcePreferences } = options;
+  const { isLightResearch = false, isDeepResearch = false, sourcePreferences } = options;
 
   const allFacts: VerifiedFact[] = [];
   const allQuotes: AttributableQuote[] = [];
@@ -76,9 +80,12 @@ export async function extractAndVerifyFacts(
   const allEntities: KeyEntity[] = [];
   const allCitations: SourceCitation[] = [];
   const gaps: string[] = [];
+  
+  // Raw content saved for deep research (when LLM has no prior knowledge)
+  const rawSourceContent: string[] = [];
 
-  // Process questions in batches to avoid overwhelming the API
-  const batchSize = isLightResearch ? 3 : 5;
+  // Process questions in batches - larger batches for deep research
+  const batchSize = isLightResearch ? 3 : (isDeepResearch ? 2 : 5); // Smaller batches for deep = more thorough per batch
   const questionBatches = chunkArray(questions, batchSize);
 
   for (let batchIndex = 0; batchIndex < questionBatches.length; batchIndex++) {
@@ -170,12 +177,21 @@ Return as JSON:
         userId,
         UNIVERSAL_PROMPTS.factExtraction,
         userPrompt,
-        { searchContextSize: isLightResearch ? 'low' : 'high' }
+        { searchContextSize: isLightResearch ? 'low' : 'high' } // Always 'high' for deep (already set)
       );
 
       // Convert web citations to source citations
       const sourceCitations = convertCitationsToSources(citations);
       allCitations.push(...sourceCitations);
+      
+      // For deep research, save raw content from sources for the writer
+      if (isDeepResearch && citations.length > 0) {
+        for (const citation of citations) {
+          if (citation.content) {
+            rawSourceContent.push(`=== SOURCE: ${citation.title} ===\nURL: ${citation.url}\n\n${citation.content}\n`);
+          }
+        }
+      }
 
       // Process facts
       for (const fact of data.facts || []) {
@@ -247,6 +263,7 @@ Return as JSON:
     entities: allEntities,
     allCitations,
     gaps,
+    rawSourceContent: rawSourceContent.length > 0 ? rawSourceContent : undefined,
   };
 }
 

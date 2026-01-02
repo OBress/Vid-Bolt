@@ -430,6 +430,9 @@ export function UniversalScriptTester({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="z-[10002]">
+                      <SelectItem value="deep">
+                        Deep Research (Recent Events)
+                      </SelectItem>
                       <SelectItem value="full">Full Research</SelectItem>
                       <SelectItem value="light">
                         Light (Verification Only)

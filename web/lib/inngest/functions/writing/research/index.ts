@@ -56,7 +56,7 @@ export interface ResearchOptions {
 export function shouldExecuteResearch(
   genre: ScriptGenre,
   researchToggle: ResearchToggle
-): { execute: boolean; reason: string } {
+): { execute: boolean; reason: string; isDeep?: boolean } {
   // Research toggle OFF always skips
   if (researchToggle === 'off') {
     return { 
@@ -72,6 +72,15 @@ export function shouldExecuteResearch(
     return { 
       execute: false, 
       reason: `Genre "${genre}" does not support research` 
+    };
+  }
+
+  // Deep research for current events - maximum information extraction
+  if (researchToggle === 'deep') {
+    return {
+      execute: true,
+      reason: 'Deep research for current events - maximum information extraction',
+      isDeep: true,
     };
   }
 
@@ -130,11 +139,16 @@ export async function executeResearchPhase(
 
   console.log(`[Research] Starting research phase for topic: ${topic.substring(0, 50)}...`);
   console.log(`[Research] Reason: ${researchDecision.reason}`);
+  
+  const isDeepResearch = researchDecision.isDeep === true;
+  if (isDeepResearch) {
+    console.log('[Research] DEEP MODE: Maximum information extraction for current events');
+  }
 
   try {
     // Step 1: Decompose topic into researchable questions
     console.log('[Research] Step 1: Decomposing topic into questions...');
-    const questions = await decomposeTopicIntoQuestions(userId, topic, angle);
+    const questions = await decomposeTopicIntoQuestions(userId, topic, angle, isDeepResearch);
     console.log(`[Research] Generated ${questions.length} research questions`);
 
     // Step 2: Execute research and extract facts
@@ -144,7 +158,7 @@ export async function executeResearchPhase(
       userId,
       topic,
       questions,
-      { isLightResearch, sourcePreferences }
+      { isLightResearch, isDeepResearch, sourcePreferences }
     );
     console.log(`[Research] Extracted ${extractedFacts.facts.length} facts, ${extractedFacts.quotes.length} quotes`);
 
