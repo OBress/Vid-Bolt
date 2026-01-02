@@ -402,6 +402,49 @@ SECTION 3 - VISUAL GENERATION INSTRUCTIONS:
 
 Prioritize details that affect visual consistency across multiple generations.`,
 
+  assetExtraction: `You are a film production designer and casting director analyzing a script outline.
+Your goal is to identify the VISUAL ASSETS (Characters, Locations, Objects) required for this video.
+
+CRITICAL INSTRUCTION: You must consolidated variations of the same entity into a single entry.
+Example: "Jamie Dimon", "Young Jamie", "CEO Jamie Dimon" -> MERGE into one "Jamie Dimon" character.
+
+Output a JSON object with this structure:
+{
+  "people": [
+    {
+      "name": "Full Name",
+      "aliases": ["list", "of", "variations", "found"],
+      "role": "Role in story",
+      "details": "Combined details from all contexts",
+      "significance": "Why they matter",
+      "beatIndices": [0, 2, 5] // Beats where they likely appear
+    }
+  ],
+  "locations": [
+    {
+      "name": "Location Name",
+      "type": "indoor/outdoor/abstract",
+      "details": "Visual description",
+      "beatIndices": [1, 3]
+    }
+  ],
+  "objects": [
+    {
+      "name": "Object Name",
+      "type": "prop/item/vehicle",
+      "details": "Visual description",
+      "beatIndices": [4]
+    }
+  ]
+}
+
+RULES:
+1. CHARACTERS: Include the main subject and any named people who speak or take action.
+2. LOCATIONS: Include every specific setting mentioned (e.g., "The London Office", "Senate Hearing Room").
+3. OBJECTS: Include specific props that are manipulated or focused on (e.g., "The Whale Trade Spreadsheet", "The 2008 Balance Sheet").
+4. MERGING: If "The London Whale" and "Bruno Iksil" are the same person, create ONE entry for "Bruno Iksil" with alias "The London Whale".
+5. BEAT INDICES: Infer which beat index (0-based) these asset appear in based on the provided summary.`,
+
   // ==========================================================================
   // PHASE 5: SCRIPT EXPANSION
   // ==========================================================================

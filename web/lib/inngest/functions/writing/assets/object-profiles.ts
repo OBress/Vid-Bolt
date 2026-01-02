@@ -112,6 +112,7 @@ Generate a comprehensive profile. Return as JSON:
   "visualInstructions": {
     "consistencyAnchors": ["features that MUST appear"],
     "prohibitions": ["things that should NEVER appear"],
+    "styleNotes": "SPECIFIC VISUAL DETAILS of the object",
     "requiredVariants": [
       {"context": "situation where object appears differently", "changes": "what changes"}
     ]
@@ -151,6 +152,7 @@ function createFallbackObjectProfile(obj: ObjectInput, index: number): ObjectPro
     visualInstructions: {
       consistencyAnchors: [obj.name, obj.type],
       prohibitions: ['anachronistic elements'],
+      styleNotes: 'Standard visual representation',
     },
   };
 }

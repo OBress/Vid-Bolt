@@ -121,7 +121,16 @@ interface UniversalScriptOutput {
 interface Step4UniversalScriptProps {
   videoId: string;
   initialTopic: string;
-  onComplete: (output: UniversalScriptOutput) => void;
+  initialOutput?: UniversalScriptOutput | null;
+  initialConfig?: {
+    topic: string;
+    genre: ScriptGenre;
+    researchToggle: ResearchToggle;
+    durationRange: number[];
+    angle: string;
+  } | null;
+  onComplete: (output: UniversalScriptOutput, config: any) => void;
+  onSave: (output: UniversalScriptOutput, config: any) => void;
   onBack: () => void;
   isLocked?: boolean;
   lockedMessage?: string;
@@ -141,29 +150,69 @@ type ResearchToggle = "deep" | "full" | "light" | "off";
 export function Step4UniversalScript({
   videoId,
   initialTopic,
+  initialOutput,
+  initialConfig,
   onComplete,
+  onSave,
   onBack,
   isLocked,
   lockedMessage,
 }: Step4UniversalScriptProps) {
-  const [view, setView] = useState<ViewState>("config");
+  // Initialize view based on whether we have output
+  const [view, setView] = useState<ViewState>(
+    initialOutput ? "output" : "config"
+  );
+
   const [taskId, setTaskId] = useState<string | null>(null);
-  const [taskStatus, setTaskStatus] = useState<string>("idle");
+  const [taskStatus, setTaskStatus] = useState<string>(
+    initialOutput ? "completed" : "idle"
+  );
   const [progress, setProgress] = useState(0);
   const [currentPhase, setCurrentPhase] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [output, setOutput] = useState<UniversalScriptOutput | null>(null);
+  const [output, setOutput] = useState<UniversalScriptOutput | null>(
+    initialOutput || null
+  );
   const [selectedAsset, setSelectedAsset] = useState<any | null>(null);
   const [isAssetDetailOpen, setIsAssetDetailOpen] = useState(false);
+  const [isRegenerateConfirmOpen, setIsRegenerateConfirmOpen] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
 
-  // Form state
-  const [topic, setTopic] = useState(initialTopic);
-  const [genre, setGenre] = useState<ScriptGenre>("documentary");
-  const [researchToggle, setResearchToggle] = useState<ResearchToggle>("full");
-  const [durationRange, setDurationRange] = useState([5, 10]); // [min, max] in minutes
-  const [angle, setAngle] = useState("");
+  // Form state - Initialize from saved config or defaults
+  const [topic, setTopic] = useState(initialConfig?.topic || initialTopic);
+  const [genre, setGenre] = useState<ScriptGenre>(
+    initialConfig?.genre || "documentary"
+  );
+  const [researchToggle, setResearchToggle] = useState<ResearchToggle>(
+    initialConfig?.researchToggle || "full"
+  );
+  const [durationRange, setDurationRange] = useState(
+    initialConfig?.durationRange || [5, 10]
+  ); // [min, max] in minutes
+  const [angle, setAngle] = useState(initialConfig?.angle || "");
+  const [activeTab, setActiveTab] = useState("script");
+
+  // Update state if props change (e.g. after loading from DB)
+  useEffect(() => {
+    if (initialOutput) {
+      setOutput(initialOutput);
+      setView("output");
+      setTaskStatus("completed");
+    }
+  }, [initialOutput]);
+
+  useEffect(() => {
+    if (initialConfig) {
+      if (initialConfig.topic) setTopic(initialConfig.topic);
+      if (initialConfig.genre) setGenre(initialConfig.genre);
+      if (initialConfig.researchToggle)
+        setResearchToggle(initialConfig.researchToggle);
+      if (initialConfig.durationRange)
+        setDurationRange(initialConfig.durationRange);
+      if (initialConfig.angle) setAngle(initialConfig.angle);
+    }
+  }, [initialConfig]);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -207,16 +256,26 @@ export function Step4UniversalScript({
         }
 
         if (outputData?.output_data) {
-          setOutput(outputData.output_data as UniversalScriptOutput);
+          const newOutput = outputData.output_data as UniversalScriptOutput;
+          setOutput(newOutput);
           setView("output");
           setTaskStatus("completed");
+
+          // Auto-save the result
+          onSave(newOutput, {
+            topic,
+            genre,
+            researchToggle,
+            durationRange,
+            angle,
+          });
         }
       } else if (statusData.status === "failed") {
         setError(statusData.error_message || "Task failed");
         setView("config");
       }
     },
-    [supabase]
+    [supabase, topic, genre, researchToggle, durationRange, angle, onSave]
   );
 
   // Polling effect
@@ -271,7 +330,13 @@ export function Step4UniversalScript({
 
   const handleConfirm = () => {
     if (output) {
-      onComplete(output);
+      onComplete(output, {
+        topic,
+        genre,
+        researchToggle,
+        durationRange,
+        angle,
+      });
     }
   };
 
@@ -570,433 +635,141 @@ export function Step4UniversalScript({
       </div>
     );
   }
-
   // =========================================================================
   // RENDER: OUTPUT VIEW
   // =========================================================================
+  // Calculate duration
+  const totalWords =
+    output?.expandedBeats?.reduce((sum, b) => sum + b.wordCount, 0) || 0;
+  const estimatedDurationMinutes = Math.ceil(totalWords / 150); // ~150 wpm
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex-shrink-0 text-center space-y-2 mb-4">
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-green-500/10 border border-green-500/20 rounded-full text-green-500 text-xs font-mono uppercase tracking-widest">
-          <CheckCircle className="w-3 h-3" />
-          Script Complete
-        </div>
-        <h2 className="text-2xl font-bold tracking-tight">
-          Review Your Script
-        </h2>
-      </div>
+    <div className="flex h-[calc(100vh-160px)] gap-6 w-full max-w-[96vw] mx-auto px-8 py-6">
+      {/* LEFT SIDEBAR (Fixed width) */}
+      <div className="w-80 shrink-0 flex flex-col gap-6 h-full">
+        {/* Header & Stats */}
+        <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl p-5 space-y-4 shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 bg-green-500/10 border border-green-500/20 rounded-full text-green-500 text-[10px] font-mono uppercase tracking-widest">
+              <CheckCircle className="w-3 h-3" />
+              Complete
+            </div>
+            <h2 className="text-xl font-bold tracking-tight whitespace-nowrap">
+              Script & Assets
+            </h2>
+          </div>
 
-      {/* Quick Stats */}
-      {output && (
-        <div className="flex-shrink-0 flex items-center justify-center gap-4 mb-4">
-          {output.researchDossier && (
-            <div className="px-3 py-1.5 bg-neutral-800/50 rounded-lg text-xs">
-              <span className="text-neutral-500">Facts:</span>{" "}
-              <span className="text-white font-medium">
-                {output.researchDossier.metadata.factCount}
-              </span>
-            </div>
-          )}
-          {output.spine && (
-            <div className="px-3 py-1.5 bg-neutral-800/50 rounded-lg text-xs">
-              <span className="text-neutral-500">Beats:</span>{" "}
-              <span className="text-white font-medium">
-                {output.spine.beatCount}
-              </span>
-            </div>
-          )}
-          {output.expandedBeats && (
-            <div className="px-3 py-1.5 bg-neutral-800/50 rounded-lg text-xs">
-              <span className="text-neutral-500">Words:</span>{" "}
-              <span className="text-white font-medium">
-                {output.expandedBeats.reduce((sum, b) => sum + b.wordCount, 0)}
-              </span>
-            </div>
-          )}
-          {output.qualityValidation && (
-            <div
-              className={`px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 ${
-                output.qualityValidation.passed
-                  ? "bg-green-500/10 text-green-400"
-                  : "bg-yellow-500/10 text-yellow-400"
-              }`}
-            >
-              {output.qualityValidation.passed ? (
-                <CheckCircle className="w-3 h-3" />
-              ) : (
-                <XCircle className="w-3 h-3" />
-              )}
-              {output.qualityValidation.passed
-                ? "Quality Passed"
-                : "Issues Found"}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tabbed Output */}
-      <div className="flex-1 overflow-hidden">
-        <Tabs defaultValue="script" className="h-full flex flex-col">
-          <TabsList className="flex-shrink-0 bg-neutral-900 mb-4">
-            <TabsTrigger value="script" className="flex items-center gap-2">
-              <FileText className="w-4 h-4" />
-              Script
-            </TabsTrigger>
-            <TabsTrigger value="research" className="flex items-center gap-2">
-              <Search className="w-4 h-4" />
-              Research
-            </TabsTrigger>
-            <TabsTrigger value="assets" className="flex items-center gap-2">
-              <Users className="w-4 h-4" />
-              Assets
-            </TabsTrigger>
-            <TabsTrigger value="spine" className="flex items-center gap-2">
-              <Layout className="w-4 h-4" />
-              Spine
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Script Tab */}
-          <TabsContent value="script" className="flex-1 overflow-y-auto">
-            <div className="bg-neutral-900 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-4">
-                  <h3 className="text-lg font-bold text-white">
-                    Script by Beats
-                  </h3>
-                  {output?.expandedBeats && (
-                    <div className="text-sm text-neutral-500">
-                      {output.expandedBeats.length} beats •{" "}
-                      {output.expandedBeats.reduce(
-                        (sum, b) => sum + b.wordCount,
-                        0
-                      )}{" "}
-                      words
-                    </div>
-                  )}
+          {output && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 bg-neutral-800/50 rounded-lg text-center">
+                <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-0.5">
+                  Words
                 </div>
-                {(output?.expandedBeats || output?.finalScript) && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      const fullScript = output.expandedBeats
-                        ? output.expandedBeats
-                            .map((b) => b.narration)
-                            .join("\n\n---\n\n")
-                        : output.finalScript || "";
-                      navigator.clipboard.writeText(fullScript);
-                    }}
-                    className="gap-2"
-                  >
-                    <Copy className="w-4 h-4" />
-                    Copy Story
-                  </Button>
-                )}
+                <div className="text-lg font-mono text-white">{totalWords}</div>
               </div>
-
-              {output?.expandedBeats && output.expandedBeats.length > 0 ? (
-                <div className="space-y-4 max-h-[400px] overflow-y-auto">
-                  {output.expandedBeats.map((beat) => {
-                    const score = beat.qualityScore ?? 0;
-                    const scoreColor =
-                      score >= 8
-                        ? "text-green-400 bg-green-500/20"
-                        : score >= 6
-                        ? "text-yellow-400 bg-yellow-500/20"
-                        : "text-red-400 bg-red-500/20";
-
-                    return (
-                      <div
-                        key={beat.beatIndex}
-                        className="border border-neutral-800 rounded-lg overflow-hidden"
-                      >
-                        <div className="bg-neutral-800/50 px-4 py-2 flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm font-bold text-white">
-                              Beat {beat.beatIndex + 1}
-                            </span>
-                            <span className="text-xs text-neutral-500">
-                              {beat.wordCount} words
-                            </span>
-                          </div>
-                          <div
-                            className={`px-2 py-0.5 rounded text-xs font-bold ${scoreColor}`}
-                          >
-                            {score > 0 ? `${score}/10` : "N/A"}
-                          </div>
-                        </div>
-                        <div className="p-4">
-                          <div className="font-serif text-neutral-300 leading-relaxed whitespace-pre-wrap text-sm line-clamp-4">
-                            {beat.narration.replace(/\\n/g, "\n")}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+              <div className="p-3 bg-neutral-800/50 rounded-lg text-center">
+                <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-0.5">
+                  est. time
                 </div>
-              ) : output?.finalScript ? (
-                <div className="font-serif leading-relaxed text-neutral-300 whitespace-pre-wrap max-h-[400px] overflow-y-auto">
-                  {output.finalScript.replace(/\\n/g, "\n")}
+                <div className="text-lg font-mono text-white">
+                  {estimatedDurationMinutes}m
                 </div>
-              ) : (
-                <p className="text-neutral-500">No script generated.</p>
-              )}
+              </div>
+              <div className="p-3 bg-neutral-800/50 rounded-lg text-center">
+                <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-0.5">
+                  Facts
+                </div>
+                <div className="text-lg font-mono text-white">
+                  {output.researchDossier?.metadata.factCount || 0}
+                </div>
+              </div>
+              <div className="p-3 bg-neutral-800/50 rounded-lg text-center">
+                <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-0.5">
+                  Beats
+                </div>
+                <div className="text-lg font-mono text-white">
+                  {output.spine?.beatCount || 0}
+                </div>
+              </div>
             </div>
-          </TabsContent>
+          )}
+        </div>
 
-          {/* Research Tab */}
-          <TabsContent value="research" className="flex-1 overflow-y-auto">
-            <div className="space-y-4 max-h-[500px] overflow-y-auto">
-              {output?.researchDossier ? (
-                <>
-                  {/* Facts */}
-                  <div className="bg-neutral-900 rounded-lg p-4">
-                    <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                      <CheckCircle className="w-4 h-4 text-green-500" />
-                      Verified Facts ({output.researchDossier.facts.length})
-                    </h4>
-                    <div className="space-y-2 max-h-60 overflow-y-auto">
-                      {output.researchDossier.facts.slice(0, 10).map((fact) => (
-                        <div
-                          key={fact.id}
-                          className="p-2 bg-neutral-800 rounded text-xs"
-                        >
-                          <span className="text-neutral-500">[{fact.id}]</span>{" "}
-                          <span className="text-neutral-300">
-                            {fact.statement}
-                          </span>
-                          <span
-                            className={`ml-2 px-1 py-0.5 rounded text-[10px] ${
-                              fact.confidence === "verified"
-                                ? "bg-green-500/20 text-green-400"
-                                : fact.confidence === "high"
-                                ? "bg-blue-500/20 text-blue-400"
-                                : "bg-yellow-500/20 text-yellow-400"
-                            }`}
-                          >
-                            {fact.confidence}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+        {/* Navigation Tabs (Vertical-ish List) */}
+        <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl overflow-hidden flex-1 flex flex-col">
+          <Tabs
+            value={activeTab}
+            onValueChange={setActiveTab}
+            className="flex-1 flex flex-col"
+            orientation="vertical"
+          >
+            <TabsList className="bg-transparent flex-col flex-1 items-stretch p-0 gap-0 border-b border-neutral-800 w-full">
+              <TabsTrigger
+                value="script"
+                className="flex-1 justify-center gap-3 px-6 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/50 text-neutral-400 data-[state=active]:text-white transition-all text-sm uppercase tracking-wider font-medium"
+              >
+                <FileText className="w-5 h-5" />
+                Script
+              </TabsTrigger>
+              <TabsTrigger
+                value="spine"
+                className="flex-1 justify-center gap-3 px-6 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/50 text-neutral-400 data-[state=active]:text-white transition-all text-sm uppercase tracking-wider font-medium"
+              >
+                <Layout className="w-5 h-5" />
+                Spine
+              </TabsTrigger>
+              <TabsTrigger
+                value="assets"
+                className="flex-1 justify-center gap-3 px-6 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/50 text-neutral-400 data-[state=active]:text-white transition-all text-sm uppercase tracking-wider font-medium"
+              >
+                <Users className="w-5 h-5" />
+                Assets
+              </TabsTrigger>
+              <TabsTrigger
+                value="research"
+                className="flex-1 justify-center gap-3 px-6 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/50 text-neutral-400 data-[state=active]:text-white transition-all text-sm uppercase tracking-wider font-medium"
+              >
+                <Search className="w-5 h-5" />
+                Research
+              </TabsTrigger>
+            </TabsList>
 
-                  {/* Quotes */}
-                  {output.researchDossier.quotes.length > 0 && (
-                    <div className="bg-neutral-900 rounded-lg p-4">
-                      <h4 className="text-sm font-bold text-white mb-3">
-                        Quotes ({output.researchDossier.quotes.length})
-                      </h4>
-                      <div className="space-y-2">
-                        {output.researchDossier.quotes
-                          .slice(0, 5)
-                          .map((quote) => (
-                            <div
-                              key={quote.id}
-                              className="p-2 bg-neutral-800 rounded text-xs"
-                            >
-                              <p className="text-neutral-300 italic">
-                                "{quote.quote}"
-                              </p>
-                              <p className="text-neutral-500 mt-1">
-                                — {quote.speaker}
-                              </p>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Entities */}
-                  {output.researchDossier.entities.length > 0 && (
-                    <div className="bg-neutral-900 rounded-lg p-4">
-                      <h4 className="text-sm font-bold text-white mb-3">
-                        Key Entities ({output.researchDossier.entities.length})
-                      </h4>
-                      <div className="flex flex-wrap gap-2">
-                        {output.researchDossier.entities
-                          .slice(0, 15)
-                          .map((entity, i) => (
-                            <span
-                              key={i}
-                              className={`px-2 py-1 rounded text-xs ${
-                                entity.type === "person"
-                                  ? "bg-purple-500/20 text-purple-400"
-                                  : entity.type === "location"
-                                  ? "bg-blue-500/20 text-blue-400"
-                                  : "bg-orange-500/20 text-orange-400"
-                              }`}
-                            >
-                              {entity.name}
-                            </span>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="bg-neutral-900 rounded-lg p-6 text-center text-neutral-500">
-                  No research performed (research toggle: {researchToggle})
-                </div>
-              )}
+            {/* Action Buttons at bottom of sidebar */}
+            <div className="mt-auto p-5 border-t border-neutral-800 space-y-3 shrink-0">
+              <Button
+                onClick={() => handleConfirm()}
+                className="w-full h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest gap-2"
+              >
+                <Check className="w-4 h-4" />
+                Confirm & Continue
+              </Button>
+              <Button
+                onClick={() => setIsRegenerateConfirmOpen(true)}
+                variant="ghost"
+                className="w-full text-neutral-500 hover:text-white"
+              >
+                Regenerate
+              </Button>
             </div>
-          </TabsContent>
-
-          {/* Assets Tab */}
-          <TabsContent value="assets" className="flex-1 overflow-y-auto">
-            <div className="space-y-4 max-h-[500px] overflow-y-auto">
-              {output?.assetRegistry ? (
-                <>
-                  {/* Characters */}
-                  <div className="bg-neutral-900 rounded-lg p-4">
-                    <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                      <Users className="w-4 h-4 text-purple-500" />
-                      Characters ({output.assetRegistry.characters.length})
-                    </h4>
-                    <div className="grid grid-cols-2 gap-2">
-                      {output.assetRegistry.characters.map((char) => (
-                        <div
-                          key={char.id}
-                          className="p-3 bg-neutral-800 rounded cursor-pointer hover:bg-neutral-700 transition-colors"
-                          onClick={() => {
-                            setSelectedAsset(char);
-                            setIsAssetDetailOpen(true);
-                          }}
-                        >
-                          <div className="text-white font-medium text-sm">
-                            {char.name}
-                          </div>
-                          <div className="text-neutral-500 text-xs">
-                            {char.role}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Locations */}
-                  {output.assetRegistry.locations.length > 0 && (
-                    <div className="bg-neutral-900 rounded-lg p-4">
-                      <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-blue-500" />
-                        Locations ({output.assetRegistry.locations.length})
-                      </h4>
-                      <div className="grid grid-cols-2 gap-2">
-                        {output.assetRegistry.locations.map((loc) => (
-                          <div
-                            key={loc.id}
-                            className="p-3 bg-neutral-800 rounded cursor-pointer hover:bg-neutral-700 transition-colors"
-                            onClick={() => {
-                              setSelectedAsset(loc);
-                              setIsAssetDetailOpen(true);
-                            }}
-                          >
-                            <div className="text-white font-medium text-sm">
-                              {loc.name}
-                            </div>
-                            <div className="text-neutral-500 text-xs">
-                              {loc.essence}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="bg-neutral-900 rounded-lg p-6 text-center text-neutral-500">
-                  No assets generated
-                </div>
-              )}
-            </div>
-          </TabsContent>
-
-          {/* Spine Tab */}
-          <TabsContent value="spine" className="flex-1 overflow-y-auto">
-            <div className="space-y-4 max-h-[500px] overflow-y-auto">
-              {output?.spine ? (
-                <>
-                  <div className="bg-neutral-900 rounded-lg p-4">
-                    <div className="grid grid-cols-3 gap-4 text-center">
-                      <div>
-                        <div className="text-2xl font-bold text-white">
-                          {output.spine.beatCount}
-                        </div>
-                        <div className="text-xs text-neutral-500">Beats</div>
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold text-white">
-                          {Math.round(output.spine.totalDurationSeconds / 60)}
-                        </div>
-                        <div className="text-xs text-neutral-500">Minutes</div>
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold text-white">
-                          {output.spine.sections.length}
-                        </div>
-                        <div className="text-xs text-neutral-500">Sections</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    {output.spine.beats.map((beat) => (
-                      <div
-                        key={beat.index}
-                        className="p-3 bg-neutral-900 rounded-lg"
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="w-6 h-6 rounded bg-orange-500/20 text-orange-400 text-xs flex items-center justify-center">
-                            {beat.index + 1}
-                          </span>
-                          <span className="px-2 py-0.5 bg-neutral-800 rounded text-xs text-neutral-400">
-                            {beat.classification.type}
-                          </span>
-                          <span className="text-neutral-600 text-xs">
-                            {beat.classification.section}
-                          </span>
-                        </div>
-                        <p className="text-sm text-neutral-300 line-clamp-2">
-                          {beat.contentSummary}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <div className="bg-neutral-900 rounded-lg p-6 text-center text-neutral-500">
-                  No spine generated
-                </div>
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
+          </Tabs>
+        </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex-shrink-0 flex items-center gap-4 pt-4">
-        <Button
-          onClick={reset}
-          variant="outline"
-          className="flex-1 h-12 border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800 gap-2"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Regenerate
-        </Button>
-        <Button
-          onClick={handleConfirm}
-          className="flex-[2] h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest gap-2"
-        >
-          <Check className="w-4 h-4" />
-          Confirm & Generate Media
-        </Button>
+      {/* RIGHT CONTENT AREA (Flexible width) */}
+      <div className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden h-full">
+        <ContentArea
+          output={output}
+          activeTab={activeTab}
+          onAssetClick={(asset) => {
+            setSelectedAsset(asset);
+            setIsAssetDetailOpen(true);
+          }}
+        />
       </div>
 
       {/* Asset Detail Dialog */}
       <Dialog open={isAssetDetailOpen} onOpenChange={setIsAssetDetailOpen}>
-        <DialogContent className="max-w-2xl bg-neutral-900 border-neutral-800 text-white max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogContent className="z-[200] max-w-2xl bg-neutral-900 border-neutral-800 text-white max-h-[80vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>{selectedAsset?.name}</DialogTitle>
             <DialogDescription className="text-neutral-400">
@@ -1021,29 +794,43 @@ export function Step4UniversalScript({
                           <span className="text-neutral-500">Style:</span>{" "}
                           {selectedAsset.visualInstructions.styleNotes}
                         </p>
-                        {selectedAsset.visualInstructions
-                          .consistencyAnchors && (
-                          <div>
-                            <span className="text-neutral-500">Anchors:</span>
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {selectedAsset.visualInstructions.consistencyAnchors.map(
-                                (a: string, i: number) => (
-                                  <span
-                                    key={i}
-                                    className="bg-neutral-800 px-2 py-0.5 rounded text-xs"
-                                  >
-                                    {a}
-                                  </span>
-                                )
-                              )}
-                            </div>
+                        <div>
+                          <span className="text-neutral-500">Anchors:</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {selectedAsset.visualInstructions.consistencyAnchors?.map(
+                              (a: string, i: number) => (
+                                <span
+                                  key={i}
+                                  className="bg-neutral-800 px-2 py-0.5 rounded text-xs"
+                                >
+                                  {a}
+                                </span>
+                              )
+                            )}
                           </div>
-                        )}
+                        </div>
+                        <div>
+                          <span className="text-neutral-500">
+                            Prohibitions:
+                          </span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {selectedAsset.visualInstructions.prohibitions?.map(
+                              (p: string, i: number) => (
+                                <span
+                                  key={i}
+                                  className="bg-red-900/20 text-red-400 px-2 py-0.5 rounded text-xs"
+                                >
+                                  {p}
+                                </span>
+                              )
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )}
 
-                  {/* Physical Characteristics (Characters) */}
+                  {/* Character Details */}
                   {selectedAsset.physicalCharacteristics && (
                     <div className="space-y-2">
                       <h4 className="text-sm font-bold text-neutral-300 uppercase tracking-wider">
@@ -1073,6 +860,15 @@ export function Step4UniversalScript({
                               ?.build
                           }
                         </div>
+                        <div className="col-span-2">
+                          <span className="text-neutral-500 block text-xs">
+                            Face
+                          </span>
+                          {
+                            selectedAsset.physicalCharacteristics.faceFeatures
+                              ?.notableFeatures
+                          }
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1091,22 +887,57 @@ export function Step4UniversalScript({
                           {selectedAsset.structuralDetails.architectureStyle} -{" "}
                           {selectedAsset.structuralDetails.materials}
                         </div>
-                        {selectedAsset.environmentalDetails && (
-                          <div>
-                            <span className="text-neutral-500 block text-xs">
-                              Atmosphere
-                            </span>
-                            {
-                              selectedAsset.environmentalDetails
-                                .weatherAtmosphere
-                            }
-                          </div>
-                        )}
+                        <div>
+                          <span className="text-neutral-500 block text-xs">
+                            Atmosphere
+                          </span>
+                          {
+                            selectedAsset.environmentalDetails
+                              ?.weatherAtmosphere
+                          }
+                        </div>
+                        <div>
+                          <span className="text-neutral-500 block text-xs">
+                            Lighting
+                          </span>
+                          {selectedAsset.lighting?.mood} (
+                          {selectedAsset.lighting?.natural})
+                        </div>
                       </div>
                     </div>
                   )}
 
-                  {/* Raw JSON */}
+                  {/* Object Details */}
+                  {selectedAsset.physicalDescription && (
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-bold text-neutral-300 uppercase tracking-wider">
+                        Physical Description
+                      </h4>
+                      <div className="bg-neutral-950 p-4 rounded-lg space-y-2 text-sm">
+                        <p>
+                          {
+                            selectedAsset.physicalDescription
+                              .detailedDescription
+                          }
+                        </p>
+                        <div className="grid grid-cols-2 gap-4 mt-2">
+                          <div>
+                            <span className="text-neutral-500 text-xs">
+                              Material:
+                            </span>{" "}
+                            {selectedAsset.physicalDescription.materials}
+                          </div>
+                          <div>
+                            <span className="text-neutral-500 text-xs">
+                              Color:
+                            </span>{" "}
+                            {selectedAsset.physicalDescription.color}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <pre className="text-[10px] text-neutral-600 overflow-x-auto p-4 bg-black rounded">
                     {JSON.stringify(selectedAsset, null, 2)}
                   </pre>
@@ -1116,6 +947,241 @@ export function Step4UniversalScript({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Regeneration Confirmation Dialog */}
+      <Dialog
+        open={isRegenerateConfirmOpen}
+        onOpenChange={setIsRegenerateConfirmOpen}
+      >
+        <DialogContent className="bg-neutral-900 border-neutral-800 text-white sm:max-w-md z-[200]">
+          <DialogHeader>
+            <DialogTitle>Regenerate Script?</DialogTitle>
+            <DialogDescription className="text-neutral-400">
+              This will clear the current script, assets, and research. All
+              progress on this specific version will be lost.
+              <br />
+              <br />
+              Are you sure you want to start over?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-3 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setIsRegenerateConfirmOpen(false)}
+              className="border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                reset();
+                setIsRegenerateConfirmOpen(false);
+              }}
+              className="bg-red-900/50 hover:bg-red-900 text-red-100 border border-red-900"
+            >
+              Yes, Regenerate
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// Helper Component for Content Area
+function ContentArea({
+  output,
+  activeTab,
+  onAssetClick,
+}: {
+  output: UniversalScriptOutput | null;
+  activeTab: string;
+  onAssetClick?: (asset: any) => void;
+}) {
+  if (!output) return null;
+
+  return (
+    <div className="h-full overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-neutral-800 scrollbar-track-transparent">
+      {activeTab === "script" && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h3 className="text-2xl font-bold text-white">Full Script</h3>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const text =
+                  output.expandedBeats?.map((b) => b.narration).join("\n\n") ||
+                  "";
+                navigator.clipboard.writeText(text);
+              }}
+            >
+              <Copy className="w-4 h-4 mr-2" /> Copy
+            </Button>
+          </div>
+
+          <div className="space-y-6">
+            {output.expandedBeats?.map((beat, idx) => (
+              <ExpandableBeatCard key={idx} beat={beat} index={idx} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "spine" && (
+        <div className="space-y-6">
+          <h3 className="text-2xl font-bold text-white">Narrative Spine</h3>
+          <div className="space-y-4">
+            {output.spine?.beats.map((beat) => (
+              <div
+                key={beat.index}
+                className="bg-neutral-800/30 border border-neutral-800 p-4 rounded-lg"
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <span className="w-6 h-6 rounded-full bg-neutral-800 flex items-center justify-center text-xs font-mono text-neutral-400">
+                    {beat.index + 1}
+                  </span>
+                  <span className="text-sm font-medium text-orange-400 uppercase tracking-wide">
+                    {beat.classification.type}
+                  </span>
+                </div>
+                <p className="text-neutral-300">{beat.contentSummary}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "assets" && (
+        <div className="space-y-8">
+          <h3 className="text-2xl font-bold text-white">Visual Assets</h3>
+
+          {/* Characters */}
+          {output.assetRegistry?.characters &&
+            output.assetRegistry.characters.length > 0 && (
+              <div className="space-y-4">
+                <h4 className="text-lg font-medium text-white flex items-center gap-2">
+                  <Users className="w-5 h-5 text-neutral-400" /> Characters
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  {output.assetRegistry.characters.map((char) => (
+                    <div
+                      key={char.id}
+                      className="bg-neutral-800/30 border border-neutral-800 p-4 rounded-lg cursor-pointer hover:bg-neutral-800/50 hover:border-neutral-700 transition-all group"
+                      onClick={() => onAssetClick?.(char)}
+                    >
+                      <div className="font-bold text-white mb-1 group-hover:text-orange-400 transition-colors">
+                        {char.name}
+                      </div>
+                      <div className="text-xs text-neutral-500 mb-2">
+                        {char.role}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+          {/* Locations */}
+          {output.assetRegistry?.locations &&
+            output.assetRegistry.locations.length > 0 && (
+              <div className="space-y-4">
+                <h4 className="text-lg font-medium text-white flex items-center gap-2">
+                  <MapPin className="w-5 h-5 text-neutral-400" /> Locations
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  {output.assetRegistry.locations.map((loc) => (
+                    <div
+                      key={loc.id}
+                      className="bg-neutral-800/30 border border-neutral-800 p-4 rounded-lg cursor-pointer hover:bg-neutral-800/50 hover:border-neutral-700 transition-all group"
+                      onClick={() => onAssetClick?.(loc)}
+                    >
+                      <div className="font-bold text-white mb-1 group-hover:text-orange-400 transition-colors">
+                        {loc.name}
+                      </div>
+                      <div className="text-xs text-neutral-500 mb-2">
+                        {loc.essence}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+        </div>
+      )}
+
+      {activeTab === "research" && (
+        <div className="space-y-6">
+          <h3 className="text-2xl font-bold text-white">Research Dossier</h3>
+          <div className="space-y-2">
+            {!output.researchDossier?.facts ||
+            output.researchDossier.facts.length === 0 ? (
+              <div className="text-neutral-500 italic p-4 border border-neutral-800/50 rounded-lg bg-neutral-900/30">
+                No research was performed for this script.
+              </div>
+            ) : (
+              output.researchDossier.facts.map((fact) => (
+                <div
+                  key={fact.id}
+                  className="p-3 bg-neutral-800/30 border border-neutral-800 rounded-lg text-sm text-neutral-300"
+                >
+                  <span className="text-orange-500 font-mono mr-2">
+                    [{fact.id}]
+                  </span>
+                  {fact.statement}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExpandableBeatCard({ beat, index }: { beat: any; index: number }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="bg-neutral-800/30 border border-neutral-800 rounded-xl overflow-hidden transition-all hover:border-neutral-700">
+      <div className="p-4 flex items-center justify-between bg-black/20">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-bold text-white">Beat {index + 1}</span>
+          <span className="text-xs text-neutral-500 font-mono">
+            {beat.wordCount} words
+          </span>
+        </div>
+        {beat.qualityScore && (
+          <div
+            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+              beat.qualityScore >= 8
+                ? "bg-green-500/10 text-green-400"
+                : "bg-yellow-500/10 text-yellow-400"
+            }`}
+          >
+            {beat.qualityScore}/10
+          </div>
+        )}
+      </div>
+      <div className="p-5">
+        <div
+          className={`font-serif text-lg leading-relaxed text-neutral-200 whitespace-pre-wrap ${
+            !expanded ? "line-clamp-3" : ""
+          }`}
+        >
+          {beat.narration}
+        </div>
+        {beat.narration.length > 200 && (
+          <Button
+            variant="link"
+            onClick={() => setExpanded(!expanded)}
+            className="mt-2 p-0 h-auto text-orange-500 text-xs font-medium hover:text-orange-400"
+          >
+            {expanded ? "Show Less" : "Read More"}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

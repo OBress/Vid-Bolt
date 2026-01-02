@@ -148,6 +148,7 @@ export function UniversalScriptTester({
   const [output, setOutput] = useState<UniversalScriptOutput | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<any | null>(null);
   const [isAssetDetailOpen, setIsAssetDetailOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("script");
 
   // Form state
   const [topic, setTopic] = useState(
@@ -533,7 +534,10 @@ export function UniversalScriptTester({
                   </h3>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     {output.researchDossier && (
-                      <div className="p-2 bg-neutral-900 rounded">
+                      <div
+                        className="p-2 bg-neutral-900 rounded cursor-pointer hover:bg-neutral-800 transition-colors"
+                        onClick={() => setActiveTab("research")}
+                      >
                         <div className="text-neutral-500">Facts</div>
                         <div className="text-white font-medium">
                           {output.researchDossier.metadata.factCount}
@@ -541,7 +545,10 @@ export function UniversalScriptTester({
                       </div>
                     )}
                     {output.spine && (
-                      <div className="p-2 bg-neutral-900 rounded">
+                      <div
+                        className="p-2 bg-neutral-900 rounded cursor-pointer hover:bg-neutral-800 transition-colors"
+                        onClick={() => setActiveTab("spine")}
+                      >
                         <div className="text-neutral-500">Beats</div>
                         <div className="text-white font-medium">
                           {output.spine.beatCount}
@@ -549,7 +556,10 @@ export function UniversalScriptTester({
                       </div>
                     )}
                     {output.assetRegistry && (
-                      <div className="p-2 bg-neutral-900 rounded">
+                      <div
+                        className="p-2 bg-neutral-900 rounded cursor-pointer hover:bg-neutral-800 transition-colors"
+                        onClick={() => setActiveTab("assets")}
+                      >
                         <div className="text-neutral-500">Characters</div>
                         <div className="text-white font-medium">
                           {output.assetRegistry.characters.length}
@@ -557,7 +567,10 @@ export function UniversalScriptTester({
                       </div>
                     )}
                     {output.expandedBeats && (
-                      <div className="p-2 bg-neutral-900 rounded">
+                      <div
+                        className="p-2 bg-neutral-900 rounded cursor-pointer hover:bg-neutral-800 transition-colors"
+                        onClick={() => setActiveTab("script")}
+                      >
                         <div className="text-neutral-500">Words</div>
                         <div className="text-white font-medium">
                           {output.expandedBeats.reduce(
@@ -606,7 +619,11 @@ export function UniversalScriptTester({
               </div>
             </div>
           ) : (
-            <Tabs defaultValue="script" className="h-full flex flex-col">
+            <Tabs
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="h-full flex flex-col"
+            >
               <TabsList className="bg-neutral-900 mb-4">
                 <TabsTrigger value="script" className="flex items-center gap-2">
                   <FileText className="w-4 h-4" />
@@ -1046,9 +1063,11 @@ export function UniversalScriptTester({
         </div>
       </div>
 
-      {/* Asset Detail Dialog */}
       <Dialog open={isAssetDetailOpen} onOpenChange={setIsAssetDetailOpen}>
-        <DialogContent className="z-[10010] max-w-2xl bg-neutral-900 border-neutral-800 text-white max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogContent
+          className="z-[10010] max-w-2xl bg-neutral-900 border-neutral-800 text-white max-h-[80vh] overflow-hidden flex flex-col"
+          overlayClassName="z-[10009] bg-black/80"
+        >
           <DialogHeader>
             <DialogTitle>{selectedAsset?.name}</DialogTitle>
             <DialogDescription className="text-neutral-400">

@@ -61,6 +61,7 @@ export interface WizardState {
   writeTaskId: string | null;
   audioTaskId: string | null;
   // Universal script output
+  scriptConfig: any; // Store script generation configuration
   universalScriptOutput: UniversalScriptOutput | null;
 }
 
@@ -146,6 +147,7 @@ export function VideoCreationWizard({
     expandTaskId: null,
     writeTaskId: null,
     audioTaskId: null,
+    scriptConfig: null,
     universalScriptOutput: null,
   });
 
@@ -185,6 +187,10 @@ export function VideoCreationWizard({
         const shotList = (video.metadata as any)?.shot_list || [];
 
         // Update state with loaded video data
+        const scriptConfig = (video.metadata as any)?.scriptConfig || null;
+        const universalScriptOutput =
+          (video.metadata as any)?.universalScriptOutput || null;
+
         setState({
           prompt: video.idea || "",
           expandedIdea: expandedIdea,
@@ -197,8 +203,8 @@ export function VideoCreationWizard({
           expandTaskId: null,
           writeTaskId: null,
           audioTaskId: null,
-          universalScriptOutput:
-            (video.metadata as any)?.universalScriptOutput || null,
+          scriptConfig,
+          universalScriptOutput,
         });
 
         // Set the video name in the navigation store
@@ -262,8 +268,47 @@ export function VideoCreationWizard({
           <Step4UniversalScript
             videoId={state.videoId!}
             initialTopic={state.prompt}
-            onComplete={async (scriptOutput) => {
+            initialOutput={state.universalScriptOutput}
+            initialConfig={state.scriptConfig}
+            onSave={async (scriptOutput, config) => {
               // Extract script from expanded beats or final script
+              const script = scriptOutput.expandedBeats
+                ? scriptOutput.expandedBeats
+                    .map((b) => b.narration)
+                    .join("\n\n")
+                : scriptOutput.finalScript || "";
+
+              // Update local state
+              updateState({
+                script,
+                universalScriptOutput: scriptOutput,
+                scriptConfig: config,
+              });
+
+              // Persist to database (Auto-save)
+              if (state.videoId) {
+                try {
+                  console.log("[Wizard] Auto-saving script data...");
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      script_content: script,
+                      // Don't change stage, keep at 'script' or 'idea' until confirmed
+                      metadata: {
+                        universalScriptOutput: scriptOutput,
+                        scriptConfig: config,
+                      },
+                    }),
+                  });
+                  console.log("[Wizard] Auto-save complete");
+                } catch (err) {
+                  console.error("Failed to auto-save script:", err);
+                }
+              }
+            }}
+            onComplete={async (scriptOutput, config) => {
+              // Extract script
               const script = scriptOutput.expandedBeats
                 ? scriptOutput.expandedBeats
                     .map((b) => b.narration)
@@ -274,9 +319,10 @@ export function VideoCreationWizard({
               updateState({
                 script,
                 universalScriptOutput: scriptOutput,
+                scriptConfig: config,
               });
 
-              // Persist to database
+              // Persist to database (Final confirm)
               if (state.videoId) {
                 try {
                   await fetch(`/api/videos/${state.videoId}`, {
@@ -287,6 +333,7 @@ export function VideoCreationWizard({
                       current_stage: "audio",
                       metadata: {
                         universalScriptOutput: scriptOutput,
+                        scriptConfig: config,
                       },
                     }),
                   });
@@ -566,13 +613,13 @@ export function VideoCreationWizard({
     }
   };
 
-  // Check if current step is editor (needs full width and height)
-  const isEditorStep = currentStep === 3;
+  // Check if current step needs full width (Script and Editor)
+  const isFullWidthStep = currentStep === 1 || currentStep === 3;
 
   return (
     <div
       className={`flex flex-col h-full w-full ${
-        isEditorStep ? "" : "max-w-5xl"
+        isFullWidthStep ? "" : "max-w-5xl"
       } mx-auto`}
     >
       {/* Progress indicator with back button */}
@@ -594,7 +641,7 @@ export function VideoCreationWizard({
             <p className="text-neutral-400">Loading video...</p>
           </div>
         </div>
-      ) : isEditorStep ? (
+      ) : isFullWidthStep ? (
         <div className="flex-1 overflow-hidden">{renderStep()}</div>
       ) : (
         <div className="flex-1 overflow-hidden">

@@ -104,6 +104,11 @@ export async function expandSingleBeat(
   // Extract visual callouts from narration (looking for [CHAR-001] style tags)
   let visualCallouts = extractVisualCallouts(narration, context.relevantAssets);
 
+  // Remove asset tags from the narration text for the user-facing script
+  // We keep the callouts we just extracted, but remove the inline tags
+  narration = narration.replace(/\[(CHAR|LOC|OBJ)-\d{3}\]/g, '');
+
+
   // Quality review loop (if enabled)
   if (enableQualityReview) {
     const previousBeatsContext = allPreviousBeats
@@ -138,6 +143,9 @@ export async function expandSingleBeat(
       wordCount = countWords(narration);
       visualCallouts = extractVisualCallouts(narration, context.relevantAssets);
       
+      // Remove asset tags from the rewritten narration
+      narration = narration.replace(/\[(CHAR|LOC|OBJ)-\d{3}\]/g, '');
+
       // Re-review the rewritten beat
       reviewContext.beatNarration = narration;
       reviewResult = await reviewBeatQuality(reviewContext);

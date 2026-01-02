@@ -613,6 +613,7 @@ export interface ObjectProfile {
   visualInstructions: {
     consistencyAnchors: string[];
     prohibitions: string[];
+    styleNotes: string;
     requiredVariants?: Array<{
       context: string;
       changes: string;
