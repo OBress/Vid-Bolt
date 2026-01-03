@@ -43,7 +43,7 @@ function getServiceClient() {
 }
 
 // Determine what action to take based on current stage
-function determineResumeAction(video: VideoProject): {
+function determineResumeAction(video: VideoProject, voiceSettings?: any): {
   action: string;
   eventName: string;
   eventData: any;
@@ -73,6 +73,7 @@ function determineResumeAction(video: VideoProject): {
       if (!script_content) {
         throw new Error("Cannot generate audio without script");
       }
+      
       return {
         action: "Generate audio",
         eventName: "audio/generate.start",
@@ -81,8 +82,15 @@ function determineResumeAction(video: VideoProject): {
           userId: video.user_id,
           projectId: video.project_id,
           script: script_content,
-          voiceProvider: "inworld", // Using Inworld TTS
-          voiceModel: "Hades",
+          voiceProvider: voiceSettings?.provider || "inworld",
+          voiceModel: voiceSettings?.model || "inworld-tts-1-max",
+          voiceName: voiceSettings?.voiceName || "Hades",
+          voiceSettings: {
+            speakingRate: voiceSettings?.speakingSpeed ? voiceSettings.speakingSpeed / 100 : 1.0,
+            temperature: voiceSettings?.provider === 'inworld' ? voiceSettings?.stability : undefined,
+            stability: voiceSettings?.provider !== 'inworld' ? voiceSettings?.stability : undefined,
+            similarityBoost: voiceSettings?.similarityBoost,
+          },
         },
       };
 
@@ -160,8 +168,17 @@ export async function POST(
       );
     }
 
+    // Fetch project settings to get voice configuration
+    const { data: projectSettingsData } = await supabase
+      .from("project_settings")
+      .select("settings")
+      .eq("project_id", video.project_id)
+      .maybeSingle();
+
+    const voiceSettings = (projectSettingsData?.settings as any)?.voice;
+
     // Determine what action to take
-    const { action, eventName, eventData } = determineResumeAction(video);
+    const { action, eventName, eventData } = determineResumeAction(video, voiceSettings);
 
     // Update video status to processing
     const { data: updatedVideo, error: updateError } = await supabase

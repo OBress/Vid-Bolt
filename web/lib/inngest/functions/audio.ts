@@ -14,10 +14,12 @@ interface AudioWorkflowInput {
   script: string;
   voiceProvider: 'elevenlabs' | 'genai' | 'inworld';
   voiceModel?: string;
+  voiceName?: string;
   voiceSettings?: {
     speakingRate?: number;
     stability?: number;
     similarityBoost?: number;
+    temperature?: number;
   };
 }
 
@@ -40,7 +42,7 @@ export const audioWorkflow = inngest.createFunction(
   { event: "audio/generate.start" },
   async ({ event, step }) => {
     const input = event.data as AudioWorkflowInput;
-    const { taskId, userId, videoId, script, voiceProvider, voiceModel, voiceSettings } = input;
+    const { taskId, userId, videoId, script, voiceProvider, voiceModel, voiceName, voiceSettings } = input;
 
     // Link task to video project
     await step.run("link-task-to-video", async () => {
@@ -116,8 +118,9 @@ export const audioWorkflow = inngest.createFunction(
           // Step 2a: Generate TTS
           const { generateSpeech } = await import("@/lib/services/inworld-tts");
           const ttsResult = await generateSpeech(userId, chunk.text, {
-            voiceId: voiceModel,
+            voiceId: voiceName || voiceModel,
             speakingRate: voiceSettings?.speakingRate,
+            temperature: voiceSettings?.temperature,
           });
 
           // Step 2b: Upload to R2 immediately (don't store base64 in state!)

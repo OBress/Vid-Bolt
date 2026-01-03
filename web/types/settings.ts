@@ -116,6 +116,7 @@ export interface UserSettings {
   theme: 'dark' | 'light' | 'system';
   onboarding_completed?: boolean;
   defaultProjectSettings?: Partial<ProjectSettings>;
+  favorite_voices?: string[];
 }
 
 export interface ApiKeys {

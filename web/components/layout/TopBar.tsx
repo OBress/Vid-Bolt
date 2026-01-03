@@ -81,7 +81,7 @@ export function TopBar() {
   }, [pathname, projects, currentVideoName]);
 
   return (
-    <div className="h-16 bg-neutral-800 border-b border-neutral-700 flex items-center justify-between px-6">
+    <div className="h-16 bg-neutral-800 border-b border-neutral-700 flex items-center justify-between px-6 relative">
       <div className="flex items-center gap-4">
         <div className="text-sm text-neutral-400">
           {label === "COMMAND CENTER" ? (

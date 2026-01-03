@@ -19,9 +19,9 @@ const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     model: 'eleven_multilingual_v2',
     voiceName: 'Rachel',
     speakerBoost: true,
-    stability: 0.5,
+    stability: 100,
     similarityBoost: 0.75,
-    speakingSpeed: 1.0,
+    speakingSpeed: 100,
     voiceStyle: 0,
   },
   visuals: {

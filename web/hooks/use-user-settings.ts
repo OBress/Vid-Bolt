@@ -106,5 +106,6 @@ export function useUserSettings() {
     saveStatus,
     updateSettings,
     refresh: loadSettings,
+    userId,
   };
 }

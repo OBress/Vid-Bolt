@@ -274,38 +274,39 @@ export default function ProjectPage({
         }`}
       >
         <div className="border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
-          <PageHeader title={projectTitle}>
-            <Button
-              ref={newVideoButtonRef}
-              variant="outline"
-              size="sm"
-              className="bg-orange-500 border-none text-white hover:bg-orange-600 transition-colors gap-2"
-              onClick={handleNewVideo}
-            >
-              <Plus className="w-4 h-4" />
-              NEW VIDEO
-            </Button>
-          </PageHeader>
-
           <Tabs
             value={activeTab}
             onValueChange={handleTabChange}
             className="w-full"
           >
-            <div className="px-6 py-2">
-              <TabsList className="bg-neutral-900/50 p-1 rounded-xl border border-neutral-800/50 shadow-[0_4px_20px_rgba(0,0,0,0.3)] backdrop-blur-sm w-fit justify-start h-auto gap-1">
-                {tabs.map((tab) => (
-                  <TabsTrigger
-                    key={tab.id}
-                    value={tab.id}
-                    className="data-[state=active]:bg-neutral-800 data-[state=active]:text-orange-500 data-[state=active]:shadow-[0_2px_8px_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.05)] data-[state=active]:border-neutral-700/50 rounded-lg bg-transparent px-6 py-2 h-full text-neutral-400 hover:text-white transition-all gap-2 border border-transparent font-medium"
-                  >
-                    <tab.icon className="w-4 h-4" />
-                    <span className="text-sm">{tab.label}</span>
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </div>
+            <PageHeader
+              title={projectTitle}
+              center={
+                <TabsList className="bg-neutral-900/50 p-1 rounded-xl border border-neutral-800/50 shadow-[0_4px_20px_rgba(0,0,0,0.3)] backdrop-blur-sm w-fit justify-start h-auto gap-1">
+                  {tabs.map((tab) => (
+                    <TabsTrigger
+                      key={tab.id}
+                      value={tab.id}
+                      className="data-[state=active]:bg-neutral-800 data-[state=active]:text-orange-500 data-[state=active]:shadow-[0_2px_8px_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.05)] data-[state=active]:border-neutral-700/50 rounded-lg bg-transparent px-6 py-2 h-full text-neutral-400 hover:text-white transition-all gap-2 border border-transparent font-medium"
+                    >
+                      <tab.icon className="w-4 h-4" />
+                      <span className="text-sm">{tab.label}</span>
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              }
+            >
+              <Button
+                ref={newVideoButtonRef}
+                variant="outline"
+                size="sm"
+                className="bg-orange-500 border-none text-white hover:bg-orange-600 transition-colors gap-2"
+                onClick={handleNewVideo}
+              >
+                <Plus className="w-4 h-4" />
+                NEW VIDEO
+              </Button>
+            </PageHeader>
 
             <div className="flex-1 overflow-auto p-6 max-h-[calc(100vh-140px)]">
               <TabsContent
