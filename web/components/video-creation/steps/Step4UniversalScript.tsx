@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { createBrowserClient } from "@supabase/ssr";
+import { useProjectSettings } from "@/hooks/use-project-settings";
 
 // Types for the Universal Script output
 interface UniversalScriptOutput {
@@ -120,6 +121,7 @@ interface UniversalScriptOutput {
 
 interface Step4UniversalScriptProps {
   videoId: string;
+  projectId: string;
   initialTopic: string;
   initialOutput?: UniversalScriptOutput | null;
   initialConfig?: {
@@ -128,6 +130,10 @@ interface Step4UniversalScriptProps {
     researchToggle: ResearchToggle;
     durationRange: number[];
     angle: string;
+    pov?: string;
+    protagonistGender?: string;
+    openrouterModel?: string;
+    contentNiche?: string;
   } | null;
   onComplete: (output: UniversalScriptOutput, config: any) => void;
   onSave: (output: UniversalScriptOutput, config: any) => void;
@@ -149,6 +155,7 @@ type ResearchToggle = "deep" | "full" | "light" | "off";
 
 export function Step4UniversalScript({
   videoId,
+  projectId,
   initialTopic,
   initialOutput,
   initialConfig,
@@ -158,6 +165,9 @@ export function Step4UniversalScript({
   isLocked,
   lockedMessage,
 }: Step4UniversalScriptProps) {
+  // Load project settings for defaults
+  const { settings: projectSettings, loading: settingsLoading } =
+    useProjectSettings(projectId);
   // Initialize view based on whether we have output
   const [view, setView] = useState<ViewState>(
     initialOutput ? "output" : "config"
@@ -179,16 +189,20 @@ export function Step4UniversalScript({
   const [isRegenerateConfirmOpen, setIsRegenerateConfirmOpen] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
 
-  // Form state - Initialize from saved config or defaults
+  // Form state - Initialize from saved config, then project settings, then hardcoded defaults
+  // Priority: initialConfig (per-video) > projectSettings > hardcoded defaults
   const [topic, setTopic] = useState(initialConfig?.topic || initialTopic);
   const [genre, setGenre] = useState<ScriptGenre>(
-    initialConfig?.genre || "documentary"
+    initialConfig?.genre || projectSettings?.script?.genre || "documentary"
   );
   const [researchToggle, setResearchToggle] = useState<ResearchToggle>(
-    initialConfig?.researchToggle || "full"
+    initialConfig?.researchToggle ||
+      projectSettings?.script?.researchDepth ||
+      "full"
   );
   const [durationRange, setDurationRange] = useState(
-    initialConfig?.durationRange || [5, 10]
+    initialConfig?.durationRange ||
+      projectSettings?.basic_info?.videoDurationRange || [5, 10]
   ); // [min, max] in minutes
   const [angle, setAngle] = useState(initialConfig?.angle || "");
   const [activeTab, setActiveTab] = useState("script");
@@ -213,6 +227,18 @@ export function Step4UniversalScript({
       if (initialConfig.angle) setAngle(initialConfig.angle);
     }
   }, [initialConfig]);
+
+  // Apply project settings as defaults when they load (if no per-video config)
+  useEffect(() => {
+    if (!settingsLoading && projectSettings && !initialConfig) {
+      // Only apply defaults if we don't have a saved per-video config
+      if (projectSettings.script?.genre) setGenre(projectSettings.script.genre);
+      if (projectSettings.script?.researchDepth)
+        setResearchToggle(projectSettings.script.researchDepth);
+      if (projectSettings.basic_info?.videoDurationRange)
+        setDurationRange(projectSettings.basic_info.videoDurationRange);
+    }
+  }, [settingsLoading, projectSettings, initialConfig]);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -308,6 +334,16 @@ export function Step4UniversalScript({
             maxMinutes: durationRange[1],
           },
           angle: angle || undefined,
+          // Include project settings for this specific video
+          pov: projectSettings?.script?.pov || "1st",
+          protagonistGender:
+            projectSettings?.script?.protagonistGender || "any",
+          openrouterModel:
+            projectSettings?.script?.openrouterModel ||
+            "google/gemini-3-flash-preview",
+          contentNiche: projectSettings?.script?.contentNiche,
+          toneStyle: projectSettings?.script?.toneStyle,
+          targetAudience: projectSettings?.script?.targetAudience,
         }),
       });
 
@@ -336,6 +372,10 @@ export function Step4UniversalScript({
         researchToggle,
         durationRange,
         angle,
+        pov: projectSettings?.script?.pov,
+        protagonistGender: projectSettings?.script?.protagonistGender,
+        openrouterModel: projectSettings?.script?.openrouterModel,
+        contentNiche: projectSettings?.script?.contentNiche,
       });
     }
   };

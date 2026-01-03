@@ -36,7 +36,14 @@ export async function POST(request: NextRequest) {
       angle, 
       mustInclude, 
       mustAvoid,
-      sourcePreferences 
+      sourcePreferences,
+      // Project settings
+      pov,
+      protagonistGender,
+      openrouterModel,
+      contentNiche,
+      toneStyle,
+      targetAudience,
     } = body;
 
     if (!topic || !genre || !durationRange) {
@@ -81,6 +88,13 @@ export async function POST(request: NextRequest) {
           mustInclude,
           mustAvoid,
           sourcePreferences,
+          // Project settings
+          pov: pov || '1st',
+          protagonistGender: protagonistGender || 'any',
+          openrouterModel: openrouterModel || 'google/gemini-3-flash-preview',
+          contentNiche,
+          toneStyle,
+          targetAudience,
         },
         output_data: {},
       })
@@ -107,6 +121,13 @@ export async function POST(request: NextRequest) {
           mustInclude,
           mustAvoid,
           sourcePreferences,
+          // Project settings for AI generation
+          pov: pov || '1st',
+          protagonistGender: protagonistGender || 'any',
+          openrouterModel: openrouterModel || 'google/gemini-3-flash-preview',
+          contentNiche,
+          toneStyle,
+          targetAudience,
         },
       },
     });

@@ -97,8 +97,9 @@ export function MediaProjectsProvider({ children }: { children: ReactNode }) {
           basic_info: {
             projectName: name,
             pictureUrl: null,
-            contentNiche: "general",
-            aspectRatio: "16:9",
+            contentNiche: "entertainment",
+            aspectRatio: "16-9",
+            videoDurationRange: [5, 15],
             autoIdeaVerification: false,
             autoScriptVerification: false,
             autoExportToMedia: false,
@@ -120,6 +121,16 @@ export function MediaProjectsProvider({ children }: { children: ReactNode }) {
           editing: {},
           export: {
             defaultTargets: [],
+          },
+          script: {
+            pov: "1st" as const,
+            protagonistGender: "any" as const,
+            genre: "documentary" as const,
+            researchDepth: "full" as const,
+            openrouterModel: "google/gemini-3-flash-preview",
+            qualityReviewModel: "google/gemini-3-pro-preview",
+            contentNiche: "entertainment",
+            favoriteModels: [],
           },
         };
       }

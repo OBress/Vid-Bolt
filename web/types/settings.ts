@@ -1,3 +1,61 @@
+// ============================================================================
+// SCRIPT SETTINGS
+// ============================================================================
+
+export type ScriptPOV = '1st' | '2nd' | '3rd';
+export type ScriptGender = 'male' | 'female' | 'any';
+export type ScriptGenre = 'documentary' | 'educational' | 'narrative_fiction' | 'historical_fiction' | 'opinion_essay' | 'tutorial' | 'news';
+export type ResearchDepth = 'deep' | 'full' | 'light' | 'off';
+
+export interface ScriptAdvancedSettings {
+  /** Custom system prompts for each generation phase */
+  systemPrompts?: {
+    research?: string;
+    spine?: string;
+    expansion?: string;
+    quality?: string;
+  };
+  /** Custom banned phrases to avoid in scripts */
+  bannedPhrases?: string[];
+  /** Custom word replacements (overused word -> alternatives) */
+  wordReplacements?: Record<string, string[]>;
+  /** Custom engagement timing settings */
+  engagementTiming?: {
+    patternInterruptIntervalSeconds?: number;
+    hookDeadlineSeconds?: number;
+    commitmentDeadlineSeconds?: number;
+  };
+}
+
+export interface ScriptSettings {
+  /** Point of view for narration */
+  pov: ScriptPOV;
+  /** Protagonist/narrator gender for appropriate pronouns */
+  protagonistGender: ScriptGender;
+  /** Default script genre */
+  genre: ScriptGenre;
+  /** Research depth setting */
+  researchDepth: ResearchDepth;
+  /** OpenRouter model ID to use for generation (writing) */
+  openrouterModel: string;
+  /** OpenRouter model ID to use for quality review/scoring */
+  qualityReviewModel?: string;
+  /** Content niche/category */
+  contentNiche: string;
+  /** Preferred tone/style description */
+  toneStyle?: string;
+  /** Target audience description */
+  targetAudience?: string;
+  /** Favorite model IDs for quick access */
+  favoriteModels?: string[];
+  /** Advanced settings (system prompts, etc.) */
+  advanced?: ScriptAdvancedSettings;
+}
+
+// ============================================================================
+// BASIC INFO SETTINGS
+// ============================================================================
+
 export interface BasicInfoSettings {
   projectName: string;
   pictureUrl: string | null;
@@ -40,6 +98,7 @@ export interface ProjectSettings {
   visuals: VisualsSettings;
   editing: EditingSettings;
   export: ExportSettings;
+  script: ScriptSettings;
 }
 
 export interface MediaProject {

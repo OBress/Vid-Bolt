@@ -4,17 +4,9 @@ import React from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Camera, Layers, Wand2, Clock } from "lucide-react";
-import { Slider } from "@/components/ui/slider";
+import { Camera, Wand2 } from "lucide-react";
 
 import { useProjectSettings } from "@/hooks/use-project-settings";
 import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
@@ -30,7 +22,6 @@ export function BasicInfoTab({ projectId }: { projectId?: string }) {
           <div className="h-48 bg-neutral-900/40 border border-neutral-800 rounded-lg animate-pulse" />
           <div className="h-48 bg-neutral-900/40 border border-neutral-800 rounded-lg animate-pulse" />
         </div>
-        <div className="h-64 bg-neutral-900/40 border border-neutral-800 rounded-lg animate-pulse" />
       </div>
     );
   }
@@ -106,171 +97,82 @@ export function BasicInfoTab({ projectId }: { projectId?: string }) {
           </CardContent>
         </Card>
 
-        {/* Content Configuration */}
+        {/* Automation Settings */}
         <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm">
           <CardHeader>
             <div className="flex items-center gap-3">
-              <Layers className="text-orange-500 w-5 h-5" />
+              <Wand2 className="text-orange-500 w-5 h-5" />
               <CardTitle className="text-sm font-bold uppercase tracking-widest text-neutral-200">
-                Configuration
+                Automation & Smart Workflows
               </CardTitle>
             </div>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <Label className="text-xs text-neutral-400 uppercase font-bold">
-                Content Niche
-              </Label>
-              <Select
-                value={basic_info.contentNiche}
-                onValueChange={(val) =>
-                  updateSettings({
-                    basic_info: { ...basic_info, contentNiche: val },
-                  })
-                }
-              >
-                <SelectTrigger className="bg-black/40 border-neutral-800">
-                  <SelectValue placeholder="Select niche" />
-                </SelectTrigger>
-                <SelectContent className="bg-neutral-900 border-neutral-800">
-                  <SelectItem value="entertainment">Entertainment</SelectItem>
-                  <SelectItem value="educational">Educational</SelectItem>
-                  <SelectItem value="technology">Technology</SelectItem>
-                  <SelectItem value="lifestyle">Lifestyle</SelectItem>
-                  <SelectItem value="gaming">Gaming</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-xs text-neutral-400 uppercase font-bold">
-                Aspect Ratio
-              </Label>
-              <Select
-                value={basic_info.aspectRatio}
-                onValueChange={(val) =>
-                  updateSettings({
-                    basic_info: { ...basic_info, aspectRatio: val },
-                  })
-                }
-              >
-                <SelectTrigger className="bg-black/40 border-neutral-800">
-                  <SelectValue placeholder="Select ratio" />
-                </SelectTrigger>
-                <SelectContent className="bg-neutral-900 border-neutral-800">
-                  <SelectItem value="9-16">9:16 (TikTok/Shorts)</SelectItem>
-                  <SelectItem value="16-9">16:9 (YouTube)</SelectItem>
-                  <SelectItem value="1-1">1:1 (Instagram)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-4 pt-4 border-t border-neutral-800/50">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-orange-500" />
-                  <Label className="text-xs text-neutral-400 uppercase font-bold">
-                    Video Duration
-                  </Label>
-                </div>
-                <div className="px-3 py-1 rounded-lg bg-orange-500/10 border border-orange-500/20 text-xs font-bold text-orange-500 font-mono">
-                  {basic_info.videoDurationRange?.[0] || 10} -{" "}
-                  {basic_info.videoDurationRange?.[1] || 30} MIN
-                </div>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-neutral-800/50">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium text-white">
+                  Automatic Idea Verification
+                </Label>
+                <p className="text-xs text-neutral-500 italic">
+                  Automatically validate generated ideas before scriptwriting.
+                </p>
               </div>
-              <Slider
-                defaultValue={basic_info.videoDurationRange || [10, 30]}
-                min={5}
-                max={60}
-                step={5}
-                minStepsBetweenThumbs={1}
-                onValueChange={(val) =>
+              <Switch
+                checked={basic_info.autoIdeaVerification}
+                onCheckedChange={(checked) =>
                   updateSettings({
-                    basic_info: { ...basic_info, videoDurationRange: val },
+                    basic_info: {
+                      ...basic_info,
+                      autoIdeaVerification: checked,
+                    },
                   })
                 }
-                className="py-4"
               />
-              <p className="text-[10px] text-neutral-500 italic">
-                Set a range for generated video length (5 min steps).
-              </p>
+            </div>
+
+            <div className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-neutral-800/50">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium text-white">
+                  Automatic Script Verification
+                </Label>
+                <p className="text-xs text-neutral-500 italic">
+                  Verify script flow and tone consistency automatically.
+                </p>
+              </div>
+              <Switch
+                checked={basic_info.autoScriptVerification}
+                onCheckedChange={(checked) =>
+                  updateSettings({
+                    basic_info: {
+                      ...basic_info,
+                      autoScriptVerification: checked,
+                    },
+                  })
+                }
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-neutral-800/50">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium text-white">
+                  Automatic Export to Media
+                </Label>
+                <p className="text-xs text-neutral-500 italic">
+                  Trigger export immediately after rendering finishes.
+                </p>
+              </div>
+              <Switch
+                checked={basic_info.autoExportToMedia}
+                onCheckedChange={(checked) =>
+                  updateSettings({
+                    basic_info: { ...basic_info, autoExportToMedia: checked },
+                  })
+                }
+              />
             </div>
           </CardContent>
         </Card>
       </div>
-
-      {/* Automation Settings */}
-      <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm">
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <Wand2 className="text-orange-500 w-5 h-5" />
-            <CardTitle className="text-sm font-bold uppercase tracking-widest text-neutral-200">
-              Automation & Smart Workflows
-            </CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-neutral-800/50">
-            <div className="space-y-0.5">
-              <Label className="text-sm font-medium text-white">
-                Automatic Idea Verification
-              </Label>
-              <p className="text-xs text-neutral-500 italic">
-                Automatically validate generated ideas before scriptwriting.
-              </p>
-            </div>
-            <Switch
-              checked={basic_info.autoIdeaVerification}
-              onCheckedChange={(checked) =>
-                updateSettings({
-                  basic_info: { ...basic_info, autoIdeaVerification: checked },
-                })
-              }
-            />
-          </div>
-
-          <div className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-neutral-800/50">
-            <div className="space-y-0.5">
-              <Label className="text-sm font-medium text-white">
-                Automatic Script Verification
-              </Label>
-              <p className="text-xs text-neutral-500 italic">
-                Verify script flow and tone consistency automatically.
-              </p>
-            </div>
-            <Switch
-              checked={basic_info.autoScriptVerification}
-              onCheckedChange={(checked) =>
-                updateSettings({
-                  basic_info: {
-                    ...basic_info,
-                    autoScriptVerification: checked,
-                  },
-                })
-              }
-            />
-          </div>
-
-          <div className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-neutral-800/50">
-            <div className="space-y-0.5">
-              <Label className="text-sm font-medium text-white">
-                Automatic Export to Media
-              </Label>
-              <p className="text-xs text-neutral-500 italic">
-                Trigger export immediately after rendering finishes.
-              </p>
-            </div>
-            <Switch
-              checked={basic_info.autoExportToMedia}
-              onCheckedChange={(checked) =>
-                updateSettings({
-                  basic_info: { ...basic_info, autoExportToMedia: checked },
-                })
-              }
-            />
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

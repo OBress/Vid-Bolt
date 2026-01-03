@@ -124,6 +124,16 @@ export interface UniversalScriptInput {
   sourcePreferences?: string;
   /** Existing reference materials */
   referenceMaterials?: string;
+  
+  // Project settings (from media project configuration)
+  /** Point of view for narration (1st, 2nd, 3rd person) */
+  pov?: '1st' | '2nd' | '3rd';
+  /** Protagonist/narrator gender */
+  protagonistGender?: 'male' | 'female' | 'any';
+  /** OpenRouter model to use for generation */
+  openrouterModel?: string;
+  /** Content category/niche */
+  contentNiche?: string;
 }
 
 // ============================================================================

@@ -67,7 +67,7 @@ export function SettingsTab({ projectId }: { projectId?: string }) {
   return (
     <div className="w-full">
       <Tabs defaultValue="basic" className="w-full">
-        <div className="mb-6">
+        <div className="mb-2">
           <TabsList className="bg-transparent border-b border-white/5 w-full justify-start h-12 p-0 gap-8 rounded-none">
             {tabs.map((tab) => (
               <TabsTrigger
@@ -82,7 +82,7 @@ export function SettingsTab({ projectId }: { projectId?: string }) {
           </TabsList>
         </div>
 
-        <div className="flex-1">
+        <div className="flex-1 pb-24">
           {tabs.map((tab) => (
             <TabsContent
               key={tab.id}

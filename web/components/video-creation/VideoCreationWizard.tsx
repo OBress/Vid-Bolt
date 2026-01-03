@@ -267,6 +267,7 @@ export function VideoCreationWizard({
         return (
           <Step4UniversalScript
             videoId={state.videoId!}
+            projectId={projectId}
             initialTopic={state.prompt}
             initialOutput={state.universalScriptOutput}
             initialConfig={state.scriptConfig}
