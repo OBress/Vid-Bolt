@@ -1,9 +1,11 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { Globe, MoreVertical } from "lucide-react";
 
 interface NicheCardProps {
+  id: string;
   title: string;
   description: string;
   model: string;
@@ -13,6 +15,7 @@ interface NicheCardProps {
 }
 
 export const NicheCard: React.FC<NicheCardProps> = ({
+  id,
   title,
   description,
   model,
@@ -21,12 +24,21 @@ export const NicheCard: React.FC<NicheCardProps> = ({
   isGlobal,
 }) => {
   return (
-    <div className="group relative bg-neutral-950/40 border border-neutral-800/50 rounded-2xl p-6 transition-all duration-300 hover:bg-neutral-900/60 hover:border-neutral-700/50 hover:shadow-[0_8px_30px_rgb(0,0,0,0.4)] backdrop-blur-sm">
+    <Link
+      href={`/command-center/settings/niche-manager/${id}`}
+      className="block group relative bg-neutral-950/40 border border-neutral-800/50 rounded-2xl p-6 transition-all duration-300 hover:bg-neutral-900/60 hover:border-neutral-700/50 hover:shadow-[0_8px_30px_rgb(0,0,0,0.4)] backdrop-blur-sm"
+    >
       <div className="flex justify-between items-start mb-4">
         <h3 className="text-xl font-bold text-white group-hover:text-orange-500 transition-colors">
           {title}
         </h3>
-        <button className="text-neutral-500 hover:text-white transition-colors">
+        <button
+          className="text-neutral-500 hover:text-white transition-colors"
+          onClick={(e) => {
+            e.preventDefault();
+            // TODO: Add menu logic
+          }}
+        >
           <MoreVertical className="w-5 h-5" />
         </button>
       </div>
@@ -66,6 +78,6 @@ export const NicheCard: React.FC<NicheCardProps> = ({
           </div>
         </div>
       )}
-    </div>
+    </Link>
   );
 };
