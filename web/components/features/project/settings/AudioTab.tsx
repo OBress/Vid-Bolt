@@ -408,6 +408,51 @@ export function AudioTab({ projectId }: { projectId?: string }) {
 
                     {/* Voice Parameters */}
                     <div className="space-y-8">
+                      {/* Speaking Speed - All providers */}
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <Label className="text-[10px] text-neutral-500 uppercase font-black tracking-widest">
+                              Speaking Speed
+                            </Label>
+                            {isInworld && (
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <AlertCircle className="w-3 h-3 text-neutral-500" />
+                                </TooltipTrigger>
+                                <TooltipContent
+                                  side="right"
+                                  className="max-w-xs"
+                                >
+                                  <p className="text-xs">
+                                    Inworld recommends values ≥0.8 for best
+                                    quality.
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                          <span className="text-xs text-orange-500 font-mono font-bold px-2 py-1 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                            {(voice.speakingSpeed / 100).toFixed(1)}x
+                          </span>
+                        </div>
+                        <Slider
+                          value={[voice.speakingSpeed]}
+                          onValueChange={([v]) =>
+                            handleVoiceUpdate({ speakingSpeed: v })
+                          }
+                          min={isInworld ? 50 : 50}
+                          max={isInworld ? 150 : 200}
+                          step={5}
+                          className="[&_[role=slider]]:bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.2)]"
+                        />
+                        {isInworld && (
+                          <p className="text-[9px] text-neutral-600 italic">
+                            Range: 0.5x - 1.5x (recommended: ≥0.8x)
+                          </p>
+                        )}
+                      </div>
+
                       {/* Stability / Temperature slider */}
                       <div className="space-y-4">
                         <div className="flex justify-between items-center">
@@ -490,51 +535,6 @@ export function AudioTab({ projectId }: { projectId?: string }) {
                           disabled={!providerConfig.supports.similarityBoost}
                           className="[&_[role=slider]]:bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.2)]"
                         />
-                      </div>
-
-                      {/* Speaking Speed - All providers */}
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center gap-2">
-                            <Label className="text-[10px] text-neutral-500 uppercase font-black tracking-widest">
-                              Speaking Speed
-                            </Label>
-                            {isInworld && (
-                              <Tooltip>
-                                <TooltipTrigger>
-                                  <AlertCircle className="w-3 h-3 text-neutral-500" />
-                                </TooltipTrigger>
-                                <TooltipContent
-                                  side="right"
-                                  className="max-w-xs"
-                                >
-                                  <p className="text-xs">
-                                    Inworld recommends values ≥0.8 for best
-                                    quality.
-                                  </p>
-                                </TooltipContent>
-                              </Tooltip>
-                            )}
-                          </div>
-                          <span className="text-xs text-orange-500 font-mono font-bold px-2 py-1 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                            {(voice.speakingSpeed / 100).toFixed(1)}x
-                          </span>
-                        </div>
-                        <Slider
-                          value={[voice.speakingSpeed]}
-                          onValueChange={([v]) =>
-                            handleVoiceUpdate({ speakingSpeed: v })
-                          }
-                          min={isInworld ? 50 : 50}
-                          max={isInworld ? 150 : 200}
-                          step={5}
-                          className="[&_[role=slider]]:bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.2)]"
-                        />
-                        {isInworld && (
-                          <p className="text-[9px] text-neutral-600 italic">
-                            Range: 0.5x - 1.5x (recommended: ≥0.8x)
-                          </p>
-                        )}
                       </div>
 
                       {/* Voice Style - ElevenLabs only */}
