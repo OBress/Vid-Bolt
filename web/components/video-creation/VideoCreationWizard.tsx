@@ -644,8 +644,9 @@ export function VideoCreationWizard({
     }
   };
 
-  // Check if current step needs full width (Script and Editor)
-  const isFullWidthStep = currentStep === 1 || currentStep === 3;
+  // Check if current step needs full width (Script, Media, and Editor)
+  const isFullWidthStep =
+    currentStep === 1 || currentStep === 2 || currentStep === 3;
 
   return (
     <div

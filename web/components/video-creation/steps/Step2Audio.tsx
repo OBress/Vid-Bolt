@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { AudioChunk } from "@/types/video";
-import { useSequencedAudio } from "@/hooks/use-sequenced-audio";
+import { useSequencedAudio, PlaybackSpeed } from "@/hooks/use-sequenced-audio";
 import { AudioTimeline } from "../audio/AudioTimeline";
 import { AudioCard } from "../audio/AudioCard";
 import { Button } from "@/components/ui/button";
@@ -21,11 +21,17 @@ export function Step2Audio({
   onBack,
   onUpdateChunks,
 }: Step2AudioProps) {
-  const { state, togglePlay, seekTo } = useSequencedAudio(audioChunks);
+  const {
+    state,
+    togglePlay,
+    seekTo,
+    skipToPrevChunk,
+    skipToNextChunk,
+    goToChunk,
+    playbackSpeed,
+    setPlaybackSpeed,
+  } = useSequencedAudio(audioChunks);
 
-  // Local state for carousel navigation (synced with player but allows manual browsing?)
-  // Requirement: "When the next audio section starts being played the center should automatically adjust"
-  // So we strictly follow state.currentChunkIndex for the center view.
   const currentIndex = state.currentChunkIndex;
 
   const handleRegenerate = async (index: number, text: string) => {
@@ -45,20 +51,31 @@ export function Step2Audio({
       onUpdateChunks(newChunks);
     } catch (err) {
       console.error("Failed to regenerate audio:", err);
-      // Maybe show a toast
     }
   };
 
   const activeChunk = audioChunks[currentIndex];
-  // Calculate neighbors for the carousel effect
   const prevChunk = audioChunks[currentIndex - 1];
   const nextChunk = audioChunks[currentIndex + 1];
+
+  // Handle clicking on side cards to navigate
+  const handlePrevCardClick = () => {
+    if (prevChunk) {
+      goToChunk(currentIndex - 1);
+    }
+  };
+
+  const handleNextCardClick = () => {
+    if (nextChunk) {
+      goToChunk(currentIndex + 1);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-black/40 rounded-xl overflow-hidden border border-white/5 relative">
       <div className="flex-1 relative flex flex-col">
         {/* Top Controls / Header */}
-        <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-start z-20 pointer-events-none">
+        <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start z-20 pointer-events-none">
           {/* Back Button */}
           <button
             onClick={onBack}
@@ -78,24 +95,34 @@ export function Step2Audio({
         </div>
 
         {/* Main Content Area (Carousel) */}
-        <div className="flex-1 flex items-center justify-center relative perspective-[1000px] overflow-hidden">
-          <div className="flex items-center justify-center w-full max-w-6xl px-12 gap-8">
-            {/* Previous Card (Ghost) */}
-            <div className="hidden lg:block w-1/3 opacity-30 scale-90 blur-sm pointer-events-none transition-all duration-500 -translate-x-12">
+        <div className="flex-1 flex items-center justify-center relative overflow-hidden pt-16 pb-4">
+          <div className="flex items-stretch justify-center w-full max-w-7xl px-2 gap-3">
+            {/* Previous Card */}
+            <div
+              className={`hidden lg:flex lg:items-center lg:justify-center w-1/4 transition-all duration-300 ${
+                prevChunk
+                  ? "cursor-pointer opacity-60 hover:opacity-80"
+                  : "opacity-0 pointer-events-none"
+              }`}
+              onClick={handlePrevCardClick}
+            >
               {prevChunk && (
                 <AudioCard
                   chunk={prevChunk}
                   isActive={false}
                   isPlaying={false}
                   onPlayClick={() => {}}
-                  onRegenerate={async () => {}}
+                  onRegenerate={async (text) =>
+                    handleRegenerate(currentIndex - 1, text)
+                  }
                   index={currentIndex - 1}
+                  compact
                 />
               )}
             </div>
 
             {/* Active Card */}
-            <div className="w-full lg:w-1/3 transition-all duration-500">
+            <div className="w-full lg:w-1/2 flex items-center justify-center transition-all duration-300">
               {activeChunk && (
                 <AudioCard
                   chunk={activeChunk}
@@ -108,29 +135,35 @@ export function Step2Audio({
               )}
             </div>
 
-            {/* Next Card (Ghost) */}
-            <div className="hidden lg:block w-1/3 opacity-30 scale-90 blur-sm pointer-events-none transition-all duration-500 translate-x-12">
+            {/* Next Card */}
+            <div
+              className={`hidden lg:flex lg:items-center lg:justify-center w-1/4 transition-all duration-300 ${
+                nextChunk
+                  ? "cursor-pointer opacity-60 hover:opacity-80"
+                  : "opacity-0 pointer-events-none"
+              }`}
+              onClick={handleNextCardClick}
+            >
               {nextChunk && (
                 <AudioCard
                   chunk={nextChunk}
                   isActive={false}
                   isPlaying={false}
                   onPlayClick={() => {}}
-                  onRegenerate={async () => {}}
+                  onRegenerate={async (text) =>
+                    handleRegenerate(currentIndex + 1, text)
+                  }
                   index={currentIndex + 1}
+                  compact
                 />
               )}
             </div>
           </div>
 
-          {/* Manual Navigation Arrows (Overlay) */}
-          <div className="absolute inset-x-8 flex justify-between pointer-events-none">
+          {/* Mobile Navigation Arrows */}
+          <div className="lg:hidden absolute inset-x-4 flex justify-between pointer-events-none">
             <button
-              onClick={() =>
-                seekTo(state.totalTime - (activeChunk?.duration_seconds || 5))
-              } // Seek back roughly one chunk? No, prev chunk start.
-              // Actually, let's just use seekTo with specific times.
-              // Simplified: Just jump to previous chunk start
+              onClick={handlePrevCardClick}
               className={`pointer-events-auto p-3 rounded-full bg-white/5 hover:bg-white/10 backdrop-blur transition-all ${
                 !prevChunk ? "opacity-0" : "opacity-100"
               }`}
@@ -140,16 +173,7 @@ export function Step2Audio({
             </button>
 
             <button
-              onClick={() => {
-                // Jump to next chunk start
-                if (activeChunk)
-                  seekTo(
-                    state.totalTime +
-                      (activeChunk.duration_seconds || 0) -
-                      state.currentTimeInChunk +
-                      0.1
-                  );
-              }}
+              onClick={handleNextCardClick}
               className={`pointer-events-auto p-3 rounded-full bg-white/5 hover:bg-white/10 backdrop-blur transition-all ${
                 !nextChunk ? "opacity-0" : "opacity-100"
               }`}
@@ -161,12 +185,20 @@ export function Step2Audio({
         </div>
 
         {/* Bottom Timeline */}
-        <div className="z-20 bg-neutral-950">
+        <div className="z-20">
           <AudioTimeline
             chunks={audioChunks}
             totalDuration={state.duration}
             currentTime={state.totalTime}
+            currentChunkIndex={currentIndex}
+            isPlaying={state.isPlaying}
+            isLoading={state.isLoading}
+            playbackSpeed={playbackSpeed}
             onSeek={seekTo}
+            onTogglePlay={togglePlay}
+            onSkipPrev={skipToPrevChunk}
+            onSkipNext={skipToNextChunk}
+            onSpeedChange={setPlaybackSpeed}
           />
         </div>
       </div>

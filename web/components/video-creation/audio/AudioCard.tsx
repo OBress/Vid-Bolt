@@ -9,6 +9,7 @@ interface AudioCardProps {
   onPlayClick: () => void;
   onRegenerate: (text: string) => Promise<void>;
   index: number;
+  compact?: boolean;
 }
 
 export function AudioCard({
@@ -18,6 +19,7 @@ export function AudioCard({
   onPlayClick,
   onRegenerate,
   index,
+  compact = false,
 }: AudioCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [text, setText] = useState(chunk.text || "");
@@ -39,14 +41,44 @@ export function AudioCard({
     }
   };
 
+  // Compact mode for side cards (prev/next)
+  if (compact) {
+    return (
+      <div className="w-full max-w-xs rounded-xl border bg-neutral-900/70 border-neutral-700 hover:border-neutral-600 transition-all duration-200">
+        <div className="p-4 space-y-3">
+          {/* Header */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-6 h-6 rounded-full bg-neutral-800 text-xs font-mono font-bold text-neutral-400">
+              {index + 1}
+            </div>
+            <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
+              Section
+            </span>
+          </div>
+
+          {/* Content Preview */}
+          <p className="text-sm text-neutral-400 leading-relaxed line-clamp-4">
+            "{chunk.text}"
+          </p>
+
+          {/* Click hint */}
+          <div className="text-[10px] text-neutral-600 text-center uppercase tracking-wider">
+            Click to select
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Full active card mode
   return (
     <div
       className={`
         relative w-full max-w-2xl mx-auto rounded-xl border transition-all duration-300
         ${
           isActive
-            ? "bg-neutral-900 border-orange-500/50 shadow-lg shadow-orange-500/10 scale-105 z-10"
-            : "bg-neutral-950/50 border-neutral-800 scale-95 opacity-50 blur-[1px]"
+            ? "bg-neutral-900 border-orange-500/50 shadow-lg shadow-orange-500/10"
+            : "bg-neutral-900/70 border-neutral-700 hover:border-neutral-600"
         }
       `}
     >
@@ -96,7 +128,7 @@ export function AudioCard({
                 </button>
                 <button
                   onClick={handleRegenerate}
-                  disabled={isRegenerating || text === chunk.text}
+                  disabled={isRegenerating}
                   className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-md text-xs font-medium flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isRegenerating ? (
@@ -111,7 +143,7 @@ export function AudioCard({
           ) : (
             <p
               className={`text-center leading-relaxed ${
-                isActive ? "text-lg text-white" : "text-sm text-neutral-500"
+                isActive ? "text-lg text-white" : "text-sm text-neutral-400"
               }`}
             >
               "{chunk.text}"
@@ -119,7 +151,7 @@ export function AudioCard({
           )}
         </div>
 
-        {/* Play Controls (Only visible if active) */}
+        {/* Play Controls (Only visible if active and not editing) */}
         {isActive && !isEditing && (
           <div className="flex justify-center pt-2">
             <button

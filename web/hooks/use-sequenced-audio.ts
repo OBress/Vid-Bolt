@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { AudioChunk } from '@/types/video';
 
@@ -8,6 +7,16 @@ export interface SequenceState {
   totalTime: number; // Global time across all chunks
   duration: number; // Total duration of all chunks
   currentTimeInChunk: number;
+  isLoading: boolean; // Whether audio is still loading
+}
+
+export const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
+export type PlaybackSpeed = typeof PLAYBACK_SPEEDS[number];
+
+interface ChunkDuration {
+  duration: number;
+  start: number;
+  end: number;
 }
 
 export function useSequencedAudio(chunks: AudioChunk[]) {
@@ -17,26 +26,81 @@ export function useSequencedAudio(chunks: AudioChunk[]) {
     totalTime: 0,
     duration: 0,
     currentTimeInChunk: 0,
+    isLoading: true,
   });
 
+  const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const startTimeRef = useRef<number>(0); // Start time of current chunk in global timeline
+  const preloadedAudioRefs = useRef<Map<number, HTMLAudioElement>>(new Map());
+  const chunkDurationsRef = useRef<ChunkDuration[]>([]);
+  const currentChunkIndexRef = useRef<number>(0); // Track current chunk for callbacks
 
-  // Calculate total duration and start times for each chunk
-  const timeframeRef = useRef<{ start: number; end: number }[]>([]);
-
+  // Preload all audio clips and get their durations
   useEffect(() => {
-    let total = 0;
-    const timeframes = chunks.map((chunk) => {
-        const start = total;
-        // Prefer explicit duration, fallback to estimate or 0
-        // (Real duration updates when metadata loads)
-        const dur = chunk.duration_seconds || 0;
-        total += dur;
-        return { start, end: total };
+    if (chunks.length === 0) {
+      setState(prev => ({ ...prev, duration: 0, isLoading: false }));
+      return;
+    }
+
+    setState(prev => ({ ...prev, isLoading: true }));
+    
+    const loadPromises: Promise<{ index: number; duration: number }>[] = [];
+    
+    chunks.forEach((chunk, index) => {
+      const promise = new Promise<{ index: number; duration: number }>((resolve) => {
+        // Check if we have explicit duration from backend
+        if (chunk.duration_seconds && chunk.duration_seconds > 0) {
+          resolve({ index, duration: chunk.duration_seconds });
+          return;
+        }
+        
+        // Otherwise, load the audio to get duration
+        const audio = new Audio();
+        audio.preload = 'metadata';
+        
+        const handleLoaded = () => {
+          const duration = audio.duration || 0;
+          preloadedAudioRefs.current.set(index, audio);
+          resolve({ index, duration });
+        };
+        
+        const handleError = () => {
+          console.warn(`Failed to load audio chunk ${index}`);
+          resolve({ index, duration: 5 }); // Fallback duration
+        };
+        
+        audio.addEventListener('loadedmetadata', handleLoaded, { once: true });
+        audio.addEventListener('error', handleError, { once: true });
+        audio.src = chunk.url;
+      });
+      
+      loadPromises.push(promise);
     });
-    timeframeRef.current = timeframes;
-    setState(prev => ({ ...prev, duration: total }));
+
+    Promise.all(loadPromises).then((results) => {
+      // Sort by index and calculate timeframes
+      results.sort((a, b) => a.index - b.index);
+      
+      let totalTime = 0;
+      const durations: ChunkDuration[] = results.map((result) => {
+        const start = totalTime;
+        const duration = result.duration;
+        totalTime += duration;
+        return { duration, start, end: totalTime };
+      });
+      
+      chunkDurationsRef.current = durations;
+      setState(prev => ({ ...prev, duration: totalTime, isLoading: false }));
+    });
+
+    return () => {
+      // Cleanup preloaded audio
+      preloadedAudioRefs.current.forEach((audio) => {
+        audio.pause();
+        audio.src = '';
+      });
+      preloadedAudioRefs.current.clear();
+    };
   }, [chunks]);
 
   // Handle Play/Pause
@@ -44,50 +108,58 @@ export function useSequencedAudio(chunks: AudioChunk[]) {
     if (!audioRef.current) return;
     if (state.isPlaying) {
       audioRef.current.pause();
+      setState(prev => ({ ...prev, isPlaying: false }));
     } else {
       audioRef.current.play().catch(e => console.error("Play failed:", e));
+      setState(prev => ({ ...prev, isPlaying: true }));
     }
-    setState(prev => ({ ...prev, isPlaying: !prev.isPlaying }));
   }, [state.isPlaying]);
 
   // Handle Seek (Global)
   const seekTo = useCallback((time: number) => {
+    const durations = chunkDurationsRef.current;
+    if (durations.length === 0) return;
+
     // Find which chunk this time belongs to
-    const index = timeframeRef.current.findIndex(
-      (tf) => time >= tf.start && time < tf.end
+    let targetIndex = durations.findIndex(
+      (d) => time >= d.start && time < d.end
     );
     
-    // If time is the exact end, clamp to last chunk end
-    const targetIndex = index === -1 ? chunks.length - 1 : index;
-    if (targetIndex < 0) return;
+    // If time is at or past the end, clamp to last chunk
+    if (targetIndex === -1) {
+      targetIndex = durations.length - 1;
+      time = Math.min(time, durations[targetIndex].end - 0.01);
+    }
 
-    const chunkStart = timeframeRef.current[targetIndex].start;
-    const offsetInChunk = time - chunkStart;
+    const chunkStart = durations[targetIndex].start;
+    const offsetInChunk = Math.max(0, time - chunkStart);
 
     // Determine if we need to switch sources
     const needsSwitch = targetIndex !== state.currentChunkIndex;
 
+    // Update ref for use in callbacks
+    currentChunkIndexRef.current = targetIndex;
+
     setState(prev => ({
-        ...prev,
-        currentChunkIndex: targetIndex,
-        totalTime: time,
-        currentTimeInChunk: offsetInChunk
+      ...prev,
+      currentChunkIndex: targetIndex,
+      totalTime: time,
+      currentTimeInChunk: offsetInChunk
     }));
 
     if (audioRef.current) {
-        if (needsSwitch) {
-            audioRef.current.src = chunks[targetIndex].url;
-            audioRef.current.currentTime = offsetInChunk;
-             // If we were playing, keep playing. 
-             // Note: source change might stop playback, need explicit play
-             if (state.isPlaying) {
-                 audioRef.current.play().catch(() => {});
-             }
-        } else {
-            audioRef.current.currentTime = offsetInChunk;
+      if (needsSwitch) {
+        audioRef.current.src = chunks[targetIndex].url;
+        audioRef.current.currentTime = offsetInChunk;
+        audioRef.current.playbackRate = playbackSpeed;
+        if (state.isPlaying) {
+          audioRef.current.play().catch(() => {});
         }
+      } else {
+        audioRef.current.currentTime = offsetInChunk;
+      }
     }
-  }, [chunks, state.currentChunkIndex, state.isPlaying]);
+  }, [chunks, state.currentChunkIndex, state.isPlaying, playbackSpeed]);
 
   // Setup Audio Event Listeners
   useEffect(() => {
@@ -99,90 +171,128 @@ export function useSequencedAudio(chunks: AudioChunk[]) {
 
     // Initialize first chunk
     if (chunks.length > 0) {
-        audio.src = chunks[0].url;
+      audio.src = chunks[0].url;
     }
 
     const onTimeUpdate = () => {
-        const chunkStart = timeframeRef.current[state.currentChunkIndex]?.start || 0;
-        const currentGlobal = chunkStart + audio.currentTime;
-        setState(prev => ({
-            ...prev,
-            totalTime: currentGlobal,
-            currentTimeInChunk: audio.currentTime
-        }));
+      const durations = chunkDurationsRef.current;
+      const chunkIndex = currentChunkIndexRef.current;
+      const currentChunkStart = durations[chunkIndex]?.start || 0;
+      const currentGlobal = currentChunkStart + audio.currentTime;
+      setState(prev => ({
+        ...prev,
+        totalTime: currentGlobal,
+        currentTimeInChunk: audio.currentTime
+      }));
     };
 
     const onEnded = () => {
-        // Move to next chunk if available
-        setState(prev => {
-            const nextIndex = prev.currentChunkIndex + 1;
-            if (nextIndex < chunks.length) {
-                // Play next
-                setTimeout(() => {
-                    if (audioRef.current) {
-                        audioRef.current.src = chunks[nextIndex].url;
-                        audioRef.current.play().catch(() => {});
-                    }
-                }, 0);
-                return {
-                    ...prev,
-                    currentChunkIndex: nextIndex,
-                    currentTimeInChunk: 0,
-                };
-            } else {
-                // End of sequence
-                return {
-                    ...prev,
-                    isPlaying: false,
-                    totalTime: 0,
-                    currentChunkIndex: 0,
-                    currentTimeInChunk: 0
-                };
+      // Move to next chunk if available
+      setState(prev => {
+        const nextIndex = prev.currentChunkIndex + 1;
+        if (nextIndex < chunks.length) {
+          // Update ref for callbacks
+          currentChunkIndexRef.current = nextIndex;
+          // Play next
+          setTimeout(() => {
+            if (audioRef.current) {
+              audioRef.current.src = chunks[nextIndex].url;
+              audioRef.current.playbackRate = playbackSpeed;
+              audioRef.current.play().catch(() => {});
             }
-        });
-    };
-    
-    const onLoadedMetadata = () => {
-        // Update the duration of the current chunk in our map if strictly needed?
-        // Ideally backend provides accurate duration. For now trust backend.
+          }, 0);
+          return {
+            ...prev,
+            currentChunkIndex: nextIndex,
+            currentTimeInChunk: 0,
+          };
+        } else {
+          // End of sequence - reset to beginning
+          currentChunkIndexRef.current = 0;
+          return {
+            ...prev,
+            isPlaying: false,
+            totalTime: prev.duration,
+            currentChunkIndex: 0,
+            currentTimeInChunk: 0
+          };
+        }
+      });
     };
 
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('ended', onEnded);
-    audio.addEventListener('loadedmetadata', onLoadedMetadata);
 
     return () => {
-        audio.pause();
-        audio.removeEventListener('timeupdate', onTimeUpdate);
-        audio.removeEventListener('ended', onEnded);
-        audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+      audio.pause();
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('ended', onEnded);
     };
-  }, [chunks.length]); // Re-init if chunks totally change (not ideal for regeneration, need refine)
+  }, [chunks.length]);
 
   // Handle regeneration (chunk url change at specific index)
   useEffect(() => {
-     if (audioRef.current && chunks[state.currentChunkIndex]) {
-         const currentSrc = audioRef.current.src;
-         const newUrl = chunks[state.currentChunkIndex].url;
-         
-         // Only update if current playing chunk URL changed (but checking full URL might tricky with blobs/relative)
-         if (!currentSrc.includes(newUrl) && newUrl) {
-             const wasPlaying = !audioRef.current.paused;
-             const currentTime = audioRef.current.currentTime;
-             
-             audioRef.current.src = newUrl;
-             audioRef.current.currentTime = currentTime; // Try to keep position? Or reset?
-             // Reset to 0 usually safer for new audio
-             audioRef.current.currentTime = 0; 
-             
-             if (wasPlaying) audioRef.current.play().catch(() => {});
-         }
-     }
-  }, [chunks, state.currentChunkIndex]);
+    if (audioRef.current && chunks[state.currentChunkIndex]) {
+      const currentSrc = audioRef.current.src;
+      const newUrl = chunks[state.currentChunkIndex].url;
+      
+      if (newUrl && !currentSrc.endsWith(newUrl) && !currentSrc.includes(newUrl)) {
+        const wasPlaying = !audioRef.current.paused;
+        
+        audioRef.current.src = newUrl;
+        audioRef.current.currentTime = 0;
+        audioRef.current.playbackRate = playbackSpeed;
+        
+        if (wasPlaying) audioRef.current.play().catch(() => {});
+      }
+    }
+  }, [chunks, state.currentChunkIndex, playbackSpeed]);
+
+  // Apply playback speed when it changes
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.playbackRate = playbackSpeed;
+    }
+  }, [playbackSpeed]);
+
+  // Skip to previous chunk
+  const skipToPrevChunk = useCallback(() => {
+    const durations = chunkDurationsRef.current;
+    if (state.currentChunkIndex <= 0 || durations.length === 0) return;
+    
+    const prevIndex = state.currentChunkIndex - 1;
+    const targetTime = durations[prevIndex]?.start ?? 0;
+    seekTo(targetTime);
+  }, [state.currentChunkIndex, seekTo]);
+
+  // Skip to next chunk
+  const skipToNextChunk = useCallback(() => {
+    const durations = chunkDurationsRef.current;
+    if (durations.length === 0) return;
+    if (state.currentChunkIndex >= chunks.length - 1) return;
+    
+    const nextIndex = state.currentChunkIndex + 1;
+    const targetTime = durations[nextIndex]?.start ?? 0;
+    seekTo(targetTime);
+  }, [state.currentChunkIndex, chunks.length, seekTo]);
+
+  // Navigate to specific chunk
+  const goToChunk = useCallback((index: number) => {
+    const durations = chunkDurationsRef.current;
+    if (index < 0 || index >= chunks.length || durations.length === 0) return;
+    
+    const targetTime = durations[index]?.start ?? 0;
+    seekTo(targetTime);
+  }, [chunks.length, seekTo]);
 
   return {
     state,
     togglePlay,
     seekTo,
+    skipToPrevChunk,
+    skipToNextChunk,
+    goToChunk,
+    playbackSpeed,
+    setPlaybackSpeed,
   };
 }
