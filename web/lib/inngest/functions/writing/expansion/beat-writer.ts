@@ -106,7 +106,8 @@ export async function expandSingleBeat(
 
   // Remove asset tags from the narration text for the user-facing script
   // We keep the callouts we just extracted, but remove the inline tags
-  narration = narration.replace(/\[(CHAR|LOC|OBJ)-\d{3}\]/g, '');
+  // Also remove [ASSET-###] tags as the AI sometimes generates these literally
+  narration = narration.replace(/\[(CHAR|LOC|OBJ|ASSET)-\d{3}\]/g, '');
 
 
   // Quality review loop (if enabled)
@@ -143,8 +144,8 @@ export async function expandSingleBeat(
       wordCount = countWords(narration);
       visualCallouts = extractVisualCallouts(narration, context.relevantAssets);
       
-      // Remove asset tags from the rewritten narration
-      narration = narration.replace(/\[(CHAR|LOC|OBJ)-\d{3}\]/g, '');
+      // Remove asset tags from the rewritten narration (including [ASSET-###] tags)
+      narration = narration.replace(/\[(CHAR|LOC|OBJ|ASSET)-\d{3}\]/g, '');
 
       // Re-review the rewritten beat
       reviewContext.beatNarration = narration;
@@ -319,10 +320,9 @@ Target: ~${targetWords} words exactly.
 1. Make the transition from previous beat feel SEAMLESS and natural
 2. Use ZERO forbidden words - substitute with alternatives
 3. Vary sentence openers - no two consecutive sentences start the same way
-4. Include [ASSET-ID] tags where visuals should change
-5. Write for the EAR - this will be spoken aloud
-6. Use contractions naturally (don't, can't, it's, that's)
-7. Be SPECIFIC with details, not vague or generalized`;
+4. Write for the EAR - this will be spoken aloud
+5. Use contractions naturally (don't, can't, it's, that's)
+6. Be SPECIFIC with details, not vague or generalized`;
 }
 
 /**
@@ -334,8 +334,8 @@ function extractVisualCallouts(
 ): ExpandedBeat['visualCallouts'] {
   const callouts: ExpandedBeat['visualCallouts'] = [];
   
-  // Find all asset ID references in the text
-  const idPattern = /\[(CHAR|LOC|OBJ)-\d{3}\]/g;
+  // Find all asset ID references in the text (including [ASSET-###] style tags)
+  const idPattern = /\[(CHAR|LOC|OBJ|ASSET)-\d{3}\]/g;
   const matches = narration.matchAll(idPattern);
 
   for (const match of matches) {

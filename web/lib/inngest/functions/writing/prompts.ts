@@ -615,7 +615,6 @@ This beat should: {engagementFunction}
 
 ### OUTPUT FORMAT:
 - Pure narration text only - no headers, labels, or markdown
-- Include [ASSET-ID] tags inline where visuals should change
 - No meta-commentary about the script or video itself
 
 ## CRITICAL REQUIREMENTS (MUST FOLLOW):
@@ -627,8 +626,7 @@ Write exactly ~{targetWords} words that:
 3. Transition smoothly from the previous beat (this is CRITICAL)
 4. Set up the next beat naturally
 5. Use facts accurately with natural attribution
-6. Include [ASSET-ID] tags where visuals should change
-7. Use NONE of the forbidden words - substitute with replacements`,
+6. Use NONE of the forbidden words - substitute with replacements`,
 
   continuityTracking: `You are a script continuity supervisor.
 Track what has been established so far for consistency.

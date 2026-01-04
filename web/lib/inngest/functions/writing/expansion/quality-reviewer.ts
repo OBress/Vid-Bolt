@@ -146,10 +146,9 @@ Fix this beat that failed quality review while maintaining its core content and 
    - tapestry → mix, blend, combination
    - unprecedented → rare, unusual, first-ever
    - (and all others from the review feedback)
-5. Preserve ALL [ASSET-ID] tags exactly as written
-6. Use contractions naturally (don't, can't, it's)
-7. Vary sentence openers - NO two consecutive sentences starting the same way
-8. Mix sentence lengths: short punchy ones with medium and occasionally longer
+5. Use contractions naturally (don't, can't, it's)
+6. Vary sentence openers - NO two consecutive sentences starting the same way
+7. Mix sentence lengths: short punchy ones with medium and occasionally longer
 
 ## NATURAL LANGUAGE REQUIREMENTS:
 - Write for the EAR, not the eye
@@ -605,7 +604,6 @@ RULES:
 2. Keep approximately the same length
 3. Write for the EAR (spoken aloud), not the eye
 4. Use contractions naturally
-5. Preserve any [ASSET-ID] tags exactly
 
 Return ONLY the improved narration, no explanations.`;
 
