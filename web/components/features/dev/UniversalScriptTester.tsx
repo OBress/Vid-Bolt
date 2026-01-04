@@ -35,6 +35,12 @@ import {
   MapPin,
   Layout,
   Copy,
+  Video,
+  Camera,
+  ChevronRight,
+  Clapperboard,
+  Image,
+  ArrowLeft,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { createBrowserClient } from "@supabase/ssr";
@@ -118,6 +124,28 @@ interface UniversalScriptOutput {
   };
 }
 
+// AV Script types
+interface AVShot {
+  shotIndex: number;
+  shotType: string;
+  cameraAngle: string;
+  cameraMovement: string;
+  duration: number;
+  imagePrompt: string;
+  imageEditPrompt: string | null;
+  videoMotionPrompt: string;
+  generationStrategy: "create_new" | "edit_existing";
+}
+
+interface AVScene {
+  sceneIndex: number;
+  sceneType: string;
+  summary: string;
+  narration: string;
+  shots: AVShot[];
+  duration: number;
+}
+
 interface UniversalScriptTesterProps {
   isOpen: boolean;
   onClose: () => void;
@@ -149,6 +177,19 @@ export function UniversalScriptTester({
   const [selectedAsset, setSelectedAsset] = useState<any | null>(null);
   const [isAssetDetailOpen, setIsAssetDetailOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("script");
+
+  // AV Script state
+  const [avScriptScenes, setAvScriptScenes] = useState<AVScene[]>([]);
+  const [avScriptStats, setAvScriptStats] = useState<{
+    totalScenes: number;
+    totalShots: number;
+    newImagesNeeded: number;
+    editsNeeded: number;
+  } | null>(null);
+  const [isGeneratingAV, setIsGeneratingAV] = useState(false);
+  const [avError, setAvError] = useState<string | null>(null);
+  const [selectedAvScene, setSelectedAvScene] = useState<AVScene | null>(null);
+  const [selectedAvShot, setSelectedAvShot] = useState<AVShot | null>(null);
 
   // Form state
   const [topic, setTopic] = useState(
@@ -328,6 +369,95 @@ export function UniversalScriptTester({
     setError(null);
     setOutput(null);
     setIsGenerating(false);
+    // Reset AV Script state too
+    setAvScriptScenes([]);
+    setAvScriptStats(null);
+    setAvError(null);
+    setSelectedAvScene(null);
+    setSelectedAvShot(null);
+  };
+
+  // Generate AV Script from the completed script
+  const generateAVScript = async () => {
+    if (!output?.finalScript && !output?.expandedBeats) {
+      setAvError("No script available to generate AV from");
+      return;
+    }
+
+    setIsGeneratingAV(true);
+    setAvError(null);
+    setAvScriptScenes([]);
+    setAvScriptStats(null);
+    setSelectedAvScene(null);
+    setSelectedAvShot(null);
+
+    try {
+      // Use finalScript or combine expanded beats
+      const scriptText =
+        output.finalScript ||
+        output.expandedBeats?.map((b) => b.narration).join("\n\n") ||
+        "";
+
+      // Trigger the Inngest workflow
+      const response = await fetch("/api/visual-director/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scriptText }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to start AV script task");
+      }
+
+      const avTaskId = data.taskId;
+      console.log(
+        `[UniversalScriptTester] AV Script task started: ${avTaskId}`
+      );
+
+      // Poll for results - increased timeout for chunked scene-by-scene processing
+      let attempts = 0;
+      const maxAttempts = 150; // 150 attempts * 2 seconds = 5 minutes max
+
+      const pollForResults = async () => {
+        while (attempts < maxAttempts) {
+          attempts++;
+          await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait 2 seconds
+
+          const statusRes = await fetch(
+            `/api/visual-director/test?taskId=${avTaskId}`
+          );
+          const statusData = await statusRes.json();
+
+          console.log(
+            `[UniversalScriptTester] Poll ${attempts}: status=${statusData.status}, step=${statusData.currentStep}`
+          );
+
+          if (statusData.status === "completed") {
+            // Success!
+            const scenes = statusData.output?.scenes || [];
+            const stats = statusData.output?.stats || null;
+            setAvScriptScenes(scenes);
+            setAvScriptStats(stats);
+            setActiveTab("avscript");
+            return;
+          }
+
+          if (statusData.status === "failed" || statusData.status === "error") {
+            throw new Error("AV Script generation failed");
+          }
+        }
+        throw new Error("Timed out waiting for AV script generation");
+      };
+
+      await pollForResults();
+    } catch (err) {
+      console.error("[UniversalScriptTester] AV Script error:", err);
+      setAvError(err instanceof Error ? err.message : "An error occurred");
+    } finally {
+      setIsGeneratingAV(false);
+    }
   };
 
   // Don't render on server or when not open
@@ -643,6 +773,18 @@ export function UniversalScriptTester({
                 <TabsTrigger value="spine" className="flex items-center gap-2">
                   <Layout className="w-4 h-4" />
                   Spine
+                </TabsTrigger>
+                <TabsTrigger
+                  value="avscript"
+                  className="flex items-center gap-2"
+                >
+                  <Video className="w-4 h-4" />
+                  AV Script
+                  {avScriptScenes.length > 0 && (
+                    <span className="ml-1 text-[10px] bg-teal-500/20 text-teal-400 px-1.5 rounded">
+                      {avScriptStats?.totalScenes}
+                    </span>
+                  )}
                 </TabsTrigger>
               </TabsList>
 
@@ -1057,6 +1199,241 @@ export function UniversalScriptTester({
                     </div>
                   )}
                 </div>
+              </TabsContent>
+
+              {/* AV Script Tab - Visual Planning */}
+              <TabsContent
+                value="avscript"
+                className="flex-1 overflow-hidden flex"
+              >
+                {avScriptScenes.length === 0 ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="text-center max-w-md">
+                      <Video className="w-16 h-16 mx-auto mb-4 text-neutral-700" />
+                      <h3 className="text-lg font-bold text-white mb-2">
+                        Generate AV Script
+                      </h3>
+                      <p className="text-neutral-400 mb-6">
+                        Create scene and shot breakdowns from your script with
+                        AI-generated image and video prompts.
+                      </p>
+                      {avError && (
+                        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm">
+                          {avError}
+                        </div>
+                      )}
+                      <Button
+                        onClick={generateAVScript}
+                        disabled={isGeneratingAV}
+                        className="bg-teal-600 hover:bg-teal-700"
+                      >
+                        {isGeneratingAV ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Generating...
+                          </>
+                        ) : (
+                          <>
+                            <Clapperboard className="w-4 h-4 mr-2" />
+                            Generate AV Script
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex overflow-hidden min-h-0">
+                    {/* Scene List */}
+                    <div className="w-72 border-r border-neutral-800 flex flex-col min-h-0">
+                      <div className="px-4 py-3 border-b border-neutral-700 flex items-center justify-between shrink-0">
+                        <span className="text-sm font-medium text-neutral-400">
+                          Scenes ({avScriptStats?.totalScenes || 0})
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={generateAVScript}
+                          disabled={isGeneratingAV}
+                          className="text-xs"
+                        >
+                          {isGeneratingAV ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            "Regenerate"
+                          )}
+                        </Button>
+                      </div>
+                      <ScrollArea className="flex-1 h-0">
+                        <div className="p-3 space-y-2">
+                          {avScriptScenes.map((scene) => (
+                            <button
+                              key={scene.sceneIndex}
+                              onClick={() => {
+                                setSelectedAvScene(scene);
+                                setSelectedAvShot(null);
+                              }}
+                              className={`w-full text-left p-3 rounded-lg border transition-all ${
+                                selectedAvScene?.sceneIndex === scene.sceneIndex
+                                  ? "bg-teal-500/10 border-teal-500/50"
+                                  : "bg-neutral-800 border-neutral-700 hover:border-neutral-600"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-medium text-white text-sm">
+                                  Scene {scene.sceneIndex}
+                                </span>
+                                <span className="text-[10px] px-1.5 py-0.5 bg-teal-500/20 text-teal-400 rounded">
+                                  {scene.sceneType.replace(/_/g, " ")}
+                                </span>
+                              </div>
+                              <p className="text-xs text-neutral-400 mb-1 line-clamp-2">
+                                {scene.summary}
+                              </p>
+                              <div className="flex gap-2 text-[10px] text-neutral-500">
+                                <span>{scene.shots.length} shots</span>
+                                <span>{scene.duration}s</span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </div>
+
+                    {/* Shot Details */}
+                    <div className="flex-1 flex flex-col overflow-hidden">
+                      {!selectedAvScene ? (
+                        <div className="flex-1 flex items-center justify-center text-neutral-500">
+                          Select a scene to see shots
+                        </div>
+                      ) : selectedAvShot ? (
+                        <ScrollArea className="flex-1 p-6">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSelectedAvShot(null)}
+                            className="text-neutral-400 hover:text-white -ml-2 mb-4"
+                          >
+                            <ArrowLeft className="w-4 h-4 mr-2" />
+                            Back to Shots
+                          </Button>
+
+                          <div className="space-y-6">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="p-3 bg-neutral-800 rounded-lg">
+                                <span className="text-xs text-neutral-500">
+                                  Shot Type
+                                </span>
+                                <p className="text-white font-medium">
+                                  {selectedAvShot.shotType.replace(/_/g, " ")}
+                                </p>
+                              </div>
+                              <div className="p-3 bg-neutral-800 rounded-lg">
+                                <span className="text-xs text-neutral-500">
+                                  Camera
+                                </span>
+                                <p className="text-white font-medium">
+                                  {selectedAvShot.cameraMovement.replace(
+                                    /_/g,
+                                    " "
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="p-4 bg-neutral-800 rounded-lg">
+                              <div className="flex items-center gap-2 mb-3">
+                                <Image className="w-4 h-4 text-purple-400" />
+                                <span className="text-sm font-medium text-white">
+                                  Image Prompt
+                                </span>
+                                <span
+                                  className={`text-xs px-2 py-0.5 rounded ${
+                                    selectedAvShot.generationStrategy ===
+                                    "create_new"
+                                      ? "bg-purple-500/20 text-purple-400"
+                                      : "bg-amber-500/20 text-amber-400"
+                                  }`}
+                                >
+                                  {selectedAvShot.generationStrategy ===
+                                  "create_new"
+                                    ? "NEW"
+                                    : "EDIT"}
+                                </span>
+                              </div>
+                              <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap">
+                                {selectedAvShot.imagePrompt}
+                              </p>
+                            </div>
+
+                            <div className="p-4 bg-neutral-800 rounded-lg">
+                              <div className="flex items-center gap-2 mb-3">
+                                <Video className="w-4 h-4 text-teal-400" />
+                                <span className="text-sm font-medium text-white">
+                                  Motion Prompt
+                                </span>
+                              </div>
+                              <p className="text-sm text-neutral-300">
+                                {selectedAvShot.videoMotionPrompt}
+                              </p>
+                            </div>
+                          </div>
+                        </ScrollArea>
+                      ) : (
+                        <ScrollArea className="flex-1 p-6">
+                          <div className="space-y-4">
+                            <div className="p-4 bg-neutral-800 rounded-lg">
+                              <h4 className="font-medium text-white mb-2">
+                                Scene {selectedAvScene.sceneIndex}:{" "}
+                                {selectedAvScene.summary}
+                              </h4>
+                              <p className="text-sm text-neutral-400">
+                                {selectedAvScene.narration}
+                              </p>
+                            </div>
+
+                            <div className="space-y-2">
+                              {selectedAvScene.shots.map((shot) => (
+                                <button
+                                  key={shot.shotIndex}
+                                  onClick={() => setSelectedAvShot(shot)}
+                                  className="w-full text-left p-4 bg-neutral-800 rounded-lg border border-neutral-700 hover:border-teal-500/50 transition-all"
+                                >
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <Camera className="w-4 h-4 text-neutral-400" />
+                                      <span className="font-medium text-white">
+                                        Shot {shot.shotIndex}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span
+                                        className={`text-xs px-2 py-0.5 rounded ${
+                                          shot.generationStrategy ===
+                                          "create_new"
+                                            ? "bg-purple-500/20 text-purple-400"
+                                            : "bg-amber-500/20 text-amber-400"
+                                        }`}
+                                      >
+                                        {shot.generationStrategy ===
+                                        "create_new"
+                                          ? "NEW"
+                                          : "EDIT"}
+                                      </span>
+                                      <ChevronRight className="w-4 h-4 text-neutral-500" />
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-neutral-400 line-clamp-2">
+                                    {shot.imagePrompt.substring(0, 120)}...
+                                  </p>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </ScrollArea>
+                      )}
+                    </div>
+                  </div>
+                )}
               </TabsContent>
             </Tabs>
           )}

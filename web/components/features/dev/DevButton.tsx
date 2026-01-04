@@ -9,12 +9,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Code2, FileText } from "lucide-react";
+import { Code2, FileText, Video } from "lucide-react";
 import { UniversalScriptTester } from "./UniversalScriptTester";
+import { AVScriptTester } from "./AVScriptTester";
 
 export function DevButton() {
   const [isOpen, setIsOpen] = useState(false);
   const [showUniversalTester, setShowUniversalTester] = useState(false);
+  const [showAVScriptTester, setShowAVScriptTester] = useState(false);
 
   return (
     <>
@@ -55,6 +57,27 @@ export function DevButton() {
                 Open Universal Script Tester
               </Button>
             </div>
+
+            {/* AV Script / Visual Director Section */}
+            <div className="space-y-4 pt-4 border-t border-neutral-800">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                Visual Director (AV Script)
+              </h3>
+              <p className="text-neutral-400 text-sm">
+                Test the visual director pipeline for scene planning, image
+                generation, and video creation from scripts.
+              </p>
+              <Button
+                onClick={() => {
+                  setIsOpen(false);
+                  setShowAVScriptTester(true);
+                }}
+                className="w-full bg-teal-600 hover:bg-teal-700"
+              >
+                <Video className="w-4 h-4 mr-2" />
+                Open AV Script Tester
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -63,6 +86,12 @@ export function DevButton() {
       <UniversalScriptTester
         isOpen={showUniversalTester}
         onClose={() => setShowUniversalTester(false)}
+      />
+
+      {/* AV Script Tester - Full Screen */}
+      <AVScriptTester
+        isOpen={showAVScriptTester}
+        onClose={() => setShowAVScriptTester(false)}
       />
     </>
   );
