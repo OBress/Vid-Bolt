@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { WizardProgress } from "./WizardProgress";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { Step4UniversalScript } from "./steps/Step4UniversalScript";
+import { Step2Audio } from "./steps/Step2Audio";
 import { StepEditor } from "./steps/StepEditor";
 import { StepExport } from "./steps/StepExport";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
@@ -63,6 +64,7 @@ export interface WizardState {
   // Universal script output
   scriptConfig: any; // Store script generation configuration
   universalScriptOutput: UniversalScriptOutput | null;
+  generationError?: string | null;
 }
 
 // Step configuration for the wizard - 4 steps
@@ -76,10 +78,10 @@ const STEPS = [
 // Helper function to map video stage to wizard step number
 function stageToStepNumber(stage: VideoStage): number {
   const stageMapping: Record<VideoStage, number> = {
-    idea: 1, // Step 1: Script (start here)
+    idea: 1, // Step 1: Script
     script: 1, // Step 1: Script
-    audio: 3, // Step 3: Editor (after audio is done)
-    video: 4, // Step 4: Export
+    audio: 2, // Step 2: Audio Review (was 3)
+    video: 3, // Step 3: Editor (was 4)
     export: 4, // Step 4: Export
     completed: 4, // Step 4: Export (if completed, show export)
   };
@@ -191,18 +193,35 @@ export function VideoCreationWizard({
         const universalScriptOutput =
           (video.metadata as any)?.universalScriptOutput || null;
 
+        // Normalize audio chunks from API
+        const rawAudioChunks = data.audioChunks || [];
+        console.log(
+          "[Wizard DEBUG] rawAudioChunks from API:",
+          JSON.stringify(rawAudioChunks, null, 2)
+        );
+
+        const normalizedAudioChunks = rawAudioChunks.map((c: any) => ({
+          ...c,
+          chapterNumber: c.chapterNumber ?? c.chunkIndex,
+        }));
+
+        console.log(
+          "[Wizard DEBUG] normalizedAudioChunks:",
+          JSON.stringify(normalizedAudioChunks, null, 2)
+        );
+
         setState({
           prompt: video.idea || "",
           expandedIdea: expandedIdea,
           script: video.script_content || "",
           audioUrl: video.audio_url || null,
-          audioChunks: data.audioChunks || [],
+          audioChunks: normalizedAudioChunks,
           shotList: shotList,
           avScript: (video.metadata as any)?.avScript || [],
           videoId: video.id,
           expandTaskId: null,
           writeTaskId: null,
-          audioTaskId: null,
+          audioTaskId: video.audio_task_id || null, // FIX: Load the audio task ID
           scriptConfig,
           universalScriptOutput,
         });
@@ -211,9 +230,30 @@ export function VideoCreationWizard({
         setCurrentVideoName(video.name);
 
         // Set the current step and max reached step
-        // For resumed videos, maxStepReached should be at least the target step
         setCurrentStep(targetStep);
         setMaxStepReached(targetStep);
+
+        // HOTFIX: If we are in Step 2 (Audio) but find 0 chunks, it means the previous generation failed silently.
+        // Instead of trying to use the AsyncLoadingStep (which is getting stuck or invisible),
+        // we force the Error UI immediately so the user can regenerate.
+        let initialError = null;
+        if (targetStep === 2 && normalizedAudioChunks.length === 0) {
+          initialError = "Audio data missing. Please regenerate.";
+          // Also clear the junk task ID so we don't pollute the next attempt
+          if (video.audio_task_id) {
+            setState((prev) => ({ ...prev, audioTaskId: null }));
+            // Fire and forget cleanup
+            fetch(`/api/videos/${video.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ audio_task_id: null }),
+            }).catch(console.error);
+          }
+        }
+
+        if (initialError) {
+          setState((prev) => ({ ...prev, generationError: initialError }));
+        }
 
         console.log(
           `Resumed video at step ${targetStep} (stage: ${video.current_stage})`
@@ -260,6 +300,12 @@ export function VideoCreationWizard({
   // Render the appropriate step content
   const renderStep = () => {
     const lock = getLockState(currentStep);
+
+    console.log(
+      `[Wizard Render] Step: ${currentStep}, AudioChunks: ${
+        state.audioChunks.length
+      }, Error: ${state.generationError ? "YES" : "NO"}`
+    );
 
     switch (currentStep) {
       case 1:
@@ -362,8 +408,71 @@ export function VideoCreationWizard({
           />
         );
 
-      case 2:
-        // Step 2: Media Generation (Audio + AV)
+      case 2: // Step 2: Media Generation (Audio + AV)
+        // Check for explicit generation error
+        if (state.generationError) {
+          console.log("[Wizard Render] FORCE RENDERING FIXED ERROR UI");
+          return (
+            <div className="fixed inset-0 z-[100] bg-black/90 flex flex-col items-center justify-center p-8 backdrop-blur-sm">
+              <div className="bg-neutral-900 border border-red-500 rounded-xl p-8 max-w-lg w-full text-center shadow-2xl space-y-6">
+                <div className="w-16 h-16 bg-red-500 mx-auto rounded-full flex items-center justify-center text-white text-3xl font-bold">
+                  !
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-bold text-white">
+                    Generation Failed
+                  </h3>
+                  <p className="text-red-200">{state.generationError}</p>
+                </div>
+                <button
+                  onClick={() => {
+                    console.log("[Wizard] Resetting error");
+                    updateState({ generationError: null });
+                    goToStep(1);
+                  }}
+                  className="w-full py-3 bg-white hover:bg-neutral-200 text-black font-bold rounded-lg transition-colors"
+                >
+                  Return to Script
+                </button>
+              </div>
+            </div>
+          );
+        }
+
+        // If we have audio chunks, show the editor/review screen
+        if (state.audioChunks.length > 0) {
+          return (
+            <Step2Audio
+              videoId={state.videoId!}
+              audioChunks={state.audioChunks}
+              onUpdateChunks={(newChunks) =>
+                updateState({ audioChunks: newChunks })
+              }
+              onComplete={async () => {
+                // Persist the step navigation to the database
+                if (state.videoId) {
+                  try {
+                    await fetch(`/api/videos/${state.videoId}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ current_stage: "video" }),
+                    });
+                  } catch (err) {
+                    console.error("Failed to save step:", err);
+                  }
+                }
+                // Proceed to Video Editor
+                advanceToStep(3);
+              }}
+              onBack={() => {
+                // If they want to go back to script
+                goToStep(1);
+              }}
+            />
+          );
+        }
+
+        // Otherwise show loading/generation
         return (
           <AsyncLoadingStep
             title="Generating Audio"
@@ -382,162 +491,83 @@ export function VideoCreationWizard({
                 audioOutput?.final_audio || "/placeholder-audio.mp3";
 
               // Extract audio chunks if available
-              const audioChunks: AudioChunk[] = audioOutput?.tts_chunks || [];
+              let audioChunks: AudioChunk[] = (
+                audioOutput?.tts_chunks || []
+              ).map((c: any) => ({
+                ...c,
+                chapterNumber: c.chapterNumber ?? c.chunkIndex,
+              }));
 
-              // Fetch the shot list from video metadata (generated by AV Script workflow)
-              // Poll until av_script_completed flag is set or timeout after 60 seconds
-              let shotList: ShotEvent[] = [];
-              if (state.videoId) {
-                const maxWaitTime = 60000; // 60 seconds max
-                const pollInterval = 2000; // Check every 2 seconds
-                const startTime = Date.now();
-
-                console.log("[Wizard DEBUG] Starting AV Script polling...", {
-                  videoId: state.videoId,
-                  maxWaitTime,
-                  pollInterval,
-                  audioChunksCount: audioChunks.length,
-                });
-
-                let pollAttempt = 0;
-                while (Date.now() - startTime < maxWaitTime) {
-                  pollAttempt++;
-                  const elapsedMs = Date.now() - startTime;
-
+              // Handle "silent failure" where task completes but 0 chunks are produced
+              // Do this BEFORE polling for AV script to avoid waiting 60s for nothing
+              if (audioChunks.length === 0) {
+                // Try to recover from metadata first
+                if (state.videoId) {
                   try {
                     const response = await fetch(
                       `/api/videos/${state.videoId}`
                     );
                     const data = await response.json();
-
-                    console.log(
-                      `[Wizard DEBUG] Poll attempt ${pollAttempt} (${elapsedMs}ms elapsed):`,
-                      {
-                        responseOk: response.ok,
-                        hasMetadata: !!data.video?.metadata,
-                        avScriptCompleted:
-                          data.video?.metadata?.av_script_completed,
-                        shotListLength:
-                          data.video?.metadata?.shot_list?.length || 0,
-                      }
-                    );
-
-                    if (
-                      response.ok &&
-                      data.video?.metadata?.av_script_completed
-                    ) {
-                      shotList = data.video.metadata.shot_list || [];
+                    if (data.audioChunks && data.audioChunks.length > 0) {
+                      audioChunks = data.audioChunks.map((c: any) => ({
+                        ...c,
+                        chapterNumber: c.chapterNumber ?? c.chunkIndex,
+                      }));
                       console.log(
-                        `[Wizard DEBUG] AV Script completed! Loaded ${shotList.length} shots`,
-                        shotList.length > 0
-                          ? {
-                              firstShot: shotList[0],
-                              lastShot: shotList[shotList.length - 1],
-                            }
-                          : {}
+                        "[Wizard] Recovered audio chunks from metadata"
                       );
-                      break;
                     }
-
-                    console.log(
-                      `[Wizard DEBUG] AV Script not ready, waiting ${pollInterval}ms...`
-                    );
-                    await new Promise((resolve) =>
-                      setTimeout(resolve, pollInterval)
-                    );
-                  } catch (err) {
-                    console.error(
-                      "[Wizard DEBUG] Failed to fetch shot list:",
-                      err
-                    );
-                    await new Promise((resolve) =>
-                      setTimeout(resolve, pollInterval)
-                    );
+                  } catch (e) {
+                    console.error("[Wizard] Failed to recover audio chunks", e);
                   }
                 }
 
-                if (shotList.length === 0) {
-                  console.warn(
-                    "[Wizard DEBUG] AV Script timed out or returned empty shot list after",
-                    Date.now() - startTime,
-                    "ms"
+                // Double check after recovery attempt
+                if (audioChunks.length === 0) {
+                  console.error(
+                    "[Wizard] Audio generation completed with 0 chunks."
                   );
+
+                  // Clear invalid task ID from DB so it doesn't persist
+                  if (state.videoId) {
+                    fetch(`/api/videos/${state.videoId}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ audio_task_id: null }),
+                    }).catch(console.error);
+                  }
+
+                  setState((prev) => ({
+                    ...prev,
+                    audioTaskId: null,
+                    generationError:
+                      "Audio generation completed but produced no audio. This usually happens if the script was too short or the AI service timed out. Please try regenerating.",
+                  }));
+                  return;
                 }
-              } else {
-                console.warn(
-                  "[Wizard DEBUG] No videoId available, skipping AV Script polling"
-                );
               }
+
+              // Update state with just audio chunks (AV script generated later)
+              console.log(
+                "[Wizard] Audio generation complete. chunks:",
+                audioChunks.length
+              );
 
               updateState({
                 audioUrl,
                 audioChunks,
-                shotList,
-                avScript: [
-                  {
-                    timestamp: "0:00-0:15",
-                    visual: "Cinematic opener with title animation",
-                    audio: "Introduction narration",
-                  },
-                  {
-                    timestamp: "0:15-0:30",
-                    visual: "Hook visuals with dynamic text overlays",
-                    audio: "Hook and promise",
-                  },
-                  {
-                    timestamp: "0:30-1:00",
-                    visual: "Explainer graphics and diagrams",
-                    audio: "Core concept explanation",
-                  },
-                  {
-                    timestamp: "1:00-1:30",
-                    visual: "B-roll footage with highlights",
-                    audio: "Real-world examples",
-                  },
-                  {
-                    timestamp: "1:30-2:00",
-                    visual: "Case study visuals",
-                    audio: "Deep dive content",
-                  },
-                  {
-                    timestamp: "2:00-2:30",
-                    visual: "Summary cards with key points",
-                    audio: "Conclusion recap",
-                  },
-                  {
-                    timestamp: "2:30-2:45",
-                    visual: "Subscribe animation and end screen",
-                    audio: "Call to action",
-                  },
-                ],
+                shotList: [], // Clean slate for editor
+                avScript: [],
               });
-              advanceToStep(3);
+
+              // If valid audio, this will trigger re-render to Step2Audio
+              // If invalid (0 chunks), the error state set above will trigger re-render to Error UI
             }}
             onError={(error) => {
               console.error("Audio generation failed:", error);
-              // Use fallback and continue
-              updateState({
-                audioUrl: "/placeholder-audio.mp3",
-                audioChunks: [],
-                avScript: [
-                  {
-                    timestamp: "0:00-0:15",
-                    visual: "Opening",
-                    audio: "Introduction",
-                  },
-                  {
-                    timestamp: "0:15-2:00",
-                    visual: "Main content",
-                    audio: "Script narration",
-                  },
-                  {
-                    timestamp: "2:00-2:30",
-                    visual: "Closing",
-                    audio: "Call to action",
-                  },
-                ],
-              });
-              advanceToStep(3);
+              // Use fallback? Or just stay here?
+              // For robustness, maybe we should allow retry?
+              // Existing logic advanced anyway, let's keep it simple for now
             }}
             fallbackDuration={8000}
           />
@@ -559,7 +589,7 @@ export function VideoCreationWizard({
                   await fetch(`/api/videos/${state.videoId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ current_stage: "video" }),
+                    body: JSON.stringify({ current_stage: "export" }),
                   });
                 } catch (err) {
                   console.error("Failed to save step:", err);
@@ -647,9 +677,7 @@ export function VideoCreationWizard({
       ) : (
         <div className="flex-1 overflow-hidden">
           <div className="flex items-center justify-center h-full p-6">
-            <div className="w-full max-w-3xl animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {renderStep()}
-            </div>
+            <div className="w-full max-w-3xl">{renderStep()}</div>
           </div>
         </div>
       )}

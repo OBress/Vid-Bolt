@@ -16,6 +16,34 @@ export const VIDEO_STAGES = ['idea', 'script', 'audio', 'video', 'export', 'comp
 export type VideoStage = typeof VIDEO_STAGES[number];
 
 // ============================================================================
+// SHARED CONTENT TYPES
+// ============================================================================
+
+export interface AudioChunk {
+  chapterNumber: number;
+  url: string;
+  duration_seconds?: number;
+  text?: string;
+  wordTimestamps?: import("@/types/task").WordTimestamp[];
+  lastUpdated?: number; // Timestamp for cache busting
+}
+
+export interface ShotEvent {
+  segment_index: number;
+  start_seconds: number;
+  end_seconds: number;
+  duration_seconds: number;
+  content_type:
+    | "list-item"
+    | "comparison"
+    | "concept"
+    | "transition"
+    | "emotional-beat";
+  text: string;
+  visual_prompt?: string;
+}
+
+// ============================================================================
 // MAIN VIDEO PROJECT TYPE
 // ============================================================================
 

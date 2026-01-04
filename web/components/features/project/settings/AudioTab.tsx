@@ -174,7 +174,7 @@ export function AudioTab({ projectId }: { projectId?: string }) {
           modelId: voice.model,
           voiceId: voice.voiceName, // Inworld uses voiceName as ID (e.g. "Hades")
           speakingRate: voice.speakingSpeed / 100, // Convert 100 -> 1.0
-          temperature: voice.stability / 100, // Convert 100 -> 1.0
+          temperature: Math.max(0.1, voice.stability / 100), // Ensure min 0.1, Convert 100 -> 1.0
         });
 
         if (error || !audioBase64) {
@@ -295,7 +295,9 @@ export function AudioTab({ projectId }: { projectId?: string }) {
                               handleVoiceUpdate({
                                 provider: val,
                                 model: newConfig.models[0].id,
-                                voiceName: newConfig.voices[0].id,
+                                voiceName: newConfig.voices[0]?.id || "",
+                                speakingSpeed: 100, // Default 1.0x
+                                stability: val === "inworld" ? 100 : 50, // 1.0 Temp for Inworld, 50% Stability for others
                               });
                             }
                           }}
@@ -491,6 +493,7 @@ export function AudioTab({ projectId }: { projectId?: string }) {
                           onValueChange={([v]) =>
                             handleVoiceUpdate({ stability: v })
                           }
+                          min={isInworld ? 10 : 0}
                           max={isInworld ? 200 : 100}
                           step={isInworld ? 10 : 1}
                           className="[&_[role=slider]]:bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.2)]"

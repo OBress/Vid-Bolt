@@ -36,6 +36,7 @@ export function AsyncLoadingStep({
   fallbackDuration = 3000,
   pollInterval = 2000,
 }: AsyncLoadingStepProps) {
+  console.log("[AsyncLoadingStep Render] ID:", taskId, "Title:", title);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [displayProgress, setDisplayProgress] = useState(0);
@@ -297,13 +298,25 @@ export function AsyncLoadingStep({
       </div>
 
       {/* Status indicator */}
-      <p className="text-xs text-neutral-600 font-mono">
-        {taskId
-          ? isPolling
-            ? "Connected to AI workflow..."
-            : "Waiting for task..."
-          : "Processing locally..."}
-      </p>
+      <div className="flex flex-col items-center gap-2">
+        <p className="text-xs text-neutral-600 font-mono">
+          {taskId
+            ? isPolling
+              ? "Connected to AI workflow..."
+              : "Waiting for task..."
+            : "Processing locally..."}
+        </p>
+
+        {hasCompleted && (
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-md text-xs font-medium text-neutral-400 hover:text-white transition-colors animate-in fade-in slide-in-from-bottom-2 duration-1000 delay-1000 fill-mode-forwards opacity-0"
+            style={{ animationDelay: "2s" }}
+          >
+            Stuck? Click to reload
+          </button>
+        )}
+      </div>
     </div>
   );
 }

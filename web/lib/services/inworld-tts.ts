@@ -61,7 +61,9 @@ export async function generateSpeech(
         text,
         voiceId: config.voiceId,
         modelId: config.modelId,
-        temperature: config.temperature,
+        // Inworld requires temperature > 0.0 and <= 2.0
+        // We clamp to 0.1 minimum to be safe, and 2.0 maximum
+        temperature: Math.max(0.1, Math.min(2.0, config.temperature || 1.0)),
         audioConfig: {
           speakingRate: config.speakingRate,
         },

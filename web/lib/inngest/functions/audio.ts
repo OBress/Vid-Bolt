@@ -94,7 +94,7 @@ export const audioWorkflow = inngest.createFunction(
     }> = [];
 
     // Track failed chunks for logging
-    const failedChunkIndices: number[] = [];
+    const failedChunkErrors: string[] = [];
 
     const progressPerChunk = 80 / chunks.length; // 80% of progress for TTS generation + upload
 
@@ -104,12 +104,14 @@ export const audioWorkflow = inngest.createFunction(
       // Combined generate + upload step to avoid storing base64 in state
       const chunkResult = await step.run(`process-chunk-${i}`, async () => {
         const stepId = await addTaskStep(taskId, "audio_generation", `Process Chunk ${i + 1}`, AUDIO_STEP_ORDER.TTS_BASE + i);
+        // ... (keep existing updateTaskStatus) ...
         await updateTaskStatus(taskId, {
           current_step: `Processing chunk ${i + 1} of ${chunks.length} (generating + uploading)...`,
           progress_percent: Math.round(15 + i * progressPerChunk),
         });
 
         try {
+          // ... (keep existing logic) ...
           // Only Inworld is implemented currently
           if (voiceProvider !== 'inworld') {
             throw new Error(`Voice provider '${voiceProvider}' is not yet implemented. Currently only 'inworld' is supported.`);
@@ -120,7 +122,7 @@ export const audioWorkflow = inngest.createFunction(
           const ttsResult = await generateSpeech(userId, chunk.text, {
             voiceId: voiceName || voiceModel,
             speakingRate: voiceSettings?.speakingRate,
-            temperature: voiceSettings?.temperature,
+            temperature: Math.max(0.1, voiceSettings?.temperature || 1.0), // Ensure min 0.1, default 1.0
           });
 
           // Step 2b: Upload to R2 immediately (don't store base64 in state!)
@@ -145,8 +147,9 @@ export const audioWorkflow = inngest.createFunction(
             text: chunk.text,
           };
         } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
           // Mark step as failed but DON'T throw - allows workflow to continue
-          await failStep(taskId, stepId, error instanceof Error ? error.message : 'Unknown error');
+          await failStep(taskId, stepId, errorMessage);
           console.error(`Chunk ${i} failed, continuing:`, error);
           
           return {
@@ -155,7 +158,7 @@ export const audioWorkflow = inngest.createFunction(
             url: null,
             durationSeconds: 0,
             wordTimestamps: [],
-            error: error instanceof Error ? error.message : 'Unknown error',
+            error: errorMessage,
           };
         }
       });
@@ -169,12 +172,19 @@ export const audioWorkflow = inngest.createFunction(
           text: chunk.text,
         });
       } else {
-        failedChunkIndices.push(chunkResult.chunkIndex);
+        if ('error' in chunkResult && chunkResult.error) {
+            failedChunkErrors.push(`Chunk ${chunkResult.chunkIndex}: ${chunkResult.error}`);
+        }
       }
     }
 
-    if (failedChunkIndices.length > 0) {
-      console.warn(`${failedChunkIndices.length} chunks failed: ${failedChunkIndices.join(', ')}`);
+    if (failedChunkErrors.length > 0) {
+      console.warn(`${failedChunkErrors.length} chunks failed:`, failedChunkErrors);
+    }
+    
+    // FAIL THE WORKFLOW if 0 chunks succeeded but we had input chunks
+    if (uploadedChunks.length === 0 && chunks.length > 0) {
+        throw new Error(`Audio generation failed. All ${chunks.length} chunks failed. Errors: ${failedChunkErrors.join('; ')}`);
     }
 
     // Step 4: Finalize and update video project
@@ -204,6 +214,7 @@ export const audioWorkflow = inngest.createFunction(
             })),
             total_duration_seconds: totalDuration,
             final_audio: primaryAudioUrl,
+            generation_errors: failedChunkErrors.length > 0 ? failedChunkErrors : null
           },
         });
 
@@ -246,7 +257,7 @@ export const audioWorkflow = inngest.createFunction(
         completed_at: new Date().toISOString(),
       });
 
-      // Update video project with audio URL and word timestamps
+      // Update video project with audio URL, word timestamps, AND audio chunks
       const { updateVideoContent, updateVideoProgress } = await import("@/lib/services/video-service");
       const updates: any = {};
       
@@ -254,17 +265,25 @@ export const audioWorkflow = inngest.createFunction(
         updates.audio_url = finalResult.primaryAudioUrl;
       }
       
-      if (finalResult.allWordTimestamps && finalResult.allWordTimestamps.length > 0) {
-        updates.metadata = {
-          word_timestamps: finalResult.allWordTimestamps
-        };
-      }
+      // Update metadata with word timestamps and audio chunks
+      // We need to merge with existing metadata
+      updates.metadata = {
+        word_timestamps: finalResult.allWordTimestamps || [],
+        audio_chunks: uploadedChunks.map(c => ({
+          chapterNumber: c.chunkIndex,
+          url: c.url,
+          durationSeconds: c.durationSeconds,
+          wordTimestamps: c.wordTimestamps,
+          text: c.text,
+        }))
+      };
       
       if (Object.keys(updates).length > 0) {
         await updateVideoContent(videoId, updates);
       }
       
-      await updateVideoProgress(videoId, "video", "Audio completed, generating shot list...", 100);
+      // Keep stage as 'audio' so user lands on Review step
+      await updateVideoProgress(videoId, "audio", "Audio generation complete", 100);
     });
 
     // Trigger AV Script generation asynchronously
