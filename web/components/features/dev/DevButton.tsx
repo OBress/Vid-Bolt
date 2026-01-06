@@ -9,14 +9,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Code2, FileText, Video } from "lucide-react";
+import { Code2, FileText, Video, Cpu } from "lucide-react";
 import { UniversalScriptTester } from "./UniversalScriptTester";
 import { AVScriptTester } from "./AVScriptTester";
+import { GPUApiTester } from "./GPUApiTester";
 
 export function DevButton() {
   const [isOpen, setIsOpen] = useState(false);
   const [showUniversalTester, setShowUniversalTester] = useState(false);
   const [showAVScriptTester, setShowAVScriptTester] = useState(false);
+  const [showGPUApiTester, setShowGPUApiTester] = useState(false);
 
   return (
     <>
@@ -78,6 +80,27 @@ export function DevButton() {
                 Open AV Script Tester
               </Button>
             </div>
+
+            {/* GPU API Tester Section */}
+            <div className="space-y-4 pt-4 border-t border-neutral-800">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                GPU API Tester
+              </h3>
+              <p className="text-neutral-400 text-sm">
+                Test individual GPU API endpoints for image creation, image
+                editing, and video generation.
+              </p>
+              <Button
+                onClick={() => {
+                  setIsOpen(false);
+                  setShowGPUApiTester(true);
+                }}
+                className="w-full bg-orange-600 hover:bg-orange-700"
+              >
+                <Cpu className="w-4 h-4 mr-2" />
+                Open GPU API Tester
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -92,6 +115,12 @@ export function DevButton() {
       <AVScriptTester
         isOpen={showAVScriptTester}
         onClose={() => setShowAVScriptTester(false)}
+      />
+
+      {/* GPU API Tester - Full Screen */}
+      <GPUApiTester
+        isOpen={showGPUApiTester}
+        onClose={() => setShowGPUApiTester(false)}
       />
     </>
   );

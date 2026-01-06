@@ -5,6 +5,7 @@ import { avScriptWorkflow } from "./av-script";
 import { universalScriptWorkflow } from "./writing/universal-script-workflow";
 import { visualDirectorWorkflow } from "./visual-director";
 import { visualDirectorTestWorkflow } from "./visual-director/test-workflow";
+import { gpuApiTestFunctions } from "./gpu-api-test";
 
 export const functions = [
   writingWorkflow,
@@ -13,4 +14,5 @@ export const functions = [
   universalScriptWorkflow,
   visualDirectorWorkflow,
   visualDirectorTestWorkflow,
+  ...gpuApiTestFunctions,
 ];

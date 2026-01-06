@@ -6,6 +6,7 @@
  */
 
 import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Initialize S3 client for R2
 let s3Client: S3Client | null = null;
@@ -146,6 +147,58 @@ export async function deleteFile(key: string): Promise<void> {
   });
 
   await client.send(command);
+}
+
+/**
+ * Generate a presigned PUT URL for direct upload to R2.
+ * This allows external services (like the GPU API) to upload directly to R2 without credentials.
+ * 
+ * @param key - The storage key (path) for the file
+ * @param contentType - MIME type of the file
+ * @param expiresInSeconds - URL expiration time (default: 1 hour)
+ * @returns Object with presigned PUT URL and public URL
+ */
+export async function generatePresignedPutUrl(
+  key: string,
+  contentType: string,
+  expiresInSeconds: number = 3600
+): Promise<{ putUrl: string; publicUrl: string }> {
+  const client = getS3Client();
+  const bucketName = getBucketName();
+
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    ContentType: contentType,
+  });
+
+  const putUrl = await getSignedUrl(client, command, {
+    expiresIn: expiresInSeconds,
+  });
+
+  return {
+    putUrl,
+    publicUrl: getPublicUrl(key),
+  };
+}
+
+/**
+ * Generate storage key for GPU API test outputs.
+ * 
+ * @param userId - User ID
+ * @param type - Type of asset (image or video)
+ * @param extension - File extension (default: png for images, mp4 for videos)
+ * @returns Storage key in format: gpu-api-test/{userId}/{type}_{timestamp}_{random}.{ext}
+ */
+export function generateGpuTestKey(
+  userId: string,
+  type: "image" | "video",
+  extension?: string
+): string {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 9);
+  const ext = extension || (type === "video" ? "mp4" : "png");
+  return `gpu-api-test/${userId}/${type}_${timestamp}_${random}.${ext}`;
 }
 
 /**
