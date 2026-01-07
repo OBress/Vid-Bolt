@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Loader2, UploadCloud } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { confirmPayment, getPaymentUploadUrl } from "../actions";
+import { confirmPayment, getProofUploadUrl } from "../actions";
 
 interface PaymentUploadModalProps {
   open: boolean;
@@ -46,7 +46,12 @@ export function PaymentUploadModal({
 
       // 1. Get presigned URL
       const ext = file.name.split(".").pop() || "png";
-      const { putUrl, publicUrl } = await getPaymentUploadUrl(statementId, ext);
+      // Use the generic proof upload, specifying 'payment'
+      const { putUrl, publicUrl } = await getProofUploadUrl(
+        statementId,
+        "payment",
+        ext
+      );
 
       // 2. Upload to R2
       const uploadRes = await fetch(putUrl, {
@@ -93,11 +98,11 @@ export function PaymentUploadModal({
           <div className="grid gap-2">
             <Label htmlFor="proof">Payment Screenshot</Label>
             <div className="border-2 border-dashed border-input hover:bg-muted/50 transition-colors rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer relative">
-              <Input
+              <input
                 id="proof"
                 type="file"
                 accept="image/*"
-                className="absolute inset-0 opacity-0 cursor-pointer"
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
                 onChange={handleFileChange}
                 disabled={uploading}
               />

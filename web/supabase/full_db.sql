@@ -517,7 +517,8 @@ CREATE TABLE IF NOT EXISTS "public"."monthly_statements" (
     "status" "public"."payment_status" DEFAULT 'draft'::"public"."payment_status",
     "payment_proof_url" "text",
     "created_at" timestamp with time zone DEFAULT "now"(),
-    "updated_at" timestamp with time zone DEFAULT "now"()
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "revenue_proof_url" "text"
 );
 
 

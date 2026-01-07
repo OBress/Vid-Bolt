@@ -22,6 +22,7 @@ export type MonthlyStatement = {
   commission_rate: number;
   status: PaymentStatus;
   payment_proof_url: string | null;
+  revenue_proof_url: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -59,7 +60,8 @@ export async function upsertStatement(
   id: string | undefined, // undefined for new (though we usually upsert by month_date)
   monthDate: string,
   revenue: number,
-  costs: CostItem[]
+  costs: CostItem[],
+  revenueProofUrl: string | null
 ) {
   const supabase = await createClient();
   const {
@@ -87,6 +89,7 @@ export async function upsertStatement(
         month_date: monthDate,
         total_revenue: revenue,
         costs: sanitizedCosts,
+        revenue_proof_url: revenueProofUrl,
         updated_at: new Date().toISOString(),
       },
       {
@@ -107,9 +110,13 @@ export async function upsertStatement(
 }
 
 /**
- * Generate a presigned URL for uploading payment proof.
+ * Generate a presigned URL for uploading proofs (revenue or payment).
  */
-export async function getPaymentUploadUrl(statementId: string, extension: string) {
+export async function getProofUploadUrl(
+  statementId: string, 
+  type: "payment" | "revenue", 
+  extension: string
+) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -120,7 +127,8 @@ export async function getPaymentUploadUrl(statementId: string, extension: string
   }
 
   const timestamp = Date.now();
-  const key = `payment-proofs/${user.id}/${statementId}/${timestamp}.${extension}`;
+  // Store both in payment-proofs, distinguish by filename prefix
+  const key = `payment-proofs/${user.id}/${statementId}/${type}-${timestamp}.${extension}`;
   
   // Use the existing R2 service
   const { putUrl, publicUrl } = await generatePresignedPutUrl(
@@ -130,6 +138,13 @@ export async function getPaymentUploadUrl(statementId: string, extension: string
   );
 
   return { putUrl, publicUrl };
+}
+
+/**
+ * Legacy wrapper for backward compatibility if needed, using confirmPayment logic directly now
+ */
+export async function getPaymentUploadUrl(statementId: string, extension: string) {
+    return getProofUploadUrl(statementId, "payment", extension);
 }
 
 /**
