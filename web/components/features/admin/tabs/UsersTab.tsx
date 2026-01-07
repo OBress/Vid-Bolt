@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { UserDetailModal } from "../UserDetailModal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,10 +44,13 @@ interface User {
   status: AccountStatus;
   date_joined: string;
   total_count: number;
+  paid_last_month?: boolean;
 }
 
 export function UsersTab() {
   const [users, setUsers] = useState<User[]>([]);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [perPage] = useState(10);
@@ -174,6 +179,9 @@ export function UsersTab() {
             <TableRow className="border-neutral-800 hover:bg-transparent">
               <TableHead className="text-neutral-400">User</TableHead>
               <TableHead className="text-neutral-400">Status</TableHead>
+              <TableHead className="text-neutral-400 text-center">
+                Paid (Last Month)
+              </TableHead>
               <TableHead className="text-neutral-400">Joined</TableHead>
               <TableHead className="text-right text-neutral-400">
                 Actions
@@ -203,7 +211,11 @@ export function UsersTab() {
               users.map((user) => (
                 <TableRow
                   key={user.id}
-                  className="border-neutral-800 hover:bg-neutral-900"
+                  className="border-neutral-800 hover:bg-neutral-900 cursor-pointer"
+                  onClick={() => {
+                    setSelectedUser(user);
+                    setDetailModalOpen(true);
+                  }}
                 >
                   <TableCell>
                     <div className="flex flex-col">
@@ -233,6 +245,13 @@ export function UsersTab() {
                     >
                       {user.status.toUpperCase()}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Checkbox
+                      checked={!!user.paid_last_month}
+                      className="border-neutral-600 data-[state=checked]:bg-green-500 data-[state=checked]:border-green-500"
+                      disabled
+                    />
                   </TableCell>
                   <TableCell className="text-neutral-400 text-sm">
                     {new Date(user.date_joined).toLocaleDateString()}
@@ -341,6 +360,14 @@ export function UsersTab() {
           Next
         </Button>
       </div>
+      <UserDetailModal
+        open={detailModalOpen}
+        onOpenChange={setDetailModalOpen}
+        user={selectedUser}
+        onUpdate={() => {
+          fetchUsers();
+        }}
+      />
     </div>
   );
 }

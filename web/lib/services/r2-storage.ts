@@ -264,3 +264,29 @@ export async function deleteFilesWithPrefix(prefix: string): Promise<{ deleted: 
   
   return { deleted, errors };
 }
+
+/**
+ * Extract the storage key from a public URL.
+ * Removes the base URL part.
+ * @param url - The full public URL
+ * @returns The storage key
+ */
+export function getKeyFromUrl(url: string): string {
+  try {
+    const baseUrl = getPublicBaseUrl();
+    if (url.startsWith(baseUrl)) {
+      let key = url.substring(baseUrl.length);
+      if (key.startsWith('/')) key = key.substring(1);
+      return key;
+    }
+    // Handle case where URL might be relative or different
+    // Attempt to extract path from URL object if possible
+    const urlObj = new URL(url);
+    // Remove leading slash from pathname
+    return urlObj.pathname.substring(1);
+  } catch (e) {
+    // If URL parsing fails or other error, return original as fallback
+    // assuming it might be the key itself
+    return url;
+  }
+}

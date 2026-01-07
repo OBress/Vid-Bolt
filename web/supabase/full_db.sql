@@ -204,15 +204,64 @@ $$;
 
 ALTER FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") OWNER TO "postgres";
 
+SET default_tablespace = '';
 
-CREATE OR REPLACE FUNCTION "public"."get_users_paginated"("page" integer DEFAULT 1, "per_page" integer DEFAULT 20, "search_text" "text" DEFAULT ''::"text", "status_filter" "text" DEFAULT 'all'::"text") RETURNS TABLE("id" "uuid", "email" "text", "name" "text", "username" "text", "is_admin" boolean, "status" "public"."account_status", "date_joined" timestamp with time zone, "total_count" bigint)
+SET default_table_access_method = "heap";
+
+
+CREATE TABLE IF NOT EXISTS "public"."monthly_statements" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "month_date" "date" NOT NULL,
+    "total_revenue" numeric DEFAULT 0,
+    "costs" "jsonb" DEFAULT '[]'::"jsonb",
+    "commission_rate" numeric DEFAULT 0.1,
+    "status" "public"."payment_status" DEFAULT 'draft'::"public"."payment_status",
+    "payment_proof_url" "text",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "revenue_proof_url" "text"
+);
+
+
+ALTER TABLE "public"."monthly_statements" OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_user_payment_history"("target_user_id" "uuid") RETURNS SETOF "public"."monthly_statements"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
 BEGIN
-    -- Check if requester is admin using alias 'u'
+    -- Check if requester is admin (aliased)
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied';
     END IF;
+
+    RETURN QUERY
+    SELECT *
+    FROM public.monthly_statements
+    WHERE user_id = target_user_id
+    ORDER BY month_date DESC;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_user_payment_history"("target_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_users_paginated"("page" integer DEFAULT 1, "per_page" integer DEFAULT 20, "search_text" "text" DEFAULT ''::"text", "status_filter" "text" DEFAULT 'all'::"text") RETURNS TABLE("id" "uuid", "email" "text", "name" "text", "username" "text", "is_admin" boolean, "status" "public"."account_status", "date_joined" timestamp with time zone, "total_count" bigint, "paid_last_month" boolean)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+    prev_month_date date;
+BEGIN
+    -- Check if requester is admin (aliased to avoid ambiguity with output 'id')
+    IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
+        RAISE EXCEPTION 'Access denied';
+    END IF;
+
+    -- Calculate previous month date (YYYY-MM-01) relative to now
+    -- Cast explicitly to date to match column type
+    prev_month_date := date_trunc('month', now() - interval '1 month')::date;
 
     RETURN QUERY
     WITH filtered_users AS (
@@ -234,7 +283,17 @@ BEGIN
         u.is_admin,
         u.status,
         u.date_joined,
-        (SELECT count(*) FROM filtered_users)::bigint as total_count
+        (SELECT count(*) FROM filtered_users)::bigint as total_count,
+        COALESCE(
+            EXISTS (
+                SELECT 1 
+                FROM public.monthly_statements ms 
+                WHERE ms.user_id = u.id 
+                  AND ms.month_date = prev_month_date
+                  AND ms.status = 'paid'
+            ), 
+            false
+        ) as paid_last_month
     FROM filtered_users u
     ORDER BY u.date_joined DESC
     LIMIT per_page
@@ -363,6 +422,33 @@ $$;
 ALTER FUNCTION "public"."protect_admin_column"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_month_date" "text") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+    -- Check if requester is admin (aliased)
+    IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
+        RAISE EXCEPTION 'Access denied';
+    END IF;
+
+    UPDATE public.monthly_statements
+    SET 
+        status = 'draft',
+        payment_proof_url = NULL,
+        updated_at = now()
+    WHERE user_id = target_user_id 
+      AND month_date = target_month_date::date; -- Explicit cast to date
+      
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Statement not found for user % and month %', target_user_id, target_month_date;
+    END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_month_date" "text") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
@@ -469,10 +555,6 @@ $$;
 
 ALTER FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) OWNER TO "postgres";
 
-SET default_tablespace = '';
-
-SET default_table_access_method = "heap";
-
 
 CREATE TABLE IF NOT EXISTS "public"."continuity_state" (
     "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
@@ -505,24 +587,6 @@ CREATE TABLE IF NOT EXISTS "public"."media_projects" (
 
 
 ALTER TABLE "public"."media_projects" OWNER TO "postgres";
-
-
-CREATE TABLE IF NOT EXISTS "public"."monthly_statements" (
-    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
-    "user_id" "uuid" NOT NULL,
-    "month_date" "date" NOT NULL,
-    "total_revenue" numeric DEFAULT 0,
-    "costs" "jsonb" DEFAULT '[]'::"jsonb",
-    "commission_rate" numeric DEFAULT 0.1,
-    "status" "public"."payment_status" DEFAULT 'draft'::"public"."payment_status",
-    "payment_proof_url" "text",
-    "created_at" timestamp with time zone DEFAULT "now"(),
-    "updated_at" timestamp with time zone DEFAULT "now"(),
-    "revenue_proof_url" "text"
-);
-
-
-ALTER TABLE "public"."monthly_statements" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."project_settings" (
@@ -1311,6 +1375,18 @@ GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "ser
 
 
 
+GRANT ALL ON TABLE "public"."monthly_statements" TO "anon";
+GRANT ALL ON TABLE "public"."monthly_statements" TO "authenticated";
+GRANT ALL ON TABLE "public"."monthly_statements" TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_user_payment_history"("target_user_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_user_payment_history"("target_user_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_user_payment_history"("target_user_id" "uuid") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."get_users_paginated"("page" integer, "per_page" integer, "search_text" "text", "status_filter" "text") TO "anon";
 GRANT ALL ON FUNCTION "public"."get_users_paginated"("page" integer, "per_page" integer, "search_text" "text", "status_filter" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_users_paginated"("page" integer, "per_page" integer, "search_text" "text", "status_filter" "text") TO "service_role";
@@ -1350,6 +1426,12 @@ GRANT ALL ON FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_up
 GRANT ALL ON FUNCTION "public"."protect_admin_column"() TO "anon";
 GRANT ALL ON FUNCTION "public"."protect_admin_column"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."protect_admin_column"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_month_date" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_month_date" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_month_date" "text") TO "service_role";
 
 
 
@@ -1401,12 +1483,6 @@ GRANT ALL ON TABLE "public"."continuity_state" TO "service_role";
 GRANT ALL ON TABLE "public"."media_projects" TO "anon";
 GRANT ALL ON TABLE "public"."media_projects" TO "authenticated";
 GRANT ALL ON TABLE "public"."media_projects" TO "service_role";
-
-
-
-GRANT ALL ON TABLE "public"."monthly_statements" TO "anon";
-GRANT ALL ON TABLE "public"."monthly_statements" TO "authenticated";
-GRANT ALL ON TABLE "public"."monthly_statements" TO "service_role";
 
 
 
