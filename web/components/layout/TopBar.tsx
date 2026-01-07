@@ -9,12 +9,15 @@ import { useMediaProjects } from "@/hooks/use-media-projects";
 import { useMemo } from "react";
 import { TaskStatusButton } from "@/components/features/tasks/TaskStatusButton";
 import { DevButton } from "@/components/features/dev/DevButton";
+import { AdminButton } from "@/components/features/admin/AdminButton";
 import { useNavigationStore } from "@/store/use-navigation-store";
+import { useUserProfile } from "@/hooks/use-user-profile";
 
 export function TopBar() {
   const pathname = usePathname();
   const { projects } = useMediaProjects();
   const { currentVideoName } = useNavigationStore();
+  const { profile } = useUserProfile();
   const [lastUpdate, setLastUpdate] = useState<string>("LOADING...");
 
   useEffect(() => {
@@ -92,9 +95,14 @@ export function TopBar() {
         </div>
       </div>
 
-      {/* Center - Dev Button */}
-      <div className="absolute left-1/2 transform -translate-x-1/2">
-        <DevButton />
+      {/* Center - Admin / Dev Buttons */}
+      <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-2">
+        {profile?.is_admin && (
+          <>
+            <AdminButton />
+            <DevButton />
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-2">

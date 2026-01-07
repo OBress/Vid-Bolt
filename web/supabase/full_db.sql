@@ -239,6 +239,33 @@ $$;
 ALTER FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."protect_admin_column"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+  -- Check if is_admin is being changed
+  IF NEW.is_admin IS DISTINCT FROM OLD.is_admin THEN
+    -- Check if the current role is service_role
+    -- We check the configuration parameter or the specialized function if available.
+    -- session_user is often the role connected to Postgres. 
+    -- auth.role() is Supabase specific.
+    -- A robust way in trigger context is checking current_setting('request.jwt.claim.role', true).
+    
+    IF (current_setting('request.jwt.claim.role', true) = 'service_role') THEN
+      RETURN NEW;
+    END IF;
+
+    -- If not service_role, raise an exception or revert the change.
+    RAISE EXCEPTION 'You are not authorized to change the is_admin status.';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."protect_admin_column"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
@@ -712,6 +739,10 @@ CREATE INDEX "idx_video_projects_user_status" ON "public"."video_projects" USING
 
 
 
+CREATE OR REPLACE TRIGGER "protect_admin_column_trigger" BEFORE UPDATE ON "public"."users" FOR EACH ROW EXECUTE FUNCTION "public"."protect_admin_column"();
+
+
+
 CREATE OR REPLACE TRIGGER "set_updated_at_continuity_state" BEFORE UPDATE ON "public"."continuity_state" FOR EACH ROW EXECUTE FUNCTION "public"."handle_updated_at"();
 
 
@@ -1127,6 +1158,12 @@ GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_update
 GRANT ALL ON FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") TO "anon";
 GRANT ALL ON FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."protect_admin_column"() TO "anon";
+GRANT ALL ON FUNCTION "public"."protect_admin_column"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."protect_admin_column"() TO "service_role";
 
 
 
