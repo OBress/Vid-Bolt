@@ -63,6 +63,16 @@ CREATE TYPE "public"."account_status" AS ENUM (
 ALTER TYPE "public"."account_status" OWNER TO "postgres";
 
 
+CREATE TYPE "public"."payment_status" AS ENUM (
+    'draft',
+    'pending_verification',
+    'paid'
+);
+
+
+ALTER TYPE "public"."payment_status" OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."append_task_step"("p_task_id" "uuid", "p_step" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
@@ -497,6 +507,23 @@ CREATE TABLE IF NOT EXISTS "public"."media_projects" (
 ALTER TABLE "public"."media_projects" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."monthly_statements" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "month_date" "date" NOT NULL,
+    "total_revenue" numeric DEFAULT 0,
+    "costs" "jsonb" DEFAULT '[]'::"jsonb",
+    "commission_rate" numeric DEFAULT 0.1,
+    "status" "public"."payment_status" DEFAULT 'draft'::"public"."payment_status",
+    "payment_proof_url" "text",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."monthly_statements" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."project_settings" (
     "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
     "project_id" "uuid" NOT NULL,
@@ -710,6 +737,16 @@ ALTER TABLE ONLY "public"."media_projects"
 
 
 
+ALTER TABLE ONLY "public"."monthly_statements"
+    ADD CONSTRAINT "monthly_statements_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."monthly_statements"
+    ADD CONSTRAINT "monthly_statements_user_id_month_date_key" UNIQUE ("user_id", "month_date");
+
+
+
 ALTER TABLE ONLY "public"."project_settings"
     ADD CONSTRAINT "project_settings_pkey" PRIMARY KEY ("id");
 
@@ -772,6 +809,10 @@ ALTER TABLE ONLY "public"."users"
 
 ALTER TABLE ONLY "public"."video_projects"
     ADD CONSTRAINT "video_projects_pkey" PRIMARY KEY ("id");
+
+
+
+CREATE INDEX "idx_monthly_statements_user_date" ON "public"."monthly_statements" USING "btree" ("user_id", "month_date");
 
 
 
@@ -893,6 +934,11 @@ ALTER TABLE ONLY "public"."media_projects"
 
 
 
+ALTER TABLE ONLY "public"."monthly_statements"
+    ADD CONSTRAINT "monthly_statements_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."project_settings"
     ADD CONSTRAINT "project_settings_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."media_projects"("id") ON DELETE CASCADE;
 
@@ -966,6 +1012,10 @@ CREATE POLICY "Users can insert own profile" ON "public"."users" FOR INSERT WITH
 
 
 
+CREATE POLICY "Users can insert their own statements" ON "public"."monthly_statements" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
+
+
+
 CREATE POLICY "Users can manage settings for their owned projects" ON "public"."project_settings" USING ((EXISTS ( SELECT 1
    FROM "public"."media_projects"
   WHERE (("media_projects"."id" = "project_settings"."project_id") AND ("media_projects"."user_id" = "auth"."uid"()))))) WITH CHECK ((EXISTS ( SELECT 1
@@ -1006,6 +1056,10 @@ CREATE POLICY "Users can update own profile" ON "public"."users" FOR UPDATE USIN
 
 
 
+CREATE POLICY "Users can update their own statements" ON "public"."monthly_statements" FOR UPDATE USING (("auth"."uid"() = "user_id"));
+
+
+
 CREATE POLICY "Users can view own keys" ON "public"."user_api_keys" FOR SELECT USING (("auth"."uid"() = "user_id"));
 
 
@@ -1020,6 +1074,10 @@ CREATE POLICY "Users can view steps for their own tasks" ON "public"."task_steps
 
 
 
+CREATE POLICY "Users can view their own statements" ON "public"."monthly_statements" FOR SELECT USING (("auth"."uid"() = "user_id"));
+
+
+
 CREATE POLICY "Users can view videos in owned media projects" ON "public"."video_projects" FOR SELECT USING ((("project_id" IS NULL) OR (EXISTS ( SELECT 1
    FROM "public"."media_projects"
   WHERE (("media_projects"."id" = "video_projects"."project_id") AND ("media_projects"."user_id" = "auth"."uid"()))))));
@@ -1030,6 +1088,9 @@ ALTER TABLE "public"."continuity_state" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."media_projects" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."monthly_statements" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."project_settings" ENABLE ROW LEVEL SECURITY;
@@ -1339,6 +1400,12 @@ GRANT ALL ON TABLE "public"."continuity_state" TO "service_role";
 GRANT ALL ON TABLE "public"."media_projects" TO "anon";
 GRANT ALL ON TABLE "public"."media_projects" TO "authenticated";
 GRANT ALL ON TABLE "public"."media_projects" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."monthly_statements" TO "anon";
+GRANT ALL ON TABLE "public"."monthly_statements" TO "authenticated";
+GRANT ALL ON TABLE "public"."monthly_statements" TO "service_role";
 
 
 
