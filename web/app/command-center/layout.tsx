@@ -4,6 +4,7 @@ import { SidebarProvider } from "@/components/layout/SidebarContext";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
 import { MediaProjectsProvider } from "@/hooks/use-media-projects";
+import { UserStatusGuard } from "@/components/auth/UserStatusGuard";
 
 export default function CommandCenterLayout({
   children,
@@ -13,17 +14,19 @@ export default function CommandCenterLayout({
   return (
     <MediaProjectsProvider>
       <SidebarProvider>
-        <div className="flex h-screen bg-black">
-          <Sidebar />
+        <UserStatusGuard>
+          <div className="flex h-screen bg-black">
+            <Sidebar />
 
-          {/* Main Content */}
-          <div className={`flex-1 flex flex-col min-w-0`}>
-            <TopBar />
+            {/* Main Content */}
+            <div className={`flex-1 flex flex-col min-w-0`}>
+              <TopBar />
 
-            {/* Dashboard Content */}
-            <div className="flex-1 overflow-hidden">{children}</div>
+              {/* Dashboard Content */}
+              <div className="flex-1 overflow-hidden">{children}</div>
+            </div>
           </div>
-        </div>
+        </UserStatusGuard>
       </SidebarProvider>
     </MediaProjectsProvider>
   );

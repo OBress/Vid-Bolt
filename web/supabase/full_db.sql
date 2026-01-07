@@ -52,6 +52,17 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
 
 
 
+CREATE TYPE "public"."account_status" AS ENUM (
+    'pending',
+    'active',
+    'paused',
+    'banned'
+);
+
+
+ALTER TYPE "public"."account_status" OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."append_task_step"("p_task_id" "uuid", "p_step" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
@@ -94,6 +105,41 @@ $$;
 
 
 ALTER FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_admin_analytics"() RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+    total_users int;
+    active_users int;
+    pending_users int;
+    total_projects int;
+    result jsonb;
+BEGIN
+    -- Check if requester is admin using alias 'u'
+    IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
+        RAISE EXCEPTION 'Access denied';
+    END IF;
+
+    SELECT count(*) INTO total_users FROM public.users;
+    SELECT count(*) INTO active_users FROM public.users WHERE status = 'active';
+    SELECT count(*) INTO pending_users FROM public.users WHERE status = 'pending';
+    SELECT count(*) INTO total_projects FROM public.video_projects;
+
+    result := jsonb_build_object(
+        'total_users', total_users,
+        'active_users', active_users,
+        'pending_users', pending_users,
+        'total_projects', total_projects
+    );
+
+    RETURN result;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_admin_analytics"() OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") RETURNS TABLE("id" "uuid", "name" "text", "status" "text", "current_stage" "text", "current_step" "text", "progress_percent" integer, "updated_at" timestamp with time zone)
@@ -147,6 +193,47 @@ $$;
 
 
 ALTER FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_users_paginated"("page" integer DEFAULT 1, "per_page" integer DEFAULT 20, "search_text" "text" DEFAULT ''::"text", "status_filter" "text" DEFAULT 'all'::"text") RETURNS TABLE("id" "uuid", "email" "text", "name" "text", "username" "text", "is_admin" boolean, "status" "public"."account_status", "date_joined" timestamp with time zone, "total_count" bigint)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+    -- Check if requester is admin using alias 'u'
+    IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
+        RAISE EXCEPTION 'Access denied';
+    END IF;
+
+    RETURN QUERY
+    WITH filtered_users AS (
+        SELECT u.*
+        FROM public.users u
+        WHERE 
+            (search_text = '' OR 
+             u.email ILIKE '%' || search_text || '%' OR 
+             u.name ILIKE '%' || search_text || '%' OR 
+             u.username ILIKE '%' || search_text || '%')
+            AND
+            (status_filter = 'all' OR u.status::text = status_filter)
+    )
+    SELECT 
+        u.id,
+        u.email,
+        u.name,
+        u.username,
+        u.is_admin,
+        u.status,
+        u.date_joined,
+        (SELECT count(*) FROM filtered_users)::bigint as total_count
+    FROM filtered_users u
+    ORDER BY u.date_joined DESC
+    LIMIT per_page
+    OFFSET (page - 1) * per_page;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_users_paginated"("page" integer, "per_page" integer, "search_text" "text", "status_filter" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
@@ -314,6 +401,30 @@ $$;
 
 
 ALTER FUNCTION "public"."update_updated_at_column"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_user_status"("target_user_id" "uuid", "new_status" "public"."account_status") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+    -- Check if requester is admin using alias 'u'
+    IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
+        RAISE EXCEPTION 'Access denied';
+    END IF;
+
+    -- Prevent modifying own status to non-active (anti-lockout)
+    IF target_user_id = auth.uid() AND new_status != 'active' THEN
+         RAISE EXCEPTION 'Cannot deactivate your own account';
+    END IF;
+
+    UPDATE public.users
+    SET status = new_status
+    WHERE id = target_user_id;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_user_status"("target_user_id" "uuid", "new_status" "public"."account_status") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) RETURNS "void"
@@ -529,7 +640,8 @@ CREATE TABLE IF NOT EXISTS "public"."users" (
     "credits" integer DEFAULT 0,
     "is_admin" boolean DEFAULT false,
     "onboarding_completed" boolean DEFAULT false,
-    "joining_reason" "text"[]
+    "joining_reason" "text"[],
+    "status" "public"."account_status" DEFAULT 'pending'::"public"."account_status"
 );
 
 
@@ -1119,6 +1231,12 @@ GRANT ALL ON FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_k
 
 
 
+GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "anon";
+GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "anon";
 GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "service_role";
@@ -1128,6 +1246,12 @@ GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "s
 GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "anon";
 GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_users_paginated"("page" integer, "per_page" integer, "search_text" "text", "status_filter" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_users_paginated"("page" integer, "per_page" integer, "search_text" "text", "status_filter" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_users_paginated"("page" integer, "per_page" integer, "search_text" "text", "status_filter" "text") TO "service_role";
 
 
 
@@ -1176,6 +1300,12 @@ GRANT ALL ON FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id
 GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "anon";
 GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."update_updated_at_column"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_user_status"("target_user_id" "uuid", "new_status" "public"."account_status") TO "anon";
+GRANT ALL ON FUNCTION "public"."update_user_status"("target_user_id" "uuid", "new_status" "public"."account_status") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_user_status"("target_user_id" "uuid", "new_status" "public"."account_status") TO "service_role";
 
 
 

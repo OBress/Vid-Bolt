@@ -8,7 +8,7 @@ import { getActiveLabel } from "@/app/command-center/navigation";
 import { useMediaProjects } from "@/hooks/use-media-projects";
 import { useMemo } from "react";
 import { TaskStatusButton } from "@/components/features/tasks/TaskStatusButton";
-import { DevButton } from "@/components/features/dev/DevButton";
+// DevButton moved to Admin Panel
 import { AdminButton } from "@/components/features/admin/AdminButton";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { useUserProfile } from "@/hooks/use-user-profile";
@@ -95,14 +95,9 @@ export function TopBar() {
         </div>
       </div>
 
-      {/* Center - Admin / Dev Buttons */}
-      <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-2">
-        {profile?.is_admin && (
-          <>
-            <AdminButton />
-            <DevButton />
-          </>
-        )}
+      {/* Center - Admin Button (Dev Tools included) */}
+      <div className="fixed left-1/2 transform -translate-x-1/2 flex items-center gap-2 z-50">
+        {profile?.is_admin && <AdminButton />}
       </div>
 
       <div className="flex items-center gap-2">

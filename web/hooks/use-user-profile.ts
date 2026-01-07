@@ -16,6 +16,7 @@ interface UserProfile {
   credits: number;
   is_admin: boolean;
   onboarding_completed: boolean;
+  status: 'pending' | 'active' | 'paused' | 'banned';
 }
 
 export function useUserProfile() {
