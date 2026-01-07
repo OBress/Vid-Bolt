@@ -3,11 +3,22 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronRight, Monitor, Plus, Loader2 } from "lucide-react";
+import {
+  ChevronRight,
+  Monitor,
+  Plus,
+  Loader2,
+  Settings,
+  CreditCard,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/LogoutButton";
 import { useSidebar } from "./SidebarContext";
-import { NAV_GROUPS, NavItem } from "@/app/command-center/navigation";
+import {
+  NAV_GROUPS,
+  FOOTER_NAV_ITEMS,
+  NavItem,
+} from "@/app/command-center/navigation";
 import { useMediaProjects } from "@/hooks/use-media-projects";
 import {
   Dialog,
@@ -36,7 +47,6 @@ export function Sidebar() {
   const [expandedGroups, setExpandedGroups] = useState<string[]>([
     "media",
     "analytics",
-    "settings",
   ]);
 
   // Dynamic project loading
@@ -231,7 +241,36 @@ export function Sidebar() {
             })}
           </nav>
 
-          <LogoutButton isCollapsed={isVisuallyCollapsed} />
+          <div className="mt-auto space-y-2">
+            {FOOTER_NAV_ITEMS.map((item) => {
+              const Icon = item.icon === "Settings" ? Settings : CreditCard;
+              return (
+                <Link
+                  key={item.id}
+                  href={item.href}
+                  className={`w-full flex items-center gap-3 p-3 rounded transition-colors ${
+                    pathname === item.href
+                      ? "bg-neutral-800 text-orange-500 border border-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.1)]"
+                      : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+                  }`}
+                >
+                  <Icon className="w-5 h-5" />
+                  <span
+                    className={`text-sm font-medium transition-all duration-300 ${
+                      isVisuallyCollapsed
+                        ? "opacity-0 w-0 overflow-hidden"
+                        : "opacity-100 w-auto"
+                    } whitespace-nowrap`}
+                  >
+                    {item.label.toUpperCase()}
+                  </span>
+                </Link>
+              );
+            })}
+            <div className="pt-2">
+              <LogoutButton isCollapsed={isVisuallyCollapsed} />
+            </div>
+          </div>
 
           <div
             className={`mt-8 p-4 bg-neutral-800 border border-neutral-700 rounded transition-all duration-300 ${

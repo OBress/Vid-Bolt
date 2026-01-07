@@ -39,25 +39,33 @@ export const NAV_GROUPS: NavGroup[] = [
       },
     ],
   },
+];
+
+export const FOOTER_NAV_ITEMS = [
+  {
+    id: "payments",
+    label: "Payments",
+    href: "/command-center/payments",
+    icon: "CreditCard",
+  },
   {
     id: "settings",
-    label: "SETTINGS",
-    icon: Settings,
-    items: [
-      {
-        id: "general",
-        label: "General Settings",
-        href: "/command-center/settings/general",
-      },
-    ],
+    label: "Settings",
+    href: "/command-center/settings/general",
+    icon: "Settings",
   },
 ];
 
 export const getActiveLabel = (pathname: string) => {
+  // Check main groups
   for (const group of NAV_GROUPS) {
     const item = group.items.find((item) => item.href === pathname);
     if (item) return item.label.toUpperCase();
   }
+  // Check footer items
+  const footerItem = FOOTER_NAV_ITEMS.find((item) => item.href === pathname);
+  if (footerItem) return footerItem.label.toUpperCase();
+
   // Check if it's a media project path
   if (pathname.startsWith("/command-center/media/")) {
     return "MEDIA PROJECT";
