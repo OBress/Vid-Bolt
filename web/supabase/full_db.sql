@@ -253,15 +253,16 @@ CREATE OR REPLACE FUNCTION "public"."get_users_paginated"("page" integer DEFAULT
     AS $$
 DECLARE
     prev_month_date date;
+    curr_month_date date;
 BEGIN
     -- Check if requester is admin (aliased to avoid ambiguity with output 'id')
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied';
     END IF;
 
-    -- Calculate previous month date (YYYY-MM-01) relative to now
-    -- Cast explicitly to date to match column type
+    -- Calculate previous and current month dates (YYYY-MM-01)
     prev_month_date := date_trunc('month', now() - interval '1 month')::date;
+    curr_month_date := date_trunc('month', now())::date;
 
     RETURN QUERY
     WITH filtered_users AS (
@@ -289,8 +290,8 @@ BEGIN
                 SELECT 1 
                 FROM public.monthly_statements ms 
                 WHERE ms.user_id = u.id 
-                  AND ms.month_date = prev_month_date
                   AND ms.status = 'paid'
+                  AND (ms.month_date = prev_month_date OR ms.month_date = curr_month_date)
             ), 
             false
         ) as paid_last_month

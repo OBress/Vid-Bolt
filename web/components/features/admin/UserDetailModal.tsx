@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import {
   Dialog,
   DialogContent,
@@ -18,9 +18,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
-import { Loader2, ExternalLink, RotateCcw, AlertTriangle } from "lucide-react";
+import {
+  Loader2,
+  ExternalLink,
+  RotateCcw,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 import { toast } from "sonner";
 import { resetPaymentMonth } from "@/actions/admin-payment-actions";
+import { cn } from "@/lib/utils";
 
 interface User {
   id: string;
@@ -38,7 +46,9 @@ interface MonthlyStatement {
   total_revenue: number;
   status: "draft" | "pending_verification" | "paid";
   payment_proof_url: string | null;
-  costs: any[];
+  revenue_proof_url: string | null;
+  commission_rate: number;
+  costs: { title: string; cost_type: string; amount_usd: number }[];
 }
 
 interface UserDetailModalProps {
@@ -57,6 +67,9 @@ export function UserDetailModal({
   const [history, setHistory] = useState<MonthlyStatement[]>([]);
   const [loading, setLoading] = useState(false);
   const [resettingId, setResettingId] = useState<string | null>(null);
+  const [expandedStatementId, setExpandedStatementId] = useState<string | null>(
+    null
+  );
 
   const supabase = createClient();
 
@@ -117,9 +130,9 @@ export function UserDetailModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-neutral-950 border-neutral-800 text-white max-w-3xl">
-        <DialogHeader>
-          <DialogTitle className="text-xl font-bold flex items-center gap-2">
+      <DialogContent className="bg-neutral-950 border-neutral-800 text-white w-full sm:max-w-5xl h-[85vh] flex flex-col p-0">
+        <DialogHeader className="p-6 border-b border-neutral-800">
+          <DialogTitle className="text-2xl font-bold flex items-center gap-3">
             User Details
             {user.is_admin && (
               <Badge
@@ -129,148 +142,340 @@ export function UserDetailModal({
                 ADMIN
               </Badge>
             )}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="grid grid-cols-2 gap-4 py-4 border-b border-neutral-800">
-          <div>
-            <p className="text-sm text-neutral-500">Name</p>
-            <p className="font-medium text-neutral-200">{user.name || "N/A"}</p>
-          </div>
-          <div>
-            <p className="text-sm text-neutral-500">Username</p>
-            <p className="font-medium text-neutral-200">
-              {user.username ? `@${user.username}` : "N/A"}
-            </p>
-          </div>
-          <div>
-            <p className="text-sm text-neutral-500">Email</p>
-            <p className="font-medium text-neutral-200">{user.email}</p>
-          </div>
-          <div>
-            <p className="text-sm text-neutral-500">Status</p>
             <Badge
               variant="secondary"
               className={
                 user.status === "active"
-                  ? "bg-green-500/10 text-green-500"
-                  : "bg-neutral-800 text-neutral-400"
+                  ? "bg-green-500/10 text-green-500 ml-auto"
+                  : "bg-neutral-800 text-neutral-400 ml-auto"
               }
             >
               {user.status.toUpperCase()}
             </Badge>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-8">
+          {/* User Info Grid */}
+          <div className="grid grid-cols-3 gap-6 p-6 bg-neutral-900/30 rounded-lg border border-neutral-800">
+            <div>
+              <p className="text-sm text-neutral-500 mb-1">Full Name</p>
+              <p className="font-medium text-lg text-neutral-200">
+                {user.name || "N/A"}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-neutral-500 mb-1">Username</p>
+              <p className="font-medium text-lg text-neutral-200">
+                {user.username ? `@${user.username}` : "N/A"}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-neutral-500 mb-1">Email Address</p>
+              <p className="font-medium text-lg text-neutral-200">
+                {user.email}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-neutral-500 mb-1">Account ID</p>
+              <p className="font-mono text-sm text-neutral-400 select-all">
+                {user.id}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-neutral-500 mb-1">Joined Date</p>
+              <p className="font-medium text-neutral-200">
+                {new Date(user.date_joined).toLocaleDateString()}
+              </p>
+            </div>
           </div>
-        </div>
 
-        <div className="space-y-4 pt-4">
-          <h3 className="font-bold text-lg text-neutral-200">
-            Payment History
-          </h3>
+          {/* Payment History Section */}
+          <div className="space-y-4">
+            <h3 className="font-bold text-xl text-neutral-200 flex items-center gap-2">
+              Payment History
+              <span className="text-sm font-normal text-neutral-500">
+                ({history.length} statements)
+              </span>
+            </h3>
 
-          <div className="border border-neutral-800 rounded-md overflow-hidden">
-            <Table>
-              <TableHeader className="bg-neutral-900/50">
-                <TableRow className="border-neutral-800 hover:bg-neutral-900/50">
-                  <TableHead className="text-neutral-400">Month</TableHead>
-                  <TableHead className="text-neutral-400">Status</TableHead>
-                  <TableHead className="text-neutral-400 text-right">
-                    Revenue
-                  </TableHead>
-                  <TableHead className="text-neutral-400 text-right">
-                    Actions
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loading ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={4}
-                      className="h-24 text-center text-neutral-500"
-                    >
-                      <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
-                      Loading history...
-                    </TableCell>
+            <div className="border border-neutral-800 rounded-lg overflow-hidden">
+              <Table>
+                <TableHeader className="bg-neutral-900/50">
+                  <TableRow className="border-neutral-800 hover:bg-neutral-900/50">
+                    <TableHead className="w-[50px]"></TableHead>
+                    <TableHead className="text-neutral-400">Month</TableHead>
+                    <TableHead className="text-neutral-400">Status</TableHead>
+                    <TableHead className="text-neutral-400 text-right">
+                      Total Revenue
+                    </TableHead>
+                    <TableHead className="text-neutral-400 text-right">
+                      Payout Due
+                    </TableHead>
+                    <TableHead className="text-neutral-400 text-right">
+                      Actions
+                    </TableHead>
                   </TableRow>
-                ) : history.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={4}
-                      className="h-24 text-center text-neutral-500"
-                    >
-                      No payment history found.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  history.map((stmt) => (
-                    <TableRow
-                      key={stmt.id}
-                      className="border-neutral-800 hover:bg-neutral-900/30"
-                    >
-                      <TableCell className="font-medium text-neutral-300">
-                        {stmt.month_date}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          className={
-                            stmt.status === "paid"
-                              ? "bg-green-500/10 text-green-500 hover:bg-green-500/20"
-                              : stmt.status === "pending_verification"
-                              ? "bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20"
-                              : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
-                          }
-                        >
-                          {stmt.status === "pending_verification"
-                            ? "PENDING"
-                            : stmt.status.toUpperCase()}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right text-neutral-300 font-mono">
-                        ${stmt.total_revenue.toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {stmt.payment_proof_url && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
-                              onClick={() =>
-                                window.open(stmt.payment_proof_url!, "_blank")
-                              }
-                              title="View Proof"
-                            >
-                              <ExternalLink className="w-4 h-4" />
-                            </Button>
-                          )}
-
-                          {(stmt.status === "paid" ||
-                            stmt.status === "pending_verification") && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0 text-red-500 hover:text-red-400 hover:bg-red-500/10"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleResetPayment(stmt);
-                              }}
-                              disabled={resettingId === stmt.id}
-                              title="Reset Payment"
-                            >
-                              {resettingId === stmt.id ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <RotateCcw className="w-4 h-4" />
-                              )}
-                            </Button>
-                          )}
-                        </div>
+                </TableHeader>
+                <TableBody>
+                  {loading ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={6}
+                        className="h-32 text-center text-neutral-500"
+                      >
+                        <Loader2 className="w-6 h-6 animate-spin mx-auto mb-3" />
+                        Loading payment history...
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                  ) : history.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={6}
+                        className="h-32 text-center text-neutral-500 text-lg"
+                      >
+                        No payment history found.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    history.map((stmt) => {
+                      const isExpanded = expandedStatementId === stmt.id;
+                      const totalCosts =
+                        stmt.costs?.reduce(
+                          (acc: number, curr: any) =>
+                            acc + (curr.amount_usd || 0),
+                          0
+                        ) || 0;
+                      const profit = stmt.total_revenue - totalCosts;
+                      // const payout = profit * (stmt.commission_rate || 0.5); // Example
+
+                      return (
+                        <Fragment key={stmt.id}>
+                          <TableRow
+                            className={cn(
+                              "border-neutral-800 transition-colors cursor-pointer",
+                              isExpanded
+                                ? "bg-neutral-900/50 hover:bg-neutral-900/60"
+                                : "hover:bg-neutral-900/30"
+                            )}
+                            onClick={() =>
+                              setExpandedStatementId(
+                                isExpanded ? null : stmt.id
+                              )
+                            }
+                          >
+                            <TableCell className="text-center">
+                              {isExpanded ? (
+                                <ChevronUp className="w-4 h-4 text-neutral-500" />
+                              ) : (
+                                <ChevronDown className="w-4 h-4 text-neutral-500" />
+                              )}
+                            </TableCell>
+                            <TableCell className="font-medium text-neutral-300 text-lg">
+                              {stmt.month_date}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                className={
+                                  stmt.status === "paid"
+                                    ? "bg-green-500/10 text-green-500 border-green-500/20"
+                                    : stmt.status === "pending_verification"
+                                    ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+                                    : "bg-neutral-800 text-neutral-400 border-neutral-700"
+                                }
+                              >
+                                {stmt.status === "pending_verification"
+                                  ? "PENDING"
+                                  : stmt.status.toUpperCase()}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right text-neutral-300 font-mono text-base">
+                              ${stmt.total_revenue.toFixed(2)}
+                            </TableCell>
+                            <TableCell className="text-right text-green-400 font-mono font-bold text-base">
+                              --
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {(stmt.status === "paid" ||
+                                  stmt.status === "pending_verification") && (
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    className="h-8 px-3 text-xs bg-red-500/10 text-red-500 hover:bg-red-500/20 border-0"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleResetPayment(stmt);
+                                    }}
+                                    disabled={resettingId === stmt.id}
+                                  >
+                                    {resettingId === stmt.id ? (
+                                      <Loader2 className="w-3 h-3 animate-spin mr-2" />
+                                    ) : (
+                                      <RotateCcw className="w-3 h-3 mr-2" />
+                                    )}
+                                    Reset
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+
+                          {/* Expanded Details Row */}
+                          {isExpanded && (
+                            <TableRow className="bg-neutral-950 hover:bg-neutral-950 border-b border-neutral-800">
+                              <TableCell colSpan={6} className="p-0">
+                                <div className="p-6 grid grid-cols-2 gap-8 bg-neutral-900/20 inset-shadow-sm">
+                                  {/* Financial Breakdown */}
+                                  <div className="space-y-4">
+                                    <h4 className="font-semibold text-neutral-300 border-b border-neutral-800 pb-2">
+                                      Financial Breakdown
+                                    </h4>
+                                    <div className="space-y-2 text-sm">
+                                      <div className="flex justify-between">
+                                        <span className="text-neutral-500">
+                                          Total Revenue Reported
+                                        </span>
+                                        <span className="font-mono text-neutral-200">
+                                          ${stmt.total_revenue.toFixed(2)}
+                                        </span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-neutral-500">
+                                          Total Costs
+                                        </span>
+                                        <span className="font-mono text-red-400">
+                                          -${totalCosts.toFixed(2)}
+                                        </span>
+                                      </div>
+                                      <div className="flex justify-between font-medium pt-2 border-t border-neutral-800">
+                                        <span className="text-neutral-400">
+                                          Net Profit
+                                        </span>
+                                        <span className="font-mono text-neutral-200">
+                                          ${profit.toFixed(2)}
+                                        </span>
+                                      </div>
+
+                                      <div className="mt-4 pt-4 border-t border-neutral-800">
+                                        <p className="text-xs text-neutral-500 mb-2 font-semibold uppercase tracking-wider">
+                                          Approved Costs
+                                        </p>
+                                        {!stmt.costs ||
+                                        stmt.costs.length === 0 ? (
+                                          <p className="text-xs text-neutral-600 italic">
+                                            No costs reported for this month.
+                                          </p>
+                                        ) : (
+                                          <div className="space-y-1">
+                                            {stmt.costs.map((cost, idx) => (
+                                              <div
+                                                key={idx}
+                                                className="flex justify-between text-xs"
+                                              >
+                                                <span className="text-neutral-400">
+                                                  {cost.title ||
+                                                    "Untitled Cost"}{" "}
+                                                  <span className="opacity-50">
+                                                    ({cost.cost_type})
+                                                  </span>
+                                                </span>
+                                                <span className="font-mono text-neutral-300">
+                                                  $
+                                                  {(
+                                                    cost.amount_usd || 0
+                                                  ).toFixed(2)}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Proof Images */}
+                                  <div className="space-y-4">
+                                    <h4 className="font-semibold text-neutral-300 border-b border-neutral-800 pb-2">
+                                      Proof Documents
+                                    </h4>
+                                    <div className="grid grid-cols-2 gap-4">
+                                      {/* Revenue Proof */}
+                                      <div className="space-y-2">
+                                        <p className="text-xs text-neutral-500 font-medium uppercase">
+                                          Revenue Proof
+                                        </p>
+                                        {stmt.revenue_proof_url ? (
+                                          <div
+                                            className="relative aspect-video bg-neutral-900 rounded-md border border-neutral-800 overflow-hidden group cursor-pointer hover:border-blue-500/50 transition-all"
+                                            onClick={() =>
+                                              window.open(
+                                                stmt.revenue_proof_url!,
+                                                "_blank"
+                                              )
+                                            }
+                                          >
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                            <img
+                                              src={stmt.revenue_proof_url}
+                                              alt="Revenue Proof"
+                                              className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                                            />
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                                              <ExternalLink className="w-5 h-5 text-white" />
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <div className="aspect-video bg-neutral-900 rounded-md border border-neutral-800 flex items-center justify-center text-neutral-600 text-xs italic">
+                                            No revenue proof uploaded
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      {/* Payment Proof */}
+                                      <div className="space-y-2">
+                                        <p className="text-xs text-neutral-500 font-medium uppercase">
+                                          Payment Proof
+                                        </p>
+                                        {stmt.payment_proof_url ? (
+                                          <div
+                                            className="relative aspect-video bg-neutral-900 rounded-md border border-neutral-800 overflow-hidden group cursor-pointer hover:border-green-500/50 transition-all"
+                                            onClick={() =>
+                                              window.open(
+                                                stmt.payment_proof_url!,
+                                                "_blank"
+                                              )
+                                            }
+                                          >
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                            <img
+                                              src={stmt.payment_proof_url}
+                                              alt="Payment Proof"
+                                              className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                                            />
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                                              <ExternalLink className="w-5 h-5 text-white" />
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <div className="aspect-video bg-neutral-900 rounded-md border border-neutral-800 flex items-center justify-center text-neutral-600 text-xs italic">
+                                            No payment proof uploaded
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </Fragment>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         </div>
       </DialogContent>
