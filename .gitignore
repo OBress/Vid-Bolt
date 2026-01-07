@@ -37,10 +37,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# GUI API
-/Vid-Bolt-GUI-API
-/Z-Image
-/LTX-2
-/LightX2V
-/.pytest_cache
