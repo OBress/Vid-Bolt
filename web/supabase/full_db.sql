@@ -220,18 +220,23 @@ CREATE TABLE IF NOT EXISTS "public"."monthly_statements" (
     "payment_proof_url" "text",
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
-    "revenue_proof_url" "text"
+    "revenue_proof_url" "text",
+    "paid_at" timestamp with time zone
 );
 
 
 ALTER TABLE "public"."monthly_statements" OWNER TO "postgres";
 
 
+COMMENT ON COLUMN "public"."monthly_statements"."costs" IS 'JSON: [{id, name, amount}] or legacy [{title, amount_usd}]';
+
+
+
 CREATE OR REPLACE FUNCTION "public"."get_user_payment_history"("target_user_id" "uuid") RETURNS SETOF "public"."monthly_statements"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
 BEGIN
-    -- Check if requester is admin (aliased)
+    -- Check if requester is admin
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied';
     END IF;
@@ -248,21 +253,16 @@ $$;
 ALTER FUNCTION "public"."get_user_payment_history"("target_user_id" "uuid") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."get_users_paginated"("page" integer DEFAULT 1, "per_page" integer DEFAULT 20, "search_text" "text" DEFAULT ''::"text", "status_filter" "text" DEFAULT 'all'::"text") RETURNS TABLE("id" "uuid", "email" "text", "name" "text", "username" "text", "is_admin" boolean, "status" "public"."account_status", "date_joined" timestamp with time zone, "total_count" bigint, "paid_last_month" boolean)
+CREATE OR REPLACE FUNCTION "public"."get_users_paginated"("page" integer DEFAULT 1, "per_page" integer DEFAULT 20, "search_text" "text" DEFAULT ''::"text", "status_filter" "text" DEFAULT 'all'::"text") RETURNS TABLE("id" "uuid", "email" "text", "name" "text", "username" "text", "is_admin" boolean, "status" "public"."account_status", "date_joined" timestamp with time zone, "total_count" bigint, "last_month_status" "text")
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
 DECLARE
-    prev_month_date date;
-    curr_month_date date;
+    -- No longer just a single string, we search a range
 BEGIN
-    -- Check if requester is admin (aliased to avoid ambiguity with output 'id')
+    -- Check for admin
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied';
     END IF;
-
-    -- Calculate previous and current month dates (YYYY-MM-01)
-    prev_month_date := date_trunc('month', now() - interval '1 month')::date;
-    curr_month_date := date_trunc('month', now())::date;
 
     RETURN QUERY
     WITH filtered_users AS (
@@ -286,15 +286,18 @@ BEGIN
         u.date_joined,
         (SELECT count(*) FROM filtered_users)::bigint as total_count,
         COALESCE(
-            EXISTS (
-                SELECT 1 
+            (
+                -- Fetch the most recent statement status from the last 2 months (Current or Previous)
+                -- If they paid for this month OR last month, we count it.
+                SELECT ms.status::text
                 FROM public.monthly_statements ms 
                 WHERE ms.user_id = u.id 
-                  AND ms.status = 'paid'
-                  AND (ms.month_date = prev_month_date OR ms.month_date = curr_month_date)
+                  AND ms.month_date >= date_trunc('month', now() - interval '1 month')
+                ORDER BY ms.month_date DESC
+                LIMIT 1
             ), 
-            false
-        ) as paid_last_month
+            'draft'
+        ) as last_month_status
     FROM filtered_users u
     ORDER BY u.date_joined DESC
     LIMIT per_page
@@ -318,6 +321,25 @@ $$;
 
 
 ALTER FUNCTION "public"."handle_new_user"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."handle_payment_status_change"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+    -- If status is changing to 'paid', set paid_at to now()
+    IF NEW.status = 'paid' AND (OLD.status IS DISTINCT FROM 'paid') THEN
+        NEW.paid_at = now();
+    -- If status is changing FROM 'paid' to something else (e.g. reset), clear paid_at
+    ELSIF OLD.status = 'paid' AND NEW.status != 'paid' THEN
+        NEW.paid_at = NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."handle_payment_status_change"() OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."handle_updated_at"() RETURNS "trigger"
@@ -555,6 +577,33 @@ $$;
 
 
 ALTER FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "date") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+    -- Check for admin
+    IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
+        RAISE EXCEPTION 'Access denied';
+    END IF;
+
+    UPDATE public.monthly_statements
+    SET 
+        status = 'paid',
+        updated_at = now()
+        -- paid_at trigger will handle the timestamp
+    WHERE user_id = target_user_id 
+      AND month_date = target_month_date;
+      
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Statement not found';
+    END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "date") OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."continuity_state" (
@@ -959,6 +1008,10 @@ CREATE INDEX "idx_video_projects_user_status" ON "public"."video_projects" USING
 
 
 CREATE OR REPLACE TRIGGER "protect_admin_column_trigger" BEFORE UPDATE ON "public"."users" FOR EACH ROW EXECUTE FUNCTION "public"."protect_admin_column"();
+
+
+
+CREATE OR REPLACE TRIGGER "set_paid_at_trigger" BEFORE INSERT OR UPDATE ON "public"."monthly_statements" FOR EACH ROW EXECUTE FUNCTION "public"."handle_payment_status_change"();
 
 
 
@@ -1400,6 +1453,12 @@ GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "service_role";
 
 
 
+GRANT ALL ON FUNCTION "public"."handle_payment_status_change"() TO "anon";
+GRANT ALL ON FUNCTION "public"."handle_payment_status_change"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."handle_payment_status_change"() TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."handle_updated_at"() TO "anon";
 GRANT ALL ON FUNCTION "public"."handle_updated_at"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."handle_updated_at"() TO "service_role";
@@ -1457,6 +1516,12 @@ GRANT ALL ON FUNCTION "public"."update_user_status"("target_user_id" "uuid", "ne
 GRANT ALL ON FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) TO "anon";
 GRANT ALL ON FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) TO "authenticated";
 GRANT ALL ON FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "date") TO "anon";
+GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "date") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "date") TO "service_role";
 
 
 

@@ -44,7 +44,7 @@ interface User {
   status: AccountStatus;
   date_joined: string;
   total_count: number;
-  paid_last_month?: boolean;
+  last_month_status?: string;
 }
 
 export function UsersTab() {
@@ -247,11 +247,27 @@ export function UsersTab() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-center">
-                    <Checkbox
-                      checked={!!user.paid_last_month}
-                      className="border-neutral-600 data-[state=checked]:bg-green-500 data-[state=checked]:border-green-500"
-                      disabled
-                    />
+                    <div className="flex justify-center">
+                      {user.last_month_status === "paid" && (
+                        <div
+                          className="h-3 w-3 rounded-full bg-green-500 shadow-[0_0_8px] shadow-green-500/50"
+                          title="Paid"
+                        />
+                      )}
+                      {user.last_month_status === "pending_verification" && (
+                        <div
+                          className="h-3 w-3 rounded-full bg-yellow-500 shadow-[0_0_8px] shadow-yellow-500/50"
+                          title="Pending Verification"
+                        />
+                      )}
+                      {(!user.last_month_status ||
+                        user.last_month_status === "draft") && (
+                        <div
+                          className="h-3 w-3 rounded-full bg-red-500/20 border border-red-500/50"
+                          title="Unpaid"
+                        />
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className="text-neutral-400 text-sm">
                     {new Date(user.date_joined).toLocaleDateString()}

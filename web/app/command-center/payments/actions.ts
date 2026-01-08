@@ -163,7 +163,7 @@ export async function confirmPayment(statementId: string, proofUrl: string) {
   const { error } = await supabase
     .from("monthly_statements")
     .update({
-      status: "paid", // As per prompt: "mark that month as complete", assuming auto-verify for now
+      status: "pending_verification",
       payment_proof_url: proofUrl,
       updated_at: new Date().toISOString(),
     })

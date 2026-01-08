@@ -22,12 +22,14 @@ import {
   Loader2,
   ExternalLink,
   RotateCcw,
-  AlertTriangle,
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
 import { toast } from "sonner";
-import { resetPaymentMonth } from "@/actions/admin-payment-actions";
+import {
+  resetPaymentMonth,
+  verifyPaymentMonth,
+} from "@/actions/admin-payment-actions";
 import { cn } from "@/lib/utils";
 
 interface User {
@@ -40,6 +42,18 @@ interface User {
   is_admin: boolean;
 }
 
+// Unified Cost Item to handle potential schema variations
+interface CostItem {
+  id?: string;
+  // New Schema
+  name?: string;
+  amount?: number;
+  // Legacy/Alternative Schema
+  title?: string;
+  cost_type?: string;
+  amount_usd?: number;
+}
+
 interface MonthlyStatement {
   id: string;
   month_date: string;
@@ -48,7 +62,8 @@ interface MonthlyStatement {
   payment_proof_url: string | null;
   revenue_proof_url: string | null;
   commission_rate: number;
-  costs: { title: string; cost_type: string; amount_usd: number }[];
+  costs: CostItem[];
+  paid_at: string | null;
 }
 
 interface UserDetailModalProps {
@@ -82,8 +97,6 @@ export function UserDetailModal({
   const fetchPaymentHistory = async (userId: string) => {
     setLoading(true);
     try {
-      // We use the client-side RPC created in the migration
-      // Note: Since we are admin, we should be able to call this securely
       const { data, error } = await supabase.rpc("get_user_payment_history", {
         target_user_id: userId,
       });
@@ -241,13 +254,11 @@ export function UserDetailModal({
                     history.map((stmt) => {
                       const isExpanded = expandedStatementId === stmt.id;
                       const totalCosts =
-                        stmt.costs?.reduce(
-                          (acc: number, curr: any) =>
-                            acc + (curr.amount_usd || 0),
-                          0
-                        ) || 0;
+                        stmt.costs?.reduce((acc: number, curr: CostItem) => {
+                          const amount = curr.amount ?? curr.amount_usd ?? 0;
+                          return acc + amount;
+                        }, 0) || 0;
                       const profit = stmt.total_revenue - totalCosts;
-                      // const payout = profit * (stmt.commission_rate || 0.5); // Example
 
                       return (
                         <Fragment key={stmt.id}>
@@ -292,17 +303,24 @@ export function UserDetailModal({
                             <TableCell className="text-right text-neutral-300 font-mono text-base">
                               ${stmt.total_revenue.toFixed(2)}
                             </TableCell>
-                            <TableCell className="text-right text-green-400 font-mono font-bold text-base">
-                              --
+                            <TableCell
+                              className={cn(
+                                "text-right font-mono font-bold text-base",
+                                stmt.status === "draft"
+                                  ? "text-neutral-500"
+                                  : "text-green-400"
+                              )}
+                            >
+                              ${(profit * stmt.commission_rate).toFixed(2)}
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="flex items-center justify-end gap-2">
                                 {(stmt.status === "paid" ||
                                   stmt.status === "pending_verification") && (
                                   <Button
-                                    variant="destructive"
+                                    variant="ghost"
                                     size="sm"
-                                    className="h-8 px-3 text-xs bg-red-500/10 text-red-500 hover:bg-red-500/20 border-0"
+                                    className="h-8 px-3 text-xs text-red-500 hover:text-red-400 hover:bg-red-500/10"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       handleResetPayment(stmt);
@@ -332,6 +350,20 @@ export function UserDetailModal({
                                       Financial Breakdown
                                     </h4>
                                     <div className="space-y-2 text-sm">
+                                      {/* Payment Date If Available */}
+                                      {stmt.paid_at && (
+                                        <div className="flex justify-between pb-2 mb-2 border-b border-neutral-800/100">
+                                          <span className="text-neutral-500">
+                                            Payment Date
+                                          </span>
+                                          <span className="font-mono text-green-400">
+                                            {new Date(
+                                              stmt.paid_at
+                                            ).toLocaleDateString()}
+                                          </span>
+                                        </div>
+                                      )}
+
                                       <div className="flex justify-between">
                                         <span className="text-neutral-500">
                                           Total Revenue Reported
@@ -357,6 +389,89 @@ export function UserDetailModal({
                                         </span>
                                       </div>
 
+                                      <div className="flex justify-between items-center text-sm">
+                                        <span className="text-neutral-500">
+                                          Commission Rate
+                                        </span>
+                                        <span className="font-mono text-neutral-400">
+                                          {(stmt.commission_rate * 100).toFixed(
+                                            0
+                                          )}
+                                          %
+                                        </span>
+                                      </div>
+
+                                      <div className="flex justify-between items-center pt-2 mt-2 border-t border-dashed border-neutral-800">
+                                        <span
+                                          className={
+                                            stmt.status === "draft"
+                                              ? "text-neutral-500 font-semibold"
+                                              : "text-green-400 font-semibold"
+                                          }
+                                        >
+                                          Payout Amount
+                                        </span>
+                                        <div className="flex items-center gap-3">
+                                          <span
+                                            className={cn(
+                                              "font-mono text-xl font-bold",
+                                              stmt.status === "draft"
+                                                ? "text-neutral-500"
+                                                : "text-green-400"
+                                            )}
+                                          >
+                                            $
+                                            {(
+                                              profit * stmt.commission_rate
+                                            ).toFixed(2)}
+                                          </span>
+                                          {stmt.status ===
+                                            "pending_verification" && (
+                                            <Button
+                                              size="sm"
+                                              className="h-7 bg-green-500 hover:bg-green-600 text-white border-0"
+                                              onClick={async (e) => {
+                                                e.stopPropagation();
+                                                if (!user) return;
+                                                if (
+                                                  !confirm(
+                                                    "Verify this payment? This will mark it as paid."
+                                                  )
+                                                )
+                                                  return;
+                                                try {
+                                                  await verifyPaymentMonth(
+                                                    user.id,
+                                                    stmt.month_date
+                                                  );
+                                                  toast.success(
+                                                    "Payment verified successfully"
+                                                  );
+                                                  await fetchPaymentHistory(
+                                                    user.id
+                                                  );
+                                                  onUpdate();
+                                                } catch (err: any) {
+                                                  toast.error(
+                                                    `Verification failed: ${err.message}`
+                                                  );
+                                                }
+                                              }}
+                                            >
+                                              Verify
+                                            </Button>
+                                          )}
+                                          {stmt.status === "paid" && (
+                                            <Badge
+                                              variant="outline"
+                                              className="bg-green-500/10 text-green-500 border-green-500/50 h-6"
+                                            >
+                                              Verified
+                                            </Badge>
+                                          )}
+                                        </div>
+                                      </div>
+
                                       <div className="mt-4 pt-4 border-t border-neutral-800">
                                         <p className="text-xs text-neutral-500 mb-2 font-semibold uppercase tracking-wider">
                                           Approved Costs
@@ -368,26 +483,34 @@ export function UserDetailModal({
                                           </p>
                                         ) : (
                                           <div className="space-y-1">
-                                            {stmt.costs.map((cost, idx) => (
-                                              <div
-                                                key={idx}
-                                                className="flex justify-between text-xs"
-                                              >
-                                                <span className="text-neutral-400">
-                                                  {cost.title ||
-                                                    "Untitled Cost"}{" "}
-                                                  <span className="opacity-50">
-                                                    ({cost.cost_type})
+                                            {stmt.costs.map((cost, idx) => {
+                                              const amount =
+                                                cost.amount ??
+                                                cost.amount_usd ??
+                                                0;
+                                              const name =
+                                                cost.name ??
+                                                cost.title ??
+                                                "Untitled Cost";
+                                              return (
+                                                <div
+                                                  key={idx}
+                                                  className="flex justify-between text-xs"
+                                                >
+                                                  <span className="text-neutral-400">
+                                                    {name}{" "}
+                                                    {cost.cost_type && (
+                                                      <span className="opacity-50">
+                                                        ({cost.cost_type})
+                                                      </span>
+                                                    )}
                                                   </span>
-                                                </span>
-                                                <span className="font-mono text-neutral-300">
-                                                  $
-                                                  {(
-                                                    cost.amount_usd || 0
-                                                  ).toFixed(2)}
-                                                </span>
-                                              </div>
-                                            ))}
+                                                  <span className="font-mono text-neutral-300">
+                                                    ${amount.toFixed(2)}
+                                                  </span>
+                                                </div>
+                                              );
+                                            })}
                                           </div>
                                         )}
                                       </div>

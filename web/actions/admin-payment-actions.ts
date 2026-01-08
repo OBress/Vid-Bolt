@@ -43,3 +43,24 @@ export async function resetPaymentMonth(userId: string, monthDate: string, proof
   revalidatePath("/command-center");
   revalidatePath("/command-center/admin"); // In case it's a separate page
 }
+
+/**
+ * Verify a user's payment for a specific month.
+ * - Sets status to 'paid'
+ * - Updates paid_at timestamp via trigger
+ */
+export async function verifyPaymentMonth(userId: string, monthDate: string) {
+  const supabase = await createClient();
+
+  const { error } = await supabase.rpc("verify_payment_month", {
+    target_user_id: userId,
+    target_month_date: monthDate,
+  });
+
+  if (error) {
+    console.error("Error verifying payment:", error);
+    throw new Error(error.message);
+  }
+
+  revalidatePath("/command-center");
+}
