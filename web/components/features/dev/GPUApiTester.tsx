@@ -27,6 +27,7 @@ import {
   Settings2,
   Sparkles,
   RefreshCw,
+  Upload,
 } from "lucide-react";
 
 // ============================================================================
@@ -61,10 +62,17 @@ interface TestResult {
 }
 
 type TestStatus = "idle" | "loading" | "success" | "error";
-type TabType = "system" | "mode" | "image" | "image-edit" | "video";
+type TabType = "system" | "mode" | "image" | "image-edit" | "video" | "loras";
 type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 type FPS = 8 | 12 | 16 | 24 | 30;
 type ApiMode = "mock" | "real";
+
+// LoRA types
+interface LoraInfo {
+  name: string;
+  size_bytes: number;
+  modified_time: number;
+}
 
 // System/Mode types
 interface HealthData {
@@ -131,6 +139,12 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   const [systemStatus, setSystemStatus] = useState<TestStatus>("idle");
   const [modeStatus, setModeStatus] = useState<TestStatus>("idle");
   const [modeSwitching, setModeSwitching] = useState(false);
+
+  // LoRA State
+  const [loraList, setLoraList] = useState<LoraInfo[]>([]);
+  const [loraStatus, setLoraStatus] = useState<TestStatus>("idle");
+  const [loraDeleting, setLoraDeleting] = useState<string | null>(null);
+  const [loraUploading, setLoraUploading] = useState(false);
 
   // Image Creation State
   const [imagePrompt, setImagePrompt] = useState(
@@ -285,6 +299,69 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       setModeStatus("error");
     } finally {
       setModeSwitching(false);
+    }
+  };
+
+  // =========================================================================
+  // LORA HANDLERS
+  // =========================================================================
+
+  const handleListLoras = async () => {
+    setLoraStatus("loading");
+    try {
+      const response = await fetch("/api/gpu-api/loras");
+      const data = await response.json();
+      if (data.success) {
+        setLoraList(data.data || []);
+        setLoraStatus("success");
+      } else {
+        setLoraStatus("error");
+      }
+    } catch {
+      setLoraStatus("error");
+    }
+  };
+
+  const handleDeleteLora = async (loraName: string) => {
+    setLoraDeleting(loraName);
+    try {
+      const response = await fetch(
+        `/api/gpu-api/loras?name=${encodeURIComponent(loraName)}`,
+        {
+          method: "DELETE",
+        }
+      );
+      const data = await response.json();
+      if (data.success) {
+        // Refresh the list
+        await handleListLoras();
+      }
+    } catch {
+      // Handle error silently
+    } finally {
+      setLoraDeleting(null);
+    }
+  };
+
+  const handleUploadLora = async (file: File) => {
+    setLoraUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/gpu-api/loras", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+      if (data.success) {
+        // Refresh the list
+        await handleListLoras();
+      }
+    } catch {
+      // Handle error silently
+    } finally {
+      setLoraUploading(false);
     }
   };
 
@@ -841,6 +918,17 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           {videoStatus !== "idle" && (
             <span className="ml-2">{renderStatusBadge(videoStatus)}</span>
           )}
+        </Button>
+        <Button
+          variant={activeTab === "loras" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setActiveTab("loras")}
+          className={
+            activeTab === "loras" ? "bg-pink-600 hover:bg-pink-700" : ""
+          }
+        >
+          <Settings2 className="w-4 h-4 mr-2" />
+          LoRAs
         </Button>
       </div>
 
@@ -1588,6 +1676,110 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
 
               {renderResult(videoResult, videoDebugExpanded, () =>
                 setVideoDebugExpanded(!videoDebugExpanded)
+              )}
+            </div>
+          )}
+
+          {/* LoRAs Tab */}
+          {activeTab === "loras" && (
+            <div className="space-y-6">
+              <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
+                  <Settings2 className="w-4 h-4 text-pink-400" />
+                  LoRA Management
+                </h3>
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleListLoras}
+                    disabled={loraStatus === "loading"}
+                    className="bg-pink-600 hover:bg-pink-700"
+                    size="sm"
+                  >
+                    {loraStatus === "loading" ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                    )}
+                    List LoRAs
+                  </Button>
+                  <label>
+                    <input
+                      type="file"
+                      accept=".safetensors"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleUploadLora(file);
+                          e.target.value = "";
+                        }
+                      }}
+                      disabled={loraUploading}
+                    />
+                    <Button
+                      asChild
+                      disabled={loraUploading}
+                      className="bg-green-600 hover:bg-green-700 cursor-pointer"
+                      size="sm"
+                    >
+                      <span>
+                        {loraUploading ? (
+                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        ) : (
+                          <Upload className="w-4 h-4 mr-2" />
+                        )}
+                        Upload LoRA
+                      </span>
+                    </Button>
+                  </label>
+                </div>
+              </div>
+
+              {/* LoRA List */}
+              {loraList.length > 0 && (
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                  <h4 className="text-sm font-medium text-neutral-300 mb-3">
+                    Available LoRAs ({loraList.length})
+                  </h4>
+                  <div className="space-y-2">
+                    {loraList.map((lora) => (
+                      <div
+                        key={lora.name}
+                        className="flex items-center justify-between p-3 bg-neutral-800 rounded-lg"
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-white">
+                            {lora.name}
+                          </p>
+                          <p className="text-xs text-neutral-400">
+                            {(lora.size_bytes / 1024 / 1024).toFixed(2)} MB
+                          </p>
+                        </div>
+                        <Button
+                          onClick={() => handleDeleteLora(lora.name)}
+                          disabled={loraDeleting === lora.name}
+                          variant="ghost"
+                          size="sm"
+                          className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        >
+                          {loraDeleting === lora.name ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <X className="w-4 h-4" />
+                          )}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {loraStatus === "success" && loraList.length === 0 && (
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700 text-center">
+                  <p className="text-sm text-neutral-400">
+                    No LoRAs found. Upload a .safetensors file to get started.
+                  </p>
+                </div>
               )}
             </div>
           )}
