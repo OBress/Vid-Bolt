@@ -1,11 +1,17 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -799,1015 +805,1035 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   // MAIN RENDER
   // =========================================================================
 
-  const content = (
-    <div className="fixed inset-0 z-[9999] bg-neutral-950 flex flex-col pointer-events-auto overflow-hidden">
-      {/* Header */}
-      <div className="flex-shrink-0 flex items-center justify-between px-6 py-4 border-b border-neutral-800">
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center">
-            <Cpu className="w-5 h-5 text-orange-500" />
+  if (!mounted || !isOpen) return null;
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        showCloseButton={false}
+        className="fixed top-0 left-0 w-full h-full z-[9999] !max-w-none translate-x-0 translate-y-0 bg-neutral-950 border-none rounded-none p-0 flex flex-col pointer-events-auto overflow-hidden isolate animate-none duration-0"
+      >
+        <DialogHeader className="sr-only">
+          <DialogTitle>GPU API Tester</DialogTitle>
+          <DialogDescription>
+            Test individual GPU API endpoints
+          </DialogDescription>
+        </DialogHeader>
+        {/* Header */}
+        <div className="flex-shrink-0 flex items-center justify-between px-6 py-4 border-b border-neutral-800">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center">
+              <Cpu className="w-5 h-5 text-orange-500" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-white">GPU API Tester</h1>
+              <p className="text-sm text-neutral-400">
+                Test image generation, editing, and video creation endpoints
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg font-bold text-white">GPU API Tester</h1>
-            <p className="text-sm text-neutral-400">
-              Test image generation, editing, and video creation endpoints
-            </p>
+          <div className="flex items-center gap-4">
+            {/* Mock/Real Toggle */}
+            <div className="flex items-center gap-3 bg-neutral-900 px-4 py-2 rounded-lg">
+              <span
+                className={`text-sm ${
+                  apiMode === "mock"
+                    ? "text-orange-400 font-medium"
+                    : "text-neutral-500"
+                }`}
+              >
+                Mock
+              </span>
+              <Switch
+                checked={apiMode === "real"}
+                onCheckedChange={(checked) =>
+                  setApiMode(checked ? "real" : "mock")
+                }
+              />
+              <span
+                className={`text-sm ${
+                  apiMode === "real"
+                    ? "text-green-400 font-medium"
+                    : "text-neutral-500"
+                }`}
+              >
+                Real API
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              className="text-neutral-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </Button>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          {/* Mock/Real Toggle */}
-          <div className="flex items-center gap-3 bg-neutral-900 px-4 py-2 rounded-lg">
-            <span
-              className={`text-sm ${
-                apiMode === "mock"
-                  ? "text-orange-400 font-medium"
-                  : "text-neutral-500"
-              }`}
-            >
-              Mock
-            </span>
-            <Switch
-              checked={apiMode === "real"}
-              onCheckedChange={(checked) =>
-                setApiMode(checked ? "real" : "mock")
-              }
-            />
-            <span
-              className={`text-sm ${
-                apiMode === "real"
-                  ? "text-green-400 font-medium"
-                  : "text-neutral-500"
-              }`}
-            >
-              Real API
-            </span>
-          </div>
+
+        {/* Tabs */}
+        <div className="flex-shrink-0 flex gap-2 px-6 py-3 border-b border-neutral-800 overflow-x-auto">
           <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="text-neutral-400 hover:text-white"
+            variant={activeTab === "system" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("system")}
+            className={
+              activeTab === "system" ? "bg-blue-600 hover:bg-blue-700" : ""
+            }
           >
-            <X className="w-5 h-5" />
+            <Activity className="w-4 h-4 mr-2" />
+            System
+          </Button>
+          <Button
+            variant={activeTab === "mode" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("mode")}
+            className={
+              activeTab === "mode" ? "bg-indigo-600 hover:bg-indigo-700" : ""
+            }
+          >
+            <Settings2 className="w-4 h-4 mr-2" />
+            Mode
+          </Button>
+          <Button
+            variant={activeTab === "image" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("image")}
+            className={
+              activeTab === "image" ? "bg-purple-600 hover:bg-purple-700" : ""
+            }
+          >
+            <Image className="w-4 h-4 mr-2" />
+            Image
+            {imageStatus !== "idle" && (
+              <span className="ml-2">{renderStatusBadge(imageStatus)}</span>
+            )}
+          </Button>
+          <Button
+            variant={activeTab === "image-edit" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("image-edit")}
+            className={
+              activeTab === "image-edit"
+                ? "bg-amber-600 hover:bg-amber-700"
+                : ""
+            }
+          >
+            <Pencil className="w-4 h-4 mr-2" />
+            Edit
+            {editStatus !== "idle" && (
+              <span className="ml-2">{renderStatusBadge(editStatus)}</span>
+            )}
+          </Button>
+          <Button
+            variant={activeTab === "video" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("video")}
+            className={
+              activeTab === "video" ? "bg-teal-600 hover:bg-teal-700" : ""
+            }
+          >
+            <Video className="w-4 h-4 mr-2" />
+            Video
+            {videoStatus !== "idle" && (
+              <span className="ml-2">{renderStatusBadge(videoStatus)}</span>
+            )}
+          </Button>
+          <Button
+            variant={activeTab === "loras" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("loras")}
+            className={
+              activeTab === "loras" ? "bg-pink-600 hover:bg-pink-700" : ""
+            }
+          >
+            <Settings2 className="w-4 h-4 mr-2" />
+            LoRAs
           </Button>
         </div>
-      </div>
 
-      {/* Tabs */}
-      <div className="flex-shrink-0 flex gap-2 px-6 py-3 border-b border-neutral-800 overflow-x-auto">
-        <Button
-          variant={activeTab === "system" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => setActiveTab("system")}
-          className={
-            activeTab === "system" ? "bg-blue-600 hover:bg-blue-700" : ""
-          }
-        >
-          <Activity className="w-4 h-4 mr-2" />
-          System
-        </Button>
-        <Button
-          variant={activeTab === "mode" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => setActiveTab("mode")}
-          className={
-            activeTab === "mode" ? "bg-indigo-600 hover:bg-indigo-700" : ""
-          }
-        >
-          <Settings2 className="w-4 h-4 mr-2" />
-          Mode
-        </Button>
-        <Button
-          variant={activeTab === "image" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => setActiveTab("image")}
-          className={
-            activeTab === "image" ? "bg-purple-600 hover:bg-purple-700" : ""
-          }
-        >
-          <Image className="w-4 h-4 mr-2" />
-          Image
-          {imageStatus !== "idle" && (
-            <span className="ml-2">{renderStatusBadge(imageStatus)}</span>
-          )}
-        </Button>
-        <Button
-          variant={activeTab === "image-edit" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => setActiveTab("image-edit")}
-          className={
-            activeTab === "image-edit" ? "bg-amber-600 hover:bg-amber-700" : ""
-          }
-        >
-          <Pencil className="w-4 h-4 mr-2" />
-          Edit
-          {editStatus !== "idle" && (
-            <span className="ml-2">{renderStatusBadge(editStatus)}</span>
-          )}
-        </Button>
-        <Button
-          variant={activeTab === "video" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => setActiveTab("video")}
-          className={
-            activeTab === "video" ? "bg-teal-600 hover:bg-teal-700" : ""
-          }
-        >
-          <Video className="w-4 h-4 mr-2" />
-          Video
-          {videoStatus !== "idle" && (
-            <span className="ml-2">{renderStatusBadge(videoStatus)}</span>
-          )}
-        </Button>
-        <Button
-          variant={activeTab === "loras" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => setActiveTab("loras")}
-          className={
-            activeTab === "loras" ? "bg-pink-600 hover:bg-pink-700" : ""
-          }
-        >
-          <Settings2 className="w-4 h-4 mr-2" />
-          LoRAs
-        </Button>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-2xl mx-auto p-6 relative z-10">
-          {/* System Tab */}
-          {activeTab === "system" && (
-            <div className="space-y-6">
-              <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-                <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-blue-400" />
-                  API Status Checks
-                </h3>
-                <div className="flex gap-3 flex-wrap">
-                  <Button
-                    onClick={handleCheckHealth}
-                    disabled={systemStatus === "loading"}
-                    className="bg-blue-600 hover:bg-blue-700"
-                    size="sm"
-                  >
-                    {systemStatus === "loading" ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                    )}
-                    Health Check
-                  </Button>
-                  <Button
-                    onClick={handleCheckReadiness}
-                    disabled={systemStatus === "loading"}
-                    className="bg-blue-600 hover:bg-blue-700"
-                    size="sm"
-                  >
-                    {systemStatus === "loading" ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <CheckCircle2 className="w-4 h-4 mr-2" />
-                    )}
-                    Readiness
-                  </Button>
-                  <Button
-                    onClick={handleGetSystemStatus}
-                    disabled={systemStatus === "loading"}
-                    className="bg-blue-600 hover:bg-blue-700"
-                    size="sm"
-                  >
-                    {systemStatus === "loading" ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <Cpu className="w-4 h-4 mr-2" />
-                    )}
-                    Full Status
-                  </Button>
-                </div>
-              </div>
-
-              {/* Health Result */}
-              {healthData && (
+        {/* Content */}
+        <div className="flex-1 min-h-0 overflow-y-auto touch-auto relative z-0 pointer-events-auto">
+          <div className="max-w-2xl mx-auto p-6 relative z-10">
+            {/* System Tab */}
+            {activeTab === "system" && (
+              <div className="space-y-6">
                 <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-                  <h4 className="text-sm font-medium text-neutral-300 mb-3">
-                    Health Response
-                  </h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-neutral-400">Status:</span>
-                      <span
-                        className={
-                          healthData.status === "healthy"
-                            ? "text-green-400"
-                            : "text-red-400"
-                        }
-                      >
-                        {healthData.status}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-neutral-400">Version:</span>
-                      <span className="text-white">{healthData.version}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-neutral-400">Mock Mode:</span>
-                      <span
-                        className={
-                          healthData.mock_mode
-                            ? "text-orange-400"
-                            : "text-green-400"
-                        }
-                      >
-                        {healthData.mock_mode ? "Yes" : "No"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Readiness Result */}
-              {readinessData && (
-                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-                  <h4 className="text-sm font-medium text-neutral-300 mb-3">
-                    Readiness Response
-                  </h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-neutral-400">Ready:</span>
-                      <span
-                        className={
-                          readinessData.ready
-                            ? "text-green-400"
-                            : "text-red-400"
-                        }
-                      >
-                        {readinessData.ready ? "Yes" : "No"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-neutral-400">Status:</span>
-                      <span className="text-white">{readinessData.status}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-neutral-400">Current Mode:</span>
-                      <span className="text-purple-400">
-                        {readinessData.current_mode || "None"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-neutral-400">Models Loaded:</span>
-                      <span
-                        className={
-                          readinessData.models_loaded
-                            ? "text-green-400"
-                            : "text-yellow-400"
-                        }
-                      >
-                        {readinessData.models_loaded ? "Yes" : "No"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* System Status Result */}
-              {systemData && (
-                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-                  <h4 className="text-sm font-medium text-neutral-300 mb-3">
-                    System Status
-                  </h4>
-                  <div className="space-y-4">
-                    {/* System Info */}
-                    <div>
-                      <h5 className="text-xs font-medium text-neutral-500 uppercase mb-2">
-                        System
-                      </h5>
-                      <div className="space-y-1 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-neutral-400">OS:</span>
-                          <span className="text-white">
-                            {systemData.system.os}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-neutral-400">Python:</span>
-                          <span className="text-white">
-                            {systemData.system.python_version}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-neutral-400">CPU Count:</span>
-                          <span className="text-white">
-                            {systemData.system.cpu_count}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    {/* GPU Info */}
-                    {systemData.gpu && (
-                      <div>
-                        <h5 className="text-xs font-medium text-neutral-500 uppercase mb-2">
-                          GPU
-                        </h5>
-                        <div className="space-y-1 text-sm">
-                          <div className="flex justify-between">
-                            <span className="text-neutral-400">Name:</span>
-                            <span className="text-white">
-                              {systemData.gpu.name}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-neutral-400">Memory:</span>
-                            <span className="text-white">
-                              {systemData.gpu.memory_used_gb.toFixed(1)} /{" "}
-                              {systemData.gpu.memory_total_gb.toFixed(1)} GB (
-                              {systemData.gpu.memory_usage_percent.toFixed(1)}%)
-                            </span>
-                          </div>
-                          {systemData.gpu.temperature_celsius && (
-                            <div className="flex justify-between">
-                              <span className="text-neutral-400">Temp:</span>
-                              <span className="text-white">
-                                {systemData.gpu.temperature_celsius}°C
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    {/* Mode Info */}
-                    {systemData.mode && (
-                      <div>
-                        <h5 className="text-xs font-medium text-neutral-500 uppercase mb-2">
-                          Mode
-                        </h5>
-                        <div className="space-y-1 text-sm">
-                          <div className="flex justify-between">
-                            <span className="text-neutral-400">
-                              Current Mode:
-                            </span>
-                            <span className="text-purple-400 font-medium">
-                              {systemData.mode.mode}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-neutral-400">Busy:</span>
-                            <span
-                              className={
-                                systemData.mode.is_busy
-                                  ? "text-yellow-400"
-                                  : "text-green-400"
-                              }
-                            >
-                              {systemData.mode.is_busy ? "Yes" : "No"}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-neutral-400">
-                              Loaded Models:
-                            </span>
-                            <span className="text-white">
-                              {systemData.mode.loaded_models.join(", ") ||
-                                "None"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Mode Tab */}
-          {activeTab === "mode" && (
-            <div className="space-y-6">
-              <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-                <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
-                  <Settings2 className="w-4 h-4 text-indigo-400" />
-                  Mode Management
-                </h3>
-                <div className="flex gap-3">
-                  <Button
-                    onClick={handleGetMode}
-                    disabled={modeStatus === "loading"}
-                    className="bg-indigo-600 hover:bg-indigo-700"
-                    size="sm"
-                  >
-                    {modeStatus === "loading" ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                    )}
-                    Get Mode
-                  </Button>
-                </div>
-              </div>
-
-              {/* Mode Result */}
-              {modeData && (
-                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-                  <h4 className="text-sm font-medium text-neutral-300 mb-3">
-                    Current Mode
-                  </h4>
-                  <div className="space-y-2 text-sm mb-4">
-                    <div className="flex justify-between">
-                      <span className="text-neutral-400">Mode:</span>
-                      <span className="text-purple-400 font-medium capitalize">
-                        {modeData.mode}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-neutral-400">Busy:</span>
-                      <span
-                        className={
-                          modeData.is_busy
-                            ? "text-yellow-400"
-                            : "text-green-400"
-                        }
-                      >
-                        {modeData.is_busy ? "Yes" : "No"}
-                      </span>
-                    </div>
-                    {modeData.active_job_id && (
-                      <div className="flex justify-between">
-                        <span className="text-neutral-400">Active Job:</span>
-                        <span className="text-white text-xs">
-                          {modeData.active_job_id}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span className="text-neutral-400">Loaded Models:</span>
-                      <span className="text-white">
-                        {modeData.loaded_models?.join(", ") || "None"}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="border-t border-neutral-700 pt-4">
-                    <h5 className="text-xs font-medium text-neutral-500 uppercase mb-3">
-                      Switch Mode
-                    </h5>
-                    <div className="flex gap-3">
-                      <Button
-                        onClick={() => handleSwitchMode("image")}
-                        disabled={
-                          modeSwitching ||
-                          modeData.mode === "image" ||
-                          modeData.is_busy
-                        }
-                        className={
-                          modeData.mode === "image"
-                            ? "bg-purple-600"
-                            : "bg-neutral-700 hover:bg-neutral-600"
-                        }
-                        size="sm"
-                      >
-                        {modeSwitching ? (
-                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                        ) : (
-                          <Image className="w-4 h-4 mr-2" />
-                        )}
-                        Image Mode
-                      </Button>
-                      <Button
-                        onClick={() => handleSwitchMode("video")}
-                        disabled={
-                          modeSwitching ||
-                          modeData.mode === "video" ||
-                          modeData.is_busy
-                        }
-                        className={
-                          modeData.mode === "video"
-                            ? "bg-teal-600"
-                            : "bg-neutral-700 hover:bg-neutral-600"
-                        }
-                        size="sm"
-                      >
-                        {modeSwitching ? (
-                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                        ) : (
-                          <Video className="w-4 h-4 mr-2" />
-                        )}
-                        Video Mode
-                      </Button>
-                    </div>
-                    <p className="text-xs text-neutral-500 mt-2">
-                      Switching modes takes ~30-60 seconds as models are
-                      loaded/unloaded.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Image Generation Tab */}
-          {activeTab === "image" && (
-            <div className="space-y-6">
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Prompt{" "}
-                  <span className="text-neutral-600">
-                    (required, max 2000 chars)
-                  </span>
-                </label>
-                <Textarea
-                  value={imagePrompt}
-                  onChange={(e) => setImagePrompt(e.target.value)}
-                  placeholder="Describe the image to generate..."
-                  className="min-h-[100px] bg-neutral-900 border-neutral-700 text-neutral-200"
-                  disabled={imageStatus === "loading"}
-                  maxLength={2000}
-                />
-                <p className="text-xs text-neutral-500 mt-1">
-                  {imagePrompt.length}/2000
-                </p>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Aspect Ratio
-                </label>
-                {renderAspectRatioSelector(
-                  imageAspectRatio,
-                  setImageAspectRatio,
-                  imageStatus === "loading",
-                  "purple"
-                )}
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Inference Steps{" "}
-                  <span className="text-neutral-600">
-                    ({imageInferenceSteps})
-                  </span>
-                </label>
-                <Slider
-                  value={[imageInferenceSteps]}
-                  onValueChange={([v]) => setImageInferenceSteps(v)}
-                  min={1}
-                  max={50}
-                  step={1}
-                  disabled={imageStatus === "loading"}
-                  className="w-full"
-                />
-                <p className="text-xs text-neutral-500 mt-1">
-                  Higher = better quality but slower (default: 20)
-                </p>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Seed{" "}
-                  <span className="text-neutral-600">
-                    (optional, for reproducibility)
-                  </span>
-                </label>
-                <Input
-                  type="number"
-                  value={imageSeed}
-                  onChange={(e) => setImageSeed(e.target.value)}
-                  placeholder="Leave empty for random"
-                  className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                  disabled={imageStatus === "loading"}
-                />
-              </div>
-
-              <div className="flex gap-3">
-                <Button
-                  onClick={handleTestImageCreation}
-                  disabled={!imagePrompt.trim() || imageStatus === "loading"}
-                  className="flex-1 bg-purple-600 hover:bg-purple-700"
-                >
-                  {imageStatus === "loading" ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4 mr-2" />
-                      Generate Image
-                    </>
-                  )}
-                </Button>
-                {imageStatus !== "idle" && imageStatus !== "loading" && (
-                  <Button
-                    variant="outline"
-                    onClick={() => handleReset("image")}
-                    className="border-neutral-700"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-
-              {renderResult(imageResult, imageDebugExpanded, () =>
-                setImageDebugExpanded(!imageDebugExpanded)
-              )}
-            </div>
-          )}
-
-          {/* Image Edit Tab */}
-          {activeTab === "image-edit" && (
-            <div className="space-y-6">
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Source Image URL{" "}
-                  <span className="text-neutral-600">
-                    (optional - uses placeholder if empty)
-                  </span>
-                </label>
-                <Input
-                  value={editSourceUrl}
-                  onChange={(e) => setEditSourceUrl(e.target.value)}
-                  placeholder="https://... (leave empty for placeholder)"
-                  className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                  disabled={editStatus === "loading"}
-                />
-                <p className="text-xs text-neutral-500 mt-1">
-                  Will use picsum.photos placeholder if not provided
-                </p>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Edit Prompt{" "}
-                  <span className="text-neutral-600">
-                    (required, max 2000 chars)
-                  </span>
-                </label>
-                <Textarea
-                  value={editPrompt}
-                  onChange={(e) => setEditPrompt(e.target.value)}
-                  placeholder="Describe how to edit the image..."
-                  className="min-h-[100px] bg-neutral-900 border-neutral-700 text-neutral-200"
-                  disabled={editStatus === "loading"}
-                  maxLength={2000}
-                />
-                <p className="text-xs text-neutral-500 mt-1">
-                  {editPrompt.length}/2000
-                </p>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Aspect Ratio
-                </label>
-                {renderAspectRatioSelector(
-                  editAspectRatio,
-                  setEditAspectRatio,
-                  editStatus === "loading",
-                  "amber"
-                )}
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Seed <span className="text-neutral-600">(optional)</span>
-                </label>
-                <Input
-                  type="number"
-                  value={editSeed}
-                  onChange={(e) => setEditSeed(e.target.value)}
-                  placeholder="Leave empty for random"
-                  className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                  disabled={editStatus === "loading"}
-                />
-              </div>
-
-              <div className="flex gap-3">
-                <Button
-                  onClick={handleTestImageEdit}
-                  disabled={!editPrompt.trim() || editStatus === "loading"}
-                  className="flex-1 bg-amber-600 hover:bg-amber-700"
-                >
-                  {editStatus === "loading" ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Editing...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4 mr-2" />
-                      Edit Image
-                    </>
-                  )}
-                </Button>
-                {editStatus !== "idle" && editStatus !== "loading" && (
-                  <Button
-                    variant="outline"
-                    onClick={() => handleReset("image-edit")}
-                    className="border-neutral-700"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-
-              {renderResult(editResult, editDebugExpanded, () =>
-                setEditDebugExpanded(!editDebugExpanded)
-              )}
-            </div>
-          )}
-
-          {/* Video Generation Tab */}
-          {activeTab === "video" && (
-            <div className="space-y-6">
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Start Frame URL{" "}
-                  <span className="text-neutral-600">
-                    (optional - uses placeholder if empty)
-                  </span>
-                </label>
-                <Input
-                  value={videoStartFrameUrl}
-                  onChange={(e) => setVideoStartFrameUrl(e.target.value)}
-                  placeholder="https://... (leave empty for placeholder)"
-                  className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                  disabled={videoStatus === "loading"}
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Motion Prompt{" "}
-                  <span className="text-neutral-600">
-                    (required, max 2000 chars)
-                  </span>
-                </label>
-                <Textarea
-                  value={videoPrompt}
-                  onChange={(e) => setVideoPrompt(e.target.value)}
-                  placeholder="Describe the motion/camera movement..."
-                  className="min-h-[100px] bg-neutral-900 border-neutral-700 text-neutral-200"
-                  disabled={videoStatus === "loading"}
-                  maxLength={2000}
-                />
-                <p className="text-xs text-neutral-500 mt-1">
-                  {videoPrompt.length}/2000
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                    Duration{" "}
-                    <span className="text-neutral-600">(1-8 seconds)</span>
-                  </label>
-                  <div className="flex gap-2">
-                    {[2, 3, 4, 5, 6, 8].map((dur) => (
-                      <Button
-                        key={dur}
-                        variant={videoDuration === dur ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setVideoDuration(dur)}
-                        disabled={videoStatus === "loading"}
-                        className={
-                          videoDuration === dur
-                            ? "bg-teal-600"
-                            : "border-neutral-700"
-                        }
-                      >
-                        {dur}s
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                    FPS
-                  </label>
-                  <div className="flex gap-2">
-                    {([8, 12, 16, 24, 30] as FPS[]).map((f) => (
-                      <Button
-                        key={f}
-                        variant={videoFps === f ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setVideoFps(f)}
-                        disabled={videoStatus === "loading"}
-                        className={
-                          videoFps === f ? "bg-teal-600" : "border-neutral-700"
-                        }
-                      >
-                        {f}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Aspect Ratio
-                </label>
-                {renderAspectRatioSelector(
-                  videoAspectRatio,
-                  setVideoAspectRatio,
-                  videoStatus === "loading",
-                  "teal"
-                )}
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  End Frame URL{" "}
-                  <span className="text-neutral-600">
-                    (optional, for interpolation)
-                  </span>
-                </label>
-                <Input
-                  value={videoEndFrameUrl}
-                  onChange={(e) => setVideoEndFrameUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                  disabled={videoStatus === "loading"}
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                  Seed <span className="text-neutral-600">(optional)</span>
-                </label>
-                <Input
-                  type="number"
-                  value={videoSeed}
-                  onChange={(e) => setVideoSeed(e.target.value)}
-                  placeholder="Leave empty for random"
-                  className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                  disabled={videoStatus === "loading"}
-                />
-              </div>
-
-              <div className="flex gap-3">
-                <Button
-                  onClick={handleTestVideoCreation}
-                  disabled={!videoPrompt.trim() || videoStatus === "loading"}
-                  className="flex-1 bg-teal-600 hover:bg-teal-700"
-                >
-                  {videoStatus === "loading" ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4 mr-2" />
-                      Generate Video
-                    </>
-                  )}
-                </Button>
-                {videoStatus !== "idle" && videoStatus !== "loading" && (
-                  <Button
-                    variant="outline"
-                    onClick={() => handleReset("video")}
-                    className="border-neutral-700"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-
-              {renderResult(videoResult, videoDebugExpanded, () =>
-                setVideoDebugExpanded(!videoDebugExpanded)
-              )}
-            </div>
-          )}
-
-          {/* LoRAs Tab */}
-          {activeTab === "loras" && (
-            <div className="space-y-6">
-              <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-                <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
-                  <Settings2 className="w-4 h-4 text-pink-400" />
-                  LoRA Management
-                </h3>
-                <div className="flex gap-3">
-                  <Button
-                    onClick={handleListLoras}
-                    disabled={loraStatus === "loading"}
-                    className="bg-pink-600 hover:bg-pink-700"
-                    size="sm"
-                  >
-                    {loraStatus === "loading" ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                    )}
-                    List LoRAs
-                  </Button>
-                  <label>
-                    <input
-                      type="file"
-                      accept=".safetensors"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          handleUploadLora(file);
-                          e.target.value = "";
-                        }
-                      }}
-                      disabled={loraUploading}
-                    />
+                  <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-blue-400" />
+                    API Status Checks
+                  </h3>
+                  <div className="flex gap-3 flex-wrap">
                     <Button
-                      asChild
-                      disabled={loraUploading}
-                      className="bg-green-600 hover:bg-green-700 cursor-pointer"
+                      onClick={handleCheckHealth}
+                      disabled={systemStatus === "loading"}
+                      className="bg-blue-600 hover:bg-blue-700"
                       size="sm"
                     >
-                      <span>
-                        {loraUploading ? (
-                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                        ) : (
-                          <Upload className="w-4 h-4 mr-2" />
-                        )}
-                        Upload LoRA
-                      </span>
+                      {systemStatus === "loading" ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                      )}
+                      Health Check
                     </Button>
-                  </label>
-                </div>
-              </div>
-
-              {/* LoRA List */}
-              {loraList.length > 0 && (
-                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-                  <h4 className="text-sm font-medium text-neutral-300 mb-3">
-                    Available LoRAs ({loraList.length})
-                  </h4>
-                  <div className="space-y-2">
-                    {loraList.map((lora) => (
-                      <div
-                        key={lora.name}
-                        className="flex items-center justify-between p-3 bg-neutral-800 rounded-lg"
-                      >
-                        <div>
-                          <p className="text-sm font-medium text-white">
-                            {lora.name}
-                          </p>
-                          <p className="text-xs text-neutral-400">
-                            {(lora.size_bytes / 1024 / 1024).toFixed(2)} MB
-                          </p>
-                        </div>
-                        <Button
-                          onClick={() => handleDeleteLora(lora.name)}
-                          disabled={loraDeleting === lora.name}
-                          variant="ghost"
-                          size="sm"
-                          className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                        >
-                          {loraDeleting === lora.name ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <X className="w-4 h-4" />
-                          )}
-                        </Button>
-                      </div>
-                    ))}
+                    <Button
+                      onClick={handleCheckReadiness}
+                      disabled={systemStatus === "loading"}
+                      className="bg-blue-600 hover:bg-blue-700"
+                      size="sm"
+                    >
+                      {systemStatus === "loading" ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : (
+                        <CheckCircle2 className="w-4 h-4 mr-2" />
+                      )}
+                      Readiness
+                    </Button>
+                    <Button
+                      onClick={handleGetSystemStatus}
+                      disabled={systemStatus === "loading"}
+                      className="bg-blue-600 hover:bg-blue-700"
+                      size="sm"
+                    >
+                      {systemStatus === "loading" ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : (
+                        <Cpu className="w-4 h-4 mr-2" />
+                      )}
+                      Full Status
+                    </Button>
                   </div>
                 </div>
-              )}
 
-              {loraStatus === "success" && loraList.length === 0 && (
-                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700 text-center">
-                  <p className="text-sm text-neutral-400">
-                    No LoRAs found. Upload a .safetensors file to get started.
+                {/* Health Result */}
+                {healthData && (
+                  <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                    <h4 className="text-sm font-medium text-neutral-300 mb-3">
+                      Health Response
+                    </h4>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Status:</span>
+                        <span
+                          className={
+                            healthData.status === "healthy"
+                              ? "text-green-400"
+                              : "text-red-400"
+                          }
+                        >
+                          {healthData.status}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Version:</span>
+                        <span className="text-white">{healthData.version}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Mock Mode:</span>
+                        <span
+                          className={
+                            healthData.mock_mode
+                              ? "text-orange-400"
+                              : "text-green-400"
+                          }
+                        >
+                          {healthData.mock_mode ? "Yes" : "No"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Readiness Result */}
+                {readinessData && (
+                  <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                    <h4 className="text-sm font-medium text-neutral-300 mb-3">
+                      Readiness Response
+                    </h4>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Ready:</span>
+                        <span
+                          className={
+                            readinessData.ready
+                              ? "text-green-400"
+                              : "text-red-400"
+                          }
+                        >
+                          {readinessData.ready ? "Yes" : "No"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Status:</span>
+                        <span className="text-white">
+                          {readinessData.status}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Current Mode:</span>
+                        <span className="text-purple-400">
+                          {readinessData.current_mode || "None"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Models Loaded:</span>
+                        <span
+                          className={
+                            readinessData.models_loaded
+                              ? "text-green-400"
+                              : "text-yellow-400"
+                          }
+                        >
+                          {readinessData.models_loaded ? "Yes" : "No"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* System Status Result */}
+                {systemData && (
+                  <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                    <h4 className="text-sm font-medium text-neutral-300 mb-3">
+                      System Status
+                    </h4>
+                    <div className="space-y-4">
+                      {/* System Info */}
+                      <div>
+                        <h5 className="text-xs font-medium text-neutral-500 uppercase mb-2">
+                          System
+                        </h5>
+                        <div className="space-y-1 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-neutral-400">OS:</span>
+                            <span className="text-white">
+                              {systemData.system.os}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-neutral-400">Python:</span>
+                            <span className="text-white">
+                              {systemData.system.python_version}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-neutral-400">CPU Count:</span>
+                            <span className="text-white">
+                              {systemData.system.cpu_count}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      {/* GPU Info */}
+                      {systemData.gpu && (
+                        <div>
+                          <h5 className="text-xs font-medium text-neutral-500 uppercase mb-2">
+                            GPU
+                          </h5>
+                          <div className="space-y-1 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-neutral-400">Name:</span>
+                              <span className="text-white">
+                                {systemData.gpu.name}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-neutral-400">Memory:</span>
+                              <span className="text-white">
+                                {systemData.gpu.memory_used_gb.toFixed(1)} /{" "}
+                                {systemData.gpu.memory_total_gb.toFixed(1)} GB (
+                                {systemData.gpu.memory_usage_percent.toFixed(1)}
+                                %)
+                              </span>
+                            </div>
+                            {systemData.gpu.temperature_celsius && (
+                              <div className="flex justify-between">
+                                <span className="text-neutral-400">Temp:</span>
+                                <span className="text-white">
+                                  {systemData.gpu.temperature_celsius}°C
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {/* Mode Info */}
+                      {systemData.mode && (
+                        <div>
+                          <h5 className="text-xs font-medium text-neutral-500 uppercase mb-2">
+                            Mode
+                          </h5>
+                          <div className="space-y-1 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-neutral-400">
+                                Current Mode:
+                              </span>
+                              <span className="text-purple-400 font-medium">
+                                {systemData.mode.mode}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-neutral-400">Busy:</span>
+                              <span
+                                className={
+                                  systemData.mode.is_busy
+                                    ? "text-yellow-400"
+                                    : "text-green-400"
+                                }
+                              >
+                                {systemData.mode.is_busy ? "Yes" : "No"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-neutral-400">
+                                Loaded Models:
+                              </span>
+                              <span className="text-white">
+                                {systemData.mode.loaded_models.join(", ") ||
+                                  "None"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Mode Tab */}
+            {activeTab === "mode" && (
+              <div className="space-y-6">
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                  <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
+                    <Settings2 className="w-4 h-4 text-indigo-400" />
+                    Mode Management
+                  </h3>
+                  <div className="flex gap-3">
+                    <Button
+                      onClick={handleGetMode}
+                      disabled={modeStatus === "loading"}
+                      className="bg-indigo-600 hover:bg-indigo-700"
+                      size="sm"
+                    >
+                      {modeStatus === "loading" ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                      )}
+                      Get Mode
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Mode Result */}
+                {modeData && (
+                  <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                    <h4 className="text-sm font-medium text-neutral-300 mb-3">
+                      Current Mode
+                    </h4>
+                    <div className="space-y-2 text-sm mb-4">
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Mode:</span>
+                        <span className="text-purple-400 font-medium capitalize">
+                          {modeData.mode}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Busy:</span>
+                        <span
+                          className={
+                            modeData.is_busy
+                              ? "text-yellow-400"
+                              : "text-green-400"
+                          }
+                        >
+                          {modeData.is_busy ? "Yes" : "No"}
+                        </span>
+                      </div>
+                      {modeData.active_job_id && (
+                        <div className="flex justify-between">
+                          <span className="text-neutral-400">Active Job:</span>
+                          <span className="text-white text-xs">
+                            {modeData.active_job_id}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Loaded Models:</span>
+                        <span className="text-white">
+                          {modeData.loaded_models?.join(", ") || "None"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-neutral-700 pt-4">
+                      <h5 className="text-xs font-medium text-neutral-500 uppercase mb-3">
+                        Switch Mode
+                      </h5>
+                      <div className="flex gap-3">
+                        <Button
+                          onClick={() => handleSwitchMode("image")}
+                          disabled={
+                            modeSwitching ||
+                            modeData.mode === "image" ||
+                            modeData.is_busy
+                          }
+                          className={
+                            modeData.mode === "image"
+                              ? "bg-purple-600"
+                              : "bg-neutral-700 hover:bg-neutral-600"
+                          }
+                          size="sm"
+                        >
+                          {modeSwitching ? (
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                          ) : (
+                            <Image className="w-4 h-4 mr-2" />
+                          )}
+                          Image Mode
+                        </Button>
+                        <Button
+                          onClick={() => handleSwitchMode("video")}
+                          disabled={
+                            modeSwitching ||
+                            modeData.mode === "video" ||
+                            modeData.is_busy
+                          }
+                          className={
+                            modeData.mode === "video"
+                              ? "bg-teal-600"
+                              : "bg-neutral-700 hover:bg-neutral-600"
+                          }
+                          size="sm"
+                        >
+                          {modeSwitching ? (
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                          ) : (
+                            <Video className="w-4 h-4 mr-2" />
+                          )}
+                          Video Mode
+                        </Button>
+                      </div>
+                      <p className="text-xs text-neutral-500 mt-2">
+                        Switching modes takes ~30-60 seconds as models are
+                        loaded/unloaded.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Image Generation Tab */}
+            {activeTab === "image" && (
+              <div className="space-y-6">
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Prompt{" "}
+                    <span className="text-neutral-600">
+                      (required, max 2000 chars)
+                    </span>
+                  </label>
+                  <Textarea
+                    value={imagePrompt}
+                    onChange={(e) => setImagePrompt(e.target.value)}
+                    placeholder="Describe the image to generate..."
+                    className="min-h-[100px] bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={imageStatus === "loading"}
+                    maxLength={2000}
+                  />
+                  <p className="text-xs text-neutral-500 mt-1">
+                    {imagePrompt.length}/2000
                   </p>
                 </div>
-              )}
-            </div>
-          )}
 
-          {/* Info Note */}
-          <div className="mt-8 p-4 bg-neutral-900/50 border border-neutral-800 rounded-lg">
-            <p className="text-xs text-neutral-500">
-              <strong className="text-neutral-400">Note:</strong>{" "}
-              {apiMode === "mock" ? (
-                <>
-                  Mock mode uses Inngest workflows for async testing. Results
-                  are polled from the database.
-                </>
-              ) : (
-                <>
-                  Real API mode calls the GPU API directly at{" "}
-                  <code className="text-orange-400">localhost:8000</code>.
-                  Ensure the GPU API server is running.
-                </>
-              )}{" "}
-              <code className="text-orange-400">GPU_API_KEY</code> must be
-              configured. Results are saved to Cloudflare R2.
-            </p>
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Aspect Ratio
+                  </label>
+                  {renderAspectRatioSelector(
+                    imageAspectRatio,
+                    setImageAspectRatio,
+                    imageStatus === "loading",
+                    "purple"
+                  )}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Inference Steps{" "}
+                    <span className="text-neutral-600">
+                      ({imageInferenceSteps})
+                    </span>
+                  </label>
+                  <Slider
+                    value={[imageInferenceSteps]}
+                    onValueChange={([v]) => setImageInferenceSteps(v)}
+                    min={1}
+                    max={50}
+                    step={1}
+                    disabled={imageStatus === "loading"}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-neutral-500 mt-1">
+                    Higher = better quality but slower (default: 20)
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Seed{" "}
+                    <span className="text-neutral-600">
+                      (optional, for reproducibility)
+                    </span>
+                  </label>
+                  <Input
+                    type="number"
+                    value={imageSeed}
+                    onChange={(e) => setImageSeed(e.target.value)}
+                    placeholder="Leave empty for random"
+                    className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={imageStatus === "loading"}
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleTestImageCreation}
+                    disabled={!imagePrompt.trim() || imageStatus === "loading"}
+                    className="flex-1 bg-purple-600 hover:bg-purple-700"
+                  >
+                    {imageStatus === "loading" ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 mr-2" />
+                        Generate Image
+                      </>
+                    )}
+                  </Button>
+                  {imageStatus !== "idle" && imageStatus !== "loading" && (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleReset("image")}
+                      className="border-neutral-700"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+
+                {renderResult(imageResult, imageDebugExpanded, () =>
+                  setImageDebugExpanded(!imageDebugExpanded)
+                )}
+              </div>
+            )}
+
+            {/* Image Edit Tab */}
+            {activeTab === "image-edit" && (
+              <div className="space-y-6">
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Source Image URL{" "}
+                    <span className="text-neutral-600">
+                      (optional - uses placeholder if empty)
+                    </span>
+                  </label>
+                  <Input
+                    value={editSourceUrl}
+                    onChange={(e) => setEditSourceUrl(e.target.value)}
+                    placeholder="https://... (leave empty for placeholder)"
+                    className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={editStatus === "loading"}
+                  />
+                  <p className="text-xs text-neutral-500 mt-1">
+                    Will use picsum.photos placeholder if not provided
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Edit Prompt{" "}
+                    <span className="text-neutral-600">
+                      (required, max 2000 chars)
+                    </span>
+                  </label>
+                  <Textarea
+                    value={editPrompt}
+                    onChange={(e) => setEditPrompt(e.target.value)}
+                    placeholder="Describe how to edit the image..."
+                    className="min-h-[100px] bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={editStatus === "loading"}
+                    maxLength={2000}
+                  />
+                  <p className="text-xs text-neutral-500 mt-1">
+                    {editPrompt.length}/2000
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Aspect Ratio
+                  </label>
+                  {renderAspectRatioSelector(
+                    editAspectRatio,
+                    setEditAspectRatio,
+                    editStatus === "loading",
+                    "amber"
+                  )}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Seed <span className="text-neutral-600">(optional)</span>
+                  </label>
+                  <Input
+                    type="number"
+                    value={editSeed}
+                    onChange={(e) => setEditSeed(e.target.value)}
+                    placeholder="Leave empty for random"
+                    className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={editStatus === "loading"}
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleTestImageEdit}
+                    disabled={!editPrompt.trim() || editStatus === "loading"}
+                    className="flex-1 bg-amber-600 hover:bg-amber-700"
+                  >
+                    {editStatus === "loading" ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Editing...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 mr-2" />
+                        Edit Image
+                      </>
+                    )}
+                  </Button>
+                  {editStatus !== "idle" && editStatus !== "loading" && (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleReset("image-edit")}
+                      className="border-neutral-700"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+
+                {renderResult(editResult, editDebugExpanded, () =>
+                  setEditDebugExpanded(!editDebugExpanded)
+                )}
+              </div>
+            )}
+
+            {/* Video Generation Tab */}
+            {activeTab === "video" && (
+              <div className="space-y-6">
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Start Frame URL{" "}
+                    <span className="text-neutral-600">
+                      (optional - uses placeholder if empty)
+                    </span>
+                  </label>
+                  <Input
+                    value={videoStartFrameUrl}
+                    onChange={(e) => setVideoStartFrameUrl(e.target.value)}
+                    placeholder="https://... (leave empty for placeholder)"
+                    className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={videoStatus === "loading"}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Motion Prompt{" "}
+                    <span className="text-neutral-600">
+                      (required, max 2000 chars)
+                    </span>
+                  </label>
+                  <Textarea
+                    value={videoPrompt}
+                    onChange={(e) => setVideoPrompt(e.target.value)}
+                    placeholder="Describe the motion/camera movement..."
+                    className="min-h-[100px] bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={videoStatus === "loading"}
+                    maxLength={2000}
+                  />
+                  <p className="text-xs text-neutral-500 mt-1">
+                    {videoPrompt.length}/2000
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Duration{" "}
+                      <span className="text-neutral-600">(1-8 seconds)</span>
+                    </label>
+                    <div className="flex gap-2">
+                      {[2, 3, 4, 5, 6, 8].map((dur) => (
+                        <Button
+                          key={dur}
+                          variant={
+                            videoDuration === dur ? "default" : "outline"
+                          }
+                          size="sm"
+                          onClick={() => setVideoDuration(dur)}
+                          disabled={videoStatus === "loading"}
+                          className={
+                            videoDuration === dur
+                              ? "bg-teal-600"
+                              : "border-neutral-700"
+                          }
+                        >
+                          {dur}s
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      FPS
+                    </label>
+                    <div className="flex gap-2">
+                      {([8, 12, 16, 24, 30] as FPS[]).map((f) => (
+                        <Button
+                          key={f}
+                          variant={videoFps === f ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setVideoFps(f)}
+                          disabled={videoStatus === "loading"}
+                          className={
+                            videoFps === f
+                              ? "bg-teal-600"
+                              : "border-neutral-700"
+                          }
+                        >
+                          {f}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Aspect Ratio
+                  </label>
+                  {renderAspectRatioSelector(
+                    videoAspectRatio,
+                    setVideoAspectRatio,
+                    videoStatus === "loading",
+                    "teal"
+                  )}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    End Frame URL{" "}
+                    <span className="text-neutral-600">
+                      (optional, for interpolation)
+                    </span>
+                  </label>
+                  <Input
+                    value={videoEndFrameUrl}
+                    onChange={(e) => setVideoEndFrameUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={videoStatus === "loading"}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Seed <span className="text-neutral-600">(optional)</span>
+                  </label>
+                  <Input
+                    type="number"
+                    value={videoSeed}
+                    onChange={(e) => setVideoSeed(e.target.value)}
+                    placeholder="Leave empty for random"
+                    className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={videoStatus === "loading"}
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleTestVideoCreation}
+                    disabled={!videoPrompt.trim() || videoStatus === "loading"}
+                    className="flex-1 bg-teal-600 hover:bg-teal-700"
+                  >
+                    {videoStatus === "loading" ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 mr-2" />
+                        Generate Video
+                      </>
+                    )}
+                  </Button>
+                  {videoStatus !== "idle" && videoStatus !== "loading" && (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleReset("video")}
+                      className="border-neutral-700"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+
+                {renderResult(videoResult, videoDebugExpanded, () =>
+                  setVideoDebugExpanded(!videoDebugExpanded)
+                )}
+              </div>
+            )}
+
+            {/* LoRAs Tab */}
+            {activeTab === "loras" && (
+              <div className="space-y-6">
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                  <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
+                    <Settings2 className="w-4 h-4 text-pink-400" />
+                    LoRA Management
+                  </h3>
+                  <div className="flex gap-3">
+                    <Button
+                      onClick={handleListLoras}
+                      disabled={loraStatus === "loading"}
+                      className="bg-pink-600 hover:bg-pink-700"
+                      size="sm"
+                    >
+                      {loraStatus === "loading" ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                      )}
+                      List LoRAs
+                    </Button>
+                    <label>
+                      <input
+                        type="file"
+                        accept=".safetensors"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            handleUploadLora(file);
+                            e.target.value = "";
+                          }
+                        }}
+                        disabled={loraUploading}
+                      />
+                      <Button
+                        asChild
+                        disabled={loraUploading}
+                        className="bg-green-600 hover:bg-green-700 cursor-pointer"
+                        size="sm"
+                      >
+                        <span>
+                          {loraUploading ? (
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                          ) : (
+                            <Upload className="w-4 h-4 mr-2" />
+                          )}
+                          Upload LoRA
+                        </span>
+                      </Button>
+                    </label>
+                  </div>
+                </div>
+
+                {/* LoRA List */}
+                {loraList.length > 0 && (
+                  <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                    <h4 className="text-sm font-medium text-neutral-300 mb-3">
+                      Available LoRAs ({loraList.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {loraList.map((lora) => (
+                        <div
+                          key={lora.name}
+                          className="flex items-center justify-between p-3 bg-neutral-800 rounded-lg"
+                        >
+                          <div>
+                            <p className="text-sm font-medium text-white">
+                              {lora.name}
+                            </p>
+                            <p className="text-xs text-neutral-400">
+                              {(lora.size_bytes / 1024 / 1024).toFixed(2)} MB
+                            </p>
+                          </div>
+                          <Button
+                            onClick={() => handleDeleteLora(lora.name)}
+                            disabled={loraDeleting === lora.name}
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                          >
+                            {loraDeleting === lora.name ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <X className="w-4 h-4" />
+                            )}
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {loraStatus === "success" && loraList.length === 0 && (
+                  <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700 text-center">
+                    <p className="text-sm text-neutral-400">
+                      No LoRAs found. Upload a .safetensors file to get started.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Info Note */}
+            <div className="mt-8 p-4 bg-neutral-900/50 border border-neutral-800 rounded-lg">
+              <p className="text-xs text-neutral-500">
+                <strong className="text-neutral-400">Note:</strong>{" "}
+                {apiMode === "mock" ? (
+                  <>
+                    Mock mode uses Inngest workflows for async testing. Results
+                    are polled from the database.
+                  </>
+                ) : (
+                  <>
+                    Real API mode calls the GPU API directly at{" "}
+                    <code className="text-orange-400">localhost:8000</code>.
+                    Ensure the GPU API server is running.
+                  </>
+                )}{" "}
+                <code className="text-orange-400">GPU_API_KEY</code> must be
+                configured. Results are saved to Cloudflare R2.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
-
-  return createPortal(content, document.body);
 }
