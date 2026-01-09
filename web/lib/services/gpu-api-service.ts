@@ -19,6 +19,8 @@ export interface ImageGenerateRequest {
   job_id: string;
   prompt: string;
   aspect_ratio?: AspectRatio;
+  width?: number;
+  height?: number;
   seed?: number;
   num_inference_steps?: number;
   save_url: string;

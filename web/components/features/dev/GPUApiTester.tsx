@@ -158,6 +158,8 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   );
   const [imageAspectRatio, setImageAspectRatio] = useState<AspectRatio>("16:9");
   const [imageInferenceSteps, setImageInferenceSteps] = useState(20);
+  const [imageWidth, setImageWidth] = useState<string>("");
+  const [imageHeight, setImageHeight] = useState<string>("");
   const [imageSeed, setImageSeed] = useState<string>("");
   const [imageStatus, setImageStatus] = useState<TestStatus>("idle");
   const [imageResult, setImageResult] = useState<TestResult | null>(null);
@@ -388,6 +390,8 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           aspectRatio: imageAspectRatio,
           numInferenceSteps: imageInferenceSteps,
           seed: imageSeed ? parseInt(imageSeed) : undefined,
+          width: imageWidth ? parseInt(imageWidth) : undefined,
+          height: imageHeight ? parseInt(imageHeight) : undefined,
         }),
       });
 
@@ -1357,9 +1361,48 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                   {renderAspectRatioSelector(
                     imageAspectRatio,
                     setImageAspectRatio,
-                    imageStatus === "loading",
+                    imageStatus === "loading" || !!(imageWidth || imageHeight),
                     "purple"
                   )}
+                  {(imageWidth || imageHeight) && (
+                    <p className="text-xs text-amber-500 mt-1">
+                      Aspect ratio is ignored when custom dimensions are set.
+                    </p>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Width <span className="text-neutral-600">(optional)</span>
+                    </label>
+                    <Input
+                      type="number"
+                      value={imageWidth}
+                      onChange={(e) => setImageWidth(e.target.value)}
+                      placeholder="e.g. 512"
+                      className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                      disabled={imageStatus === "loading"}
+                      min={256}
+                      max={1536}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Height{" "}
+                      <span className="text-neutral-600">(optional)</span>
+                    </label>
+                    <Input
+                      type="number"
+                      value={imageHeight}
+                      onChange={(e) => setImageHeight(e.target.value)}
+                      placeholder="e.g. 512"
+                      className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                      disabled={imageStatus === "loading"}
+                      min={256}
+                      max={1536}
+                    />
+                  </div>
                 </div>
 
                 <div>

@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { prompt, aspectRatio, numInferenceSteps, seed } = body;
+    const { prompt, aspectRatio, numInferenceSteps, seed, width, height } = body;
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
       return NextResponse.json(
@@ -66,6 +66,8 @@ export async function POST(request: NextRequest) {
           aspectRatio, 
           numInferenceSteps,
           seed,
+          width,
+          height,
           testType: 'image_creation' 
         },
         output_data: {},
@@ -88,6 +90,8 @@ export async function POST(request: NextRequest) {
         aspectRatio: aspectRatio || '16:9',
         numInferenceSteps: numInferenceSteps || 20,
         seed: seed || null,
+        width,
+        height,
       },
     });
 
