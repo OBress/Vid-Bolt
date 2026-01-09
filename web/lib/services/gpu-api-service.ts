@@ -152,6 +152,8 @@ export interface ImageGenerateResult {
   success: boolean;
   publicUrl?: string;
   generationTime?: number;
+  isAsync?: boolean;
+  jobId?: string;
   errorCode?: string;
   errorMessage?: string;
   debug: {
@@ -192,11 +194,13 @@ export async function callGpuImageGenerate(
     };
   }
 
-  // Handle 202 Accepted (async job accepted) - treat as success
+  // Handle 202 Accepted (async job accepted) - treat as success with async flag
   if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+    const asyncResponse = response as GPUApiAsyncJobResponse;
     return {
       success: true,
-      publicUrl: request.save_url, // Result will be uploaded to this presigned URL
+      isAsync: true,
+      jobId: asyncResponse.job_id,
       generationTime: undefined,
       debug,
     };
@@ -220,6 +224,8 @@ export interface ImageEditResult {
   success: boolean;
   publicUrl?: string;
   generationTime?: number;
+  isAsync?: boolean;
+  jobId?: string;
   errorCode?: string;
   errorMessage?: string;
   debug: {
@@ -230,6 +236,12 @@ export interface ImageEditResult {
   };
 }
 
+/**
+ * Edit an image via the GPU API.
+ * 
+ * @param request - Image edit request matching API spec
+ * @returns Result with success status, URL, and debug info
+ */
 /**
  * Edit an image via the GPU API.
  * 
@@ -260,11 +272,13 @@ export async function callGpuImageEdit(
     };
   }
 
-  // Handle 202 Accepted (async job accepted) - treat as success
+  // Handle 202 Accepted (async job accepted) - treat as success with async flag
   if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+    const asyncResponse = response as GPUApiAsyncJobResponse;
     return {
       success: true,
-      publicUrl: request.save_url,
+      isAsync: true,
+      jobId: asyncResponse.job_id,
       generationTime: undefined,
       debug,
     };
@@ -288,6 +302,8 @@ export interface VideoGenerateResult {
   success: boolean;
   publicUrl?: string;
   generationTime?: number;
+  isAsync?: boolean;
+  jobId?: string;
   errorCode?: string;
   errorMessage?: string;
   debug: {
@@ -298,6 +314,12 @@ export interface VideoGenerateResult {
   };
 }
 
+/**
+ * Generate a video via the GPU API.
+ * 
+ * @param request - Video generation request matching API spec
+ * @returns Result with success status, URL, and debug info
+ */
 /**
  * Generate a video via the GPU API.
  * 
@@ -328,11 +350,13 @@ export async function callGpuVideoGenerate(
     };
   }
 
-  // Handle 202 Accepted (async job accepted) - treat as success
+  // Handle 202 Accepted (async job accepted) - treat as success with async flag
   if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+    const asyncResponse = response as GPUApiAsyncJobResponse;
     return {
       success: true,
-      publicUrl: request.save_url,
+      isAsync: true,
+      jobId: asyncResponse.job_id,
       generationTime: undefined,
       debug,
     };
@@ -618,6 +642,31 @@ export async function callGpuListLoras(): Promise<{
   }
 }
 
+/**
+ * Get background job status
+ */
+export async function callGpuGetJobStatus(jobId: string): Promise<{
+  success: boolean;
+  job?: any;
+  error?: string;
+}> {
+  const baseUrl = getGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/jobs/${jobId}`, {
+      headers: { "X-API-Key": apiKey },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return { success: false, error: errorData.detail || `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, job: data };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
 // ============================================================================
 // LTX-2 VIDEO GENERATION
 // ============================================================================
@@ -665,6 +714,8 @@ export interface LTX2GenerateResult {
   durationSeconds?: number;
   hasAudio?: boolean;
   upscaleInfo?: Record<string, unknown>;
+  isAsync?: boolean;
+  jobId?: string;
   errorCode?: string;
   errorMessage?: string;
   debug: {
@@ -710,6 +761,17 @@ export async function callGpuLtx2Generate(
     };
   }
 
+  // Handle 202 Accepted (async job accepted)
+  if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+    const asyncResponse = response as GPUApiAsyncJobResponse;
+    return {
+      success: true,
+      isAsync: true,
+      jobId: asyncResponse.job_id,
+      debug,
+    };
+  }
+
   return {
     success: false,
     errorCode: (response as GPUApiErrorResponse).error_code,
@@ -749,6 +811,17 @@ export async function callGpuLtx2Interpolate(
       durationSeconds: successResponse.duration_seconds,
       hasAudio: successResponse.has_audio,
       upscaleInfo: successResponse.upscale_info,
+      debug,
+    };
+  }
+
+  // Handle 202 Accepted (async job accepted)
+  if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+    const asyncResponse = response as GPUApiAsyncJobResponse;
+    return {
+      success: true,
+      isAsync: true,
+      jobId: asyncResponse.job_id,
       debug,
     };
   }

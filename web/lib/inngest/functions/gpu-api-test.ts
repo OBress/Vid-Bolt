@@ -19,6 +19,7 @@ import {
   callGpuImageGenerate,
   callGpuImageEdit,
   callGpuVideoGenerate,
+  callGpuGetJobStatus,
   type AspectRatio,
   type FPS,
 } from '@/lib/services/gpu-api-service';
@@ -82,7 +83,7 @@ export const gpuApiTestImageCreate = inngest.createFunction(
       });
 
       // Call the GPU API
-      const result = await step.run('call-gpu-api', async () => {
+      let result = await step.run('call-gpu-api', async () => {
         const jobId = uuidv4();
         return await callGpuImageGenerate({
           job_id: jobId,
@@ -93,6 +94,66 @@ export const gpuApiTestImageCreate = inngest.createFunction(
           save_url: putUrl,
         });
       });
+
+      // If the job is async, poll for completion
+      if (result.success && result.isAsync && result.jobId) {
+        console.log(`[GPUApiTest] Job is async, starting polling for job ${result.jobId}`);
+        
+        let attempts = 0;
+        const maxAttempts = 60; // 5 minutes max (5s * 60)
+        let isDone = false;
+
+        while (attempts < maxAttempts && !isDone) {
+          attempts++;
+          
+          // Wait for 5 seconds
+          await step.sleep('wait-for-job', '5s');
+
+          // Check job status
+          const pollResult = await step.run(`poll-job-status-${attempts}`, async () => {
+            return await callGpuGetJobStatus(result.jobId!);
+          });
+
+          if (!pollResult.success) {
+            console.error(`[GPUApiTest] Polling failed for job ${result.jobId}:`, pollResult.error);
+            // We don't throw here, just continue polling or timeout
+            continue;
+          }
+
+          const job = pollResult.job;
+          console.log(`[GPUApiTest] Job ${result.jobId} status: ${job.status}, progress: ${job.progress_percent || 0}%`);
+
+          // Update task progress
+          await step.run(`update-status-polling-${attempts}`, async () => {
+            await updateTaskStatus(taskId, {
+              current_step: `Processing on GPU (${job.status})...`,
+              progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6), // Scale 0-100 to 30-90
+            });
+          });
+
+          if (job.status === 'completed') {
+            isDone = true;
+            result = {
+              ...result,
+              success: true,
+              generationTime: job.result?.generation_time,
+              publicUrl: job.result?.save_url || result.publicUrl,
+            };
+          } else if (job.status === 'failed') {
+            isDone = true;
+            result = {
+              ...result,
+              success: false,
+              errorMessage: job.error_message || 'GPU job failed',
+              errorCode: job.error_code,
+            };
+          }
+        }
+
+        if (!isDone) {
+          throw new Error('Timeout waiting for GPU job completion');
+        }
+      }
 
       // Store results
       await supabase
@@ -106,7 +167,7 @@ export const gpuApiTestImageCreate = inngest.createFunction(
             type: 'image_creation',
             imageUrl: result.success ? publicUrl : undefined,
             generationTime: result.generationTime,
-            error: result.success ? undefined : result.errorMessage,
+            error: result.success ? undefined : (result.errorMessage || 'Unknown error'),
             errorCode: result.errorCode,
             r2Key: key,
             debug: result.debug,
@@ -207,7 +268,7 @@ export const gpuApiTestImageEdit = inngest.createFunction(
       const inputImageUrl = sourceImageUrl || PLACEHOLDER_IMAGE_URL;
 
       // Call the GPU API
-      const result = await step.run('call-gpu-api', async () => {
+      let result = await step.run('call-gpu-api', async () => {
         const jobId = uuidv4();
         return await callGpuImageEdit({
           job_id: jobId,
@@ -218,6 +279,61 @@ export const gpuApiTestImageEdit = inngest.createFunction(
           save_url: putUrl,
         });
       });
+
+      // If the job is async, poll for completion
+      if (result.success && result.isAsync && result.jobId) {
+        console.log(`[GPUApiTest] Image edit job is async, starting polling for job ${result.jobId}`);
+        
+        let attempts = 0;
+        const maxAttempts = 60; // 5 minutes max
+        let isDone = false;
+
+        while (attempts < maxAttempts && !isDone) {
+          attempts++;
+          await step.sleep('wait-for-job', '5s');
+
+          const pollResult = await step.run(`poll-job-status-${attempts}`, async () => {
+            return await callGpuGetJobStatus(result.jobId!);
+          });
+
+          if (!pollResult.success) {
+            console.error(`[GPUApiTest] Polling failed for job ${result.jobId}:`, pollResult.error);
+            continue;
+          }
+
+          const job = pollResult.job;
+          console.log(`[GPUApiTest] Image edit job ${result.jobId} status: ${job.status}, progress: ${job.progress_percent || 0}%`);
+
+          await step.run(`update-status-polling-${attempts}`, async () => {
+            await updateTaskStatus(taskId, {
+              current_step: `Editing image on GPU (${job.status})...`,
+              progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6),
+            });
+          });
+
+          if (job.status === 'completed') {
+            isDone = true;
+            result = {
+              ...result,
+              success: true,
+              generationTime: job.result?.generation_time,
+              publicUrl: job.result?.save_url || result.publicUrl,
+            };
+          } else if (job.status === 'failed') {
+            isDone = true;
+            result = {
+              ...result,
+              success: false,
+              errorMessage: job.error_message || 'GPU job failed',
+              errorCode: job.error_code,
+            };
+          }
+        }
+
+        if (!isDone) {
+          throw new Error('Timeout waiting for GPU job completion');
+        }
+      }
 
       // Store results
       await supabase
@@ -232,7 +348,7 @@ export const gpuApiTestImageEdit = inngest.createFunction(
             imageUrl: result.success ? publicUrl : undefined,
             generationTime: result.generationTime,
             inputImageUrl,
-            error: result.success ? undefined : result.errorMessage,
+            error: result.success ? undefined : (result.errorMessage || 'Unknown error'),
             errorCode: result.errorCode,
             r2Key: key,
             debug: result.debug,
@@ -343,7 +459,7 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
       const inputImageUrl = startFrameUrl || PLACEHOLDER_IMAGE_URL;
 
       // Call the GPU API
-      const result = await step.run('call-gpu-api', async () => {
+      let result = await step.run('call-gpu-api', async () => {
         const jobId = uuidv4();
         return await callGpuVideoGenerate({
           job_id: jobId,
@@ -357,6 +473,61 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
           save_url: putUrl,
         });
       });
+
+      // If the job is async, poll for completion
+      if (result.success && result.isAsync && result.jobId) {
+        console.log(`[GPUApiTest] Video job is async, starting polling for job ${result.jobId}`);
+        
+        let attempts = 0;
+        const maxAttempts = 120; // 10 minutes max (5s * 120) for video
+        let isDone = false;
+
+        while (attempts < maxAttempts && !isDone) {
+          attempts++;
+          await step.sleep('wait-for-job', '5s');
+
+          const pollResult = await step.run(`poll-job-status-${attempts}`, async () => {
+            return await callGpuGetJobStatus(result.jobId!);
+          });
+
+          if (!pollResult.success) {
+            console.error(`[GPUApiTest] Polling failed for job ${result.jobId}:`, pollResult.error);
+            continue;
+          }
+
+          const job = pollResult.job;
+          console.log(`[GPUApiTest] Video job ${result.jobId} status: ${job.status}, progress: ${job.progress_percent || 0}%`);
+
+          await step.run(`update-status-polling-${attempts}`, async () => {
+            await updateTaskStatus(taskId, {
+              current_step: `Generating video on GPU (${job.status})...`,
+              progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6),
+            });
+          });
+
+          if (job.status === 'completed') {
+            isDone = true;
+            result = {
+              ...result,
+              success: true,
+              generationTime: job.result?.generation_time,
+              publicUrl: job.result?.save_url || result.publicUrl,
+            };
+          } else if (job.status === 'failed') {
+            isDone = true;
+            result = {
+              ...result,
+              success: false,
+              errorMessage: job.error_message || 'GPU job failed',
+              errorCode: job.error_code,
+            };
+          }
+        }
+
+        if (!isDone) {
+          throw new Error('Timeout waiting for GPU job completion');
+        }
+      }
 
       // Store results
       await supabase
@@ -373,7 +544,7 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
             inputImageUrl,
             durationSeconds: durationSeconds || 4.0,
             fps: fps || 24,
-            error: result.success ? undefined : result.errorMessage,
+            error: result.success ? undefined : (result.errorMessage || 'Unknown error'),
             errorCode: result.errorCode,
             r2Key: key,
             debug: result.debug,
