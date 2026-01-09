@@ -337,3 +337,381 @@ export function getGpuApiStatus(): GPUApiHealthStatus {
     message: `GPU API configured at ${gpuApiUrl}`,
   };
 }
+
+// ============================================================================
+// HEALTH ENDPOINTS
+// ============================================================================
+
+export interface HealthResponse {
+  status: string;
+  version: string;
+  mock_mode: boolean;
+}
+
+export interface ReadinessResponse {
+  ready: boolean;
+  status: string;
+  version: string;
+  mock_mode: boolean;
+  current_mode: string | null;
+  models_loaded: boolean;
+}
+
+/**
+ * Check GPU API health (no auth required)
+ */
+export async function callGpuHealth(): Promise<{
+  success: boolean;
+  data?: HealthResponse;
+  error?: string;
+}> {
+  const baseUrl = getGpuApiUrl();
+  try {
+    const response = await fetch(`${baseUrl}/health`);
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
+/**
+ * Check GPU API readiness (no auth required)
+ */
+export async function callGpuHealthReady(): Promise<{
+  success: boolean;
+  data?: ReadinessResponse;
+  error?: string;
+}> {
+  const baseUrl = getGpuApiUrl();
+  try {
+    const response = await fetch(`${baseUrl}/health/ready`);
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
+// ============================================================================
+// SYSTEM STATUS
+// ============================================================================
+
+export interface GPUInfo {
+  name: string;
+  memory_total_gb: number;
+  memory_used_gb: number;
+  memory_free_gb: number;
+  memory_usage_percent: number;
+  temperature_celsius?: number;
+  gpu_utilization_percent?: number;
+  cuda_version?: string;
+  driver_version?: string;
+}
+
+export interface SystemInfo {
+  os: string;
+  os_version: string;
+  python_version: string;
+  cpu_count: number;
+  hostname: string;
+}
+
+export interface ModeInfo {
+  mode: string;
+  is_busy: boolean;
+  active_job_id: string | null;
+  loaded_models: string[];
+}
+
+export interface ConcurrencyLimits {
+  max_concurrent_image_generations: number;
+  max_concurrent_video_generations: number;
+}
+
+export interface SystemStatusResponse {
+  system: SystemInfo;
+  gpu: GPUInfo | null;
+  mode: ModeInfo | null;
+  concurrency_limits: ConcurrencyLimits;
+  mock_mode: boolean;
+}
+
+/**
+ * Get detailed system status (auth required)
+ */
+export async function callGpuSystemStatus(): Promise<{
+  success: boolean;
+  data?: SystemStatusResponse;
+  error?: string;
+}> {
+  const baseUrl = getGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/system/status`, {
+      headers: { "X-API-Key": apiKey },
+    });
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
+// ============================================================================
+// MODE MANAGEMENT
+// ============================================================================
+
+export interface ModeStatusResponse {
+  mode: string;
+  is_busy: boolean;
+  active_job_id: string | null;
+  loaded_models: string[];
+}
+
+export interface ModeSwitchResponse {
+  status: string;
+  previous_mode: string;
+  current_mode: string;
+  message: string;
+}
+
+/**
+ * Get current mode status
+ */
+export async function callGpuGetMode(): Promise<{
+  success: boolean;
+  data?: ModeStatusResponse;
+  error?: string;
+}> {
+  const baseUrl = getGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/mode`, {
+      headers: { "X-API-Key": apiKey },
+    });
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
+/**
+ * Switch between image and video modes
+ */
+export async function callGpuSwitchMode(targetMode: "image" | "video"): Promise<{
+  success: boolean;
+  data?: ModeSwitchResponse;
+  error?: string;
+}> {
+  const baseUrl = getGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/mode/switch`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": apiKey,
+      },
+      body: JSON.stringify({ target_mode: targetMode }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return { success: false, error: errorData.detail || `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
+// ============================================================================
+// LORA MANAGEMENT
+// ============================================================================
+
+export interface LoraInfo {
+  name: string;
+  size_bytes: number;
+  modified_time: number;
+}
+
+/**
+ * List available Z-Image LoRAs
+ */
+export async function callGpuListLoras(): Promise<{
+  success: boolean;
+  data?: LoraInfo[];
+  error?: string;
+}> {
+  const baseUrl = getGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/loras/z-image`, {
+      headers: { "X-API-Key": apiKey },
+    });
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
+// ============================================================================
+// LTX-2 VIDEO GENERATION
+// ============================================================================
+
+/** Request body for POST /api/v1/ltx2/generate */
+export interface LTX2GenerateRequest {
+  job_id: string;
+  input_image_url: string;
+  prompt: string;
+  negative_prompt?: string;
+  duration_seconds?: number;
+  frame_rate?: number;
+  aspect_ratio?: AspectRatio;
+  end_image_url?: string;
+  seed?: number;
+  enhance_prompt?: boolean;
+  save_url: string;
+}
+
+/** Keyframe for interpolation */
+export interface KeyframeImage {
+  image_url: string;
+  frame_index: number;
+  strength?: number;
+}
+
+/** Request body for POST /api/v1/ltx2/interpolate */
+export interface LTX2InterpolateRequest {
+  job_id: string;
+  prompt: string;
+  negative_prompt?: string;
+  keyframes: KeyframeImage[];
+  duration_seconds?: number;
+  frame_rate?: number;
+  aspect_ratio?: AspectRatio;
+  seed?: number;
+  enhance_prompt?: boolean;
+  save_url: string;
+}
+
+export interface LTX2GenerateResult {
+  success: boolean;
+  publicUrl?: string;
+  generationTime?: number;
+  durationSeconds?: number;
+  hasAudio?: boolean;
+  upscaleInfo?: Record<string, unknown>;
+  errorCode?: string;
+  errorMessage?: string;
+  debug: {
+    request: LTX2GenerateRequest | LTX2InterpolateRequest;
+    response: unknown;
+    statusCode: number;
+    gpuApiUrl: string;
+  };
+}
+
+/**
+ * Generate video via LTX-2 API (I2V)
+ */
+export async function callGpuLtx2Generate(
+  request: LTX2GenerateRequest
+): Promise<LTX2GenerateResult> {
+  const { response, rawRequest, rawResponse, statusCode } = await callGpuApi(
+    "/api/v1/ltx2/generate",
+    request
+  );
+
+  const debug = {
+    request: rawRequest,
+    response: rawResponse,
+    statusCode,
+    gpuApiUrl: getGpuApiUrl(),
+  };
+
+  if (response.status === "completed") {
+    const successResponse = response as GPUApiSuccessResponse & {
+      duration_seconds?: number;
+      has_audio?: boolean;
+      upscale_info?: Record<string, unknown>;
+    };
+    return {
+      success: true,
+      publicUrl: successResponse.save_url,
+      generationTime: successResponse.generation_time,
+      durationSeconds: successResponse.duration_seconds,
+      hasAudio: successResponse.has_audio,
+      upscaleInfo: successResponse.upscale_info,
+      debug,
+    };
+  }
+
+  return {
+    success: false,
+    errorCode: (response as GPUApiErrorResponse).error_code,
+    errorMessage: (response as GPUApiErrorResponse).error_message,
+    debug,
+  };
+}
+
+/**
+ * Generate video via LTX-2 keyframe interpolation
+ */
+export async function callGpuLtx2Interpolate(
+  request: LTX2InterpolateRequest
+): Promise<LTX2GenerateResult> {
+  const { response, rawRequest, rawResponse, statusCode } = await callGpuApi(
+    "/api/v1/ltx2/interpolate",
+    request
+  );
+
+  const debug = {
+    request: rawRequest,
+    response: rawResponse,
+    statusCode,
+    gpuApiUrl: getGpuApiUrl(),
+  };
+
+  if (response.status === "completed") {
+    const successResponse = response as GPUApiSuccessResponse & {
+      duration_seconds?: number;
+      has_audio?: boolean;
+      upscale_info?: Record<string, unknown>;
+    };
+    return {
+      success: true,
+      publicUrl: successResponse.save_url,
+      generationTime: successResponse.generation_time,
+      durationSeconds: successResponse.duration_seconds,
+      hasAudio: successResponse.has_audio,
+      upscaleInfo: successResponse.upscale_info,
+      debug,
+    };
+  }
+
+  return {
+    success: false,
+    errorCode: (response as GPUApiErrorResponse).error_code,
+    errorMessage: (response as GPUApiErrorResponse).error_message,
+    debug,
+  };
+}

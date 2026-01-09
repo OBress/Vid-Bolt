@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import {
   Loader2,
   X,
@@ -22,6 +23,10 @@ import {
   ChevronUp,
   Copy,
   ExternalLink,
+  Activity,
+  Settings2,
+  Sparkles,
+  RefreshCw,
 } from "lucide-react";
 
 // ============================================================================
@@ -56,9 +61,56 @@ interface TestResult {
 }
 
 type TestStatus = "idle" | "loading" | "success" | "error";
-type TabType = "image" | "image-edit" | "video";
+type TabType = "system" | "mode" | "image" | "image-edit" | "video";
 type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 type FPS = 8 | 12 | 16 | 24 | 30;
+type ApiMode = "mock" | "real";
+
+// System/Mode types
+interface HealthData {
+  status: string;
+  version: string;
+  mock_mode: boolean;
+}
+
+interface ReadinessData {
+  ready: boolean;
+  status: string;
+  version: string;
+  mock_mode: boolean;
+  current_mode: string | null;
+  models_loaded: boolean;
+}
+
+interface SystemData {
+  system: {
+    os: string;
+    python_version: string;
+    cpu_count: number;
+    hostname: string;
+  };
+  gpu: {
+    name: string;
+    memory_total_gb: number;
+    memory_used_gb: number;
+    memory_free_gb: number;
+    memory_usage_percent: number;
+    temperature_celsius?: number;
+  } | null;
+  mode: {
+    mode: string;
+    is_busy: boolean;
+    loaded_models: string[];
+  } | null;
+  mock_mode: boolean;
+}
+
+interface ModeData {
+  mode: string;
+  is_busy: boolean;
+  active_job_id: string | null;
+  loaded_models: string[];
+}
 
 // ============================================================================
 // COMPONENT
@@ -66,7 +118,19 @@ type FPS = 8 | 12 | 16 | 24 | 30;
 
 export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   const [mounted, setMounted] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabType>("image");
+  const [activeTab, setActiveTab] = useState<TabType>("system");
+  const [apiMode, setApiMode] = useState<ApiMode>("mock");
+
+  // System/Mode State
+  const [healthData, setHealthData] = useState<HealthData | null>(null);
+  const [readinessData, setReadinessData] = useState<ReadinessData | null>(
+    null
+  );
+  const [systemData, setSystemData] = useState<SystemData | null>(null);
+  const [modeData, setModeData] = useState<ModeData | null>(null);
+  const [systemStatus, setSystemStatus] = useState<TestStatus>("idle");
+  const [modeStatus, setModeStatus] = useState<TestStatus>("idle");
+  const [modeSwitching, setModeSwitching] = useState(false);
 
   // Image Creation State
   const [imagePrompt, setImagePrompt] = useState(
@@ -131,6 +195,97 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
     }
 
     throw new Error("Timeout waiting for result");
+  };
+
+  // =========================================================================
+  // SYSTEM/MODE HANDLERS
+  // =========================================================================
+
+  const handleCheckHealth = async () => {
+    setSystemStatus("loading");
+    try {
+      const response = await fetch("/api/gpu-api/health");
+      const data = await response.json();
+      if (data.success) {
+        setHealthData(data.data);
+        setSystemStatus("success");
+      } else {
+        setSystemStatus("error");
+      }
+    } catch {
+      setSystemStatus("error");
+    }
+  };
+
+  const handleCheckReadiness = async () => {
+    setSystemStatus("loading");
+    try {
+      const response = await fetch("/api/gpu-api/health?ready=true");
+      const data = await response.json();
+      if (data.success) {
+        setReadinessData(data.data);
+        setSystemStatus("success");
+      } else {
+        setSystemStatus("error");
+      }
+    } catch {
+      setSystemStatus("error");
+    }
+  };
+
+  const handleGetSystemStatus = async () => {
+    setSystemStatus("loading");
+    try {
+      const response = await fetch("/api/gpu-api/system");
+      const data = await response.json();
+      if (data.success) {
+        setSystemData(data.data);
+        setSystemStatus("success");
+      } else {
+        setSystemStatus("error");
+      }
+    } catch {
+      setSystemStatus("error");
+    }
+  };
+
+  const handleGetMode = async () => {
+    setModeStatus("loading");
+    try {
+      const response = await fetch("/api/gpu-api/mode");
+      const data = await response.json();
+      if (data.success) {
+        setModeData(data.data);
+        setModeStatus("success");
+      } else {
+        setModeStatus("error");
+      }
+    } catch {
+      setModeStatus("error");
+    }
+  };
+
+  const handleSwitchMode = async (targetMode: "image" | "video") => {
+    setModeSwitching(true);
+    setModeStatus("loading");
+    try {
+      const response = await fetch("/api/gpu-api/mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetMode }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setModeData(data.data);
+        setModeStatus("success");
+      } else {
+        setModeStatus("error");
+      }
+    } catch {
+      setModeStatus("error");
+    } finally {
+      setModeSwitching(false);
+    }
   };
 
   // =========================================================================
@@ -568,9 +723,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   // =========================================================================
 
   const content = (
-    <div className="fixed inset-0 z-[9999] bg-neutral-950 flex flex-col">
+    <div className="fixed inset-0 z-[9999] bg-neutral-950 flex flex-col pointer-events-auto overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
+      <div className="flex-shrink-0 flex items-center justify-between px-6 py-4 border-b border-neutral-800">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center">
             <Cpu className="w-5 h-5 text-orange-500" />
@@ -582,18 +737,69 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
             </p>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="text-neutral-400 hover:text-white"
-        >
-          <X className="w-5 h-5" />
-        </Button>
+        <div className="flex items-center gap-4">
+          {/* Mock/Real Toggle */}
+          <div className="flex items-center gap-3 bg-neutral-900 px-4 py-2 rounded-lg">
+            <span
+              className={`text-sm ${
+                apiMode === "mock"
+                  ? "text-orange-400 font-medium"
+                  : "text-neutral-500"
+              }`}
+            >
+              Mock
+            </span>
+            <Switch
+              checked={apiMode === "real"}
+              onCheckedChange={(checked) =>
+                setApiMode(checked ? "real" : "mock")
+              }
+            />
+            <span
+              className={`text-sm ${
+                apiMode === "real"
+                  ? "text-green-400 font-medium"
+                  : "text-neutral-500"
+              }`}
+            >
+              Real API
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="text-neutral-400 hover:text-white"
+          >
+            <X className="w-5 h-5" />
+          </Button>
+        </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 px-6 py-3 border-b border-neutral-800">
+      <div className="flex-shrink-0 flex gap-2 px-6 py-3 border-b border-neutral-800 overflow-x-auto">
+        <Button
+          variant={activeTab === "system" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setActiveTab("system")}
+          className={
+            activeTab === "system" ? "bg-blue-600 hover:bg-blue-700" : ""
+          }
+        >
+          <Activity className="w-4 h-4 mr-2" />
+          System
+        </Button>
+        <Button
+          variant={activeTab === "mode" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setActiveTab("mode")}
+          className={
+            activeTab === "mode" ? "bg-indigo-600 hover:bg-indigo-700" : ""
+          }
+        >
+          <Settings2 className="w-4 h-4 mr-2" />
+          Mode
+        </Button>
         <Button
           variant={activeTab === "image" ? "default" : "ghost"}
           size="sm"
@@ -603,7 +809,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           }
         >
           <Image className="w-4 h-4 mr-2" />
-          Image Generation
+          Image
           {imageStatus !== "idle" && (
             <span className="ml-2">{renderStatusBadge(imageStatus)}</span>
           )}
@@ -617,7 +823,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           }
         >
           <Pencil className="w-4 h-4 mr-2" />
-          Image Edit
+          Edit
           {editStatus !== "idle" && (
             <span className="ml-2">{renderStatusBadge(editStatus)}</span>
           )}
@@ -631,7 +837,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           }
         >
           <Video className="w-4 h-4 mr-2" />
-          Video Generation
+          Video
           {videoStatus !== "idle" && (
             <span className="ml-2">{renderStatusBadge(videoStatus)}</span>
           )}
@@ -639,8 +845,377 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       </div>
 
       {/* Content */}
-      <ScrollArea className="flex-1">
-        <div className="max-w-2xl mx-auto p-6">
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="max-w-2xl mx-auto p-6 relative z-10">
+          {/* System Tab */}
+          {activeTab === "system" && (
+            <div className="space-y-6">
+              <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-blue-400" />
+                  API Status Checks
+                </h3>
+                <div className="flex gap-3 flex-wrap">
+                  <Button
+                    onClick={handleCheckHealth}
+                    disabled={systemStatus === "loading"}
+                    className="bg-blue-600 hover:bg-blue-700"
+                    size="sm"
+                  >
+                    {systemStatus === "loading" ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                    )}
+                    Health Check
+                  </Button>
+                  <Button
+                    onClick={handleCheckReadiness}
+                    disabled={systemStatus === "loading"}
+                    className="bg-blue-600 hover:bg-blue-700"
+                    size="sm"
+                  >
+                    {systemStatus === "loading" ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4 mr-2" />
+                    )}
+                    Readiness
+                  </Button>
+                  <Button
+                    onClick={handleGetSystemStatus}
+                    disabled={systemStatus === "loading"}
+                    className="bg-blue-600 hover:bg-blue-700"
+                    size="sm"
+                  >
+                    {systemStatus === "loading" ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <Cpu className="w-4 h-4 mr-2" />
+                    )}
+                    Full Status
+                  </Button>
+                </div>
+              </div>
+
+              {/* Health Result */}
+              {healthData && (
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                  <h4 className="text-sm font-medium text-neutral-300 mb-3">
+                    Health Response
+                  </h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-neutral-400">Status:</span>
+                      <span
+                        className={
+                          healthData.status === "healthy"
+                            ? "text-green-400"
+                            : "text-red-400"
+                        }
+                      >
+                        {healthData.status}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-400">Version:</span>
+                      <span className="text-white">{healthData.version}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-400">Mock Mode:</span>
+                      <span
+                        className={
+                          healthData.mock_mode
+                            ? "text-orange-400"
+                            : "text-green-400"
+                        }
+                      >
+                        {healthData.mock_mode ? "Yes" : "No"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Readiness Result */}
+              {readinessData && (
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                  <h4 className="text-sm font-medium text-neutral-300 mb-3">
+                    Readiness Response
+                  </h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-neutral-400">Ready:</span>
+                      <span
+                        className={
+                          readinessData.ready
+                            ? "text-green-400"
+                            : "text-red-400"
+                        }
+                      >
+                        {readinessData.ready ? "Yes" : "No"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-400">Status:</span>
+                      <span className="text-white">{readinessData.status}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-400">Current Mode:</span>
+                      <span className="text-purple-400">
+                        {readinessData.current_mode || "None"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-400">Models Loaded:</span>
+                      <span
+                        className={
+                          readinessData.models_loaded
+                            ? "text-green-400"
+                            : "text-yellow-400"
+                        }
+                      >
+                        {readinessData.models_loaded ? "Yes" : "No"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* System Status Result */}
+              {systemData && (
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                  <h4 className="text-sm font-medium text-neutral-300 mb-3">
+                    System Status
+                  </h4>
+                  <div className="space-y-4">
+                    {/* System Info */}
+                    <div>
+                      <h5 className="text-xs font-medium text-neutral-500 uppercase mb-2">
+                        System
+                      </h5>
+                      <div className="space-y-1 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-neutral-400">OS:</span>
+                          <span className="text-white">
+                            {systemData.system.os}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-neutral-400">Python:</span>
+                          <span className="text-white">
+                            {systemData.system.python_version}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-neutral-400">CPU Count:</span>
+                          <span className="text-white">
+                            {systemData.system.cpu_count}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    {/* GPU Info */}
+                    {systemData.gpu && (
+                      <div>
+                        <h5 className="text-xs font-medium text-neutral-500 uppercase mb-2">
+                          GPU
+                        </h5>
+                        <div className="space-y-1 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-neutral-400">Name:</span>
+                            <span className="text-white">
+                              {systemData.gpu.name}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-neutral-400">Memory:</span>
+                            <span className="text-white">
+                              {systemData.gpu.memory_used_gb.toFixed(1)} /{" "}
+                              {systemData.gpu.memory_total_gb.toFixed(1)} GB (
+                              {systemData.gpu.memory_usage_percent.toFixed(1)}%)
+                            </span>
+                          </div>
+                          {systemData.gpu.temperature_celsius && (
+                            <div className="flex justify-between">
+                              <span className="text-neutral-400">Temp:</span>
+                              <span className="text-white">
+                                {systemData.gpu.temperature_celsius}°C
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {/* Mode Info */}
+                    {systemData.mode && (
+                      <div>
+                        <h5 className="text-xs font-medium text-neutral-500 uppercase mb-2">
+                          Mode
+                        </h5>
+                        <div className="space-y-1 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-neutral-400">
+                              Current Mode:
+                            </span>
+                            <span className="text-purple-400 font-medium">
+                              {systemData.mode.mode}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-neutral-400">Busy:</span>
+                            <span
+                              className={
+                                systemData.mode.is_busy
+                                  ? "text-yellow-400"
+                                  : "text-green-400"
+                              }
+                            >
+                              {systemData.mode.is_busy ? "Yes" : "No"}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-neutral-400">
+                              Loaded Models:
+                            </span>
+                            <span className="text-white">
+                              {systemData.mode.loaded_models.join(", ") ||
+                                "None"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Mode Tab */}
+          {activeTab === "mode" && (
+            <div className="space-y-6">
+              <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
+                  <Settings2 className="w-4 h-4 text-indigo-400" />
+                  Mode Management
+                </h3>
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleGetMode}
+                    disabled={modeStatus === "loading"}
+                    className="bg-indigo-600 hover:bg-indigo-700"
+                    size="sm"
+                  >
+                    {modeStatus === "loading" ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                    )}
+                    Get Mode
+                  </Button>
+                </div>
+              </div>
+
+              {/* Mode Result */}
+              {modeData && (
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                  <h4 className="text-sm font-medium text-neutral-300 mb-3">
+                    Current Mode
+                  </h4>
+                  <div className="space-y-2 text-sm mb-4">
+                    <div className="flex justify-between">
+                      <span className="text-neutral-400">Mode:</span>
+                      <span className="text-purple-400 font-medium capitalize">
+                        {modeData.mode}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-400">Busy:</span>
+                      <span
+                        className={
+                          modeData.is_busy
+                            ? "text-yellow-400"
+                            : "text-green-400"
+                        }
+                      >
+                        {modeData.is_busy ? "Yes" : "No"}
+                      </span>
+                    </div>
+                    {modeData.active_job_id && (
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Active Job:</span>
+                        <span className="text-white text-xs">
+                          {modeData.active_job_id}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-neutral-400">Loaded Models:</span>
+                      <span className="text-white">
+                        {modeData.loaded_models?.join(", ") || "None"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-neutral-700 pt-4">
+                    <h5 className="text-xs font-medium text-neutral-500 uppercase mb-3">
+                      Switch Mode
+                    </h5>
+                    <div className="flex gap-3">
+                      <Button
+                        onClick={() => handleSwitchMode("image")}
+                        disabled={
+                          modeSwitching ||
+                          modeData.mode === "image" ||
+                          modeData.is_busy
+                        }
+                        className={
+                          modeData.mode === "image"
+                            ? "bg-purple-600"
+                            : "bg-neutral-700 hover:bg-neutral-600"
+                        }
+                        size="sm"
+                      >
+                        {modeSwitching ? (
+                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        ) : (
+                          <Image className="w-4 h-4 mr-2" />
+                        )}
+                        Image Mode
+                      </Button>
+                      <Button
+                        onClick={() => handleSwitchMode("video")}
+                        disabled={
+                          modeSwitching ||
+                          modeData.mode === "video" ||
+                          modeData.is_busy
+                        }
+                        className={
+                          modeData.mode === "video"
+                            ? "bg-teal-600"
+                            : "bg-neutral-700 hover:bg-neutral-600"
+                        }
+                        size="sm"
+                      >
+                        {modeSwitching ? (
+                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        ) : (
+                          <Video className="w-4 h-4 mr-2" />
+                        )}
+                        Video Mode
+                      </Button>
+                    </div>
+                    <p className="text-xs text-neutral-500 mt-2">
+                      Switching modes takes ~30-60 seconds as models are
+                      loaded/unloaded.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Image Generation Tab */}
           {activeTab === "image" && (
             <div className="space-y-6">
@@ -1020,17 +1595,25 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           {/* Info Note */}
           <div className="mt-8 p-4 bg-neutral-900/50 border border-neutral-800 rounded-lg">
             <p className="text-xs text-neutral-500">
-              <strong className="text-neutral-400">Note:</strong> This tester
-              connects to the GPU API at{" "}
-              <code className="text-orange-400">localhost:8000</code>. Ensure
-              your GPU API server is running and{" "}
-              <code className="text-orange-400">GPU_API_KEY</code> is
-              configured. Results are saved to Cloudflare R2 under{" "}
-              <code className="text-orange-400">gpu-api-test/</code>.
+              <strong className="text-neutral-400">Note:</strong>{" "}
+              {apiMode === "mock" ? (
+                <>
+                  Mock mode uses Inngest workflows for async testing. Results
+                  are polled from the database.
+                </>
+              ) : (
+                <>
+                  Real API mode calls the GPU API directly at{" "}
+                  <code className="text-orange-400">localhost:8000</code>.
+                  Ensure the GPU API server is running.
+                </>
+              )}{" "}
+              <code className="text-orange-400">GPU_API_KEY</code> must be
+              configured. Results are saved to Cloudflare R2.
             </p>
           </div>
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 
