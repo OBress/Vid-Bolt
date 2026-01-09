@@ -48,11 +48,20 @@ export interface VideoGenerateRequest {
   save_url: string;
 }
 
-/** Successful response from GPU API */
+
+/** Successful response from GPU API (legacy sync response) */
 export interface GPUApiSuccessResponse {
   status: "completed";
   generation_time: number;
   save_url: string;
+}
+
+/** Async job accepted response (202 Accepted) */
+export interface GPUApiAsyncJobResponse {
+  job_id: string;
+  status: "pending" | "processing";
+  status_url: string;
+  message: string;
 }
 
 /** Error response from GPU API */
@@ -62,7 +71,7 @@ export interface GPUApiErrorResponse {
   error_message: string;
 }
 
-export type GPUApiResponse = GPUApiSuccessResponse | GPUApiErrorResponse;
+export type GPUApiResponse = GPUApiSuccessResponse | GPUApiAsyncJobResponse | GPUApiErrorResponse;
 
 // ============================================================================
 // CONFIGURATION
@@ -177,16 +186,28 @@ export async function callGpuImageGenerate(
   if (response.status === "completed") {
     return {
       success: true,
-      publicUrl: response.save_url,
-      generationTime: response.generation_time,
+      publicUrl: (response as GPUApiSuccessResponse).save_url,
+      generationTime: (response as GPUApiSuccessResponse).generation_time,
       debug,
     };
   }
 
+  // Handle 202 Accepted (async job accepted) - treat as success
+  if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+    return {
+      success: true,
+      publicUrl: request.save_url, // Result will be uploaded to this presigned URL
+      generationTime: undefined,
+      debug,
+    };
+  }
+
+  // Error response
+  const errorResponse = response as GPUApiErrorResponse;
   return {
     success: false,
-    errorCode: response.error_code,
-    errorMessage: response.error_message,
+    errorCode: errorResponse.error_code,
+    errorMessage: errorResponse.error_message,
     debug,
   };
 }
@@ -233,16 +254,28 @@ export async function callGpuImageEdit(
   if (response.status === "completed") {
     return {
       success: true,
-      publicUrl: response.save_url,
-      generationTime: response.generation_time,
+      publicUrl: (response as GPUApiSuccessResponse).save_url,
+      generationTime: (response as GPUApiSuccessResponse).generation_time,
       debug,
     };
   }
 
+  // Handle 202 Accepted (async job accepted) - treat as success
+  if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+    return {
+      success: true,
+      publicUrl: request.save_url,
+      generationTime: undefined,
+      debug,
+    };
+  }
+
+  // Error response
+  const errorResponse = response as GPUApiErrorResponse;
   return {
     success: false,
-    errorCode: response.error_code,
-    errorMessage: response.error_message,
+    errorCode: errorResponse.error_code,
+    errorMessage: errorResponse.error_message,
     debug,
   };
 }
@@ -289,16 +322,28 @@ export async function callGpuVideoGenerate(
   if (response.status === "completed") {
     return {
       success: true,
-      publicUrl: response.save_url,
-      generationTime: response.generation_time,
+      publicUrl: (response as GPUApiSuccessResponse).save_url,
+      generationTime: (response as GPUApiSuccessResponse).generation_time,
       debug,
     };
   }
 
+  // Handle 202 Accepted (async job accepted) - treat as success
+  if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+    return {
+      success: true,
+      publicUrl: request.save_url,
+      generationTime: undefined,
+      debug,
+    };
+  }
+
+  // Error response
+  const errorResponse = response as GPUApiErrorResponse;
   return {
     success: false,
-    errorCode: response.error_code,
-    errorMessage: response.error_message,
+    errorCode: errorResponse.error_code,
+    errorMessage: errorResponse.error_message,
     debug,
   };
 }
