@@ -19,9 +19,12 @@ import {
   callGpuImageGenerate,
   callGpuImageEdit,
   callGpuVideoGenerate,
+  callGpuLtx2Generate,
+  callGpuLtx2Interpolate,
   callGpuGetJobStatus,
   type AspectRatio,
   type FPS,
+  type KeyframeImage,
 } from '@/lib/services/gpu-api-service';
 
 // Placeholder image URL for testing (random images from picsum)
@@ -415,6 +418,8 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
       durationSeconds, 
       fps, 
       aspectRatio,
+      width,
+      height,
       endFrameUrl,
       seed 
     } = event.data;
@@ -470,6 +475,8 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
           duration_seconds: durationSeconds || 4.0,
           fps: (fps as FPS) || 24,
           aspect_ratio: (aspectRatio as AspectRatio) || '16:9',
+          width: width || undefined,
+          height: height || undefined,
           seed: seed || undefined,
           end_image_url: endFrameUrl || undefined,
           save_url: putUrl,
@@ -589,6 +596,339 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
 );
 
 // ============================================================================
+// LTX-2 GENERATION TEST
+// ============================================================================
+
+export const gpuApiTestLtx2Create = inngest.createFunction(
+  {
+    id: 'gpu-api-test-ltx-2-create',
+    retries: 1,
+    concurrency: {
+      limit: 3,
+      key: 'event.data.userId',
+    },
+  },
+  { event: 'gpu-api/test-ltx2.create' },
+  async ({ event, step }) => {
+    const { 
+      taskId, 
+      userId, 
+      prompt, 
+      input_image_url, 
+      negative_prompt,
+      duration_seconds,
+      frame_rate,
+      aspect_ratio,
+      width,
+      height,
+      end_image_url,
+      seed,
+      enhance_prompt
+    } = event.data;
+    const supabase = getSupabaseServiceClient();
+
+    console.log(`[GPUApiTest] Starting LTX-2 generation test for task ${taskId}`);
+
+    try {
+      await step.run('validate-r2', async () => {
+        if (!isR2Configured()) {
+          throw new Error('R2 storage is not configured. Please set R2 environment variables.');
+        }
+      });
+
+      await step.run('update-status-running', async () => {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_phase: 'video_generation',
+          current_step: 'Generating presigned URL...',
+          progress_percent: 10,
+        });
+      });
+
+      const { putUrl, publicUrl, key } = await step.run('generate-presigned-url', async () => {
+        const key = generateGpuTestKey(userId, 'video', 'mp4');
+        const { putUrl, publicUrl } = await generatePresignedPutUrl(key, 'video/mp4');
+        return { putUrl, publicUrl, key };
+      });
+
+      await step.run('update-status-calling-gpu', async () => {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: 'Calling GPU API...',
+          progress_percent: 30,
+        });
+      });
+
+      const inputImageUrl = input_image_url || PLACEHOLDER_IMAGE_URL;
+
+      let result = await step.run('call-gpu-api', async () => {
+        const jobId = uuidv4();
+        return await callGpuLtx2Generate({
+          job_id: jobId,
+          input_image_url: inputImageUrl,
+          prompt,
+          negative_prompt: negative_prompt || undefined,
+          duration_seconds: duration_seconds || 5.0,
+          frame_rate: frame_rate || 24.0,
+          aspect_ratio: (aspect_ratio as AspectRatio) || '16:9',
+          width: width || undefined,
+          height: height || undefined,
+          end_image_url: end_image_url || undefined,
+          seed: seed || undefined,
+          enhance_prompt: enhance_prompt || false,
+          save_url: putUrl,
+        });
+      });
+
+      if (result.success && result.isAsync && result.jobId) {
+        let attempts = 0;
+        const maxAttempts = 120;
+        let isDone = false;
+
+        while (attempts < maxAttempts && !isDone) {
+          attempts++;
+          await step.sleep('wait-for-job', '5s');
+
+          const pollResult = await step.run(`poll-job-status-${attempts}`, async () => {
+            return await callGpuGetJobStatus(result.jobId!);
+          });
+
+          if (!pollResult.success) continue;
+
+          const job = pollResult.job;
+          await step.run(`update-status-polling-${attempts}`, async () => {
+            await updateTaskStatus(taskId, {
+              current_step: `LTX-2 Generation (${job.status})...`,
+              progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6),
+            });
+          });
+
+          if (job.status === 'completed') {
+            isDone = true;
+            result = {
+              ...result,
+              success: true,
+              generationTime: job.result?.generation_time,
+              publicUrl: job.result?.save_url || result.publicUrl,
+            };
+          } else if (job.status === 'failed') {
+            isDone = true;
+            result = {
+              ...result,
+              success: false,
+              errorMessage: job.error_message || 'GPU job failed',
+              errorCode: job.error_code,
+            };
+          }
+        }
+
+        if (!isDone) throw new Error('Timeout waiting for GPU job completion');
+      }
+
+      await supabase
+        .from('tasks')
+        .update({
+          status: result.success ? 'completed' : 'failed',
+          current_step: result.success ? 'Complete' : 'Failed',
+          progress_percent: result.success ? 100 : 0,
+          output_data: {
+            success: result.success,
+            type: 'ltx2_generation',
+            videoUrl: result.success ? publicUrl : undefined,
+            generationTime: result.generationTime,
+            inputImageUrl,
+            error: result.success ? undefined : (result.errorMessage || 'Unknown error'),
+            errorCode: result.errorCode,
+            r2Key: key,
+            debug: result.debug,
+          },
+        })
+        .eq('id', taskId);
+
+      if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
+
+      return { success: true, videoUrl: publicUrl, generationTime: result.generationTime, debug: result.debug };
+    } catch (error) {
+      await supabase.from('tasks').update({
+        status: 'failed',
+        current_step: 'Failed',
+        progress_percent: 0,
+        output_data: {
+          success: false,
+          type: 'ltx2_generation',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        },
+      }).eq('id', taskId);
+      throw error;
+    }
+  }
+);
+
+// ============================================================================
+// LTX-2 INTERPOLATION TEST
+// ============================================================================
+
+export const gpuApiTestLtx2Interpolate = inngest.createFunction(
+  {
+    id: 'gpu-api-test-ltx-2-interpolate',
+    retries: 1,
+    concurrency: {
+      limit: 3,
+      key: 'event.data.userId',
+    },
+  },
+  { event: 'gpu-api/test-ltx2.interpolate' },
+  async ({ event, step }) => {
+    const { 
+      taskId, 
+      userId, 
+      prompt, 
+      keyframes, 
+      negative_prompt,
+      duration_seconds,
+      frame_rate,
+      aspect_ratio,
+      width,
+      height,
+      seed,
+      enhance_prompt
+    } = event.data;
+    const supabase = getSupabaseServiceClient();
+
+    console.log(`[GPUApiTest] Starting LTX-2 interpolation test for task ${taskId}`);
+
+    try {
+      await step.run('validate-r2', async () => {
+        if (!isR2Configured()) {
+          throw new Error('R2 storage is not configured. Please set R2 environment variables.');
+        }
+      });
+
+      await step.run('update-status-running', async () => {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_phase: 'video_generation',
+          current_step: 'Generating presigned URL...',
+          progress_percent: 10,
+        });
+      });
+
+      const { putUrl, publicUrl, key } = await step.run('generate-presigned-url', async () => {
+        const key = generateGpuTestKey(userId, 'video', 'mp4');
+        const { putUrl, publicUrl } = await generatePresignedPutUrl(key, 'video/mp4');
+        return { putUrl, publicUrl, key };
+      });
+
+      await step.run('update-status-calling-gpu', async () => {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: 'Calling GPU API...',
+          progress_percent: 30,
+        });
+      });
+
+      let result = await step.run('call-gpu-api', async () => {
+        const jobId = uuidv4();
+        return await callGpuLtx2Interpolate({
+          job_id: jobId,
+          prompt,
+          keyframes,
+          negative_prompt: negative_prompt || undefined,
+          duration_seconds: duration_seconds || 5.0,
+          frame_rate: frame_rate || 24.0,
+          aspect_ratio: (aspect_ratio as AspectRatio) || '16:9',
+          width: width || undefined,
+          height: height || undefined,
+          seed: seed || undefined,
+          enhance_prompt: enhance_prompt || false,
+          save_url: putUrl,
+        });
+      });
+
+      if (result.success && result.isAsync && result.jobId) {
+        let attempts = 0;
+        const maxAttempts = 120;
+        let isDone = false;
+
+        while (attempts < maxAttempts && !isDone) {
+          attempts++;
+          await step.sleep('wait-for-job', '5s');
+
+          const pollResult = await step.run(`poll-job-status-${attempts}`, async () => {
+            return await callGpuGetJobStatus(result.jobId!);
+          });
+
+          if (!pollResult.success) continue;
+
+          const job = pollResult.job;
+          await step.run(`update-status-polling-${attempts}`, async () => {
+            await updateTaskStatus(taskId, {
+              current_step: `LTX-2 Interpolation (${job.status})...`,
+              progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6),
+            });
+          });
+
+          if (job.status === 'completed') {
+            isDone = true;
+            result = {
+              ...result,
+              success: true,
+              generationTime: job.result?.generation_time,
+              publicUrl: job.result?.save_url || result.publicUrl,
+            };
+          } else if (job.status === 'failed') {
+            isDone = true;
+            result = {
+              ...result,
+              success: false,
+              errorMessage: job.error_message || 'GPU job failed',
+              errorCode: job.error_code,
+            };
+          }
+        }
+
+        if (!isDone) throw new Error('Timeout waiting for GPU job completion');
+      }
+
+      await supabase
+        .from('tasks')
+        .update({
+          status: result.success ? 'completed' : 'failed',
+          current_step: result.success ? 'Complete' : 'Failed',
+          progress_percent: result.success ? 100 : 0,
+          output_data: {
+            success: result.success,
+            type: 'ltx2_interpolate',
+            videoUrl: result.success ? publicUrl : undefined,
+            generationTime: result.generationTime,
+            error: result.success ? undefined : (result.errorMessage || 'Unknown error'),
+            errorCode: result.errorCode,
+            r2Key: key,
+            debug: result.debug,
+          },
+        })
+        .eq('id', taskId);
+
+      if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
+
+      return { success: true, videoUrl: publicUrl, generationTime: result.generationTime, debug: result.debug };
+    } catch (error) {
+      await supabase.from('tasks').update({
+        status: 'failed',
+        current_step: 'Failed',
+        progress_percent: 0,
+        output_data: {
+          success: false,
+          type: 'ltx2_interpolate',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        },
+      }).eq('id', taskId);
+      throw error;
+    }
+  }
+);
+
+// ============================================================================
 // EXPORT ALL FUNCTIONS
 // ============================================================================
 
@@ -596,4 +936,6 @@ export const gpuApiTestFunctions = [
   gpuApiTestImageCreate,
   gpuApiTestImageEdit,
   gpuApiTestVideoCreate,
+  gpuApiTestLtx2Create,
+  gpuApiTestLtx2Interpolate,
 ];

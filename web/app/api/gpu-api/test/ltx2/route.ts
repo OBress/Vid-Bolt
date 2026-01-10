@@ -5,14 +5,12 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 /**
- * POST /api/gpu-api/test/video
+ * POST /api/gpu-api/test/ltx2
  * 
- * Triggers single video creation test via Inngest.
- * Supports all parameters from the GPU API documentation.
+ * Triggers specialized LTX-2 video generation test via Inngest.
  */
 export async function POST(request: NextRequest) {
   try {
-    // Get user from session
     const cookieStore = await cookies();
     const supabaseAuth = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -33,7 +31,19 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { prompt, startFrameUrl, durationSeconds, fps, aspectRatio, endFrameUrl, seed, width, height } = body;
+    const { 
+      prompt, 
+      input_image_url, 
+      negative_prompt, 
+      duration_seconds, 
+      frame_rate, 
+      aspect_ratio, 
+      width, 
+      height, 
+      end_image_url, 
+      seed, 
+      enhance_prompt 
+    } = body;
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
       return NextResponse.json(
@@ -42,10 +52,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // startFrameUrl is optional - will use placeholder if not provided
-    console.log(`[GPUApiTest] Creating video creation task for prompt: ${prompt.substring(0, 50)}...`);
+    console.log(`[GPUApiTest] Creating LTX-2 task for prompt: ${prompt.substring(0, 50)}...`);
 
-    // Create task in database using service role
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!supabaseUrl || !supabaseKey) {
@@ -58,21 +66,23 @@ export async function POST(request: NextRequest) {
       .from("tasks")
       .insert({
         user_id: user.id,
-        type: "video", // GPU tasks are video type
-        name: `GPU Test: Video Creation`,
+        type: "video",
+        name: `GPU Test: LTX-2 Generation`,
         status: "pending",
         steps: [],
         input_data: { 
           prompt, 
-          startFrameUrl, 
-          durationSeconds,
-          fps,
-          aspectRatio,
-          endFrameUrl,
-          seed,
+          input_image_url, 
+          negative_prompt, 
+          duration_seconds,
+          frame_rate,
+          aspect_ratio,
           width,
           height,
-          testType: 'video_creation' 
+          end_image_url,
+          seed,
+          enhance_prompt,
+          testType: 'ltx2_generation' 
         },
         output_data: {},
       })
@@ -84,32 +94,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    // Trigger Inngest workflow
     await inngest.send({
-      name: "gpu-api/test-video.create",
+      name: "gpu-api/test-ltx2.create",
       data: {
         taskId: task.id,
         userId: user.id,
         prompt,
-        startFrameUrl: startFrameUrl || null,
-        durationSeconds: durationSeconds || 4.0,
-        fps: fps || 24,
-        aspectRatio: aspectRatio || '16:9',
+        input_image_url: input_image_url || null,
+        negative_prompt: negative_prompt || null,
+        duration_seconds: duration_seconds || 5.0,
+        frame_rate: frame_rate || 24.0,
+        aspect_ratio: aspect_ratio || '16:9',
         width: width || null,
         height: height || null,
-        endFrameUrl: endFrameUrl || null,
+        end_image_url: end_image_url || null,
         seed: seed || null,
+        enhance_prompt: enhance_prompt || false,
       },
     });
-
-    console.log(`[GPUApiTest] Triggered video creation test for task ${task.id}`);
 
     return NextResponse.json({ 
       success: true, 
       taskId: task.id,
     });
   } catch (error) {
-    console.error("[GPUApiTest] Video creation error:", error);
+    console.error("[GPUApiTest] LTX-2 generation error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }

@@ -45,6 +45,8 @@ export interface VideoGenerateRequest {
   duration_seconds?: number;
   fps?: FPS;
   aspect_ratio?: AspectRatio;
+  width?: number;
+  height?: number;
   seed?: number;
   end_image_url?: string;
   save_url: string;
@@ -682,6 +684,8 @@ export interface LTX2GenerateRequest {
   duration_seconds?: number;
   frame_rate?: number;
   aspect_ratio?: AspectRatio;
+  width?: number;
+  height?: number;
   end_image_url?: string;
   seed?: number;
   enhance_prompt?: boolean;
@@ -704,6 +708,8 @@ export interface LTX2InterpolateRequest {
   duration_seconds?: number;
   frame_rate?: number;
   aspect_ratio?: AspectRatio;
+  width?: number;
+  height?: number;
   seed?: number;
   enhance_prompt?: boolean;
   save_url: string;

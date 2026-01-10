@@ -68,7 +68,15 @@ interface TestResult {
 }
 
 type TestStatus = "idle" | "loading" | "success" | "error";
-type TabType = "system" | "mode" | "image" | "image-edit" | "video" | "loras";
+type TabType =
+  | "system"
+  | "mode"
+  | "image"
+  | "image-edit"
+  | "video"
+  | "ltx2"
+  | "ltx2-interpolate"
+  | "loras";
 type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 type FPS = 8 | 12 | 16 | 24 | 30;
 type ApiMode = "mock" | "real";
@@ -184,11 +192,54 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   const [videoDuration, setVideoDuration] = useState(4);
   const [videoFps, setVideoFps] = useState<FPS>(24);
   const [videoAspectRatio, setVideoAspectRatio] = useState<AspectRatio>("16:9");
+  const [videoWidth, setVideoWidth] = useState<string>("");
+  const [videoHeight, setVideoHeight] = useState<string>("");
   const [videoEndFrameUrl, setVideoEndFrameUrl] = useState("");
   const [videoSeed, setVideoSeed] = useState<string>("");
   const [videoStatus, setVideoStatus] = useState<TestStatus>("idle");
   const [videoResult, setVideoResult] = useState<TestResult | null>(null);
   const [videoDebugExpanded, setVideoDebugExpanded] = useState(false);
+
+  // LTX-2 State
+  const [ltx2Prompt, setLtx2Prompt] = useState(
+    "Cinematic shot of a drone flying through a valley"
+  );
+  const [ltx2NegativePrompt, setLtx2NegativePrompt] = useState("");
+  const [ltx2InputImageUrl, setLtx2InputImageUrl] = useState("");
+  const [ltx2Duration, setLtx2Duration] = useState(5.0);
+  const [ltx2FrameRate, setLtx2FrameRate] = useState(24.0);
+  const [ltx2AspectRatio, setLtx2AspectRatio] = useState<AspectRatio>("16:9");
+  const [ltx2Width, setLtx2Width] = useState<string>("");
+  const [ltx2Height, setLtx2Height] = useState<string>("");
+  const [ltx2EndImageUrl, setLtx2EndImageUrl] = useState("");
+  const [ltx2Seed, setLtx2Seed] = useState<string>("");
+  const [ltx2EnhancePrompt, setLtx2EnhancePrompt] = useState(false);
+  const [ltx2Status, setLtx2Status] = useState<TestStatus>("idle");
+  const [ltx2Result, setLtx2Result] = useState<TestResult | null>(null);
+  const [ltx2DebugExpanded, setLtx2DebugExpanded] = useState(false);
+
+  // LTX-2 Interpolate State
+  const [interpPrompt, setInterpPrompt] = useState(
+    "Smooth transition between keyframes"
+  );
+  const [interpKeyframes, setInterpKeyframes] = useState<
+    { url: string; index: number; strength: number }[]
+  >([
+    { url: "", index: 0, strength: 1.0 },
+    { url: "", index: 120, strength: 1.0 },
+  ]);
+  const [interpNegativePrompt, setInterpNegativePrompt] = useState("");
+  const [interpDuration, setInterpDuration] = useState(5.0);
+  const [interpFrameRate, setInterpFrameRate] = useState(24.0);
+  const [interpAspectRatio, setInterpAspectRatio] =
+    useState<AspectRatio>("16:9");
+  const [interpWidth, setInterpWidth] = useState<string>("");
+  const [interpHeight, setInterpHeight] = useState<string>("");
+  const [interpSeed, setInterpSeed] = useState<string>("");
+  const [interpEnhancePrompt, setInterpEnhancePrompt] = useState(false);
+  const [interpStatus, setInterpStatus] = useState<TestStatus>("idle");
+  const [interpResult, setInterpResult] = useState<TestResult | null>(null);
+  const [interpDebugExpanded, setInterpDebugExpanded] = useState(false);
 
   // Mount effect for portal
   useEffect(() => {
@@ -459,6 +510,8 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           durationSeconds: videoDuration,
           fps: videoFps,
           aspectRatio: videoAspectRatio,
+          width: videoWidth ? parseInt(videoWidth) : undefined,
+          height: videoHeight ? parseInt(videoHeight) : undefined,
           endFrameUrl: videoEndFrameUrl || undefined,
           seed: videoSeed ? parseInt(videoSeed) : undefined,
         }),
@@ -478,6 +531,94 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
         error: err instanceof Error ? err.message : "Unknown error",
       });
       setVideoStatus("error");
+    }
+  };
+
+  const handleTestLtx2Creation = async () => {
+    setLtx2Status("loading");
+    setLtx2Result(null);
+    try {
+      const response = await fetch("/api/gpu-api/test/ltx2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: ltx2Prompt,
+          input_image_url: ltx2InputImageUrl || undefined,
+          negative_prompt: ltx2NegativePrompt || undefined,
+          duration_seconds: ltx2Duration,
+          frame_rate: ltx2FrameRate,
+          aspect_ratio: ltx2AspectRatio,
+          width: ltx2Width ? parseInt(ltx2Width) : undefined,
+          height: ltx2Height ? parseInt(ltx2Height) : undefined,
+          end_image_url: ltx2EndImageUrl || undefined,
+          seed: ltx2Seed ? parseInt(ltx2Seed) : undefined,
+          enhance_prompt: ltx2EnhancePrompt,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to start test");
+
+      const result = await pollForResult(data.taskId);
+      setLtx2Result(result);
+      setLtx2Status(result.success ? "success" : "error");
+      setLtx2DebugExpanded(!result.success);
+    } catch (err) {
+      setLtx2Result({
+        success: false,
+        type: "ltx2_generation",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+      setLtx2Status("error");
+    }
+  };
+
+  const handleTestLtx2Interpolation = async () => {
+    setInterpStatus("loading");
+    setInterpResult(null);
+    try {
+      // Filter out empty keyframes
+      const activeKeyframes = interpKeyframes.filter(
+        (kf) => kf.url.trim() !== ""
+      );
+      if (activeKeyframes.length === 0)
+        throw new Error("At least one keyframe URL is required");
+
+      const response = await fetch("/api/gpu-api/test/ltx2-interpolate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: interpPrompt,
+          keyframes: activeKeyframes.map((kf) => ({
+            image_url: kf.url,
+            frame_index: kf.index,
+            strength: kf.strength,
+          })),
+          negative_prompt: interpNegativePrompt || undefined,
+          duration_seconds: interpDuration,
+          frame_rate: interpFrameRate,
+          aspect_ratio: interpAspectRatio,
+          width: interpWidth ? parseInt(interpWidth) : undefined,
+          height: interpHeight ? parseInt(interpHeight) : undefined,
+          seed: interpSeed ? parseInt(interpSeed) : undefined,
+          enhance_prompt: interpEnhancePrompt,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to start test");
+
+      const result = await pollForResult(data.taskId);
+      setInterpResult(result);
+      setInterpStatus(result.success ? "success" : "error");
+      setInterpDebugExpanded(!result.success);
+    } catch (err) {
+      setInterpResult({
+        success: false,
+        type: "ltx2_interpolate",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+      setInterpStatus("error");
     }
   };
 
@@ -944,6 +1085,36 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
             )}
           </Button>
           <Button
+            variant={activeTab === "ltx2" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("ltx2")}
+            className={
+              activeTab === "ltx2" ? "bg-cyan-600 hover:bg-cyan-700" : ""
+            }
+          >
+            <Sparkles className="w-4 h-4 mr-2" />
+            LTX-2
+            {ltx2Status !== "idle" && (
+              <span className="ml-2">{renderStatusBadge(ltx2Status)}</span>
+            )}
+          </Button>
+          <Button
+            variant={activeTab === "ltx2-interpolate" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("ltx2-interpolate")}
+            className={
+              activeTab === "ltx2-interpolate"
+                ? "bg-emerald-600 hover:bg-emerald-700"
+                : ""
+            }
+          >
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Interpolate
+            {interpStatus !== "idle" && (
+              <span className="ml-2">{renderStatusBadge(interpStatus)}</span>
+            )}
+          </Button>
+          <Button
             variant={activeTab === "loras" ? "default" : "ghost"}
             size="sm"
             onClick={() => setActiveTab("loras")}
@@ -1384,7 +1555,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
                       disabled={imageStatus === "loading"}
                       min={256}
-                      max={1536}
+                      max={2048}
                     />
                   </div>
                   <div>
@@ -1400,7 +1571,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
                       disabled={imageStatus === "loading"}
                       min={256}
-                      max={1536}
+                      max={2048}
                     />
                   </div>
                 </div>
@@ -1680,9 +1851,53 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                   {renderAspectRatioSelector(
                     videoAspectRatio,
                     setVideoAspectRatio,
-                    videoStatus === "loading",
+                    videoStatus === "loading" || !!(videoWidth || videoHeight),
                     "teal"
                   )}
+                  {(videoWidth || videoHeight) && (
+                    <p className="text-xs text-amber-500 mt-1">
+                      Aspect ratio is ignored when custom dimensions are set.
+                    </p>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Width{" "}
+                      <span className="text-neutral-600">
+                        (optional, 512-1920)
+                      </span>
+                    </label>
+                    <Input
+                      type="number"
+                      value={videoWidth}
+                      onChange={(e) => setVideoWidth(e.target.value)}
+                      placeholder="e.g. 1920 for 1080p"
+                      className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                      disabled={videoStatus === "loading"}
+                      min={512}
+                      max={1920}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Height{" "}
+                      <span className="text-neutral-600">
+                        (optional, 512-1920)
+                      </span>
+                    </label>
+                    <Input
+                      type="number"
+                      value={videoHeight}
+                      onChange={(e) => setVideoHeight(e.target.value)}
+                      placeholder="e.g. 1080 for 1080p"
+                      className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                      disabled={videoStatus === "loading"}
+                      min={512}
+                      max={1920}
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -1746,6 +1961,354 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
 
                 {renderResult(videoResult, videoDebugExpanded, () =>
                   setVideoDebugExpanded(!videoDebugExpanded)
+                )}
+              </div>
+            )}
+
+            {/* LTX-2 Generation Tab */}
+            {activeTab === "ltx2" && (
+              <div className="space-y-6">
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Input Image URL{" "}
+                    <span className="text-neutral-600">(optional)</span>
+                  </label>
+                  <Input
+                    value={ltx2InputImageUrl}
+                    onChange={(e) => setLtx2InputImageUrl(e.target.value)}
+                    placeholder="https://... (leave empty for placeholder)"
+                    className="bg-neutral-900 border-neutral-700 text-neutral-200"
+                    disabled={ltx2Status === "loading"}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Prompt
+                  </label>
+                  <Textarea
+                    value={ltx2Prompt}
+                    onChange={(e) => setLtx2Prompt(e.target.value)}
+                    placeholder="Describe the video content..."
+                    className="min-h-[100px] bg-neutral-900 border-neutral-700 text-neutral-200"
+                    disabled={ltx2Status === "loading"}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Negative Prompt{" "}
+                    <span className="text-neutral-600">(optional)</span>
+                  </label>
+                  <Textarea
+                    value={ltx2NegativePrompt}
+                    onChange={(e) => setLtx2NegativePrompt(e.target.value)}
+                    placeholder="Describe what to avoid..."
+                    className="min-h-[60px] bg-neutral-900 border-neutral-700 text-neutral-200"
+                    disabled={ltx2Status === "loading"}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Duration{" "}
+                      <span className="text-neutral-600">(seconds)</span>
+                    </label>
+                    <Input
+                      type="number"
+                      value={ltx2Duration}
+                      onChange={(e) =>
+                        setLtx2Duration(parseFloat(e.target.value))
+                      }
+                      step={0.5}
+                      min={1}
+                      max={8}
+                      className="bg-neutral-900 border-neutral-700 text-neutral-200"
+                      disabled={ltx2Status === "loading"}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Frame Rate <span className="text-neutral-600">(FPS)</span>
+                    </label>
+                    <Input
+                      type="number"
+                      value={ltx2FrameRate}
+                      onChange={(e) =>
+                        setLtx2FrameRate(parseFloat(e.target.value))
+                      }
+                      className="bg-neutral-900 border-neutral-700 text-neutral-200"
+                      disabled={ltx2Status === "loading"}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Aspect Ratio
+                  </label>
+                  {renderAspectRatioSelector(
+                    ltx2AspectRatio,
+                    setLtx2AspectRatio,
+                    ltx2Status === "loading" || !!(ltx2Width || ltx2Height),
+                    "cyan"
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Width <span className="text-neutral-600">(512-1920)</span>
+                    </label>
+                    <Input
+                      type="number"
+                      value={ltx2Width}
+                      onChange={(e) => setLtx2Width(e.target.value)}
+                      placeholder="e.g. 1920"
+                      className="bg-neutral-900 border-neutral-700 text-neutral-200"
+                      disabled={ltx2Status === "loading"}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Height{" "}
+                      <span className="text-neutral-600">(512-1920)</span>
+                    </label>
+                    <Input
+                      type="number"
+                      value={ltx2Height}
+                      onChange={(e) => setLtx2Height(e.target.value)}
+                      placeholder="e.g. 1080"
+                      className="bg-neutral-900 border-neutral-700 text-neutral-200"
+                      disabled={ltx2Status === "loading"}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 bg-neutral-900 p-4 rounded-lg border border-neutral-800">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-white">
+                      Enhance Prompt
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      Use AI to expand your prompt
+                    </p>
+                  </div>
+                  <Switch
+                    checked={ltx2EnhancePrompt}
+                    onCheckedChange={setLtx2EnhancePrompt}
+                    disabled={ltx2Status === "loading"}
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleTestLtx2Creation}
+                    disabled={!ltx2Prompt.trim() || ltx2Status === "loading"}
+                    className="flex-1 bg-cyan-600 hover:bg-cyan-700"
+                  >
+                    {ltx2Status === "loading" ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />{" "}
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 mr-2" /> Generate LTX-2
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {renderResult(ltx2Result, ltx2DebugExpanded, () =>
+                  setLtx2DebugExpanded(!ltx2DebugExpanded)
+                )}
+              </div>
+            )}
+
+            {/* LTX-2 Interpolation Tab */}
+            {activeTab === "ltx2-interpolate" && (
+              <div className="space-y-6">
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Prompt
+                  </label>
+                  <Textarea
+                    value={interpPrompt}
+                    onChange={(e) => setInterpPrompt(e.target.value)}
+                    placeholder="Describe the transitions..."
+                    className="min-h-[80px] bg-neutral-900 border-neutral-700 text-neutral-200"
+                    disabled={interpStatus === "loading"}
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-neutral-400">
+                      Keyframes
+                    </label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        setInterpKeyframes([
+                          ...interpKeyframes,
+                          {
+                            url: "",
+                            index: interpKeyframes.length * 48,
+                            strength: 1.0,
+                          },
+                        ])
+                      }
+                      className="border-neutral-700 text-xs"
+                      disabled={interpStatus === "loading"}
+                    >
+                      Add Keyframe
+                    </Button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {interpKeyframes.map((kf, i) => (
+                      <div
+                        key={i}
+                        className="p-3 bg-neutral-900 rounded-lg border border-neutral-800 space-y-2"
+                      >
+                        <div className="flex gap-2">
+                          <Input
+                            value={kf.url}
+                            onChange={(e) => {
+                              const newKfs = [...interpKeyframes];
+                              newKfs[i].url = e.target.value;
+                              setInterpKeyframes(newKfs);
+                            }}
+                            placeholder="Image URL"
+                            className="bg-neutral-800 border-neutral-700 text-xs"
+                            disabled={interpStatus === "loading"}
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() =>
+                              setInterpKeyframes(
+                                interpKeyframes.filter((_, idx) => idx !== i)
+                              )
+                            }
+                            disabled={
+                              interpKeyframes.length <= 1 ||
+                              interpStatus === "loading"
+                            }
+                          >
+                            <X className="w-4 h-4 text-red-500" />
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[10px] text-neutral-500 uppercase">
+                              Frame Index
+                            </label>
+                            <Input
+                              type="number"
+                              value={kf.index}
+                              onChange={(e) => {
+                                const newKfs = [...interpKeyframes];
+                                newKfs[i].index = parseInt(e.target.value);
+                                setInterpKeyframes(newKfs);
+                              }}
+                              className="h-8 bg-neutral-800 border-neutral-700 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-neutral-500 uppercase">
+                              Strength
+                            </label>
+                            <Input
+                              type="number"
+                              step={0.1}
+                              min={0}
+                              max={1}
+                              value={kf.strength}
+                              onChange={(e) => {
+                                const newKfs = [...interpKeyframes];
+                                newKfs[i].strength = parseFloat(e.target.value);
+                                setInterpKeyframes(newKfs);
+                              }}
+                              className="h-8 bg-neutral-800 border-neutral-700 text-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Duration
+                    </label>
+                    <Input
+                      type="number"
+                      value={interpDuration}
+                      onChange={(e) =>
+                        setInterpDuration(parseFloat(e.target.value))
+                      }
+                      className="bg-neutral-900 border-neutral-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      Resolution
+                    </label>
+                    <div className="flex gap-2 text-[10px]">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setInterpWidth("1280");
+                          setInterpHeight("720");
+                        }}
+                      >
+                        720p
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setInterpWidth("1920");
+                          setInterpHeight("1080");
+                        }}
+                      >
+                        1080p
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleTestLtx2Interpolation}
+                    disabled={
+                      !interpPrompt.trim() || interpStatus === "loading"
+                    }
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    {interpStatus === "loading" ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />{" "}
+                        Interpolating...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4 mr-2" /> Start
+                        Interpolation
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {renderResult(interpResult, interpDebugExpanded, () =>
+                  setInterpDebugExpanded(!interpDebugExpanded)
                 )}
               </div>
             )}
