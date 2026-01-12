@@ -13,6 +13,7 @@
 
 export type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 export type FPS = 8 | 12 | 16 | 24 | 30;
+export type VramMode = "static" | "dynamic";
 
 /** Request body for POST /api/v1/image/generate */
 export interface ImageGenerateRequest {
@@ -840,4 +841,66 @@ export async function callGpuLtx2Interpolate(
     errorMessage: (response as GPUApiErrorResponse).error_message,
     debug,
   };
+}
+
+// ============================================================================
+// SYSTEM SETTINGS (VRAM MODE)
+// ============================================================================
+
+export interface VramModeResponse {
+  mode: VramMode;
+  description: string;
+}
+
+/**
+ * Get current VRAM loading strategy
+ */
+export async function callGpuGetVramMode(): Promise<{
+  success: boolean;
+  data?: VramModeResponse;
+  error?: string;
+}> {
+  const baseUrl = getGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/settings/vram-mode`, {
+      headers: { "X-API-Key": apiKey },
+    });
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
+/**
+ * Set VRAM loading strategy
+ */
+export async function callGpuSetVramMode(mode: VramMode): Promise<{
+  success: boolean;
+  data?: VramModeResponse;
+  error?: string;
+}> {
+  const baseUrl = getGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/settings/vram-mode`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": apiKey,
+      },
+      body: JSON.stringify({ mode }),
+    });
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
 }

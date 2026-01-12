@@ -80,6 +80,7 @@ type TabType =
 type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 type FPS = 8 | 12 | 16 | 24 | 30;
 type ApiMode = "mock" | "real";
+type VramMode = "static" | "dynamic";
 
 // LoRA types
 interface LoraInfo {
@@ -142,6 +143,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("system");
   const [apiMode, setApiMode] = useState<ApiMode>("mock");
+  const [vramMode, setVramMode] = useState<VramMode | null>(null);
 
   // System/Mode State
   const [healthData, setHealthData] = useState<HealthData | null>(null);
@@ -178,6 +180,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
     "Change the sky to nighttime with stars"
   );
   const [editSourceUrl, setEditSourceUrl] = useState("");
+  const [editMaskUrl, setEditMaskUrl] = useState("");
   const [editAspectRatio, setEditAspectRatio] = useState<AspectRatio>("16:9");
   const [editSeed, setEditSeed] = useState<string>("");
   const [editStatus, setEditStatus] = useState<TestStatus>("idle");
@@ -361,6 +364,34 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
     }
   };
 
+  const handleGetVramMode = async () => {
+    try {
+      const response = await fetch("/api/gpu-api/settings/vram-mode");
+      const data = await response.json();
+      if (data.success) {
+        setVramMode(data.data.mode);
+      }
+    } catch {
+      // Ignore error
+    }
+  };
+
+  const handleSetVramMode = async (mode: VramMode) => {
+    try {
+      const response = await fetch("/api/gpu-api/settings/vram-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setVramMode(data.data.mode);
+      }
+    } catch {
+      // Ignore error
+    }
+  };
+
   // =========================================================================
   // LORA HANDLERS
   // =========================================================================
@@ -474,6 +505,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
         body: JSON.stringify({
           prompt: editPrompt,
           sourceImageUrl: editSourceUrl || undefined,
+          maskImageUrl: editMaskUrl || undefined,
           aspectRatio: editAspectRatio,
           seed: editSeed ? parseInt(editSeed) : undefined,
         }),
@@ -1403,6 +1435,60 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                   </div>
                 </div>
 
+                {/* VRAM Strategy Card */}
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                  <h3 className="text-sm font-medium text-white mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Cpu className="w-4 h-4 text-blue-400" />
+                      VRAM Strategy
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => handleGetVramMode()}
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                    </Button>
+                  </h3>
+
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-neutral-400">Current:</span>
+                      <span className="text-sm font-medium text-white uppercase">
+                        {vramMode || "Unknown"}
+                      </span>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <Button
+                        onClick={() => handleSetVramMode("static")}
+                        disabled={vramMode === "static"}
+                        className={
+                          vramMode === "static"
+                            ? "bg-blue-600"
+                            : "bg-neutral-700 hover:bg-neutral-600"
+                        }
+                        size="sm"
+                      >
+                        Static
+                      </Button>
+                      <Button
+                        onClick={() => handleSetVramMode("dynamic")}
+                        disabled={vramMode === "dynamic"}
+                        className={
+                          vramMode === "dynamic"
+                            ? "bg-green-600"
+                            : "bg-neutral-700 hover:bg-neutral-600"
+                        }
+                        size="sm"
+                      >
+                        Dynamic
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Mode Result */}
                 {modeData && (
                   <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
@@ -1669,6 +1755,20 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                   <p className="text-xs text-neutral-500 mt-1">
                     Will use picsum.photos placeholder if not provided
                   </p>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Mask Image URL{" "}
+                    <span className="text-neutral-600">(optional)</span>
+                  </label>
+                  <Input
+                    value={editMaskUrl}
+                    onChange={(e) => setEditMaskUrl(e.target.value)}
+                    placeholder="https://... (black/white mask)"
+                    className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={editStatus === "loading"}
+                  />
                 </div>
 
                 <div>

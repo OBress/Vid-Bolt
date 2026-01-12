@@ -229,7 +229,7 @@ export const gpuApiTestImageEdit = inngest.createFunction(
   },
   { event: 'gpu-api/test-image.edit' },
   async ({ event, step }) => {
-    const { taskId, userId, prompt, sourceImageUrl, aspectRatio, seed } = event.data;
+    const { taskId, userId, prompt, sourceImageUrl, aspectRatio, seed, maskImageUrl } = event.data;
     const supabase = getSupabaseServiceClient();
 
     console.log(`[GPUApiTest] Starting image edit test for task ${taskId}`);
@@ -280,6 +280,7 @@ export const gpuApiTestImageEdit = inngest.createFunction(
           input_image_url: inputImageUrl,
           prompt,
           aspect_ratio: (aspectRatio as AspectRatio) || '16:9',
+          mask_image_url: maskImageUrl || undefined,
           seed: seed || undefined,
           save_url: putUrl,
         });
