@@ -45,7 +45,7 @@ export const gpuApiTestImageCreate = inngest.createFunction(
   },
   { event: 'gpu-api/test-image.create' },
   async ({ event, step }) => {
-    const { taskId, userId, prompt, aspectRatio, numInferenceSteps, seed, width, height } = event.data;
+    const { taskId, userId, prompt, aspectRatio, numInferenceSteps, seed, width, height, lora_name } = event.data;
     const supabase = getSupabaseServiceClient();
 
     console.log(`[GPUApiTest] Starting image creation test for task ${taskId}`);
@@ -92,10 +92,11 @@ export const gpuApiTestImageCreate = inngest.createFunction(
           job_id: jobId,
           prompt,
           aspect_ratio: (aspectRatio as AspectRatio) || '16:9',
-          width: width || undefined,
-          height: height || undefined,
+          width: width || (aspectRatio === '9:16' ? 1080 : 1920),
+          height: height || (aspectRatio === '9:16' ? 1920 : 1080),
           num_inference_steps: numInferenceSteps || 20,
           seed: seed || undefined,
+          lora_name: lora_name || undefined,
           save_url: putUrl,
         });
       });
@@ -130,10 +131,26 @@ export const gpuApiTestImageCreate = inngest.createFunction(
 
           // Update task progress
           await step.run(`update-status-polling-${attempts}`, async () => {
+            const stage = job.progress_stage ? `: ${job.progress_stage}` : '';
+            const queueMsg = job.status === 'pending' && job.queue_position ? ` (Queue Pos: ${job.queue_position})` : '';
+            
             await updateTaskStatus(taskId, {
-              current_step: `Processing on GPU (${job.status})...`,
+              current_step: `Processing on GPU (${job.status}${stage})${queueMsg}...`,
               progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6), // Scale 0-100 to 30-90
             });
+
+            // Also update output_data periodically so UI can see queue position
+            if (job.status === 'pending' || job.status === 'processing') {
+              await supabase
+                .from('tasks')
+                .update({
+                  output_data: {
+                    ...result,
+                    finalJob: job
+                  }
+                })
+                .eq('id', taskId);
+            }
           });
 
           if (job.status === 'completed') {
@@ -143,6 +160,7 @@ export const gpuApiTestImageCreate = inngest.createFunction(
               success: true,
               generationTime: job.result?.generation_time,
               publicUrl: job.result?.save_url || result.publicUrl,
+              finalJob: job,
             };
           } else if (job.status === 'failed') {
             isDone = true;
@@ -151,6 +169,7 @@ export const gpuApiTestImageCreate = inngest.createFunction(
               success: false,
               errorMessage: job.error_message || 'GPU job failed',
               errorCode: job.error_code,
+              finalJob: job,
             };
           }
         }
@@ -176,6 +195,7 @@ export const gpuApiTestImageCreate = inngest.createFunction(
             errorCode: result.errorCode,
             r2Key: key,
             debug: result.debug,
+            finalJob: result.finalJob,
           },
         })
         .eq('id', taskId);
@@ -191,6 +211,7 @@ export const gpuApiTestImageCreate = inngest.createFunction(
         imageUrl: publicUrl,
         generationTime: result.generationTime,
         debug: result.debug,
+        finalJob: result.finalJob,
       };
     } catch (error) {
       console.error(`[GPUApiTest] Image creation test failed for task ${taskId}:`, error);
@@ -311,10 +332,25 @@ export const gpuApiTestImageEdit = inngest.createFunction(
           console.log(`[GPUApiTest] Image edit job ${result.jobId} status: ${job.status}, progress: ${job.progress_percent || 0}%`);
 
           await step.run(`update-status-polling-${attempts}`, async () => {
+            const stage = job.progress_stage ? `: ${job.progress_stage}` : '';
+            const queueMsg = job.status === 'pending' && job.queue_position ? ` (Queue Pos: ${job.queue_position})` : '';
+            
             await updateTaskStatus(taskId, {
-              current_step: `Editing image on GPU (${job.status})...`,
+              current_step: `Editing image on GPU (${job.status}${stage})${queueMsg}...`,
               progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6),
             });
+
+            if (job.status === 'pending' || job.status === 'processing') {
+              await supabase
+                .from('tasks')
+                .update({
+                  output_data: {
+                    ...result,
+                    finalJob: job
+                  }
+                })
+                .eq('id', taskId);
+            }
           });
 
           if (job.status === 'completed') {
@@ -324,6 +360,7 @@ export const gpuApiTestImageEdit = inngest.createFunction(
               success: true,
               generationTime: job.result?.generation_time,
               publicUrl: job.result?.save_url || result.publicUrl,
+              finalJob: job,
             };
           } else if (job.status === 'failed') {
             isDone = true;
@@ -332,6 +369,7 @@ export const gpuApiTestImageEdit = inngest.createFunction(
               success: false,
               errorMessage: job.error_message || 'GPU job failed',
               errorCode: job.error_code,
+              finalJob: job,
             };
           }
         }
@@ -358,6 +396,7 @@ export const gpuApiTestImageEdit = inngest.createFunction(
             errorCode: result.errorCode,
             r2Key: key,
             debug: result.debug,
+            finalJob: result.finalJob,
           },
         })
         .eq('id', taskId);
@@ -373,6 +412,7 @@ export const gpuApiTestImageEdit = inngest.createFunction(
         imageUrl: publicUrl,
         generationTime: result.generationTime,
         debug: result.debug,
+        finalJob: result.finalJob,
       };
     } catch (error) {
       console.error(`[GPUApiTest] Image edit test failed for task ${taskId}:`, error);
@@ -476,8 +516,8 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
           duration_seconds: durationSeconds || 4.0,
           fps: (fps as FPS) || 24,
           aspect_ratio: (aspectRatio as AspectRatio) || '16:9',
-          width: width || undefined,
-          height: height || undefined,
+          width: width || (aspectRatio === '9:16' ? 1080 : 1920),
+          height: height || (aspectRatio === '9:16' ? 1920 : 1080),
           seed: seed || undefined,
           end_image_url: endFrameUrl || undefined,
           save_url: putUrl,
@@ -509,10 +549,25 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
           console.log(`[GPUApiTest] Video job ${result.jobId} status: ${job.status}, progress: ${job.progress_percent || 0}%`);
 
           await step.run(`update-status-polling-${attempts}`, async () => {
+            const stage = job.progress_stage ? `: ${job.progress_stage}` : '';
+            const queueMsg = job.status === 'pending' && job.queue_position ? ` (Queue Pos: ${job.queue_position})` : '';
+            
             await updateTaskStatus(taskId, {
-              current_step: `Generating video on GPU (${job.status})...`,
+              current_step: `Generating video on GPU (${job.status}${stage})${queueMsg}...`,
               progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6),
             });
+
+            if (job.status === 'pending' || job.status === 'processing') {
+              await supabase
+                .from('tasks')
+                .update({
+                  output_data: {
+                    ...result,
+                    finalJob: job
+                  }
+                })
+                .eq('id', taskId);
+            }
           });
 
           if (job.status === 'completed') {
@@ -522,6 +577,7 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
               success: true,
               generationTime: job.result?.generation_time,
               publicUrl: job.result?.save_url || result.publicUrl,
+              finalJob: job,
             };
           } else if (job.status === 'failed') {
             isDone = true;
@@ -530,6 +586,7 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
               success: false,
               errorMessage: job.error_message || 'GPU job failed',
               errorCode: job.error_code,
+              finalJob: job,
             };
           }
         }
@@ -558,6 +615,7 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
             errorCode: result.errorCode,
             r2Key: key,
             debug: result.debug,
+            finalJob: result.finalJob,
           },
         })
         .eq('id', taskId);
@@ -573,6 +631,7 @@ export const gpuApiTestVideoCreate = inngest.createFunction(
         videoUrl: publicUrl,
         generationTime: result.generationTime,
         debug: result.debug,
+        finalJob: result.finalJob,
       };
     } catch (error) {
       console.error(`[GPUApiTest] Video creation test failed for task ${taskId}:`, error);
@@ -672,8 +731,8 @@ export const gpuApiTestLtx2Create = inngest.createFunction(
           duration_seconds: duration_seconds || 5.0,
           frame_rate: frame_rate || 24.0,
           aspect_ratio: (aspect_ratio as AspectRatio) || '16:9',
-          width: width || undefined,
-          height: height || undefined,
+          width: width || (aspect_ratio === '9:16' ? 1080 : 1920),
+          height: height || (aspect_ratio === '9:16' ? 1920 : 1080),
           end_image_url: end_image_url || undefined,
           seed: seed || undefined,
           enhance_prompt: enhance_prompt || false,
@@ -698,10 +757,25 @@ export const gpuApiTestLtx2Create = inngest.createFunction(
 
           const job = pollResult.job;
           await step.run(`update-status-polling-${attempts}`, async () => {
+            const stage = job.progress_stage ? `: ${job.progress_stage}` : '';
+            const queueMsg = job.status === 'pending' && job.queue_position ? ` (Queue Pos: ${job.queue_position})` : '';
+            
             await updateTaskStatus(taskId, {
-              current_step: `LTX-2 Generation (${job.status})...`,
+              current_step: `LTX-2 Generation (${job.status}${stage})${queueMsg}...`,
               progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6),
             });
+
+            if (job.status === 'pending' || job.status === 'processing') {
+              await supabase
+                .from('tasks')
+                .update({
+                  output_data: {
+                    ...result,
+                    finalJob: job
+                  }
+                })
+                .eq('id', taskId);
+            }
           });
 
           if (job.status === 'completed') {
@@ -711,6 +785,7 @@ export const gpuApiTestLtx2Create = inngest.createFunction(
               success: true,
               generationTime: job.result?.generation_time,
               publicUrl: job.result?.save_url || result.publicUrl,
+              finalJob: job,
             };
           } else if (job.status === 'failed') {
             isDone = true;
@@ -719,6 +794,7 @@ export const gpuApiTestLtx2Create = inngest.createFunction(
               success: false,
               errorMessage: job.error_message || 'GPU job failed',
               errorCode: job.error_code,
+              finalJob: job,
             };
           }
         }
@@ -742,6 +818,7 @@ export const gpuApiTestLtx2Create = inngest.createFunction(
             errorCode: result.errorCode,
             r2Key: key,
             debug: result.debug,
+            finalJob: result.finalJob,
           },
         })
         .eq('id', taskId);
@@ -863,10 +940,25 @@ export const gpuApiTestLtx2Interpolate = inngest.createFunction(
 
           const job = pollResult.job;
           await step.run(`update-status-polling-${attempts}`, async () => {
+            const stage = job.progress_stage ? `: ${job.progress_stage}` : '';
+            const queueMsg = job.status === 'pending' && job.queue_position ? ` (Queue Pos: ${job.queue_position})` : '';
+            
             await updateTaskStatus(taskId, {
-              current_step: `LTX-2 Interpolation (${job.status})...`,
+              current_step: `LTX-2 Interpolation (${job.status}${stage})${queueMsg}...`,
               progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6),
             });
+
+            if (job.status === 'pending' || job.status === 'processing') {
+              await supabase
+                .from('tasks')
+                .update({
+                  output_data: {
+                    ...result,
+                    finalJob: job
+                  }
+                })
+                .eq('id', taskId);
+            }
           });
 
           if (job.status === 'completed') {
@@ -876,6 +968,7 @@ export const gpuApiTestLtx2Interpolate = inngest.createFunction(
               success: true,
               generationTime: job.result?.generation_time,
               publicUrl: job.result?.save_url || result.publicUrl,
+              finalJob: job,
             };
           } else if (job.status === 'failed') {
             isDone = true;
@@ -884,6 +977,7 @@ export const gpuApiTestLtx2Interpolate = inngest.createFunction(
               success: false,
               errorMessage: job.error_message || 'GPU job failed',
               errorCode: job.error_code,
+              finalJob: job,
             };
           }
         }
@@ -906,6 +1000,7 @@ export const gpuApiTestLtx2Interpolate = inngest.createFunction(
             errorCode: result.errorCode,
             r2Key: key,
             debug: result.debug,
+            finalJob: result.finalJob,
           },
         })
         .eq('id', taskId);

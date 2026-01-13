@@ -134,10 +134,8 @@ export function VisualsTab({ projectId }: { projectId?: string }) {
                   <SelectValue placeholder="Select ratio" />
                 </SelectTrigger>
                 <SelectContent className="bg-neutral-900 border-neutral-800">
-                  <SelectItem value="9-16">9:16 (TikTok/Shorts)</SelectItem>
                   <SelectItem value="16-9">16:9 (YouTube)</SelectItem>
-                  <SelectItem value="1-1">1:1 (Instagram)</SelectItem>
-                  <SelectItem value="4-3">4:3 (Standard)</SelectItem>
+                  <SelectItem value="9-16">9:16 (TikTok/Shorts)</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-[10px] text-neutral-500 italic">

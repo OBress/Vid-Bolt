@@ -65,6 +65,7 @@ interface TestResult {
   durationSeconds?: number;
   fps?: number;
   debug?: DebugInfo;
+  finalJob?: any;
 }
 
 type TestStatus = "idle" | "loading" | "success" | "error";
@@ -77,7 +78,7 @@ type TabType =
   | "ltx2"
   | "ltx2-interpolate"
   | "loras";
-type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+type AspectRatio = "16:9" | "9:16";
 type FPS = 8 | 12 | 16 | 24 | 30;
 type ApiMode = "mock" | "real";
 type VramMode = "static" | "dynamic";
@@ -123,6 +124,7 @@ interface SystemData {
   mode: {
     mode: string;
     is_busy: boolean;
+    active_job_id: string | null;
     loaded_models: string[];
   } | null;
   mock_mode: boolean;
@@ -167,12 +169,13 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
     "A beautiful sunset over mountains with golden light"
   );
   const [imageAspectRatio, setImageAspectRatio] = useState<AspectRatio>("16:9");
-  const [imageInferenceSteps, setImageInferenceSteps] = useState(20);
+  const [imageInferenceSteps, setImageInferenceSteps] = useState(8);
   const [imageWidth, setImageWidth] = useState<string>("");
   const [imageHeight, setImageHeight] = useState<string>("");
   const [imageSeed, setImageSeed] = useState<string>("");
   const [imageStatus, setImageStatus] = useState<TestStatus>("idle");
   const [imageResult, setImageResult] = useState<TestResult | null>(null);
+  const [imageLora, setImageLora] = useState<string>("");
   const [imageDebugExpanded, setImageDebugExpanded] = useState(false);
 
   // Image Edit State
@@ -250,23 +253,45 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
     return () => setMounted(false);
   }, []);
 
+  // Fetch initial data on tab switch
+  useEffect(() => {
+    if (activeTab === "loras" || activeTab === "image") {
+      handleListLoras();
+    }
+    if (activeTab === "system") {
+      handleCheckHealth();
+      handleGetVramMode();
+    }
+    if (activeTab === "mode") {
+      handleGetMode();
+      handleGetVramMode();
+    }
+  }, [activeTab]);
+
   // =========================================================================
   // POLLING HELPER
   // =========================================================================
 
-  const pollForResult = async (taskId: string): Promise<TestResult> => {
-    const maxAttempts = 120; // 2 minutes max for video generation
+  const pollForResult = async (
+    taskId: string,
+    onUpdate?: (output: TestResult) => void
+  ): Promise<TestResult> => {
+    const maxAttempts = 120;
     let attempts = 0;
 
     while (attempts < maxAttempts) {
       const response = await fetch(`/api/gpu-api/test/status?taskId=${taskId}`);
       const data = await response.json();
 
+      if (data.output && onUpdate) {
+        onUpdate(data.output as TestResult);
+      }
+
       if (data.status === "completed" || data.status === "failed") {
         return data.output as TestResult;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
       attempts++;
     }
 
@@ -472,15 +497,26 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           aspectRatio: imageAspectRatio,
           numInferenceSteps: imageInferenceSteps,
           seed: imageSeed ? parseInt(imageSeed) : undefined,
-          width: imageWidth ? parseInt(imageWidth) : undefined,
-          height: imageHeight ? parseInt(imageHeight) : undefined,
+          lora: imageLora || undefined,
+          width: imageWidth
+            ? parseInt(imageWidth)
+            : imageAspectRatio === "9:16"
+            ? 1080
+            : 1920,
+          height: imageHeight
+            ? parseInt(imageHeight)
+            : imageAspectRatio === "9:16"
+            ? 1920
+            : 1080,
         }),
       });
 
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to start test");
 
-      const result = await pollForResult(data.taskId);
+      const result = await pollForResult(data.taskId, (update) =>
+        setImageResult(update)
+      );
       setImageResult(result);
       setImageStatus(result.success ? "success" : "error");
       setImageDebugExpanded(!result.success); // Auto-expand debug on error
@@ -514,7 +550,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to start test");
 
-      const result = await pollForResult(data.taskId);
+      const result = await pollForResult(data.taskId, (update) =>
+        setEditResult(update)
+      );
       setEditResult(result);
       setEditStatus(result.success ? "success" : "error");
       setEditDebugExpanded(!result.success);
@@ -542,8 +580,16 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           durationSeconds: videoDuration,
           fps: videoFps,
           aspectRatio: videoAspectRatio,
-          width: videoWidth ? parseInt(videoWidth) : undefined,
-          height: videoHeight ? parseInt(videoHeight) : undefined,
+          width: videoWidth
+            ? parseInt(videoWidth)
+            : videoAspectRatio === "9:16"
+            ? 1080
+            : 1920,
+          height: videoHeight
+            ? parseInt(videoHeight)
+            : videoAspectRatio === "9:16"
+            ? 1920
+            : 1080,
           endFrameUrl: videoEndFrameUrl || undefined,
           seed: videoSeed ? parseInt(videoSeed) : undefined,
         }),
@@ -552,7 +598,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to start test");
 
-      const result = await pollForResult(data.taskId);
+      const result = await pollForResult(data.taskId, (update) =>
+        setVideoResult(update)
+      );
       setVideoResult(result);
       setVideoStatus(result.success ? "success" : "error");
       setVideoDebugExpanded(!result.success);
@@ -580,8 +628,16 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           duration_seconds: ltx2Duration,
           frame_rate: ltx2FrameRate,
           aspect_ratio: ltx2AspectRatio,
-          width: ltx2Width ? parseInt(ltx2Width) : undefined,
-          height: ltx2Height ? parseInt(ltx2Height) : undefined,
+          width: ltx2Width
+            ? parseInt(ltx2Width)
+            : ltx2AspectRatio === "9:16"
+            ? 1080
+            : 1920,
+          height: ltx2Height
+            ? parseInt(ltx2Height)
+            : ltx2AspectRatio === "9:16"
+            ? 1920
+            : 1080,
           end_image_url: ltx2EndImageUrl || undefined,
           seed: ltx2Seed ? parseInt(ltx2Seed) : undefined,
           enhance_prompt: ltx2EnhancePrompt,
@@ -591,7 +647,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to start test");
 
-      const result = await pollForResult(data.taskId);
+      const result = await pollForResult(data.taskId, (update) =>
+        setLtx2Result(update)
+      );
       setLtx2Result(result);
       setLtx2Status(result.success ? "success" : "error");
       setLtx2DebugExpanded(!result.success);
@@ -630,8 +688,16 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           duration_seconds: interpDuration,
           frame_rate: interpFrameRate,
           aspect_ratio: interpAspectRatio,
-          width: interpWidth ? parseInt(interpWidth) : undefined,
-          height: interpHeight ? parseInt(interpHeight) : undefined,
+          width: interpWidth
+            ? parseInt(interpWidth)
+            : interpAspectRatio === "9:16"
+            ? 1080
+            : 1920,
+          height: interpHeight
+            ? parseInt(interpHeight)
+            : interpAspectRatio === "9:16"
+            ? 1920
+            : 1080,
           seed: interpSeed ? parseInt(interpSeed) : undefined,
           enhance_prompt: interpEnhancePrompt,
         }),
@@ -640,7 +706,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to start test");
 
-      const result = await pollForResult(data.taskId);
+      const result = await pollForResult(data.taskId, (update) =>
+        setInterpResult(update)
+      );
       setInterpResult(result);
       setInterpStatus(result.success ? "success" : "error");
       setInterpDebugExpanded(!result.success);
@@ -682,7 +750,23 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   // RENDER HELPERS
   // =========================================================================
 
-  const renderStatusBadge = (status: TestStatus) => {
+  const renderStatusBadge = (
+    status: TestStatus,
+    result?: TestResult | null
+  ) => {
+    // Check for queue position in finalJob
+    const queuePos = result?.finalJob?.queue_position;
+    const isPending = result?.finalJob?.status === "pending";
+
+    if (status === "loading" && isPending && queuePos) {
+      return (
+        <span className="flex items-center gap-1 text-xs px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          Queue Pos: {queuePos}
+        </span>
+      );
+    }
+
     switch (status) {
       case "loading":
         return (
@@ -717,7 +801,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
     color: string
   ) => (
     <div className="flex gap-2 flex-wrap">
-      {(["16:9", "9:16", "1:1", "4:3", "3:4"] as AspectRatio[]).map((ratio) => (
+      {(["16:9", "9:16"] as AspectRatio[]).map((ratio) => (
         <Button
           key={ratio}
           variant={value === ratio ? "default" : "outline"}
@@ -731,6 +815,13 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       ))}
     </div>
   );
+
+  const calculateDefaultResolutions = (ratio: AspectRatio) => {
+    if (ratio === "9:16") {
+      return { width: "1080", height: "1920" };
+    }
+    return { width: "1920", height: "1080" };
+  };
 
   const renderDebugSection = (
     result: TestResult | null,
@@ -785,6 +876,28 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                 {result.debug.statusCode || "N/A"}
               </code>
             </div>
+
+            {/* Final Job Info */}
+            {result.finalJob && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-neutral-500 uppercase">
+                    Final Job State
+                  </span>
+                  <button
+                    onClick={() =>
+                      copyToClipboard(JSON.stringify(result.finalJob, null, 2))
+                    }
+                    className="p-1 hover:bg-neutral-800 rounded transition-colors"
+                  >
+                    <Copy className="w-3 h-3 text-neutral-400" />
+                  </button>
+                </div>
+                <pre className="text-xs text-neutral-300 bg-neutral-900 p-2 rounded overflow-x-auto">
+                  {JSON.stringify(result.finalJob, null, 2)}
+                </pre>
+              </div>
+            )}
 
             {/* Request */}
             <div>
@@ -1010,6 +1123,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              {renderStatusBadge(imageStatus, imageResult)}
+            </div>
             {/* Mock/Real Toggle */}
             <div className="flex items-center gap-3 bg-neutral-900 px-4 py-2 rounded-lg">
               <span
@@ -1083,7 +1199,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
             <Image className="w-4 h-4 mr-2" />
             Image
             {imageStatus !== "idle" && (
-              <span className="ml-2">{renderStatusBadge(imageStatus)}</span>
+              <span className="ml-2">
+                {renderStatusBadge(imageStatus, imageResult)}
+              </span>
             )}
           </Button>
           <Button
@@ -1099,7 +1217,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
             <Pencil className="w-4 h-4 mr-2" />
             Edit
             {editStatus !== "idle" && (
-              <span className="ml-2">{renderStatusBadge(editStatus)}</span>
+              <span className="ml-2">
+                {renderStatusBadge(editStatus, editResult)}
+              </span>
             )}
           </Button>
           <Button
@@ -1113,7 +1233,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
             <Video className="w-4 h-4 mr-2" />
             Video
             {videoStatus !== "idle" && (
-              <span className="ml-2">{renderStatusBadge(videoStatus)}</span>
+              <span className="ml-2">
+                {renderStatusBadge(videoStatus, videoResult)}
+              </span>
             )}
           </Button>
           <Button
@@ -1127,7 +1249,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
             <Sparkles className="w-4 h-4 mr-2" />
             LTX-2
             {ltx2Status !== "idle" && (
-              <span className="ml-2">{renderStatusBadge(ltx2Status)}</span>
+              <span className="ml-2">
+                {renderStatusBadge(ltx2Status, ltx2Result)}
+              </span>
             )}
           </Button>
           <Button
@@ -1143,7 +1267,9 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
             <RefreshCw className="w-4 h-4 mr-2" />
             Interpolate
             {interpStatus !== "idle" && (
-              <span className="ml-2">{renderStatusBadge(interpStatus)}</span>
+              <span className="ml-2">
+                {renderStatusBadge(interpStatus, interpResult)}
+              </span>
             )}
           </Button>
           <Button
@@ -1698,6 +1824,26 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                     className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
                     disabled={imageStatus === "loading"}
                   />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    LoRA <span className="text-neutral-600">(optional)</span>
+                  </label>
+                  <select
+                    value={imageLora}
+                    onChange={(e) => setImageLora(e.target.value)}
+                    className="w-full bg-neutral-900 border border-neutral-700 rounded-md px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:ring-2 focus:ring-purple-600 relative z-20"
+                    disabled={imageStatus === "loading"}
+                  >
+                    <option value="">None (Base Model)</option>
+                    {loraList.map((lora) => (
+                      <option key={lora.name} value={lora.name}>
+                        {lora.name} ({Math.round(lora.size_bytes / 1024 / 1024)}{" "}
+                        MB)
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="flex gap-3">

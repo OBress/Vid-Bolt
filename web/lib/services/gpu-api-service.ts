@@ -11,7 +11,7 @@
 // TYPES - Matching the API Documentation
 // ============================================================================
 
-export type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+export type AspectRatio = "16:9" | "9:16";
 export type FPS = 8 | 12 | 16 | 24 | 30;
 export type VramMode = "static" | "dynamic";
 
@@ -24,6 +24,7 @@ export interface ImageGenerateRequest {
   height?: number;
   seed?: number;
   num_inference_steps?: number;
+  lora_name?: string;
   save_url: string;
 }
 
@@ -76,7 +77,21 @@ export interface GPUApiErrorResponse {
   error_message: string;
 }
 
-export type GPUApiResponse = GPUApiSuccessResponse | GPUApiAsyncJobResponse | GPUApiErrorResponse;
+export interface JobInfo {
+  job_id: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  created_at: number;
+  started_at?: number;
+  completed_at?: number;
+  error_message?: string;
+  error_code?: string;
+  result?: any;
+  progress_percent?: number;
+  progress_stage?: string;
+  queue_position?: number;
+}
+
+export type GPUApiResponse = GPUApiSuccessResponse | GPUApiAsyncJobResponse | GPUApiErrorResponse | JobInfo;
 
 // ============================================================================
 // CONFIGURATION
@@ -167,6 +182,7 @@ export interface ImageGenerateResult {
     statusCode: number;
     gpuApiUrl: string;
   };
+  finalJob?: JobInfo;
 }
 
 /**
@@ -239,6 +255,7 @@ export interface ImageEditResult {
     statusCode: number;
     gpuApiUrl: string;
   };
+  finalJob?: JobInfo;
 }
 
 /**
@@ -317,6 +334,7 @@ export interface VideoGenerateResult {
     statusCode: number;
     gpuApiUrl: string;
   };
+  finalJob?: JobInfo;
 }
 
 /**
@@ -733,6 +751,7 @@ export interface LTX2GenerateResult {
     statusCode: number;
     gpuApiUrl: string;
   };
+  finalJob?: JobInfo;
 }
 
 /**
