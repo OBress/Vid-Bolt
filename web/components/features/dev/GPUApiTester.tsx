@@ -314,6 +314,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   const [batchVarySeeds, setBatchVarySeeds] = useState(true);
   const [batchJobType, setBatchJobType] = useState<JobType>("image");
   const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [isManualPolling, setIsManualPolling] = useState(false);
 
   // Clear storage state
   const [clearingStorage, setClearingStorage] = useState(false);
@@ -901,6 +902,111 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       }
       return newMap;
     });
+  };
+
+  // Manual poll for job status (webhook-based architecture uses this for manual refresh)
+  const handleManualPoll = async () => {
+    setIsManualPolling(true);
+    try {
+      const currentJobs = trackedJobsRef.current;
+
+      // Get unique batch IDs for jobs that are pending/processing
+      const activeBatchIds = new Set<string>();
+      for (const job of currentJobs.values()) {
+        if (
+          (job.status === "pending" || job.status === "processing") &&
+          job.batchId
+        ) {
+          activeBatchIds.add(job.batchId);
+        }
+      }
+
+      // Poll each active batch
+      for (const batchId of activeBatchIds) {
+        try {
+          const response = await fetch(
+            `/api/gpu-api/test/batch/status?batchId=${batchId}`
+          );
+          const data = await response.json();
+
+          if (!data.success || !data.batch) continue;
+
+          const batchStatus = data.batch;
+
+          // Update tracked batch
+          setTrackedBatches((prev) => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(batchId);
+            if (existing) {
+              newMap.set(batchId, {
+                ...existing,
+                status: batchStatus.status,
+                completedItems: batchStatus.completed_items,
+                failedItems: batchStatus.failed_items,
+              });
+            }
+            return newMap;
+          });
+
+          // Update individual jobs from batch items
+          setTrackedJobs((prev) => {
+            const newMap = new Map(prev);
+
+            for (const item of batchStatus.items) {
+              for (const [jobId, job] of newMap) {
+                if (
+                  job.batchId === batchId &&
+                  job.batchItemIndex === item.item_index
+                ) {
+                  const updatedJob = { ...job };
+
+                  if (item.status === "completed") {
+                    updatedJob.status = "completed";
+                    updatedJob.progressPercent = 100;
+                    updatedJob.result = {
+                      success: true,
+                      type: job.type,
+                      imageUrl:
+                        job.type === "image" || job.type === "image-edit"
+                          ? item.result?.save_url
+                          : undefined,
+                      videoUrl:
+                        job.type === "video" || job.type === "ltx2"
+                          ? item.result?.save_url
+                          : undefined,
+                      generationTime: item.result?.generation_time,
+                    };
+                  } else if (item.status === "failed") {
+                    updatedJob.status = "failed";
+                    updatedJob.result = {
+                      success: false,
+                      type: job.type,
+                      error: item.error_message || "Job failed",
+                    };
+                  } else if (item.status === "processing") {
+                    updatedJob.status = "processing";
+                  } else if (item.status === "pending") {
+                    updatedJob.status = "pending";
+                  }
+
+                  newMap.set(jobId, updatedJob);
+                  break;
+                }
+              }
+            }
+
+            return newMap;
+          });
+        } catch (error) {
+          console.error(
+            `[GPUApiTester] Error polling batch ${batchId}:`,
+            error
+          );
+        }
+      }
+    } finally {
+      setIsManualPolling(false);
+    }
   };
 
   // =========================================================================
@@ -3534,6 +3640,22 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                   Queue ({trackedJobs.size})
                 </h2>
                 <div className="flex items-center gap-2">
+                  {/* Manual Poll Button */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleManualPoll}
+                    disabled={isManualPolling || activeJobCount === 0}
+                    className="border-neutral-600 text-neutral-300 hover:bg-neutral-700 h-7"
+                    title="Manually refresh job status from GPU API"
+                  >
+                    <RefreshCw
+                      className={`w-3 h-3 mr-1 ${
+                        isManualPolling ? "animate-spin" : ""
+                      }`}
+                    />
+                    Poll
+                  </Button>
                   {queuedJobCount > 0 && (
                     <Button
                       onClick={handleSendAllQueued}

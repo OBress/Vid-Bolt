@@ -21,10 +21,34 @@ import {
 const PLACEHOLDER_IMAGE_URL = "https://picsum.photos/1920/1080";
 
 /**
+ * Get the webhook callback URL for GPU API
+ * Uses WEBHOOK_CALLBACK_URL env var, or derives from request origin
+ */
+function getWebhookUrl(request: NextRequest): string {
+  // Prefer explicit env var
+  if (process.env.WEBHOOK_CALLBACK_URL) {
+    return process.env.WEBHOOK_CALLBACK_URL;
+  }
+  
+  // Derive from request origin (works for deployed apps)
+  const origin = request.headers.get("origin") 
+    || request.headers.get("x-forwarded-host")
+    || "http://localhost:3000";
+  
+  // Handle x-forwarded-host which doesn't include protocol
+  const baseUrl = origin.startsWith("http") 
+    ? origin 
+    : `https://${origin}`;
+    
+  return `${baseUrl}/api/gpu-callback`;
+}
+
+/**
  * POST /api/gpu-api/test/batch/submit
  *
  * Submit a batch of jobs directly to the GPU API.
  * Groups jobs by type and generates presigned URLs for each item.
+ * Includes webhook URL for completion callbacks.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -98,9 +122,15 @@ export async function POST(request: NextRequest) {
     }
 
     const batchId = `batch-${uuidv4()}`;
+    
+    // Get webhook configuration
+    const webhookUrl = getWebhookUrl(request);
+    const webhookSecret = process.env.GPU_WEBHOOK_SECRET;
+    
     console.log(
       `[GPUApiTest] Processing batch ${batchId}: ${items.length} ${type} items`
     );
+    console.log(`[GPUApiTest] Webhook URL: ${webhookUrl}`);
 
     // Generate presigned URLs for all items
     const itemsWithUrls = await Promise.all(
@@ -110,7 +140,9 @@ export async function POST(request: NextRequest) {
         const mimeType = isVideo ? "video/mp4" : "image/png";
         const key = generateGpuTestKey(user.id, isVideo ? "video" : "image", extension);
         const { putUrl, publicUrl } = await generatePresignedPutUrl(key, mimeType);
-        return { ...item, putUrl, publicUrl, key, index };
+        // Generate unique item_id for webhook correlation
+        const itemId = `${batchId}_item_${index}`;
+        return { ...item, putUrl, publicUrl, key, index, itemId };
       })
     );
 
@@ -121,6 +153,7 @@ export async function POST(request: NextRequest) {
       case "image": {
         const batchItems: BatchImageGenerateItem[] = itemsWithUrls.map(
           (item) => ({
+            item_id: item.itemId,
             prompt: item.prompt,
             aspect_ratio: (item.aspectRatio as AspectRatio) || "16:9",
             width:
@@ -133,12 +166,13 @@ export async function POST(request: NextRequest) {
             save_url: item.putUrl,
           })
         );
-        result = await callGpuBatchImageGenerate(batchId, batchItems);
+        result = await callGpuBatchImageGenerate(batchId, batchItems, webhookUrl, webhookSecret);
         break;
       }
 
       case "image-edit": {
         const batchItems: BatchImageEditItem[] = itemsWithUrls.map((item) => ({
+          item_id: item.itemId,
           input_image_url: item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
           prompt: item.prompt,
           aspect_ratio: (item.aspectRatio as AspectRatio) || "16:9",
@@ -146,7 +180,7 @@ export async function POST(request: NextRequest) {
           seed: item.seed,
           save_url: item.putUrl,
         }));
-        result = await callGpuBatchImageEdit(batchId, batchItems);
+        result = await callGpuBatchImageEdit(batchId, batchItems, webhookUrl, webhookSecret);
         break;
       }
 
@@ -154,6 +188,7 @@ export async function POST(request: NextRequest) {
       case "ltx2": {
         const batchItems: BatchVideoGenerateItem[] = itemsWithUrls.map(
           (item) => ({
+            item_id: item.itemId,
             input_image_url: item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
             prompt: item.prompt,
             negative_prompt: item.negative_prompt,
@@ -170,7 +205,7 @@ export async function POST(request: NextRequest) {
             save_url: item.putUrl,
           })
         );
-        result = await callGpuBatchVideoGenerate(batchId, batchItems);
+        result = await callGpuBatchVideoGenerate(batchId, batchItems, webhookUrl, webhookSecret);
         break;
       }
 
@@ -196,9 +231,11 @@ export async function POST(request: NextRequest) {
       batchId: result.batchId,
       totalItems: result.totalItems,
       statusUrl: result.statusUrl,
-      // Return public URLs mapped by index for result retrieval
+      webhookUrl, // Return for debugging
+      // Return public URLs and item IDs mapped by index for result retrieval
       itemUrls: itemsWithUrls.map((item) => ({
         index: item.index,
+        itemId: item.itemId,
         publicUrl: item.publicUrl,
         key: item.key,
       })),
@@ -211,3 +248,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
