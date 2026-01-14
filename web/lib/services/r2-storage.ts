@@ -31,6 +31,12 @@ function getS3Client(): S3Client {
       accessKeyId,
       secretAccessKey,
     },
+    // Disable automatic checksum calculation for presigned URLs
+    // AWS SDK v3.729+ adds CRC32 checksums by default, which causes
+    // SignatureDoesNotMatch errors when external services (GPU API)
+    // upload without sending the checksum headers
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
   });
 
   return s3Client;

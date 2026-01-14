@@ -812,7 +812,7 @@ CREATE TABLE IF NOT EXISTS "public"."video_projects" (
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "completed_at" timestamp with time zone,
-    CONSTRAINT "video_projects_current_stage_check" CHECK (("current_stage" = ANY (ARRAY['idea'::"text", 'script'::"text", 'audio'::"text", 'video'::"text", 'export'::"text", 'completed'::"text"]))),
+    CONSTRAINT "video_projects_current_stage_check" CHECK (("current_stage" = ANY (ARRAY['idea'::"text", 'script'::"text", 'audio'::"text", 'media'::"text", 'video'::"text", 'export'::"text", 'completed'::"text"]))),
     CONSTRAINT "video_projects_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
     CONSTRAINT "video_projects_status_check" CHECK (("status" = ANY (ARRAY['draft'::"text", 'processing'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"])))
 );
@@ -833,7 +833,15 @@ COMMENT ON COLUMN "public"."video_projects"."current_stage" IS 'Current pipeline
 
 
 
-COMMENT ON COLUMN "public"."video_projects"."metadata" IS 'Flexible JSONB storage for video-specific data';
+COMMENT ON COLUMN "public"."video_projects"."metadata" IS 'Flexible JSONB storage for video-specific data. 
+Media generation progress stored in metadata.media_generation: {
+  status: "pending"|"av_script"|"images"|"image_edits"|"videos"|"completed"|"failed",
+  started_at, completed_at, error,
+  total_shots, current_shot_index, current_phase,
+  images_completed, images_failed,
+  edits_completed, edits_failed, edits_skipped,
+  videos_completed, videos_failed
+}';
 
 
 

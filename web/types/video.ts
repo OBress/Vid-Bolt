@@ -12,7 +12,7 @@
 export const VIDEO_STATUSES = ['draft', 'processing', 'completed', 'failed', 'cancelled'] as const;
 export type VideoStatus = typeof VIDEO_STATUSES[number];
 
-export const VIDEO_STAGES = ['idea', 'script', 'audio', 'video', 'export', 'completed'] as const;
+export const VIDEO_STAGES = ['idea', 'script', 'audio', 'media', 'video', 'export', 'completed'] as const;
 export type VideoStage = typeof VIDEO_STAGES[number];
 
 // ============================================================================
@@ -329,7 +329,8 @@ export type VideoProjectInsert = Omit<
 export const STAGE_PROGRESSION: Record<VideoStage, VideoStage | null> = {
   idea: 'script',
   script: 'audio',
-  audio: 'video',
+  audio: 'media',
+  media: 'video',
   video: 'export',
   export: 'completed',
   completed: null,
@@ -348,10 +349,11 @@ export function getNextStage(currentStage: VideoStage): VideoStage | null {
 export function calculateStageProgress(stage: VideoStage): number {
   const stageProgress: Record<VideoStage, number> = {
     idea: 0,
-    script: 20,
-    audio: 40,
-    video: 60,
-    export: 80,
+    script: 15,
+    audio: 30,
+    media: 50,
+    video: 70,
+    export: 85,
     completed: 100,
   };
   return stageProgress[stage];

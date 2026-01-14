@@ -107,6 +107,16 @@ export const avScriptWorkflow = inngest.createFunction(
 
     console.log(`[AVScript] Complete for video ${videoId}`);
 
+    // Emit completion event for orchestration (e.g., media-generation workflow)
+    await step.sendEvent("emit-completion", {
+      name: "av-script/workflow.complete",
+      data: {
+        videoId,
+        userId,
+        shotCount: shotsWithPrompts.length,
+      },
+    });
+
     return {
       success: true,
       videoId,

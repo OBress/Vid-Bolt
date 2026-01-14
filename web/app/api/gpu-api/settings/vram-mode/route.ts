@@ -59,8 +59,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { mode } = body;
 
-    if (mode !== "static" && mode !== "dynamic") {
-      return NextResponse.json({ error: "Invalid mode. Must be 'static' or 'dynamic'" }, { status: 400 });
+    const validModes = ["image_generation", "image_editing", "video_generation", "all"];
+    if (!validModes.includes(mode)) {
+      return NextResponse.json({ error: "Invalid mode. Must be 'image_generation', 'image_editing', 'video_generation', or 'all'" }, { status: 400 });
     }
 
     const result = await callGpuSetVramMode(mode as VramMode);

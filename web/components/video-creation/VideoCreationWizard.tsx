@@ -5,6 +5,7 @@ import { WizardProgress } from "./WizardProgress";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { Step4UniversalScript } from "./steps/Step4UniversalScript";
 import { Step2Audio } from "./steps/Step2Audio";
+import { StepMediaGeneration } from "./steps/StepMediaGeneration";
 import { StepEditor } from "./steps/StepEditor";
 import { StepExport } from "./steps/StepExport";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
@@ -67,12 +68,13 @@ export interface WizardState {
   generationError?: string | null;
 }
 
-// Step configuration for the wizard - 4 steps
+// Step configuration for the wizard - 5 steps
 const STEPS = [
   { id: 1, label: "Script", type: "script" }, // Universal script generation
-  { id: 2, label: "Media", type: "loading" }, // Audio generation
-  { id: 3, label: "Editor", type: "editor" }, // Video editor
-  { id: 4, label: "Export", type: "final" }, // Export
+  { id: 2, label: "Audio", type: "audio" }, // Audio generation & review
+  { id: 3, label: "Media", type: "media-gen" }, // Image & video generation
+  { id: 4, label: "Editor", type: "editor" }, // Video editor
+  { id: 5, label: "Export", type: "final" }, // Export
 ] as const;
 
 // Helper function to map video stage to wizard step number
@@ -80,10 +82,11 @@ function stageToStepNumber(stage: VideoStage): number {
   const stageMapping: Record<VideoStage, number> = {
     idea: 1, // Step 1: Script
     script: 1, // Step 1: Script
-    audio: 2, // Step 2: Audio Review (was 3)
-    video: 3, // Step 3: Editor (was 4)
-    export: 4, // Step 4: Export
-    completed: 4, // Step 4: Export (if completed, show export)
+    audio: 2, // Step 2: Audio
+    media: 3, // Step 3: Media Generation
+    video: 4, // Step 4: Editor
+    export: 5, // Step 5: Export
+    completed: 5, // Step 5: Export (if completed)
   };
   return stageMapping[stage] || 1;
 }
@@ -408,7 +411,7 @@ export function VideoCreationWizard({
           />
         );
 
-      case 2: // Step 2: Media Generation (Audio + AV)
+      case 2: // Step 2: Audio Generation & Review
         // Check for explicit generation error
         if (state.generationError) {
           console.log("[Wizard Render] FORCE RENDERING FIXED ERROR UI");
@@ -455,13 +458,13 @@ export function VideoCreationWizard({
                     await fetch(`/api/videos/${state.videoId}`, {
                       method: "PATCH",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ current_stage: "video" }),
+                      body: JSON.stringify({ current_stage: "media" }),
                     });
                   } catch (err) {
                     console.error("Failed to save step:", err);
                   }
                 }
-                // Proceed to Video Editor
+                // Proceed to Media Generation
                 advanceToStep(3);
               }}
               onBack={() => {
@@ -573,8 +576,30 @@ export function VideoCreationWizard({
           />
         );
 
-      case 3:
-        // Step 3: Video Editor
+      case 3: // Step 3: Media Generation (Images & Videos)
+        return (
+          <StepMediaGeneration
+            videoId={state.videoId!}
+            onComplete={async () => {
+              // Reload shot list from API
+              try {
+                const response = await fetch(`/api/videos/${state.videoId}`);
+                const data = await response.json();
+                const metadata = data.video?.metadata || {};
+                updateState({
+                  shotList: metadata.shot_list || [],
+                });
+              } catch (err) {
+                console.error("Failed to load shot list:", err);
+              }
+              // Proceed to Editor
+              advanceToStep(4);
+            }}
+            onBack={() => goToStep(2)}
+          />
+        );
+
+      case 4: // Step 4: Video Editor
         return (
           <StepEditor
             videoId={state.videoId!}
@@ -595,15 +620,14 @@ export function VideoCreationWizard({
                   console.error("Failed to save step:", err);
                 }
               }
-              advanceToStep(4);
+              advanceToStep(5);
             }}
-            onBack={() => goToStep(1)}
+            onBack={() => goToStep(3)}
             {...lock}
           />
         );
 
-      case 4:
-        // Step 4: Export
+      case 5: // Step 5: Export
         return (
           <StepExport
             videoId={state.videoId!}
@@ -617,13 +641,13 @@ export function VideoCreationWizard({
                   await fetch(`/api/videos/${state.videoId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ current_stage: "audio" }),
+                    body: JSON.stringify({ current_stage: "video" }),
                   });
                 } catch (err) {
                   console.error("Failed to save step:", err);
                 }
               }
-              goToStep(3);
+              goToStep(4);
             }}
             onClose={async () => {
               if (state.videoId) {
@@ -644,9 +668,12 @@ export function VideoCreationWizard({
     }
   };
 
-  // Check if current step needs full width (Script, Media, and Editor)
+  // Check if current step needs full width (Script, Audio, Media, and Editor)
   const isFullWidthStep =
-    currentStep === 1 || currentStep === 2 || currentStep === 3;
+    currentStep === 1 ||
+    currentStep === 2 ||
+    currentStep === 3 ||
+    currentStep === 4;
 
   return (
     <div

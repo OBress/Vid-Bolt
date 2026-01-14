@@ -3,7 +3,7 @@
  * ============================================================================
  * Service layer for communicating with the GPU backend API.
  * All requests are authenticated with X-API-Key header.
- * 
+ *
  * API Base URL: http://localhost:8000 (configurable via GPU_API_URL env var)
  */
 
@@ -13,7 +13,11 @@
 
 export type AspectRatio = "16:9" | "9:16";
 export type FPS = 8 | 12 | 16 | 24 | 30;
-export type VramMode = "static" | "dynamic";
+export type VramMode =
+  | "image_generation"
+  | "image_editing"
+  | "video_generation"
+  | "all";
 
 /** Request body for POST /api/v1/image/generate */
 export interface ImageGenerateRequest {
@@ -54,7 +58,6 @@ export interface VideoGenerateRequest {
   save_url: string;
 }
 
-
 /** Successful response from GPU API (legacy sync response) */
 export interface GPUApiSuccessResponse {
   status: "completed";
@@ -91,7 +94,11 @@ export interface JobInfo {
   queue_position?: number;
 }
 
-export type GPUApiResponse = GPUApiSuccessResponse | GPUApiAsyncJobResponse | GPUApiErrorResponse | JobInfo;
+export type GPUApiResponse =
+  | GPUApiSuccessResponse
+  | GPUApiAsyncJobResponse
+  | GPUApiErrorResponse
+  | JobInfo;
 
 // ============================================================================
 // CONFIGURATION
@@ -116,7 +123,12 @@ function getGpuApiKey(): string {
 async function callGpuApi<T>(
   endpoint: string,
   body: T
-): Promise<{ response: GPUApiResponse; rawRequest: T; rawResponse: unknown; statusCode: number }> {
+): Promise<{
+  response: GPUApiResponse;
+  rawRequest: T;
+  rawResponse: unknown;
+  statusCode: number;
+}> {
   const baseUrl = getGpuApiUrl();
   const apiKey = getGpuApiKey();
   const url = `${baseUrl}${endpoint}`;
@@ -139,7 +151,10 @@ async function callGpuApi<T>(
     const data = await response.json();
     const duration = Date.now() - startTime;
 
-    console.log(`[GPUApiService] Response (${duration}ms):`, JSON.stringify(data, null, 2));
+    console.log(
+      `[GPUApiService] Response (${duration}ms):`,
+      JSON.stringify(data, null, 2)
+    );
 
     return {
       response: data as GPUApiResponse,
@@ -155,10 +170,13 @@ async function callGpuApi<T>(
       response: {
         status: "failed",
         error_code: "NETWORK_ERROR",
-        error_message: error instanceof Error ? error.message : "Network request failed",
+        error_message:
+          error instanceof Error ? error.message : "Network request failed",
       },
       rawRequest: body,
-      rawResponse: { error: error instanceof Error ? error.message : "Unknown error" },
+      rawResponse: {
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
       statusCode: 0,
     };
   }
@@ -187,7 +205,7 @@ export interface ImageGenerateResult {
 
 /**
  * Generate an image via the GPU API.
- * 
+ *
  * @param request - Image generation request matching API spec
  * @returns Result with success status, URL, and debug info
  */
@@ -216,7 +234,10 @@ export async function callGpuImageGenerate(
   }
 
   // Handle 202 Accepted (async job accepted) - treat as success with async flag
-  if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+  if (
+    statusCode === 202 &&
+    (response.status === "pending" || response.status === "processing")
+  ) {
     const asyncResponse = response as GPUApiAsyncJobResponse;
     return {
       success: true,
@@ -260,13 +281,13 @@ export interface ImageEditResult {
 
 /**
  * Edit an image via the GPU API.
- * 
+ *
  * @param request - Image edit request matching API spec
  * @returns Result with success status, URL, and debug info
  */
 /**
  * Edit an image via the GPU API.
- * 
+ *
  * @param request - Image edit request matching API spec
  * @returns Result with success status, URL, and debug info
  */
@@ -295,7 +316,10 @@ export async function callGpuImageEdit(
   }
 
   // Handle 202 Accepted (async job accepted) - treat as success with async flag
-  if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+  if (
+    statusCode === 202 &&
+    (response.status === "pending" || response.status === "processing")
+  ) {
     const asyncResponse = response as GPUApiAsyncJobResponse;
     return {
       success: true,
@@ -339,13 +363,13 @@ export interface VideoGenerateResult {
 
 /**
  * Generate a video via the GPU API.
- * 
+ *
  * @param request - Video generation request matching API spec
  * @returns Result with success status, URL, and debug info
  */
 /**
  * Generate a video via the GPU API.
- * 
+ *
  * @param request - Video generation request matching API spec
  * @returns Result with success status, URL, and debug info
  */
@@ -374,7 +398,10 @@ export async function callGpuVideoGenerate(
   }
 
   // Handle 202 Accepted (async job accepted) - treat as success with async flag
-  if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+  if (
+    statusCode === 202 &&
+    (response.status === "pending" || response.status === "processing")
+  ) {
     const asyncResponse = response as GPUApiAsyncJobResponse;
     return {
       success: true,
@@ -466,7 +493,10 @@ export async function callGpuHealth(): Promise<{
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
@@ -487,7 +517,10 @@ export async function callGpuHealthReady(): Promise<{
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
@@ -555,7 +588,10 @@ export async function callGpuSystemStatus(): Promise<{
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
@@ -597,14 +633,19 @@ export async function callGpuGetMode(): Promise<{
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
 /**
  * Switch between image and video modes
  */
-export async function callGpuSwitchMode(targetMode: "image" | "video"): Promise<{
+export async function callGpuSwitchMode(
+  targetMode: "image" | "video"
+): Promise<{
   success: boolean;
   data?: ModeSwitchResponse;
   error?: string;
@@ -622,12 +663,18 @@ export async function callGpuSwitchMode(targetMode: "image" | "video"): Promise<
     });
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { success: false, error: errorData.detail || `HTTP ${response.status}` };
+      return {
+        success: false,
+        error: errorData.detail || `HTTP ${response.status}`,
+      };
     }
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
@@ -661,7 +708,10 @@ export async function callGpuListLoras(): Promise<{
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
@@ -681,12 +731,18 @@ export async function callGpuGetJobStatus(jobId: string): Promise<{
     });
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { success: false, error: errorData.detail || `HTTP ${response.status}` };
+      return {
+        success: false,
+        error: errorData.detail || `HTTP ${response.status}`,
+      };
     }
     const data = await response.json();
     return { success: true, job: data };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
@@ -790,7 +846,10 @@ export async function callGpuLtx2Generate(
   }
 
   // Handle 202 Accepted (async job accepted)
-  if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+  if (
+    statusCode === 202 &&
+    (response.status === "pending" || response.status === "processing")
+  ) {
     const asyncResponse = response as GPUApiAsyncJobResponse;
     return {
       success: true,
@@ -844,7 +903,10 @@ export async function callGpuLtx2Interpolate(
   }
 
   // Handle 202 Accepted (async job accepted)
-  if (statusCode === 202 && (response.status === "pending" || response.status === "processing")) {
+  if (
+    statusCode === 202 &&
+    (response.status === "pending" || response.status === "processing")
+  ) {
     const asyncResponse = response as GPUApiAsyncJobResponse;
     return {
       success: true,
@@ -891,7 +953,10 @@ export async function callGpuGetVramMode(): Promise<{
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
@@ -920,6 +985,9 @@ export async function callGpuSetVramMode(mode: VramMode): Promise<{
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
