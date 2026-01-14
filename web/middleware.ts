@@ -5,14 +5,15 @@ export async function middleware(request: NextRequest) {
   const { nextUrl } = request
   const isLoggedIn = request.cookies.get('is_logged_in')?.value === 'true'
 
-  // Allow access to auth callback, login page, and Inngest webhook
+  // Allow access to auth callback, login page, Inngest webhook, and GPU callback
   if (
     nextUrl.pathname.startsWith('/auth') ||
     nextUrl.pathname === '/login' ||
-    nextUrl.pathname.startsWith('/api/inngest')
+    nextUrl.pathname.startsWith('/api/inngest') ||
+    nextUrl.pathname.startsWith('/api/gpu-callback')
   ) {
-    // Inngest requests don't need Supabase session logic and should be served as-is
-    if (nextUrl.pathname.startsWith('/api/inngest')) {
+    // Webhook requests don't need Supabase session logic and should be served as-is
+    if (nextUrl.pathname.startsWith('/api/inngest') || nextUrl.pathname.startsWith('/api/gpu-callback')) {
       return NextResponse.next()
     }
     return await updateSession(request)

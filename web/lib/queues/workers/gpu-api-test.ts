@@ -27,6 +27,10 @@ import type { AspectRatio, FPS } from '@/lib/services/gpu-api-service';
 
 const PLACEHOLDER_IMAGE_URL = 'https://picsum.photos/1920/1080';
 
+// Get webhook configuration from environment
+const getWebhookUrl = () => process.env.WEBHOOK_CALLBACK_URL || 'http://localhost:3000/api/gpu-callback';
+const getWebhookSecret = () => process.env.GPU_WEBHOOK_SECRET;
+
 // ============================================================================
 // SHARED POLLING HELPER
 // ============================================================================
@@ -120,6 +124,9 @@ export const gpuImageCreateProcessor: Processor<GpuImageCreateJobData> = async (
       seed: seed || undefined,
       lora_name: lora_name || undefined,
       save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: taskId,
+      webhook_secret: getWebhookSecret(),
     });
 
     if (result.success && result.isAsync && result.jobId) {
@@ -182,6 +189,9 @@ export const gpuImageEditProcessor: Processor<GpuImageEditJobData> = async (job:
       mask_image_url: maskImageUrl || undefined,
       seed: seed || undefined,
       save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: taskId,
+      webhook_secret: getWebhookSecret(),
     });
 
     if (result.success && result.isAsync && result.jobId) {
@@ -252,6 +262,9 @@ export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (
       seed: seed || undefined,
       end_image_url: endFrameUrl || undefined,
       save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: taskId,
+      webhook_secret: getWebhookSecret(),
     });
 
     if (result.success && result.isAsync && result.jobId) {
@@ -326,6 +339,9 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
       seed: seed || undefined,
       enhance_prompt: enhance_prompt || false,
       save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: taskId,
+      webhook_secret: getWebhookSecret(),
     });
 
     if (result.success && result.isAsync && result.jobId) {
@@ -397,6 +413,9 @@ export const gpuLtx2InterpolateProcessor: Processor<GpuLtx2InterpolateJobData> =
       seed: seed || undefined,
       enhance_prompt: enhance_prompt || false,
       save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: taskId,
+      webhook_secret: getWebhookSecret(),
     });
 
     if (result.success && result.isAsync && result.jobId) {

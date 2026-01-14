@@ -765,6 +765,12 @@ export interface LTX2GenerateRequest {
   seed?: number;
   enhance_prompt?: boolean;
   save_url: string;
+  /** REQUIRED: URL to POST when complete */
+  webhook_url: string;
+  /** Optional: Client identifier returned in webhook */
+  item_id?: string;
+  /** Optional: HMAC signing secret */
+  webhook_secret?: string;
 }
 
 /** Keyframe for interpolation */
@@ -788,6 +794,12 @@ export interface LTX2InterpolateRequest {
   seed?: number;
   enhance_prompt?: boolean;
   save_url: string;
+  /** REQUIRED: URL to POST when complete */
+  webhook_url: string;
+  /** Optional: Client identifier returned in webhook */
+  item_id?: string;
+  /** Optional: HMAC signing secret */
+  webhook_secret?: string;
 }
 
 export interface LTX2GenerateResult {
