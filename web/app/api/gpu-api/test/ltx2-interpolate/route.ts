@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/lib/inngest/client";
+import { gpuLtx2InterpolateQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
@@ -7,7 +7,7 @@ import { cookies } from "next/headers";
 /**
  * POST /api/gpu-api/test/ltx2-interpolate
  * 
- * Triggers specialized LTX-2 keyframe interpolation test via Inngest.
+ * Triggers specialized LTX-2 keyframe interpolation test via BullMQ.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -31,18 +31,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { 
-      prompt, 
-      keyframes, 
-      negative_prompt, 
-      duration_seconds, 
-      frame_rate, 
-      aspect_ratio, 
-      width, 
-      height, 
-      seed, 
-      enhance_prompt 
-    } = body;
+    const { prompt, keyframes, negative_prompt, duration_seconds, frame_rate, aspect_ratio, width, height, seed, enhance_prompt } = body;
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
       return NextResponse.json(
@@ -76,19 +65,7 @@ export async function POST(request: NextRequest) {
         name: `GPU Test: LTX-2 Interpolation`,
         status: "pending",
         steps: [],
-        input_data: { 
-          prompt, 
-          keyframes, 
-          negative_prompt, 
-          duration_seconds,
-          frame_rate,
-          aspect_ratio,
-          width,
-          height,
-          seed,
-          enhance_prompt,
-          testType: 'ltx2_interpolate' 
-        },
+        input_data: { prompt, keyframes, negative_prompt, duration_seconds, frame_rate, aspect_ratio, width, height, seed, enhance_prompt, testType: 'ltx2_interpolate' },
         output_data: {},
       })
       .select()
@@ -99,28 +76,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    await inngest.send({
-      name: "gpu-api/test-ltx2.interpolate",
-      data: {
-        taskId: task.id,
-        userId: user.id,
-        prompt,
-        keyframes,
-        negative_prompt: negative_prompt || null,
-        duration_seconds: duration_seconds || 5.0,
-        frame_rate: frame_rate || 24.0,
-        aspect_ratio: aspect_ratio || '16:9',
-        width: width || null,
-        height: height || null,
-        seed: seed || null,
-        enhance_prompt: enhance_prompt || false,
-      },
-    });
-
-    return NextResponse.json({ 
-      success: true, 
+    const job = await gpuLtx2InterpolateQueue.add('ltx2-interpolate', {
       taskId: task.id,
-    });
+      userId: user.id,
+      prompt,
+      keyframes,
+      negative_prompt: negative_prompt || undefined,
+      duration_seconds: duration_seconds || 5.0,
+      frame_rate: frame_rate || 24.0,
+      aspect_ratio: aspect_ratio || '16:9',
+      width: width || undefined,
+      height: height || undefined,
+      seed: seed || undefined,
+      enhance_prompt: enhance_prompt || false,
+    }, { jobId: task.id });
+
+    return NextResponse.json({ success: true, taskId: task.id, jobId: job.id });
   } catch (error) {
     console.error("[GPUApiTest] LTX-2 interpolation error:", error);
     return NextResponse.json(

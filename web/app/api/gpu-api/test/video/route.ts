@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/lib/inngest/client";
+import { gpuVideoCreateQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
@@ -7,12 +7,10 @@ import { cookies } from "next/headers";
 /**
  * POST /api/gpu-api/test/video
  * 
- * Triggers single video creation test via Inngest.
- * Supports all parameters from the GPU API documentation.
+ * Triggers single video creation test via BullMQ.
  */
 export async function POST(request: NextRequest) {
   try {
-    // Get user from session
     const cookieStore = await cookies();
     const supabaseAuth = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -42,10 +40,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // startFrameUrl is optional - will use placeholder if not provided
     console.log(`[GPUApiTest] Creating video creation task for prompt: ${prompt.substring(0, 50)}...`);
 
-    // Create task in database using service role
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!supabaseUrl || !supabaseKey) {
@@ -58,22 +54,11 @@ export async function POST(request: NextRequest) {
       .from("tasks")
       .insert({
         user_id: user.id,
-        type: "video", // GPU tasks are video type
+        type: "video",
         name: `GPU Test: Video Creation`,
         status: "pending",
         steps: [],
-        input_data: { 
-          prompt, 
-          startFrameUrl, 
-          durationSeconds,
-          fps,
-          aspectRatio,
-          endFrameUrl,
-          seed,
-          width,
-          height,
-          testType: 'video_creation' 
-        },
+        input_data: { prompt, startFrameUrl, durationSeconds, fps, aspectRatio, endFrameUrl, seed, width, height, testType: 'video_creation' },
         output_data: {},
       })
       .select()
@@ -84,30 +69,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    // Trigger Inngest workflow
-    await inngest.send({
-      name: "gpu-api/test-video.create",
-      data: {
-        taskId: task.id,
-        userId: user.id,
-        prompt,
-        startFrameUrl: startFrameUrl || null,
-        durationSeconds: durationSeconds || 4.0,
-        fps: fps || 24,
-        aspectRatio: aspectRatio || '16:9',
-        width: width || null,
-        height: height || null,
-        endFrameUrl: endFrameUrl || null,
-        seed: seed || null,
-      },
-    });
-
-    console.log(`[GPUApiTest] Triggered video creation test for task ${task.id}`);
-
-    return NextResponse.json({ 
-      success: true, 
+    const job = await gpuVideoCreateQueue.add('video-create', {
       taskId: task.id,
-    });
+      userId: user.id,
+      prompt,
+      startFrameUrl: startFrameUrl || undefined,
+      durationSeconds: durationSeconds || 4.0,
+      fps: fps || 24,
+      aspectRatio: aspectRatio || '16:9',
+      width: width || undefined,
+      height: height || undefined,
+      endFrameUrl: endFrameUrl || undefined,
+      seed: seed || undefined,
+    }, { jobId: task.id });
+
+    console.log(`[GPUApiTest] Triggered video creation test for task ${task.id}, job ${job.id}`);
+
+    return NextResponse.json({ success: true, taskId: task.id, jobId: job.id });
   } catch (error) {
     console.error("[GPUApiTest] Video creation error:", error);
     return NextResponse.json(

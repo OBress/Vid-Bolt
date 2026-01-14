@@ -3,18 +3,14 @@
  * ============================================================================
  * POST /api/videos/[videoId]/trigger-media-gen
  * 
- * Triggers the complete media generation workflow for a video project.
- * This includes AV script generation, image generation, image editing,
- * and video generation.
- * 
- * Prerequisites:
- * - Audio generation must be complete (word_timestamps in metadata)
- * - Script content must exist
+ * Triggers media generation for a video project via BullMQ.
+ * Note: This is a simplified implementation that triggers the visualDirector queue.
+ * Full media generation pipeline will be enhanced in future updates.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { inngest } from "@/lib/inngest/client";
+import { visualDirectorQueue, avScriptQueue } from "@/lib/queues";
 import type { VideoProjectMetadata } from "@/types/media-generation";
 
 export async function POST(
@@ -69,11 +65,11 @@ export async function POST(
       );
     }
 
-    // Check if media generation is already in progress or recently started
+    // Check for duplicate triggers
     const mediaGenStatus = metadata.media_generation?.status;
     const startedAt = metadata.media_generation?.started_at;
     const recentlyStarted = startedAt && 
-      (Date.now() - new Date(startedAt).getTime()) < 30000; // Within 30 seconds
+      (Date.now() - new Date(startedAt).getTime()) < 30000;
     
     if (mediaGenStatus === 'av_script' ||
         mediaGenStatus === 'images' ||
@@ -82,10 +78,7 @@ export async function POST(
         (mediaGenStatus === 'pending' && recentlyStarted)) {
       console.log(`[API] Rejecting duplicate trigger - status: ${mediaGenStatus}, started: ${startedAt}`);
       return NextResponse.json(
-        { 
-          error: "Media generation already in progress",
-          status: mediaGenStatus 
-        },
+        { error: "Media generation already in progress", status: mediaGenStatus },
         { status: 409 }
       );
     }
@@ -120,29 +113,43 @@ export async function POST(
           videos_completed: 0,
           videos_failed: 0,
         },
-        // Reset shot list if not skipping AV script
         ...(skipAvScript ? {} : { shot_list: [], av_script_completed: false }),
       },
       current_stage: 'media',
       status: 'processing',
     }).eq("id", videoId);
 
-    // Trigger the media generation workflow
-    await inngest.send({
-      name: "media-generation/start",
-      data: {
-        videoId,
+    // Trigger the appropriate workflow via BullMQ
+    let jobId: string | undefined;
+    
+    if (skipAvScript) {
+      // Go straight to visual director
+      const job = await visualDirectorQueue.add('media-gen', {
+        taskId: crypto.randomUUID(),
         userId: video.user_id,
-        projectId: video.project_id || undefined,
-        skipAvScript,
-      },
-    });
+        videoId,
+        finalScript: script,
+      });
+      jobId = job.id;
+    } else {
+      // Start with AV script generation
+      const job = await avScriptQueue.add('media-gen-av', {
+        taskId: crypto.randomUUID(),
+        userId: video.user_id,
+        videoId,
+        script,
+        wordTimestamps,
+        totalDurationSeconds: metadata.total_duration_seconds || 0,
+      });
+      jobId = job.id;
+    }
 
     return NextResponse.json({
       success: true,
       message: "Media generation workflow triggered",
       videoId,
       skipAvScript,
+      jobId,
     });
 
   } catch (error) {

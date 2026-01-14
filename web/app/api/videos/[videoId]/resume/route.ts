@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { inngest } from "@/lib/inngest/client";
+import { writingQueue, audioQueue, visualDirectorQueue } from "@/lib/queues";
 import type { VideoProject } from "@/types/video";
 import { canResumeVideo, getNextStage } from "@/types/video";
 
@@ -42,26 +42,32 @@ function getServiceClient() {
   return createClient(supabaseUrl, supabaseKey);
 }
 
-// Determine what action to take based on current stage
-function determineResumeAction(video: VideoProject, voiceSettings?: any): {
+// Resume action configuration
+interface ResumeAction {
   action: string;
-  eventName: string;
+  taskType: 'writing' | 'audio' | 'video' | 'export';
+  queueName: 'writing' | 'audio' | 'visual-director';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   eventData: any;
-} {
+}
+
+// Determine what action to take based on current stage
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function determineResumeAction(video: VideoProject, voiceSettings?: any): ResumeAction {
   const { current_stage, idea, script_content, audio_url } = video;
 
   switch (current_stage) {
     case "idea":
     case "script":
-      // Need to generate or regenerate script
       return {
         action: "Generate script",
-        eventName: "writing/workflow.start",
+        taskType: "writing",
+        queueName: "writing",
         eventData: {
           videoId: video.id,
           userId: video.user_id,
           projectId: video.project_id,
-          scriptType: "long_form", // Default, could be from metadata
+          scriptType: "long_form",
           idea: idea || "",
           researchEnabled: false,
           numberOfChapters: 1,
@@ -69,14 +75,14 @@ function determineResumeAction(video: VideoProject, voiceSettings?: any): {
       };
 
     case "audio":
-      // Need to generate audio
       if (!script_content) {
         throw new Error("Cannot generate audio without script");
       }
       
       return {
         action: "Generate audio",
-        eventName: "audio/generate.start",
+        taskType: "audio",
+        queueName: "audio",
         eventData: {
           videoId: video.id,
           userId: video.user_id,
@@ -95,35 +101,33 @@ function determineResumeAction(video: VideoProject, voiceSettings?: any): {
       };
 
     case "video":
-      // Need to generate video
       if (!audio_url) {
         throw new Error("Cannot generate video without audio");
       }
       return {
         action: "Generate video",
-        eventName: "video/workflow.start",
+        taskType: "video",
+        queueName: "visual-director",
         eventData: {
           videoId: video.id,
           userId: video.user_id,
           projectId: video.project_id,
           script: script_content || "",
           audioUrl: audio_url,
-          imageModel: "default", // Should come from project settings
-          videoModel: "default",
         },
       };
 
     case "export":
-      // Need to export video
       return {
         action: "Export video",
-        eventName: "export/workflow.start",
+        taskType: "export",
+        queueName: "visual-director", // Placeholder - export not fully implemented
         eventData: {
           videoId: video.id,
           userId: video.user_id,
           projectId: video.project_id,
           videoUrl: video.video_url || "",
-          targets: ["youtube"], // Should come from project settings
+          targets: ["youtube"],
         },
       };
 
@@ -160,31 +164,36 @@ export async function POST(
       return NextResponse.json({ error: "Video not found" }, { status: 404 });
     }
 
+    const typedVideo = video as VideoProject;
+
     // Check if video can be resumed
-    if (!canResumeVideo(video)) {
+    if (!canResumeVideo(typedVideo)) {
       return NextResponse.json(
-        { error: "Video cannot be resumed (already completed or cancelled)" },
+        { error: "Video cannot be resumed. It must be in 'pending', 'draft', or 'error' status." },
         { status: 400 }
       );
     }
 
-    // Fetch project settings to get voice configuration
-    const { data: projectSettingsData } = await supabase
-      .from("project_settings")
-      .select("settings")
-      .eq("project_id", video.project_id)
-      .maybeSingle();
+    // Get voice settings from request body (optional)
+    let voiceSettings = null;
+    try {
+      const body = await request.json();
+      voiceSettings = body.voiceSettings || null;
+    } catch {
+      // No body, that's fine
+    }
 
-    const voiceSettings = (projectSettingsData?.settings as any)?.voice;
-
-    // Determine what action to take
-    const { action, eventName, eventData } = determineResumeAction(video, voiceSettings);
+    // Determine what to do
+    const resumeAction = determineResumeAction(typedVideo, voiceSettings);
 
     // Update video status to processing
+    const nextStage = getNextStage(typedVideo);
     const { data: updatedVideo, error: updateError } = await supabase
       .from("video_projects")
       .update({
         status: "processing",
+        current_stage: nextStage || typedVideo.current_stage,
+        current_step: resumeAction.action,
         updated_at: new Date().toISOString(),
       })
       .eq("id", videoId)
@@ -192,26 +201,21 @@ export async function POST(
       .single();
 
     if (updateError) {
-      console.error("Failed to update video status:", updateError);
+      console.error("Failed to update video:", updateError);
       return NextResponse.json({ error: updateError.message }, { status: 500 });
     }
 
-    // Create a task for this workflow
-    const taskType = video.current_stage === "audio" ? "audio" 
-                   : video.current_stage === "video" ? "video" 
-                   : video.current_stage === "export" ? "export" 
-                   : "writing";
-    
+    // Create task record
     const { data: task, error: taskError } = await supabase
       .from("tasks")
       .insert({
         user_id: user.id,
-        project_id: video.project_id || null,
-        type: taskType,
-        name: `${action}: ${video.name}`.substring(0, 100),
+        project_id: typedVideo.project_id || null,
+        type: resumeAction.taskType,
+        name: `${resumeAction.action}: Video ${videoId.slice(0, 8)}`,
         status: "pending",
         steps: [],
-        input_data: eventData,
+        input_data: resumeAction.eventData,
         output_data: {},
       })
       .select()
@@ -222,20 +226,31 @@ export async function POST(
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    // Trigger Inngest workflow with taskId
-    const event = await inngest.send({
-      name: eventName,
-      data: {
-        ...eventData,
-        taskId: task.id,
-      },
-    });
+    // Dispatch to appropriate BullMQ queue
+    const jobData = {
+      ...resumeAction.eventData,
+      taskId: task.id,
+    };
+
+    let jobId: string | undefined;
+
+    if (resumeAction.queueName === "writing") {
+      const job = await writingQueue.add('write-script', jobData, { jobId: task.id });
+      jobId = job.id;
+    } else if (resumeAction.queueName === "audio") {
+      const job = await audioQueue.add('generate-audio', jobData, { jobId: task.id });
+      jobId = job.id;
+    } else if (resumeAction.queueName === "visual-director") {
+      const job = await visualDirectorQueue.add('generate-video', jobData, { jobId: task.id });
+      jobId = job.id;
+    }
 
     return NextResponse.json({
       success: true,
       video: updatedVideo,
-      nextAction: action,
+      nextAction: resumeAction.action,
       taskId: task.id,
+      jobId,
     });
   } catch (error) {
     console.error("Failed to resume video:", error);

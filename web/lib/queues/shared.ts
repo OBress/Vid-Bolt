@@ -1,9 +1,12 @@
+/**
+ * Shared Worker Utilities
+ * ============================================================================
+ * Common utilities for BullMQ workers. This replaces the inngest/functions/shared.ts
+ * module so workers don't depend on the Inngest folder.
+ */
+
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import type { 
-  TaskStep, 
-  TaskPhase, 
-  WritingTaskOutput,
-} from "@/types/task";
+import type { TaskStep, TaskPhase, WritingTaskOutput } from "@/types/task";
 
 // ============================================================================
 // SUPABASE CLIENT
@@ -23,7 +26,7 @@ export function getSupabaseServiceClient(): SupabaseClient {
 }
 
 // ============================================================================
-// STEP MANAGEMENT FUNCTIONS (JSONB-based)
+// STEP MANAGEMENT FUNCTIONS
 // ============================================================================
 
 /**
@@ -48,7 +51,6 @@ export async function addTaskStep(
     started_at: new Date().toISOString(),
   };
   
-  // Use the SQL function to atomically append to steps array
   const { error } = await supabase.rpc('append_task_step', {
     p_task_id: taskId,
     p_step: newStep
@@ -170,7 +172,6 @@ export async function updateTaskOutput(
 
 /**
  * Appends a chapter to the chapters array in output_data.
- * Uses atomic SQL function to prevent race conditions.
  */
 export async function appendChapter(
   taskId: string,
@@ -188,7 +189,7 @@ export async function appendChapter(
 }
 
 // ============================================================================
-// CONTINUITY STATE FUNCTIONS
+// CONTINUITY STATE FUNCTIONS  
 // ============================================================================
 
 export async function updateContinuityState(

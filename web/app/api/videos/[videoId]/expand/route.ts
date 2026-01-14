@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { inngest } from "@/lib/inngest/client";
+import { writingQueue } from "@/lib/queues";
 import type { VideoProject } from "@/types/video";
 
 // Helper to get authenticated user
@@ -111,21 +111,20 @@ export async function POST(
       })
       .eq("id", videoId);
 
-    // Trigger Inngest workflow
-    const event = await inngest.send({
-      name: "idea/expand.start",
-      data: {
-        taskId: task.id,
-        userId: user.id,
-        videoId,
-        idea: typedVideo.idea,
-      },
-    });
+    // Add job to BullMQ queue (idea expansion uses writing workflow)
+    const job = await writingQueue.add('expand-idea', {
+      taskId: task.id,
+      userId: user.id,
+      videoId,
+      idea: typedVideo.idea,
+      scriptType: 'long_form',
+      numberOfChapters: 1,
+    }, { jobId: task.id });
 
     return NextResponse.json({
       success: true,
       taskId: task.id,
-      eventId: event.ids[0],
+      jobId: job.id,
     });
   } catch (error) {
     console.error("Failed to start idea expansion:", error);

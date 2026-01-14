@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { inngest } from "@/lib/inngest/client";
+// import { inngest } from "@/lib/inngest/client"; // Replaced with BullMQ
+import { writingQueue } from "@/lib/queues";
 import type { VideoProject } from "@/types/video";
 
 // Helper to get authenticated user
@@ -81,7 +82,7 @@ export async function POST(
 
     // Determine the idea to use (expanded idea from body, or from video metadata, or original)
     const idea = body.expandedIdea 
-      || (typedVideo.metadata as any)?.expanded_idea 
+      || (typedVideo.metadata as Record<string, unknown>)?.expanded_idea as string | undefined
       || typedVideo.idea;
 
     if (!idea) {
@@ -128,10 +129,10 @@ export async function POST(
       })
       .eq("id", videoId);
 
-    // Trigger Inngest workflow
-    const event = await inngest.send({
-      name: "writing/workflow.start",
-      data: {
+    // Add job to BullMQ queue (replaces inngest.send)
+    const job = await writingQueue.add(
+      'write-script', // Job name
+      {
         taskId: task.id,
         userId: user.id,
         projectId: typedVideo.project_id,
@@ -141,12 +142,15 @@ export async function POST(
         researchEnabled: body.researchEnabled ?? false,
         numberOfChapters: body.numberOfChapters ?? 1,
       },
-    });
+      {
+        jobId: task.id, // Use taskId as jobId for easy correlation
+      }
+    );
 
     return NextResponse.json({
       success: true,
       taskId: task.id,
-      eventId: event.ids[0],
+      jobId: job.id,
     });
   } catch (error) {
     console.error("Failed to start script writing:", error);

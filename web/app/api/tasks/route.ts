@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/lib/inngest/client";
+import { writingQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
@@ -51,12 +51,12 @@ export async function POST(request: NextRequest) {
       .insert({
         user_id: user.id,
         project_id: projectId || null,
-        type: "writing",  // Using new consolidated type
+        type: "writing",
         name: `Writing: ${idea.substring(0, 50)}...`,
         status: "pending",
-        steps: [],  // Initialize empty steps array
+        steps: [],
         input_data: { scriptType, idea, researchEnabled, numberOfChapters },
-        output_data: {},  // Initialize empty output
+        output_data: {},
       })
       .select()
       .single();
@@ -65,21 +65,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    // Trigger Inngest workflow
-    await inngest.send({
-      name: "writing/workflow.start",
-      data: {
-        taskId: task.id,
-        userId: user.id,
-        projectId,
-        scriptType,
-        idea,
-        researchEnabled: researchEnabled ?? false,
-        numberOfChapters: numberOfChapters ?? 5,
-      },
-    });
+    // Add job to BullMQ queue
+    const job = await writingQueue.add('write-script', {
+      taskId: task.id,
+      userId: user.id,
+      projectId,
+      scriptType,
+      idea,
+      researchEnabled: researchEnabled ?? false,
+      numberOfChapters: numberOfChapters ?? 5,
+    }, { jobId: task.id });
 
-    return NextResponse.json({ success: true, task });
+    return NextResponse.json({ success: true, task, jobId: job.id });
   } catch (error) {
     console.error("Failed to start task:", error);
     return NextResponse.json(
@@ -110,7 +107,6 @@ export async function GET(request: NextRequest) {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Include steps in response if requested (for detailed task views)
     const selectFields = includeSteps 
       ? "id, name, type, status, current_phase, current_step, progress_percent, steps, created_at, updated_at"
       : "id, name, type, status, current_phase, current_step, progress_percent, created_at, updated_at";

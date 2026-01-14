@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/lib/inngest/client";
+// import { inngest } from "@/lib/inngest/client"; // Replaced with BullMQ
+import { universalScriptQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
@@ -106,10 +107,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    // Trigger Inngest workflow
-    await inngest.send({
-      name: "universal-script/workflow.start",
-      data: {
+    // Add job to BullMQ queue (replaces inngest.send)
+    const job = await universalScriptQueue.add(
+      'universal-script',
+      {
         taskId: task.id,
         userId: user.id,
         input: {
@@ -130,9 +131,12 @@ export async function POST(request: NextRequest) {
           targetAudience,
         },
       },
-    });
+      {
+        jobId: task.id, // Use taskId as jobId for easy correlation
+      }
+    );
 
-    return NextResponse.json({ success: true, taskId: task.id, task });
+    return NextResponse.json({ success: true, taskId: task.id, jobId: job.id, task });
   } catch (error) {
     console.error("Failed to start universal script task:", error);
     return NextResponse.json(
@@ -141,3 +145,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

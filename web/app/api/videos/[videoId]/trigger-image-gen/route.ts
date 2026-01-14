@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { inngest } from "@/lib/inngest/client";
+import { gpuImageCreateQueue } from "@/lib/queues";
 
 export async function POST(
   request: NextRequest,
@@ -26,33 +26,38 @@ export async function POST(
       .single();
 
     if (error || !video) {
-        return NextResponse.json({ error: "Video not found", details: error }, { status: 404 });
+      return NextResponse.json({ error: "Video not found", details: error }, { status: 404 });
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const metadata = video.metadata as any || {};
     const shotList = metadata.shot_list || [];
     
-    // Filter shots manually to see count
+    // Filter shots for images
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const shotsToGenerate = shotList.filter((s: any) => s.visual_prompt && s.media_type === "image");
 
     console.log(`[API] Triggering image gen for video ${videoId}. Found ${shotsToGenerate.length} images to generate out of ${shotList.length} shots.`);
 
-    // Manually trigger the event
-    await inngest.send({
-      name: "av-script/generate.finished",
-      data: {
-        videoId: video.id,
+    // Queue image generation jobs for each shot
+    const jobs = [];
+    for (const shot of shotsToGenerate) {
+      const job = await gpuImageCreateQueue.add('shot-image', {
+        taskId: shot.shot_id || crypto.randomUUID(),
         userId: video.user_id,
-        shots: shotList, // Pass all shots, let workflow filter
-      },
-    });
+        prompt: shot.visual_prompt,
+        aspectRatio: '16:9',
+      });
+      jobs.push(job.id);
+    }
 
     return NextResponse.json({ 
-        success: true, 
-        message: "Manually triggered image generation workflow",
-        videoId,
-        totalShots: shotList.length,
-        imageShots: shotsToGenerate.length
+      success: true, 
+      message: "Triggered image generation workflow",
+      videoId,
+      totalShots: shotList.length,
+      imageShots: shotsToGenerate.length,
+      jobIds: jobs,
     });
 
   } catch (error) {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { avScriptQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
-import { inngest } from "@/lib/inngest/client";
 
 export async function POST(
   request: NextRequest,
@@ -29,10 +29,10 @@ export async function POST(
         return NextResponse.json({ error: "Video not found", details: error }, { status: 404 });
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const metadata = video.metadata as any || {};
     const wordTimestamps = metadata.word_timestamps || [];
     const totalDuration = metadata.total_duration_seconds || 0;
-    // We might need script content too
     const script = video.script_content || "";
 
     if (!wordTimestamps || wordTimestamps.length === 0) {
@@ -52,24 +52,22 @@ export async function POST(
              }
          }).eq("id", videoId);
 
-    // Manually trigger the event
-    await inngest.send({
-        name: "av-script/generate.start",
-        data: {
-          taskId: avScriptTaskId,
-          userId: video.user_id,
-          videoId,
-          script,
-          wordTimestamps: wordTimestamps,
-          totalDurationSeconds: totalDuration,
-        },
-      });
+    // Add job to BullMQ queue
+    const job = await avScriptQueue.add('generate-av-script', {
+      taskId: avScriptTaskId,
+      userId: video.user_id,
+      videoId,
+      script,
+      wordTimestamps: wordTimestamps,
+      totalDurationSeconds: totalDuration,
+    }, { jobId: avScriptTaskId });
 
     return NextResponse.json({ 
         success: true, 
-        message: "Manually triggered AV script generation workflow",
+        message: "Triggered AV script generation workflow",
         videoId,
-        wordCount: wordTimestamps.length
+        wordCount: wordTimestamps.length,
+        jobId: job.id
     });
 
   } catch (error) {

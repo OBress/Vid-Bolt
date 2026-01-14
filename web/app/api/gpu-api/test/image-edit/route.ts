@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/lib/inngest/client";
+import { gpuImageEditQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
@@ -7,12 +7,10 @@ import { cookies } from "next/headers";
 /**
  * POST /api/gpu-api/test/image-edit
  * 
- * Triggers single image edit test via Inngest.
- * Supports all parameters from the GPU API documentation.
+ * Triggers single image edit test via BullMQ.
  */
 export async function POST(request: NextRequest) {
   try {
-    // Get user from session
     const cookieStore = await cookies();
     const supabaseAuth = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -42,10 +40,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // sourceImageUrl is optional - will use placeholder if not provided
     console.log(`[GPUApiTest] Creating image edit task for prompt: ${prompt.substring(0, 50)}...`);
 
-    // Create task in database using service role
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!supabaseUrl || !supabaseKey) {
@@ -58,18 +54,11 @@ export async function POST(request: NextRequest) {
       .from("tasks")
       .insert({
         user_id: user.id,
-        type: "video", // GPU tasks are video type
+        type: "video",
         name: `GPU Test: Image Edit`,
         status: "pending",
         steps: [],
-        input_data: { 
-          prompt, 
-          sourceImageUrl, 
-          aspectRatio,
-          maskImageUrl,
-          seed,
-          testType: 'image_edit' 
-        },
+        input_data: { prompt, sourceImageUrl, aspectRatio, maskImageUrl, seed, testType: 'image_edit' },
         output_data: {},
       })
       .select()
@@ -80,26 +69,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    // Trigger Inngest workflow
-    await inngest.send({
-      name: "gpu-api/test-image.edit",
-      data: {
-        taskId: task.id,
-        userId: user.id,
-        prompt,
-        sourceImageUrl: sourceImageUrl || null,
-        aspectRatio: aspectRatio || '16:9',
-        maskImageUrl: maskImageUrl || null,
-        seed: seed || null,
-      },
-    });
-
-    console.log(`[GPUApiTest] Triggered image edit test for task ${task.id}`);
-
-    return NextResponse.json({ 
-      success: true, 
+    const job = await gpuImageEditQueue.add('image-edit', {
       taskId: task.id,
-    });
+      userId: user.id,
+      prompt,
+      sourceImageUrl: sourceImageUrl || undefined,
+      aspectRatio: aspectRatio || '16:9',
+      maskImageUrl: maskImageUrl || undefined,
+      seed: seed || undefined,
+    }, { jobId: task.id });
+
+    console.log(`[GPUApiTest] Triggered image edit test for task ${task.id}, job ${job.id}`);
+
+    return NextResponse.json({ success: true, taskId: task.id, jobId: job.id });
   } catch (error) {
     console.error("[GPUApiTest] Image edit error:", error);
     return NextResponse.json(

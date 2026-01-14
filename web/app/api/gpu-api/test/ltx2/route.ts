@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/lib/inngest/client";
+import { gpuLtx2CreateQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
@@ -7,7 +7,7 @@ import { cookies } from "next/headers";
 /**
  * POST /api/gpu-api/test/ltx2
  * 
- * Triggers specialized LTX-2 video generation test via Inngest.
+ * Triggers specialized LTX-2 video generation test via BullMQ.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -31,19 +31,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { 
-      prompt, 
-      input_image_url, 
-      negative_prompt, 
-      duration_seconds, 
-      frame_rate, 
-      aspect_ratio, 
-      width, 
-      height, 
-      end_image_url, 
-      seed, 
-      enhance_prompt 
-    } = body;
+    const { prompt, input_image_url, negative_prompt, duration_seconds, frame_rate, aspect_ratio, width, height, end_image_url, seed, enhance_prompt } = body;
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
       return NextResponse.json(
@@ -70,20 +58,7 @@ export async function POST(request: NextRequest) {
         name: `GPU Test: LTX-2 Generation`,
         status: "pending",
         steps: [],
-        input_data: { 
-          prompt, 
-          input_image_url, 
-          negative_prompt, 
-          duration_seconds,
-          frame_rate,
-          aspect_ratio,
-          width,
-          height,
-          end_image_url,
-          seed,
-          enhance_prompt,
-          testType: 'ltx2_generation' 
-        },
+        input_data: { prompt, input_image_url, negative_prompt, duration_seconds, frame_rate, aspect_ratio, width, height, end_image_url, seed, enhance_prompt, testType: 'ltx2_generation' },
         output_data: {},
       })
       .select()
@@ -94,29 +69,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    await inngest.send({
-      name: "gpu-api/test-ltx2.create",
-      data: {
-        taskId: task.id,
-        userId: user.id,
-        prompt,
-        input_image_url: input_image_url || null,
-        negative_prompt: negative_prompt || null,
-        duration_seconds: duration_seconds || 5.0,
-        frame_rate: frame_rate || 24.0,
-        aspect_ratio: aspect_ratio || '16:9',
-        width: width || null,
-        height: height || null,
-        end_image_url: end_image_url || null,
-        seed: seed || null,
-        enhance_prompt: enhance_prompt || false,
-      },
-    });
-
-    return NextResponse.json({ 
-      success: true, 
+    const job = await gpuLtx2CreateQueue.add('ltx2-create', {
       taskId: task.id,
-    });
+      userId: user.id,
+      prompt,
+      input_image_url: input_image_url || undefined,
+      negative_prompt: negative_prompt || undefined,
+      duration_seconds: duration_seconds || 5.0,
+      frame_rate: frame_rate || 24.0,
+      aspect_ratio: aspect_ratio || '16:9',
+      width: width || undefined,
+      height: height || undefined,
+      end_image_url: end_image_url || undefined,
+      seed: seed || undefined,
+      enhance_prompt: enhance_prompt || false,
+    }, { jobId: task.id });
+
+    return NextResponse.json({ success: true, taskId: task.id, jobId: job.id });
   } catch (error) {
     console.error("[GPUApiTest] LTX-2 generation error:", error);
     return NextResponse.json(

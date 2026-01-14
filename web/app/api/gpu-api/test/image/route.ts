@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/lib/inngest/client";
+import { gpuImageCreateQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
@@ -7,7 +7,7 @@ import { cookies } from "next/headers";
 /**
  * POST /api/gpu-api/test/image
  * 
- * Triggers single image creation test via Inngest.
+ * Triggers single image creation test via BullMQ.
  * Supports all parameters from the GPU API documentation.
  */
 export async function POST(request: NextRequest) {
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
       .from("tasks")
       .insert({
         user_id: user.id,
-        type: "video", // GPU tasks are video type
+        type: "video",
         name: `GPU Test: Image Creation`,
         status: "pending",
         steps: [],
@@ -81,27 +81,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    // Trigger Inngest workflow
-    await inngest.send({
-      name: "gpu-api/test-image.create",
-      data: {
-        taskId: task.id,
-        userId: user.id,
-        prompt,
-        aspectRatio: aspectRatio || '16:9',
-        numInferenceSteps: numInferenceSteps || 8,
-        seed: seed || null,
-        width,
-        height,
-        lora_name: lora,
-      },
-    });
+    // Add job to BullMQ queue
+    const job = await gpuImageCreateQueue.add('image-create', {
+      taskId: task.id,
+      userId: user.id,
+      prompt,
+      aspectRatio: aspectRatio || '16:9',
+      numInferenceSteps: numInferenceSteps || 8,
+      seed: seed || undefined,
+      width,
+      height,
+      lora_name: lora,
+    }, { jobId: task.id });
 
-    console.log(`[GPUApiTest] Triggered image creation test for task ${task.id}`);
+    console.log(`[GPUApiTest] Triggered image creation test for task ${task.id}, job ${job.id}`);
 
     return NextResponse.json({ 
       success: true, 
       taskId: task.id,
+      jobId: job.id,
     });
   } catch (error) {
     console.error("[GPUApiTest] Image creation error:", error);
@@ -111,3 +109,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

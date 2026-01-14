@@ -38,7 +38,7 @@ ComfyUI server deployment
 Custom workflow execution (ControlNet, LoRAs, AnimateDiff)
 Automatic VM provisioning and teardown
 Task Queue
-Inngest or Trigger.dev for background jobs
+Native since I'm using railway
 Handles long-running AI generation
 Retry logic and failure handling
 
@@ -80,7 +80,7 @@ Hugging Face Hub for model downloads
 R2 for cached/custom models
 
 Hosting
-Vercel Pro for Next.js frontend and API
+Railway for Next.js frontend and API
 Cloudflare for DNS and CDN
 GPU Compute (User-Managed)
 Google Cloud Platform (Compute Engine)
@@ -89,7 +89,6 @@ RunPod as alternative
 Other API Services
 User’s own API keys
 Monitoring
-Vercel Analytics (free)
-Sentry for error tracking (free tier)
+Railway for error tracking (free tier)
 AWS CloudWatch for Lambda metrics
 Something monitoring the comfyui status on GCP or wherever

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/lib/inngest/client";
+import { visualDirectorQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
@@ -7,8 +7,7 @@ import { cookies } from "next/headers";
 /**
  * POST /api/visual-director/test
  * 
- * Triggers the Visual Director test Inngest workflow.
- * Takes raw script text and returns a task ID for polling.
+ * Triggers the Visual Director test via BullMQ.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -57,7 +56,7 @@ export async function POST(request: NextRequest) {
       .from("tasks")
       .insert({
         user_id: user.id,
-        type: "writing", // Must be one of: writing, writing_workflow, audio, video, export
+        type: "writing",
         name: `AV Script Test: ${scriptText.substring(0, 30)}...`,
         status: "pending",
         steps: [],
@@ -72,21 +71,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    // Trigger Inngest workflow
-    await inngest.send({
-      name: "visual-director/test.start",
-      data: {
-        taskId: task.id,
-        userId: user.id,
-        scriptText,
-      },
-    });
+    // Add job to BullMQ queue
+    const job = await visualDirectorQueue.add('visual-director-test', {
+      taskId: task.id,
+      userId: user.id,
+      videoId: task.id, // Use task ID as fake video ID for test
+      finalScript: scriptText,
+    }, { jobId: task.id });
 
-    console.log(`[VisualDirectorTest] Triggered workflow for task ${task.id}`);
+    console.log(`[VisualDirectorTest] Triggered workflow for task ${task.id}, job ${job.id}`);
 
     return NextResponse.json({ 
       success: true, 
       taskId: task.id,
+      jobId: job.id,
     });
   } catch (error) {
     console.error("[VisualDirectorTest] Error:", error);
