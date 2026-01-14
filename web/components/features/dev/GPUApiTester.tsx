@@ -106,6 +106,8 @@ type QueueFilter =
 interface TrackedJob {
   id: string;
   taskId?: string; // Optional - only set after submitted to API
+  batchId?: string; // Optional - set when submitted as part of a batch
+  batchItemIndex?: number; // Optional - index within the batch
   type: JobType;
   status: "queued" | "pending" | "processing" | "completed" | "failed";
   queuePosition?: number;
@@ -117,6 +119,19 @@ interface TrackedJob {
     prompt: string;
     [key: string]: any;
   };
+}
+
+// Batch tracking for GPU API batch operations
+interface TrackedBatch {
+  id: string;
+  type: JobType;
+  status: "pending" | "processing" | "completed" | "failed";
+  totalItems: number;
+  completedItems: number;
+  failedItems: number;
+  jobIds: string[]; // Local job IDs in this batch
+  itemUrls: Array<{ index: number; publicUrl: string; key: string }>;
+  createdAt: Date;
 }
 
 // LoRA types
@@ -289,12 +304,16 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   const [trackedJobs, setTrackedJobs] = useState<Map<string, TrackedJob>>(
     new Map()
   );
+  const [trackedBatches, setTrackedBatches] = useState<
+    Map<string, TrackedBatch>
+  >(new Map());
   const [queuePanelOpen, setQueuePanelOpen] = useState(false);
   const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
   const [batchQueueOpen, setBatchQueueOpen] = useState(false);
   const [batchCount, setBatchCount] = useState(5);
   const [batchVarySeeds, setBatchVarySeeds] = useState(true);
   const [batchJobType, setBatchJobType] = useState<JobType>("image");
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
 
   // Clear storage state
   const [clearingStorage, setClearingStorage] = useState(false);
@@ -377,79 +396,89 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   ).length;
   const activeJobCount = queuedJobCount + pendingJobCount + processingJobCount;
 
-  // Background polling for active jobs (only when panel is open)
-  // Optimized: 10s interval, batch up to 10 jobs per cycle to reduce log spam
+  // Background polling for active batches (only when panel is open)
+  // Optimized: polls batch status instead of individual jobs
   useEffect(() => {
-    const pollJobs = async () => {
+    const pollBatches = async () => {
       // Skip polling if panel is closed
       if (!queuePanelOpen) return;
 
       const currentJobs = trackedJobsRef.current;
-      const jobsToUpdate = Array.from(currentJobs.values()).filter(
-        (job) =>
+
+      // Get unique batch IDs for jobs that are pending/processing
+      const activeBatchIds = new Set<string>();
+      for (const job of currentJobs.values()) {
+        if (
           (job.status === "pending" || job.status === "processing") &&
-          job.taskId
-      );
+          job.batchId
+        ) {
+          activeBatchIds.add(job.batchId);
+        }
+      }
 
-      if (jobsToUpdate.length === 0) return;
+      if (activeBatchIds.size === 0) {
+        // Also check for legacy individual jobs (non-batch)
+        const legacyJobs = Array.from(currentJobs.values()).filter(
+          (job) =>
+            (job.status === "pending" || job.status === "processing") &&
+            job.taskId &&
+            !job.batchId
+        );
 
-      // Limit to 10 jobs per poll cycle to avoid hammering the API
-      const jobsBatch = jobsToUpdate.slice(0, 10);
+        if (legacyJobs.length === 0) return;
 
-      // Fetch all in parallel for efficiency
-      const results = await Promise.allSettled(
-        jobsBatch.map(async (job) => {
-          const response = await fetch(
-            `/api/gpu-api/test/status?taskId=${job.taskId}`
-          );
-          return { job, data: await response.json() };
-        })
-      );
+        // Handle legacy polling for non-batch jobs
+        const jobsBatch = legacyJobs.slice(0, 10);
+        const results = await Promise.allSettled(
+          jobsBatch.map(async (job) => {
+            const response = await fetch(
+              `/api/gpu-api/test/status?taskId=${job.taskId}`
+            );
+            return { job, data: await response.json() };
+          })
+        );
 
-      for (const result of results) {
-        if (result.status !== "fulfilled") continue;
-        const { job, data } = result.value;
+        for (const result of results) {
+          if (result.status !== "fulfilled") continue;
+          const { job, data } = result.value;
 
-        setTrackedJobs((prev) => {
-          const newMap = new Map(prev);
-          const existingJob = newMap.get(job.id);
-          if (!existingJob) return prev;
+          setTrackedJobs((prev) => {
+            const newMap = new Map(prev);
+            const existingJob = newMap.get(job.id);
+            if (!existingJob) return prev;
 
-          const updatedJob = { ...existingJob };
+            const updatedJob = { ...existingJob };
 
-          if (data.status === "completed") {
-            updatedJob.status = "completed";
-            updatedJob.progressPercent = 100;
-            if (data.output) {
+            if (data.status === "completed") {
+              updatedJob.status = "completed";
+              updatedJob.progressPercent = 100;
+              if (data.output) {
+                updatedJob.result = {
+                  success: data.output.success,
+                  type: job.type,
+                  imageUrl: data.output.imageUrl,
+                  videoUrl: data.output.videoUrl,
+                  generationTime: data.output.generationTime,
+                  finalJob: data.output.finalJob,
+                };
+              }
+            } else if (data.status === "failed") {
+              updatedJob.status = "failed";
               updatedJob.result = {
-                success: data.output.success,
+                success: false,
                 type: job.type,
-                imageUrl: data.output.imageUrl,
-                videoUrl: data.output.videoUrl,
-                generationTime: data.output.generationTime,
-                finalJob: data.output.finalJob,
+                error: data.output?.errorMessage || "Job failed",
               };
-            }
-          } else if (data.status === "failed") {
-            updatedJob.status = "failed";
-            updatedJob.result = {
-              success: false,
-              type: job.type,
-              error: data.output?.errorMessage || "Job failed",
-            };
-          } else if (data.status === "running") {
-            if (data.output?.finalJob) {
-              const finalJob = data.output.finalJob;
-              if (finalJob.status === "processing") {
-                updatedJob.status = "processing";
-                updatedJob.progressPercent = finalJob.progress_percent || 0;
-                updatedJob.progressStage = finalJob.progress_stage;
-              } else if (finalJob.status === "pending") {
-                updatedJob.queuePosition = finalJob.queue_position;
-              } else if (finalJob.status === "completed") {
-                updatedJob.status = "completed";
-                updatedJob.progressPercent = 100;
-                if (data.output) {
+            } else if (data.status === "running") {
+              if (data.output?.finalJob) {
+                const finalJob = data.output.finalJob;
+                if (finalJob.status === "processing") {
+                  updatedJob.status = "processing";
+                  updatedJob.progressPercent = finalJob.progress_percent || 0;
+                  updatedJob.progressStage = finalJob.progress_stage;
+                } else if (finalJob.status === "completed") {
+                  updatedJob.status = "completed";
+                  updatedJob.progressPercent = 100;
                   updatedJob.result = {
                     success: data.output.success ?? true,
                     type: job.type,
@@ -458,27 +487,111 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                     generationTime: data.output.generationTime,
                     finalJob: data.output.finalJob,
                   };
+                } else if (finalJob.status === "failed") {
+                  updatedJob.status = "failed";
+                  updatedJob.result = {
+                    success: false,
+                    type: job.type,
+                    error: finalJob.error_message || "Job failed",
+                  };
                 }
-              } else if (finalJob.status === "failed") {
-                updatedJob.status = "failed";
-                updatedJob.result = {
-                  success: false,
-                  type: job.type,
-                  error: finalJob.error_message || "Job failed",
-                };
               }
-            } else {
-              updatedJob.progressPercent = data.progress || 0;
             }
-          }
 
-          newMap.set(job.id, updatedJob);
-          return newMap;
-        });
+            newMap.set(job.id, updatedJob);
+            return newMap;
+          });
+        }
+        return;
+      }
+
+      // Poll each active batch
+      for (const batchId of activeBatchIds) {
+        try {
+          const response = await fetch(
+            `/api/gpu-api/test/batch/status?batchId=${batchId}`
+          );
+          const data = await response.json();
+
+          if (!data.success || !data.batch) continue;
+
+          const batchStatus = data.batch;
+
+          // Update tracked batch
+          setTrackedBatches((prev) => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(batchId);
+            if (existing) {
+              newMap.set(batchId, {
+                ...existing,
+                status: batchStatus.status,
+                completedItems: batchStatus.completed_items,
+                failedItems: batchStatus.failed_items,
+              });
+            }
+            return newMap;
+          });
+
+          // Update individual jobs from batch items
+          setTrackedJobs((prev) => {
+            const newMap = new Map(prev);
+
+            for (const item of batchStatus.items) {
+              // Find the job with this batchId and item index
+              for (const [jobId, job] of newMap) {
+                if (
+                  job.batchId === batchId &&
+                  job.batchItemIndex === item.item_index
+                ) {
+                  const updatedJob = { ...job };
+
+                  if (item.status === "completed") {
+                    updatedJob.status = "completed";
+                    updatedJob.progressPercent = 100;
+                    updatedJob.result = {
+                      success: true,
+                      type: job.type,
+                      imageUrl:
+                        job.type === "image" || job.type === "image-edit"
+                          ? item.result?.save_url
+                          : undefined,
+                      videoUrl:
+                        job.type === "video" || job.type === "ltx2"
+                          ? item.result?.save_url
+                          : undefined,
+                      generationTime: item.result?.generation_time,
+                    };
+                  } else if (item.status === "failed") {
+                    updatedJob.status = "failed";
+                    updatedJob.result = {
+                      success: false,
+                      type: job.type,
+                      error: item.error_message || "Job failed",
+                    };
+                  } else if (item.status === "processing") {
+                    updatedJob.status = "processing";
+                  } else if (item.status === "pending") {
+                    updatedJob.status = "pending";
+                  }
+
+                  newMap.set(jobId, updatedJob);
+                  break;
+                }
+              }
+            }
+
+            return newMap;
+          });
+        } catch (error) {
+          console.error(
+            `[GPUApiTester] Error polling batch ${batchId}:`,
+            error
+          );
+        }
       }
     };
 
-    const interval = setInterval(pollJobs, 10000); // Poll every 10 seconds instead of 3
+    const interval = setInterval(pollBatches, 10000); // Poll every 10 seconds
     return () => clearInterval(interval);
   }, [queuePanelOpen]);
 
@@ -599,14 +712,153 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
     }
   };
 
-  // Send ALL queued jobs to API at once
+  // Send ALL queued jobs to API using batch submission
   const handleSendAllQueued = async () => {
     const queuedJobs = Array.from(trackedJobs.values()).filter(
       (j) => j.status === "queued"
     );
 
-    // Submit all in parallel for maximum concurrency testing
-    await Promise.all(queuedJobs.map((job) => submitJobToApi(job)));
+    if (queuedJobs.length === 0) return;
+
+    setBatchSubmitting(true);
+
+    try {
+      // Group jobs by type
+      const jobsByType = new Map<JobType, TrackedJob[]>();
+      for (const job of queuedJobs) {
+        const existing = jobsByType.get(job.type) || [];
+        existing.push(job);
+        jobsByType.set(job.type, existing);
+      }
+
+      // Submit each type as a separate batch
+      for (const [type, jobs] of jobsByType) {
+        // Map JobType to batch API type
+        const batchType = type === "image-edit" ? "image-edit" : type;
+
+        // Prepare items for batch submission
+        const items = jobs.map((job) => job.params);
+
+        try {
+          const response = await fetch("/api/gpu-api/test/batch/submit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: batchType, items }),
+          });
+
+          const data = await response.json();
+
+          if (!response.ok || !data.success) {
+            // Mark all jobs in this batch as failed
+            setTrackedJobs((prev) => {
+              const newMap = new Map(prev);
+              for (const job of jobs) {
+                const existing = newMap.get(job.id);
+                if (existing) {
+                  newMap.set(job.id, {
+                    ...existing,
+                    status: "failed",
+                    result: {
+                      success: false,
+                      type: job.type,
+                      error: data.error || "Batch submission failed",
+                    },
+                  });
+                }
+              }
+              return newMap;
+            });
+            continue;
+          }
+
+          const { batchId, itemUrls } = data;
+
+          // Create tracked batch
+          setTrackedBatches((prev) => {
+            const newMap = new Map(prev);
+            newMap.set(batchId, {
+              id: batchId,
+              type,
+              status: "pending",
+              totalItems: jobs.length,
+              completedItems: 0,
+              failedItems: 0,
+              jobIds: jobs.map((j) => j.id),
+              itemUrls: itemUrls || [],
+              createdAt: new Date(),
+            });
+            return newMap;
+          });
+
+          // Update each job with batch ID and pending status
+          setTrackedJobs((prev) => {
+            const newMap = new Map(prev);
+            jobs.forEach((job, index) => {
+              const existing = newMap.get(job.id);
+              if (existing) {
+                // Find the public URL for this item
+                const itemUrl = itemUrls?.find(
+                  (u: { index: number }) => u.index === index
+                );
+                newMap.set(job.id, {
+                  ...existing,
+                  batchId,
+                  batchItemIndex: index,
+                  status: "pending",
+                  result: itemUrl
+                    ? {
+                        success: false,
+                        type: job.type,
+                        // Pre-populate URL (will be available once completed)
+                        imageUrl:
+                          type === "image" || type === "image-edit"
+                            ? itemUrl.publicUrl
+                            : undefined,
+                        videoUrl:
+                          type === "video" || type === "ltx2"
+                            ? itemUrl.publicUrl
+                            : undefined,
+                      }
+                    : null,
+                });
+              }
+            });
+            return newMap;
+          });
+
+          console.log(
+            `[GPUApiTester] Submitted batch ${batchId} with ${jobs.length} ${type} jobs`
+          );
+        } catch (error) {
+          console.error(
+            `[GPUApiTester] Failed to submit ${type} batch:`,
+            error
+          );
+          // Mark jobs as failed
+          setTrackedJobs((prev) => {
+            const newMap = new Map(prev);
+            for (const job of jobs) {
+              const existing = newMap.get(job.id);
+              if (existing) {
+                newMap.set(job.id, {
+                  ...existing,
+                  status: "failed",
+                  result: {
+                    success: false,
+                    type: job.type,
+                    error:
+                      error instanceof Error ? error.message : "Network error",
+                  },
+                });
+              }
+            }
+            return newMap;
+          });
+        }
+      }
+    } finally {
+      setBatchSubmitting(false);
+    }
   };
 
   // Batch queue multiple jobs locally (no API call)
