@@ -30,6 +30,12 @@ export interface ImageGenerateRequest {
   num_inference_steps?: number;
   lora_name?: string;
   save_url: string;
+  /** REQUIRED: URL to POST when complete */
+  webhook_url?: string;
+  /** Optional: Client identifier returned in webhook */
+  item_id?: string;
+  /** Optional: HMAC signing secret */
+  webhook_secret?: string;
 }
 
 /** Request body for POST /api/v1/image/edit */
@@ -41,6 +47,12 @@ export interface ImageEditRequest {
   mask_image_url?: string;
   seed?: number;
   save_url: string;
+  /** REQUIRED: URL to POST when complete */
+  webhook_url?: string;
+  /** Optional: Client identifier returned in webhook */
+  item_id?: string;
+  /** Optional: HMAC signing secret */
+  webhook_secret?: string;
 }
 
 /** Request body for POST /api/v1/video/generate */
@@ -56,6 +68,12 @@ export interface VideoGenerateRequest {
   seed?: number;
   end_image_url?: string;
   save_url: string;
+  /** REQUIRED: URL to POST when complete */
+  webhook_url?: string;
+  /** Optional: Client identifier returned in webhook */
+  item_id?: string;
+  /** Optional: HMAC signing secret */
+  webhook_secret?: string;
 }
 
 /** Successful response from GPU API (legacy sync response) */

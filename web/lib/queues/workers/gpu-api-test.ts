@@ -3,13 +3,16 @@
  * ============================================================================
  * BullMQ processors for GPU API testing (image/video generation).
  * 
- * NOTE: These are placeholder implementations with polling. 
- * In the future, these will be converted to use webhooks.
+ * Uses webhook-based completion instead of polling:
+ * 1. Worker submits job with webhook_url and item_id=taskId
+ * 2. Worker waits for webhook result via Redis pub/sub
+ * 3. GPU callback updates Supabase and notifies worker
  */
 
 import { Job, Processor } from 'bullmq';
 import { v4 as uuidv4 } from 'uuid';
 import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
+import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
 import { 
   isR2Configured, 
   generatePresignedPutUrl,
@@ -21,7 +24,6 @@ import {
   callGpuVideoGenerate,
   callGpuLtx2Generate,
   callGpuLtx2Interpolate,
-  callGpuGetJobStatus,
 } from '@/lib/services/gpu-api-service';
 import type { AspectRatio, FPS } from '@/lib/services/gpu-api-service';
 
@@ -32,53 +34,53 @@ const getWebhookUrl = () => process.env.WEBHOOK_CALLBACK_URL || 'http://localhos
 const getWebhookSecret = () => process.env.GPU_WEBHOOK_SECRET;
 
 // ============================================================================
-// SHARED POLLING HELPER
+// SHARED WEBHOOK HELPER
 // ============================================================================
 
-async function pollJobUntilComplete(
-  jobId: string,
+/**
+ * Wait for GPU job completion via webhook.
+ * Replaces polling with Redis pub/sub notification.
+ */
+async function waitForJobCompletion(
   taskId: string,
   operationType: string,
-  maxAttempts: number = 60,
-  pollIntervalMs: number = 5000
+  timeoutMs: number = 300000  // 5 minutes default
 ): Promise<{
   success: boolean;
   generationTime?: number;
   publicUrl?: string;
   errorMessage?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  finalJob?: any;
 }> {
-  const supabase = getSupabaseServiceClient();
-  let attempts = 0;
+  // Update status to indicate waiting
+  await updateTaskStatus(taskId, {
+    current_step: `${operationType} (waiting for completion)...`,
+    progress_percent: 50,
+  });
   
-  while (attempts < maxAttempts) {
-    attempts++;
-    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+  console.log(`[GPUApiTest] Waiting for webhook result for task ${taskId}`);
+  
+  try {
+    const webhookResult = await waitForWebhookResult(taskId, timeoutMs);
     
-    const pollResult = await callGpuGetJobStatus(jobId);
-    if (!pollResult.success) continue;
-    
-    const job = pollResult.job;
-    const stage = job.progress_stage ? `: ${job.progress_stage}` : '';
-    const queueMsg = job.status === 'pending' && job.queue_position ? ` (Queue Pos: ${job.queue_position})` : '';
-    
-    await updateTaskStatus(taskId, {
-      current_step: `${operationType} (${job.status}${stage})${queueMsg}...`,
-      progress_percent: 30 + Math.floor((job.progress_percent || 0) * 0.6),
-    });
-    
-    if (job.status === 'pending' || job.status === 'processing') {
-      await supabase.from('tasks').update({ output_data: { finalJob: job } }).eq('id', taskId);
+    if (webhookResult.status === 'completed') {
+      return {
+        success: true,
+        generationTime: webhookResult.result?.generation_time,
+        publicUrl: webhookResult.result?.save_url,
+      };
+    } else {
+      return {
+        success: false,
+        errorMessage: webhookResult.errorMessage || 'GPU job failed',
+      };
     }
-    
-    if (job.status === 'completed') {
-      return { success: true, generationTime: job.result?.generation_time, publicUrl: job.result?.save_url, finalJob: job };
-    } else if (job.status === 'failed') {
-      return { success: false, errorMessage: job.error_message || 'GPU job failed', finalJob: job };
-    }
+  } catch (error) {
+    // Timeout or connection error
+    return {
+      success: false,
+      errorMessage: error instanceof Error ? error.message : 'Unknown error waiting for webhook',
+    };
   }
-  throw new Error('Timeout waiting for GPU job completion');
 }
 
 // ============================================================================
@@ -129,9 +131,9 @@ export const gpuImageCreateProcessor: Processor<GpuImageCreateJobData> = async (
       webhook_secret: getWebhookSecret(),
     });
 
-    if (result.success && result.isAsync && result.jobId) {
-      const pollResult = await pollJobUntilComplete(result.jobId, taskId, 'Generating image');
-      result = { ...result, ...pollResult };
+    if (result.success && result.isAsync) {
+      const webhookResult = await waitForJobCompletion(taskId, 'Generating image');
+      result = { ...result, ...webhookResult };
     }
 
     await supabase.from('tasks').update({
@@ -194,9 +196,9 @@ export const gpuImageEditProcessor: Processor<GpuImageEditJobData> = async (job:
       webhook_secret: getWebhookSecret(),
     });
 
-    if (result.success && result.isAsync && result.jobId) {
-      const pollResult = await pollJobUntilComplete(result.jobId, taskId, 'Editing image');
-      result = { ...result, ...pollResult };
+    if (result.success && result.isAsync) {
+      const webhookResult = await waitForJobCompletion(taskId, 'Editing image');
+      result = { ...result, ...webhookResult };
     }
 
     await supabase.from('tasks').update({
@@ -267,9 +269,9 @@ export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (
       webhook_secret: getWebhookSecret(),
     });
 
-    if (result.success && result.isAsync && result.jobId) {
-      const pollResult = await pollJobUntilComplete(result.jobId, taskId, 'Generating video', 120);
-      result = { ...result, ...pollResult };
+    if (result.success && result.isAsync) {
+      const webhookResult = await waitForJobCompletion(taskId, 'Generating video', 600000);  // 10 min for video
+      result = { ...result, ...webhookResult };
     }
 
     await supabase.from('tasks').update({
@@ -344,9 +346,9 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
       webhook_secret: getWebhookSecret(),
     });
 
-    if (result.success && result.isAsync && result.jobId) {
-      const pollResult = await pollJobUntilComplete(result.jobId, taskId, 'LTX-2 Generation', 120);
-      result = { ...result, ...pollResult };
+    if (result.success && result.isAsync) {
+      const webhookResult = await waitForJobCompletion(taskId, 'LTX-2 Generation', 600000);  // 10 min
+      result = { ...result, ...webhookResult };
     }
 
     await supabase.from('tasks').update({
@@ -418,9 +420,9 @@ export const gpuLtx2InterpolateProcessor: Processor<GpuLtx2InterpolateJobData> =
       webhook_secret: getWebhookSecret(),
     });
 
-    if (result.success && result.isAsync && result.jobId) {
-      const pollResult = await pollJobUntilComplete(result.jobId, taskId, 'LTX-2 Interpolation', 120);
-      result = { ...result, ...pollResult };
+    if (result.success && result.isAsync) {
+      const webhookResult = await waitForJobCompletion(taskId, 'LTX-2 Interpolation', 600000);  // 10 min
+      result = { ...result, ...webhookResult };
     }
 
     await supabase.from('tasks').update({

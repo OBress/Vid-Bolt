@@ -8,6 +8,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
+import { createClient } from "@supabase/supabase-js";
 import { getRedisConnection } from "@/lib/queues/redis";
 import type { WebhookPayload } from "@/lib/services/gpu-api-service";
 
@@ -93,7 +94,7 @@ export async function POST(request: NextRequest) {
       receivedAt: Date.now(),
     };
 
-    // Publish to Redis for real-time updates
+    // Publish to Redis for real-time updates (workers listen to this)
     try {
       const redis = getRedisConnection();
       await redis.publish(WEBHOOK_CHANNEL, JSON.stringify(result));
@@ -101,6 +102,36 @@ export async function POST(request: NextRequest) {
     } catch (redisError) {
       // Log but don't fail - webhook was still received
       console.error("[GPUCallback] Failed to publish to Redis:", redisError);
+    }
+
+    // Update task status in Supabase (for UI polling to stop)
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      
+      if (supabaseUrl && supabaseKey && payload.item_id) {
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        const isSuccess = payload.status === 'completed';
+        
+        await supabase.from('tasks').update({
+          status: isSuccess ? 'completed' : 'failed',
+          current_step: isSuccess ? 'Complete' : 'Failed',
+          progress_percent: isSuccess ? 100 : 0,
+          output_data: {
+            success: isSuccess,
+            type: payload.generation_type,
+            imageUrl: payload.result?.save_url,
+            videoUrl: payload.result?.save_url,
+            generationTime: payload.result?.generation_time,
+            error: payload.error_message,
+          },
+        }).eq('id', payload.item_id);
+        
+        console.log(`[GPUCallback] Updated task ${payload.item_id} status to ${isSuccess ? 'completed' : 'failed'}`);
+      }
+    } catch (dbError) {
+      // Log but don't fail - Redis was still notified
+      console.error("[GPUCallback] Failed to update Supabase:", dbError);
     }
 
     const duration = Date.now() - startTime;
