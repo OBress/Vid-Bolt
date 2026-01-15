@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -8,47 +9,21 @@ import {
   isR2Configured,
 } from "@/lib/services/r2-storage";
 import {
-  callGpuBatchImageGenerate,
-  callGpuBatchImageEdit,
-  callGpuBatchVideoGenerate,
-  type BatchImageGenerateItem,
-  type BatchImageEditItem,
-  type BatchVideoGenerateItem,
-  type AspectRatio,
-} from "@/lib/services/gpu-api-service";
+  gpuImageCreateQueue,
+  gpuImageEditQueue,
+  gpuVideoCreateQueue,
+  gpuLtx2CreateQueue,
+} from "@/lib/queues";
+import type { AspectRatio } from "@/lib/services/gpu-api-service";
 
 // Placeholder image URL for testing
 const PLACEHOLDER_IMAGE_URL = "https://picsum.photos/1920/1080";
 
 /**
- * Get the webhook callback URL for GPU API
- * Uses WEBHOOK_CALLBACK_URL env var, or derives from request origin
- */
-function getWebhookUrl(request: NextRequest): string {
-  // Prefer explicit env var
-  if (process.env.WEBHOOK_CALLBACK_URL) {
-    return process.env.WEBHOOK_CALLBACK_URL;
-  }
-  
-  // Derive from request origin (works for deployed apps)
-  const origin = request.headers.get("origin") 
-    || request.headers.get("x-forwarded-host")
-    || "http://localhost:3000";
-  
-  // Handle x-forwarded-host which doesn't include protocol
-  const baseUrl = origin.startsWith("http") 
-    ? origin 
-    : `https://${origin}`;
-    
-  return `${baseUrl}/api/gpu-callback`;
-}
-
-/**
  * POST /api/gpu-api/test/batch/submit
  *
- * Submit a batch of jobs directly to the GPU API.
- * Groups jobs by type and generates presigned URLs for each item.
- * Includes webhook URL for completion callbacks.
+ * Submit a batch of jobs via BullMQ workers.
+ * Each item is queued as a separate job for durability and proper webhook handling.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -123,121 +98,173 @@ export async function POST(request: NextRequest) {
 
     const batchId = `batch-${uuidv4()}`;
     
-    // Get webhook configuration
-    const webhookUrl = getWebhookUrl(request);
-    const webhookSecret = process.env.GPU_WEBHOOK_SECRET;
-    
     console.log(
-      `[GPUApiTest] Processing batch ${batchId}: ${items.length} ${type} items`
-    );
-    console.log(`[GPUApiTest] Webhook URL: ${webhookUrl}`);
-
-    // Generate presigned URLs for all items
-    const itemsWithUrls = await Promise.all(
-      items.map(async (item, index) => {
-        const isVideo = type === "video" || type === "ltx2";
-        const extension = isVideo ? "mp4" : "png";
-        const mimeType = isVideo ? "video/mp4" : "image/png";
-        const key = generateGpuTestKey(user.id, isVideo ? "video" : "image", extension);
-        const { putUrl, publicUrl } = await generatePresignedPutUrl(key, mimeType);
-        // Generate unique item_id for webhook correlation
-        const itemId = `${batchId}_item_${index}`;
-        return { ...item, putUrl, publicUrl, key, index, itemId };
-      })
+      `[GPUApiTest] Processing batch ${batchId}: ${items.length} ${type} items via BullMQ workers`
     );
 
-    let result;
-
-    // Submit batch based on type
-    switch (type) {
-      case "image": {
-        const batchItems: BatchImageGenerateItem[] = itemsWithUrls.map(
-          (item) => ({
-            item_id: item.itemId,
-            prompt: item.prompt,
-            aspect_ratio: (item.aspectRatio as AspectRatio) || "16:9",
-            width:
-              item.width || (item.aspectRatio === "9:16" ? 1080 : 1920),
-            height:
-              item.height || (item.aspectRatio === "9:16" ? 1920 : 1080),
-            seed: item.seed,
-            num_inference_steps: item.numInferenceSteps || 8,
-            lora_name: item.lora,
-            save_url: item.putUrl,
-          })
-        );
-        result = await callGpuBatchImageGenerate(batchId, batchItems, webhookUrl, webhookSecret);
-        break;
-      }
-
-      case "image-edit": {
-        const batchItems: BatchImageEditItem[] = itemsWithUrls.map((item) => ({
-          item_id: item.itemId,
-          input_image_url: item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
-          prompt: item.prompt,
-          aspect_ratio: (item.aspectRatio as AspectRatio) || "16:9",
-          mask_image_url: item.maskImageUrl,
-          seed: item.seed,
-          save_url: item.putUrl,
-        }));
-        result = await callGpuBatchImageEdit(batchId, batchItems, webhookUrl, webhookSecret);
-        break;
-      }
-
-      case "video":
-      case "ltx2": {
-        const batchItems: BatchVideoGenerateItem[] = itemsWithUrls.map(
-          (item) => ({
-            item_id: item.itemId,
-            input_image_url: item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
-            prompt: item.prompt,
-            negative_prompt: item.negative_prompt,
-            duration_seconds: item.duration_seconds || 5.0,
-            frame_rate: item.frame_rate || 24.0,
-            aspect_ratio: (item.aspectRatio as AspectRatio) || "16:9",
-            width:
-              item.width || (item.aspectRatio === "9:16" ? 1080 : 1920),
-            height:
-              item.height || (item.aspectRatio === "9:16" ? 1920 : 1080),
-            end_image_url: item.end_image_url,
-            seed: item.seed,
-            enhance_prompt: item.enhance_prompt || false,
-            save_url: item.putUrl,
-          })
-        );
-        result = await callGpuBatchVideoGenerate(batchId, batchItems, webhookUrl, webhookSecret);
-        break;
-      }
-
-      default:
-        return NextResponse.json(
-          { error: `Unsupported batch type: ${type}` },
-          { status: 400 }
-        );
-    }
-
-    if (!result.success) {
-      console.error(`[GPUApiTest] Batch submission failed:`, result.errorMessage);
+    // Get Supabase service client for creating tasks
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) {
       return NextResponse.json(
-        { error: result.errorMessage || "Batch submission failed" },
+        { error: "Supabase configuration missing" },
         { status: 500 }
       );
     }
+    
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log(`[GPUApiTest] Batch ${batchId} submitted successfully`);
+    // Generate presigned URLs and queue jobs for all items
+    const queuedTasks: Array<{
+      index: number;
+      taskId: string;
+      itemId: string;
+      publicUrl: string;
+      key: string;
+    }> = [];
+
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      const isVideo = type === "video" || type === "ltx2";
+      const extension = isVideo ? "mp4" : "png";
+      const mimeType = isVideo ? "video/mp4" : "image/png";
+      const key = generateGpuTestKey(user.id, isVideo ? "video" : "image", extension);
+      const { putUrl, publicUrl } = await generatePresignedPutUrl(key, mimeType);
+      const itemId = `${batchId}_item_${index}`;
+
+      // Determine task type and name - must be valid: writing, audio, video, export, universal_script
+      // Using 'video' for all GPU tasks since they're media generation
+      const taskType = "video";
+      const taskName = `${type === "video" || type === "ltx2" ? "Video" : type === "image-edit" ? "Image Edit" : "Image"} Generation (Batch ${index + 1}/${items.length})`;
+
+      // Create task in Supabase
+      const { data: task, error: taskError } = await supabase
+        .from("tasks")
+        .insert({
+          user_id: user.id,
+          name: taskName,
+          type: taskType,
+          status: "pending",
+          current_phase: type === "video" || type === "ltx2" ? "video_generation" : type === "image-edit" ? "image_editing" : "image_generation",
+          current_step: `Queued (${index + 1}/${items.length})`,
+          progress_percent: 0,
+          input_data: {
+            batchId,
+            itemIndex: index,
+            prompt: item.prompt,
+            aspectRatio: item.aspectRatio,
+            width: item.width,
+            height: item.height,
+            seed: item.seed,
+          },
+        })
+        .select()
+        .single();
+
+      if (taskError || !task) {
+        console.error(`[GPUApiTest] Failed to create task for item ${index}:`, taskError);
+        continue; // Skip this item but continue with others
+      }
+
+      // Queue job based on type
+      const commonJobData = {
+        taskId: task.id,
+        userId: user.id,
+        batchId,
+        itemIndex: index,
+        prompt: item.prompt,
+        aspectRatio: (item.aspectRatio as AspectRatio) || "16:9",
+        width: item.width || (item.aspectRatio === "9:16" ? 1080 : 1920),
+        height: item.height || (item.aspectRatio === "9:16" ? 1920 : 1080),
+        seed: item.seed,
+        r2Key: key,
+        putUrl,
+        publicUrl,
+      };
+
+      try {
+        switch (type) {
+          case "image":
+            await gpuImageCreateQueue.add(`batch-${batchId}-${index}`, {
+              ...commonJobData,
+              numInferenceSteps: item.numInferenceSteps || 8,
+              lora_name: item.lora,
+            });
+            break;
+
+          case "image-edit":
+            await gpuImageEditQueue.add(`batch-${batchId}-${index}`, {
+              ...commonJobData,
+              sourceImageUrl: item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
+              maskImageUrl: item.maskImageUrl,
+            });
+            break;
+
+          case "video":
+            await gpuVideoCreateQueue.add(`batch-${batchId}-${index}`, {
+              ...commonJobData,
+              sourceImageUrl: item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
+              endImageUrl: item.end_image_url,
+              durationSeconds: item.duration_seconds || 5.0,
+              fps: item.frame_rate || 24,
+            });
+            break;
+
+          case "ltx2":
+            await gpuLtx2CreateQueue.add(`batch-${batchId}-${index}`, {
+              ...commonJobData,
+              sourceImageUrl: item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
+              negativePrompt: item.negative_prompt,
+              endImageUrl: item.end_image_url,
+              durationSeconds: item.duration_seconds || 5.0,
+              frameRate: item.frame_rate || 24,
+              enhancePrompt: item.enhance_prompt || false,
+            });
+            break;
+        }
+
+        console.log(`[GPUApiTest] Queued ${type} job for task ${task.id} to BullMQ`);
+
+        // Update task status to pending (queued in BullMQ)
+        await supabase.from("tasks").update({
+          status: "pending",
+          current_step: "Queued for processing",
+        }).eq("id", task.id);
+
+        queuedTasks.push({
+          index,
+          taskId: task.id,
+          itemId,
+          publicUrl,
+          key,
+        });
+
+      } catch (queueError) {
+        console.error(`[GPUApiTest] Failed to queue item ${index}:`, queueError);
+        // Mark task as failed
+        await supabase.from("tasks").update({
+          status: "failed",
+          current_step: "Failed to queue",
+          output_data: { error: String(queueError) },
+        }).eq("id", task.id);
+      }
+    }
+
+    console.log(`[GPUApiTest] Queued ${queuedTasks.length}/${items.length} items from batch ${batchId}`);
 
     return NextResponse.json({
       success: true,
-      batchId: result.batchId,
-      totalItems: result.totalItems,
-      statusUrl: result.statusUrl,
-      webhookUrl, // Return for debugging
-      // Return public URLs and item IDs mapped by index for result retrieval
-      itemUrls: itemsWithUrls.map((item) => ({
-        index: item.index,
-        itemId: item.itemId,
-        publicUrl: item.publicUrl,
-        key: item.key,
+      batchId,
+      totalItems: items.length,
+      queuedItems: queuedTasks.length,
+      // Return task IDs and URLs for each item
+      tasks: queuedTasks.map((t) => ({
+        index: t.index,
+        taskId: t.taskId,
+        itemId: t.itemId,
+        publicUrl: t.publicUrl,
+        key: t.key,
       })),
     });
   } catch (error) {
@@ -248,4 +275,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

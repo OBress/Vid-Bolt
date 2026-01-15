@@ -315,6 +315,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   const [batchJobType, setBatchJobType] = useState<JobType>("image");
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [isManualPolling, setIsManualPolling] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
   // Clear storage state
   const [clearingStorage, setClearingStorage] = useState(false);
@@ -526,23 +527,50 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
               newMap.set(batchId, {
                 ...existing,
                 status: batchStatus.status,
-                completedItems: batchStatus.completed_items,
-                failedItems: batchStatus.failed_items,
+                completedItems: batchStatus.completedItems,
+                failedItems: batchStatus.failedItems,
               });
             }
             return newMap;
           });
 
           // Update individual jobs from batch items
+          // Debug: log what we received
+          console.log(`[GPUApiTester] Received batch status:`, {
+            batchId,
+            status: batchStatus.status,
+            completedItems: batchStatus.completedItems,
+            items: batchStatus.items?.map(
+              (i: { taskId: string; status: string; itemIndex: number }) => ({
+                taskId: i.taskId,
+                status: i.status,
+                itemIndex: i.itemIndex,
+              })
+            ),
+          });
+
           setTrackedJobs((prev) => {
             const newMap = new Map(prev);
+
+            // Debug: log current jobs for this batch
+            const batchJobs = Array.from(newMap.values()).filter(
+              (j) => j.batchId === batchId
+            );
+            console.log(
+              `[GPUApiTester] Current tracked jobs for batch:`,
+              batchJobs.map((j) => ({
+                id: j.id,
+                batchItemIndex: j.batchItemIndex,
+                status: j.status,
+              }))
+            );
 
             for (const item of batchStatus.items) {
               // Find the job with this batchId and item index
               for (const [jobId, job] of newMap) {
                 if (
                   job.batchId === batchId &&
-                  job.batchItemIndex === item.item_index
+                  job.batchItemIndex === item.itemIndex
                 ) {
                   const updatedJob = { ...job };
 
@@ -554,22 +582,30 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       type: job.type,
                       imageUrl:
                         job.type === "image" || job.type === "image-edit"
-                          ? item.result?.save_url
+                          ? item.result?.imageUrl || item.result?.save_url
                           : undefined,
                       videoUrl:
                         job.type === "video" || job.type === "ltx2"
-                          ? item.result?.save_url
+                          ? item.result?.videoUrl || item.result?.save_url
                           : undefined,
-                      generationTime: item.result?.generation_time,
+                      generationTime:
+                        item.result?.generationTime ||
+                        item.result?.generation_time,
                     };
                   } else if (item.status === "failed") {
                     updatedJob.status = "failed";
                     updatedJob.result = {
                       success: false,
                       type: job.type,
-                      error: item.error_message || "Job failed",
+                      error:
+                        item.result?.error ||
+                        item.error_message ||
+                        "Job failed",
                     };
-                  } else if (item.status === "processing") {
+                  } else if (
+                    item.status === "running" ||
+                    item.status === "processing"
+                  ) {
                     updatedJob.status = "processing";
                   } else if (item.status === "pending") {
                     updatedJob.status = "pending";
@@ -941,8 +977,8 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
               newMap.set(batchId, {
                 ...existing,
                 status: batchStatus.status,
-                completedItems: batchStatus.completed_items,
-                failedItems: batchStatus.failed_items,
+                completedItems: batchStatus.completedItems,
+                failedItems: batchStatus.failedItems,
               });
             }
             return newMap;
@@ -956,7 +992,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
               for (const [jobId, job] of newMap) {
                 if (
                   job.batchId === batchId &&
-                  job.batchItemIndex === item.item_index
+                  job.batchItemIndex === item.itemIndex
                 ) {
                   const updatedJob = { ...job };
 
@@ -968,22 +1004,30 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       type: job.type,
                       imageUrl:
                         job.type === "image" || job.type === "image-edit"
-                          ? item.result?.save_url
+                          ? item.result?.imageUrl || item.result?.save_url
                           : undefined,
                       videoUrl:
                         job.type === "video" || job.type === "ltx2"
-                          ? item.result?.save_url
+                          ? item.result?.videoUrl || item.result?.save_url
                           : undefined,
-                      generationTime: item.result?.generation_time,
+                      generationTime:
+                        item.result?.generationTime ||
+                        item.result?.generation_time,
                     };
                   } else if (item.status === "failed") {
                     updatedJob.status = "failed";
                     updatedJob.result = {
                       success: false,
                       type: job.type,
-                      error: item.error_message || "Job failed",
+                      error:
+                        item.result?.error ||
+                        item.error_message ||
+                        "Job failed",
                     };
-                  } else if (item.status === "processing") {
+                  } else if (
+                    item.status === "running" ||
+                    item.status === "processing"
+                  ) {
                     updatedJob.status = "processing";
                   } else if (item.status === "pending") {
                     updatedJob.status = "pending";
@@ -3717,97 +3761,245 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                     </p>
                   </div>
                 ) : (
-                  filteredJobs
-                    .sort(
-                      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-                    )
-                    .map((job) => (
-                      <div
-                        key={job.id}
-                        className="bg-neutral-800 rounded-lg p-2 border border-neutral-700 text-xs"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1">
-                            {job.type === "image" && (
-                              <Image className="w-3 h-3 text-purple-400" />
-                            )}
-                            {job.type === "image-edit" && (
-                              <Pencil className="w-3 h-3 text-amber-400" />
-                            )}
-                            {job.type === "video" && (
-                              <Video className="w-3 h-3 text-teal-400" />
-                            )}
-                            {job.type === "ltx2" && (
-                              <Sparkles className="w-3 h-3 text-cyan-400" />
-                            )}
-                            <span className="text-neutral-400 uppercase">
-                              {job.type}
+                  <div className="flex flex-col gap-2">
+                    {/* Selected Job Detail Panel */}
+                    {selectedJobId && trackedJobs.get(selectedJobId) && (
+                      <div className="bg-neutral-900 border border-indigo-500/50 rounded-lg p-3 mb-2">
+                        {(() => {
+                          const job = trackedJobs.get(selectedJobId)!;
+                          const mediaUrl =
+                            job.result?.imageUrl || job.result?.videoUrl;
+                          return (
+                            <>
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-medium text-indigo-400">
+                                  Job Details
+                                </span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setSelectedJobId(null)}
+                                  className="h-5 w-5 p-0"
+                                >
+                                  <X className="w-3 h-3" />
+                                </Button>
+                              </div>
+
+                              {/* Preview */}
+                              {job.status === "completed" && mediaUrl && (
+                                <div className="mb-3 rounded overflow-hidden bg-neutral-800">
+                                  {job.result?.imageUrl ? (
+                                    <img
+                                      src={job.result.imageUrl}
+                                      alt="Generated"
+                                      className="w-full h-auto max-h-40 object-contain"
+                                    />
+                                  ) : job.result?.videoUrl ? (
+                                    <video
+                                      src={job.result.videoUrl}
+                                      controls
+                                      className="w-full h-auto max-h-40"
+                                    />
+                                  ) : null}
+                                </div>
+                              )}
+
+                              {/* Info */}
+                              <div className="space-y-1.5 text-xs">
+                                <div className="flex justify-between">
+                                  <span className="text-neutral-500">
+                                    Status:
+                                  </span>
+                                  <span
+                                    className={`font-medium ${
+                                      job.status === "completed"
+                                        ? "text-green-400"
+                                        : job.status === "failed"
+                                        ? "text-red-400"
+                                        : job.status === "processing"
+                                        ? "text-blue-400"
+                                        : "text-yellow-400"
+                                    }`}
+                                  >
+                                    {job.status}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-neutral-500">
+                                    Type:
+                                  </span>
+                                  <span className="text-neutral-300">
+                                    {job.type}
+                                  </span>
+                                </div>
+                                {job.batchId && (
+                                  <div className="flex justify-between">
+                                    <span className="text-neutral-500">
+                                      Batch:
+                                    </span>
+                                    <span
+                                      className="text-neutral-400 truncate max-w-[150px]"
+                                      title={job.batchId}
+                                    >
+                                      {job.batchId.slice(0, 20)}...
+                                    </span>
+                                  </div>
+                                )}
+                                {job.result?.generationTime && (
+                                  <div className="flex justify-between">
+                                    <span className="text-neutral-500">
+                                      Gen Time:
+                                    </span>
+                                    <span className="text-neutral-300">
+                                      {job.result.generationTime}s
+                                    </span>
+                                  </div>
+                                )}
+                                <div className="pt-1">
+                                  <span className="text-neutral-500 block mb-1">
+                                    Prompt:
+                                  </span>
+                                  <p className="text-neutral-300 text-[10px] leading-relaxed bg-neutral-800 rounded p-2">
+                                    {job.params.prompt}
+                                  </p>
+                                </div>
+
+                                {/* URL and Actions */}
+                                {mediaUrl && (
+                                  <div className="pt-2 space-y-2">
+                                    <div>
+                                      <span className="text-neutral-500 block mb-1">
+                                        URL:
+                                      </span>
+                                      <div className="flex gap-1">
+                                        <input
+                                          type="text"
+                                          value={mediaUrl}
+                                          readOnly
+                                          className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[10px] text-neutral-400"
+                                        />
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() =>
+                                            navigator.clipboard.writeText(
+                                              mediaUrl
+                                            )
+                                          }
+                                          className="h-6 px-2 border-neutral-700"
+                                        >
+                                          <Copy className="w-3 h-3" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <a
+                                        href={mediaUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex-1 flex items-center justify-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded py-1.5 text-xs"
+                                      >
+                                        <ExternalLink className="w-3 h-3" />
+                                        Open
+                                      </a>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Error */}
+                                {job.status === "failed" &&
+                                  job.result?.error && (
+                                    <div className="pt-2">
+                                      <span className="text-red-400 block mb-1">
+                                        Error:
+                                      </span>
+                                      <p className="text-red-300 text-[10px] bg-red-900/20 rounded p-2">
+                                        {job.result.error}
+                                      </p>
+                                    </div>
+                                  )}
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    {/* Job List */}
+                    {filteredJobs
+                      .sort(
+                        (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+                      )
+                      .map((job) => (
+                        <div
+                          key={job.id}
+                          onClick={() =>
+                            setSelectedJobId(
+                              selectedJobId === job.id ? null : job.id
+                            )
+                          }
+                          className={`bg-neutral-800 rounded-lg p-2 border text-xs cursor-pointer transition-colors ${
+                            selectedJobId === job.id
+                              ? "border-indigo-500 bg-neutral-800/80"
+                              : "border-neutral-700 hover:border-neutral-600"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1">
+                              {job.type === "image" && (
+                                <Image className="w-3 h-3 text-purple-400" />
+                              )}
+                              {job.type === "image-edit" && (
+                                <Pencil className="w-3 h-3 text-amber-400" />
+                              )}
+                              {job.type === "video" && (
+                                <Video className="w-3 h-3 text-teal-400" />
+                              )}
+                              {job.type === "ltx2" && (
+                                <Sparkles className="w-3 h-3 text-cyan-400" />
+                              )}
+                              <span className="text-neutral-400 uppercase">
+                                {job.type}
+                              </span>
+                            </div>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                job.status === "queued"
+                                  ? "bg-orange-500/20 text-orange-400"
+                                  : job.status === "pending"
+                                  ? "bg-yellow-500/20 text-yellow-400"
+                                  : job.status === "processing"
+                                  ? "bg-blue-500/20 text-blue-400"
+                                  : job.status === "completed"
+                                  ? "bg-green-500/20 text-green-400"
+                                  : "bg-red-500/20 text-red-400"
+                              }`}
+                            >
+                              {job.status === "queued"
+                                ? "Local"
+                                : job.status === "pending" && job.queuePosition
+                                ? `#${job.queuePosition}`
+                                : job.status === "processing" &&
+                                  job.progressPercent !== undefined
+                                ? `${job.progressPercent}%`
+                                : job.status}
                             </span>
                           </div>
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] ${
-                              job.status === "queued"
-                                ? "bg-orange-500/20 text-orange-400"
-                                : job.status === "pending"
-                                ? "bg-yellow-500/20 text-yellow-400"
-                                : job.status === "processing"
-                                ? "bg-blue-500/20 text-blue-400"
-                                : job.status === "completed"
-                                ? "bg-green-500/20 text-green-400"
-                                : "bg-red-500/20 text-red-400"
-                            }`}
-                          >
-                            {job.status === "queued"
-                              ? "Local"
-                              : job.status === "pending" && job.queuePosition
-                              ? `#${job.queuePosition}`
-                              : job.status === "processing" &&
-                                job.progressPercent !== undefined
-                              ? `${job.progressPercent}%`
-                              : job.status}
-                          </span>
-                        </div>
-                        {job.status === "processing" &&
-                          job.progressPercent !== undefined && (
-                            <div className="mt-1 h-1 bg-neutral-700 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-blue-500"
-                                style={{ width: `${job.progressPercent}%` }}
-                              />
-                            </div>
-                          )}
-                        <p className="mt-1 text-neutral-400 truncate">
-                          {job.params.prompt?.slice(0, 40)}...
-                        </p>
-                        {job.status === "completed" && job.result && (
-                          <div className="mt-1 flex gap-2">
-                            {job.result.imageUrl && (
-                              <a
-                                href={job.result.imageUrl}
-                                target="_blank"
-                                className="text-purple-400 hover:underline"
-                              >
-                                View
-                              </a>
+                          {job.status === "processing" &&
+                            job.progressPercent !== undefined && (
+                              <div className="mt-1 h-1 bg-neutral-700 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-blue-500"
+                                  style={{ width: `${job.progressPercent}%` }}
+                                />
+                              </div>
                             )}
-                            {job.result.videoUrl && (
-                              <a
-                                href={job.result.videoUrl}
-                                target="_blank"
-                                className="text-teal-400 hover:underline"
-                              >
-                                View
-                              </a>
-                            )}
-                          </div>
-                        )}
-                        {job.status === "failed" && (
-                          <p className="mt-1 text-red-400 truncate">
-                            {job.result?.error}
+                          <p className="mt-1 text-neutral-400 truncate">
+                            {job.params.prompt?.slice(0, 40)}...
                           </p>
-                        )}
-                      </div>
-                    ))
+                        </div>
+                      ))}
+                  </div>
                 )}
               </div>
 

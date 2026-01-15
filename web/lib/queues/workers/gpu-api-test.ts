@@ -97,6 +97,10 @@ export interface GpuImageCreateJobData {
   width?: number;
   height?: number;
   lora_name?: string;
+  // Pre-generated URLs for batch jobs
+  putUrl?: string;
+  publicUrl?: string;
+  r2Key?: string;
 }
 
 export const gpuImageCreateProcessor: Processor<GpuImageCreateJobData> = async (job: Job<GpuImageCreateJobData>) => {
@@ -110,8 +114,17 @@ export const gpuImageCreateProcessor: Processor<GpuImageCreateJobData> = async (
 
     await updateTaskStatus(taskId, { status: 'running', current_phase: 'image_generation', current_step: 'Generating presigned URL...', progress_percent: 10 });
 
-    const key = generateGpuTestKey(userId, 'image', 'png');
-    const { putUrl, publicUrl } = await generatePresignedPutUrl(key, 'image/png');
+    // Use pre-generated URLs if provided (batch jobs), otherwise generate new ones
+    let key = job.data.r2Key;
+    let putUrl = job.data.putUrl;
+    let publicUrl = job.data.publicUrl;
+
+    if (!putUrl || !publicUrl) {
+      key = generateGpuTestKey(userId, 'image', 'png');
+      const urls = await generatePresignedPutUrl(key, 'image/png');
+      putUrl = urls.putUrl;
+      publicUrl = urls.publicUrl;
+    }
 
     await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
 
@@ -136,12 +149,23 @@ export const gpuImageCreateProcessor: Processor<GpuImageCreateJobData> = async (
       result = { ...result, ...webhookResult };
     }
 
-    await supabase.from('tasks').update({
-      status: result.success ? 'completed' : 'failed',
+    // Final status update with logging
+    const finalStatus = result.success ? 'completed' : 'failed';
+    console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
+    
+    const { error: updateError, data: updateData } = await supabase.from('tasks').update({
+      status: finalStatus,
       current_step: result.success ? 'Complete' : 'Failed',
       progress_percent: result.success ? 100 : 0,
+      completed_at: new Date().toISOString(),
       output_data: { success: result.success, type: 'image_creation', imageUrl: result.success ? publicUrl : undefined, generationTime: result.generationTime, error: result.success ? undefined : result.errorMessage, r2Key: key },
-    }).eq('id', taskId);
+    }).eq('id', taskId).select('id, status');
+
+    if (updateError) {
+      console.error(`[GPUApiTest] FAILED to update task ${taskId}:`, updateError);
+    } else {
+      console.log(`[GPUApiTest] Task ${taskId} updated successfully:`, updateData);
+    }
 
     if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
     return { success: true, imageUrl: publicUrl, generationTime: result.generationTime };
@@ -163,6 +187,10 @@ export interface GpuImageEditJobData {
   aspectRatio?: AspectRatio;
   seed?: number;
   maskImageUrl?: string;
+  // Pre-generated URLs for batch jobs
+  putUrl?: string;
+  publicUrl?: string;
+  r2Key?: string;
 }
 
 export const gpuImageEditProcessor: Processor<GpuImageEditJobData> = async (job: Job<GpuImageEditJobData>) => {
@@ -176,8 +204,17 @@ export const gpuImageEditProcessor: Processor<GpuImageEditJobData> = async (job:
 
     await updateTaskStatus(taskId, { status: 'running', current_phase: 'image_editing', current_step: 'Generating presigned URL...', progress_percent: 10 });
 
-    const key = generateGpuTestKey(userId, 'image', 'png');
-    const { putUrl, publicUrl } = await generatePresignedPutUrl(key, 'image/png');
+    // Use pre-generated URLs if provided (batch jobs), otherwise generate new ones
+    let key = job.data.r2Key;
+    let putUrl = job.data.putUrl;
+    let publicUrl = job.data.publicUrl;
+
+    if (!putUrl || !publicUrl) {
+      key = generateGpuTestKey(userId, 'image', 'png');
+      const urls = await generatePresignedPutUrl(key, 'image/png');
+      putUrl = urls.putUrl;
+      publicUrl = urls.publicUrl;
+    }
     const inputImageUrl = sourceImageUrl || PLACEHOLDER_IMAGE_URL;
 
     await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
@@ -201,12 +238,23 @@ export const gpuImageEditProcessor: Processor<GpuImageEditJobData> = async (job:
       result = { ...result, ...webhookResult };
     }
 
-    await supabase.from('tasks').update({
-      status: result.success ? 'completed' : 'failed',
+    // Final status update with logging
+    const finalStatus = result.success ? 'completed' : 'failed';
+    console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
+    
+    const { error: updateError, data: updateData } = await supabase.from('tasks').update({
+      status: finalStatus,
       current_step: result.success ? 'Complete' : 'Failed',
       progress_percent: result.success ? 100 : 0,
+      completed_at: new Date().toISOString(),
       output_data: { success: result.success, type: 'image_edit', imageUrl: result.success ? publicUrl : undefined, generationTime: result.generationTime, inputImageUrl, error: result.success ? undefined : result.errorMessage, r2Key: key },
-    }).eq('id', taskId);
+    }).eq('id', taskId).select('id, status');
+
+    if (updateError) {
+      console.error(`[GPUApiTest] FAILED to update task ${taskId}:`, updateError);
+    } else {
+      console.log(`[GPUApiTest] Task ${taskId} updated successfully:`, updateData);
+    }
 
     if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
     return { success: true, imageUrl: publicUrl, generationTime: result.generationTime };
@@ -225,13 +273,19 @@ export interface GpuVideoCreateJobData {
   userId: string;
   prompt: string;
   startFrameUrl?: string;
+  sourceImageUrl?: string;  // Alias for startFrameUrl (batch jobs)
   durationSeconds?: number;
   fps?: FPS;
   aspectRatio?: AspectRatio;
   width?: number;
   height?: number;
   endFrameUrl?: string;
+  endImageUrl?: string;  // Alias for endFrameUrl (batch jobs)
   seed?: number;
+  // Pre-generated URLs for batch jobs
+  putUrl?: string;
+  publicUrl?: string;
+  r2Key?: string;
 }
 
 export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (job: Job<GpuVideoCreateJobData>) => {
@@ -245,9 +299,18 @@ export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (
 
     await updateTaskStatus(taskId, { status: 'running', current_phase: 'video_generation', current_step: 'Generating presigned URL...', progress_percent: 10 });
 
-    const key = generateGpuTestKey(userId, 'video', 'mp4');
-    const { putUrl, publicUrl } = await generatePresignedPutUrl(key, 'video/mp4');
-    const inputImageUrl = startFrameUrl || PLACEHOLDER_IMAGE_URL;
+    // Use pre-generated URLs if provided (batch jobs), otherwise generate new ones
+    let key = job.data.r2Key;
+    let putUrl = job.data.putUrl;
+    let publicUrl = job.data.publicUrl;
+
+    if (!putUrl || !publicUrl) {
+      key = generateGpuTestKey(userId, 'video', 'mp4');
+      const urls = await generatePresignedPutUrl(key, 'video/mp4');
+      putUrl = urls.putUrl;
+      publicUrl = urls.publicUrl;
+    }
+    const inputImageUrl = startFrameUrl || job.data.sourceImageUrl || PLACEHOLDER_IMAGE_URL;
 
     await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
 
@@ -274,12 +337,23 @@ export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (
       result = { ...result, ...webhookResult };
     }
 
-    await supabase.from('tasks').update({
-      status: result.success ? 'completed' : 'failed',
+    // Final status update with logging
+    const finalStatus = result.success ? 'completed' : 'failed';
+    console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
+    
+    const { error: updateError, data: updateData } = await supabase.from('tasks').update({
+      status: finalStatus,
       current_step: result.success ? 'Complete' : 'Failed',
       progress_percent: result.success ? 100 : 0,
+      completed_at: new Date().toISOString(),
       output_data: { success: result.success, type: 'video_creation', videoUrl: result.success ? publicUrl : undefined, generationTime: result.generationTime, inputImageUrl, durationSeconds: durationSeconds || 4.0, fps: fps || 24, error: result.success ? undefined : result.errorMessage, r2Key: key },
-    }).eq('id', taskId);
+    }).eq('id', taskId).select('id, status');
+
+    if (updateError) {
+      console.error(`[GPUApiTest] FAILED to update task ${taskId}:`, updateError);
+    } else {
+      console.log(`[GPUApiTest] Task ${taskId} updated successfully:`, updateData);
+    }
 
     if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
     return { success: true, videoUrl: publicUrl, generationTime: result.generationTime };
@@ -298,19 +372,30 @@ export interface GpuLtx2CreateJobData {
   userId: string;
   prompt: string;
   input_image_url?: string;
+  sourceImageUrl?: string;  // Alias for input_image_url (batch jobs)
   negative_prompt?: string;
+  negativePrompt?: string;  // Alias (batch jobs)
   duration_seconds?: number;
+  durationSeconds?: number;  // Alias (batch jobs)
   frame_rate?: number;
+  frameRate?: number;  // Alias (batch jobs)
   aspect_ratio?: AspectRatio;
+  aspectRatio?: AspectRatio;  // Alias (batch jobs)
   width?: number;
   height?: number;
   end_image_url?: string;
+  endImageUrl?: string;  // Alias (batch jobs)
   seed?: number;
   enhance_prompt?: boolean;
+  enhancePrompt?: boolean;  // Alias (batch jobs)
+  // Pre-generated URLs for batch jobs
+  putUrl?: string;
+  publicUrl?: string;
+  r2Key?: string;
 }
 
 export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (job: Job<GpuLtx2CreateJobData>) => {
-  const { taskId, userId, prompt, input_image_url, negative_prompt, duration_seconds, frame_rate, aspect_ratio, width, height, end_image_url, seed, enhance_prompt } = job.data;
+  const { taskId, userId, prompt } = job.data;
   const supabase = getSupabaseServiceClient();
 
   console.log(`[GPUApiTest] Starting LTX-2 generation for task ${taskId}`);
@@ -320,26 +405,45 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
 
     await updateTaskStatus(taskId, { status: 'running', current_phase: 'video_generation', current_step: 'Generating presigned URL...', progress_percent: 10 });
 
-    const key = generateGpuTestKey(userId, 'video', 'mp4');
-    const { putUrl, publicUrl } = await generatePresignedPutUrl(key, 'video/mp4');
-    const inputImageUrl = input_image_url || PLACEHOLDER_IMAGE_URL;
+    // Use pre-generated URLs if provided (batch jobs), otherwise generate new ones
+    let key = job.data.r2Key;
+    let putUrl = job.data.putUrl;
+    let publicUrl = job.data.publicUrl;
+
+    if (!putUrl || !publicUrl) {
+      key = generateGpuTestKey(userId, 'video', 'mp4');
+      const urls = await generatePresignedPutUrl(key, 'video/mp4');
+      putUrl = urls.putUrl;
+      publicUrl = urls.publicUrl;
+    }
+    const inputImageUrl = job.data.input_image_url || job.data.sourceImageUrl || PLACEHOLDER_IMAGE_URL;
 
     await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
 
     const gpuJobId = uuidv4();
+    const negative_prompt = job.data.negative_prompt || job.data.negativePrompt;
+    const duration_seconds = job.data.duration_seconds || job.data.durationSeconds || 5.0;
+    const frame_rate = job.data.frame_rate || job.data.frameRate || 24.0;
+    const aspect_ratio = job.data.aspect_ratio || job.data.aspectRatio || '16:9';
+    const width = job.data.width || (aspect_ratio === '9:16' ? 1080 : 1920);
+    const height = job.data.height || (aspect_ratio === '9:16' ? 1920 : 1080);
+    const end_image_url = job.data.end_image_url || job.data.endImageUrl;
+    const seed = job.data.seed;
+    const enhance_prompt = job.data.enhance_prompt || job.data.enhancePrompt || false;
+    
     let result = await callGpuLtx2Generate({
       job_id: gpuJobId,
       input_image_url: inputImageUrl,
       prompt,
       negative_prompt: negative_prompt || undefined,
-      duration_seconds: duration_seconds || 5.0,
-      frame_rate: frame_rate || 24.0,
-      aspect_ratio: aspect_ratio || '16:9',
-      width: width || (aspect_ratio === '9:16' ? 1080 : 1920),
-      height: height || (aspect_ratio === '9:16' ? 1920 : 1080),
+      duration_seconds,
+      frame_rate,
+      aspect_ratio,
+      width,
+      height,
       end_image_url: end_image_url || undefined,
       seed: seed || undefined,
-      enhance_prompt: enhance_prompt || false,
+      enhance_prompt,
       save_url: putUrl,
       webhook_url: getWebhookUrl(),
       item_id: taskId,
@@ -351,12 +455,23 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
       result = { ...result, ...webhookResult };
     }
 
-    await supabase.from('tasks').update({
-      status: result.success ? 'completed' : 'failed',
+    // Final status update with logging
+    const finalStatus = result.success ? 'completed' : 'failed';
+    console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
+    
+    const { error: updateError, data: updateData } = await supabase.from('tasks').update({
+      status: finalStatus,
       current_step: result.success ? 'Complete' : 'Failed',
       progress_percent: result.success ? 100 : 0,
+      completed_at: new Date().toISOString(),
       output_data: { success: result.success, type: 'ltx2_generation', videoUrl: result.success ? publicUrl : undefined, generationTime: result.generationTime, inputImageUrl, error: result.success ? undefined : result.errorMessage, r2Key: key },
-    }).eq('id', taskId);
+    }).eq('id', taskId).select('id, status');
+
+    if (updateError) {
+      console.error(`[GPUApiTest] FAILED to update task ${taskId}:`, updateError);
+    } else {
+      console.log(`[GPUApiTest] Task ${taskId} updated successfully:`, updateData);
+    }
 
     if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
     return { success: true, videoUrl: publicUrl, generationTime: result.generationTime };
@@ -425,12 +540,23 @@ export const gpuLtx2InterpolateProcessor: Processor<GpuLtx2InterpolateJobData> =
       result = { ...result, ...webhookResult };
     }
 
-    await supabase.from('tasks').update({
-      status: result.success ? 'completed' : 'failed',
+    // Final status update with logging
+    const finalStatus = result.success ? 'completed' : 'failed';
+    console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
+    
+    const { error: updateError, data: updateData } = await supabase.from('tasks').update({
+      status: finalStatus,
       current_step: result.success ? 'Complete' : 'Failed',
       progress_percent: result.success ? 100 : 0,
+      completed_at: new Date().toISOString(),
       output_data: { success: result.success, type: 'ltx2_interpolate', videoUrl: result.success ? publicUrl : undefined, generationTime: result.generationTime, error: result.success ? undefined : result.errorMessage, r2Key: key },
-    }).eq('id', taskId);
+    }).eq('id', taskId).select('id, status');
+
+    if (updateError) {
+      console.error(`[GPUApiTest] FAILED to update task ${taskId}:`, updateError);
+    } else {
+      console.log(`[GPUApiTest] Task ${taskId} updated successfully:`, updateData);
+    }
 
     if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
     return { success: true, videoUrl: publicUrl, generationTime: result.generationTime };
