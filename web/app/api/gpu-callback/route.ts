@@ -11,6 +11,7 @@ import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { getRedisConnection } from "@/lib/queues/redis";
 import type { WebhookPayload } from "@/lib/services/gpu-api-service";
+import { getKeyFromUrl, getPublicUrl } from "@/lib/services/r2-storage";
 
 // Channel name for webhook result pub/sub
 const WEBHOOK_CHANNEL = "gpu-webhook-results";
@@ -109,9 +110,23 @@ export async function POST(request: NextRequest) {
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
       const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
       
-      if (supabaseUrl && supabaseKey && payload.item_id) {
+        if (supabaseUrl && supabaseKey && payload.item_id) {
         const supabase = createClient(supabaseUrl, supabaseKey);
         const isSuccess = payload.status === 'completed';
+        
+        // FIX: Ensure we use the public URL (custom domain) not the internal R2 URL
+        // The GPU API returns the internal R2 URL (r2.cloudflarestorage.com)
+        // We need to convert this to our custom domain public URL
+        let finalUrl = payload.result?.save_url;
+        if (isSuccess && finalUrl) {
+          try {
+            const key = getKeyFromUrl(finalUrl);
+            finalUrl = getPublicUrl(key);
+          } catch (e) {
+            console.error("[GPUCallback] Failed to sanitize URL:", e);
+            // Fallback to original URL if parsing fails
+          }
+        }
         
         await supabase.from('tasks').update({
           status: isSuccess ? 'completed' : 'failed',
@@ -120,8 +135,8 @@ export async function POST(request: NextRequest) {
           output_data: {
             success: isSuccess,
             type: payload.generation_type,
-            imageUrl: payload.result?.save_url,
-            videoUrl: payload.result?.save_url,
+            imageUrl: finalUrl,
+            videoUrl: finalUrl,
             generationTime: payload.result?.generation_time,
             error: payload.error_message,
           },

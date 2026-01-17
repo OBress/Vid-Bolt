@@ -16,7 +16,8 @@ import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
 import { 
   isR2Configured, 
   generatePresignedPutUrl,
-  generateGpuTestKey
+  generateGpuTestKey,
+  getPublicUrl
 } from '@/lib/services/r2-storage';
 import {
   callGpuImageGenerate,
@@ -151,6 +152,8 @@ export const gpuImageCreateProcessor: Processor<GpuImageCreateJobData> = async (
 
     // Final status update with logging
     const finalStatus = result.success ? 'completed' : 'failed';
+    const finalPublicUrl = result.success ? getPublicUrl(key!) : undefined;
+
     console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
     
     const { error: updateError, data: updateData } = await supabase.from('tasks').update({
@@ -158,7 +161,7 @@ export const gpuImageCreateProcessor: Processor<GpuImageCreateJobData> = async (
       current_step: result.success ? 'Complete' : 'Failed',
       progress_percent: result.success ? 100 : 0,
       completed_at: new Date().toISOString(),
-      output_data: { success: result.success, type: 'image_creation', imageUrl: result.success ? publicUrl : undefined, generationTime: result.generationTime, error: result.success ? undefined : result.errorMessage, r2Key: key },
+      output_data: { success: result.success, type: 'image_creation', imageUrl: finalPublicUrl, generationTime: result.generationTime, error: result.success ? undefined : result.errorMessage, r2Key: key },
     }).eq('id', taskId).select('id, status');
 
     if (updateError) {
@@ -168,7 +171,7 @@ export const gpuImageCreateProcessor: Processor<GpuImageCreateJobData> = async (
     }
 
     if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
-    return { success: true, imageUrl: publicUrl, generationTime: result.generationTime };
+    return { success: true, imageUrl: finalPublicUrl, generationTime: result.generationTime };
   } catch (error) {
     await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'image_creation', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
     throw error;
@@ -240,6 +243,8 @@ export const gpuImageEditProcessor: Processor<GpuImageEditJobData> = async (job:
 
     // Final status update with logging
     const finalStatus = result.success ? 'completed' : 'failed';
+    const finalPublicUrl = result.success ? getPublicUrl(key!) : undefined;
+
     console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
     
     const { error: updateError, data: updateData } = await supabase.from('tasks').update({
@@ -247,7 +252,7 @@ export const gpuImageEditProcessor: Processor<GpuImageEditJobData> = async (job:
       current_step: result.success ? 'Complete' : 'Failed',
       progress_percent: result.success ? 100 : 0,
       completed_at: new Date().toISOString(),
-      output_data: { success: result.success, type: 'image_edit', imageUrl: result.success ? publicUrl : undefined, generationTime: result.generationTime, inputImageUrl, error: result.success ? undefined : result.errorMessage, r2Key: key },
+      output_data: { success: result.success, type: 'image_edit', imageUrl: finalPublicUrl, generationTime: result.generationTime, inputImageUrl, error: result.success ? undefined : result.errorMessage, r2Key: key },
     }).eq('id', taskId).select('id, status');
 
     if (updateError) {
@@ -257,7 +262,7 @@ export const gpuImageEditProcessor: Processor<GpuImageEditJobData> = async (job:
     }
 
     if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
-    return { success: true, imageUrl: publicUrl, generationTime: result.generationTime };
+    return { success: true, imageUrl: finalPublicUrl, generationTime: result.generationTime };
   } catch (error) {
     await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'image_edit', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
     throw error;
@@ -315,17 +320,17 @@ export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (
     await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
 
     const gpuJobId = uuidv4();
-    let result = await callGpuVideoGenerate({
+    let result = await callGpuLtx2Generate({
       job_id: gpuJobId,
-      input_image_url: inputImageUrl,
+      start_frame_url: inputImageUrl,
       prompt,
       duration_seconds: durationSeconds || 4.0,
-      fps: fps || 24,
+      frame_rate: fps || 24,
       aspect_ratio: aspectRatio || '16:9',
       width: width || (aspectRatio === '9:16' ? 1080 : 1920),
       height: height || (aspectRatio === '9:16' ? 1920 : 1080),
       seed: seed || undefined,
-      end_image_url: endFrameUrl || undefined,
+      end_frame_url: endFrameUrl || undefined,
       save_url: putUrl,
       webhook_url: getWebhookUrl(),
       item_id: taskId,
@@ -339,6 +344,8 @@ export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (
 
     // Final status update with logging
     const finalStatus = result.success ? 'completed' : 'failed';
+    const finalPublicUrl = result.success ? getPublicUrl(key!) : undefined;
+
     console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
     
     const { error: updateError, data: updateData } = await supabase.from('tasks').update({
@@ -346,7 +353,7 @@ export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (
       current_step: result.success ? 'Complete' : 'Failed',
       progress_percent: result.success ? 100 : 0,
       completed_at: new Date().toISOString(),
-      output_data: { success: result.success, type: 'video_creation', videoUrl: result.success ? publicUrl : undefined, generationTime: result.generationTime, inputImageUrl, durationSeconds: durationSeconds || 4.0, fps: fps || 24, error: result.success ? undefined : result.errorMessage, r2Key: key },
+      output_data: { success: result.success, type: 'video_creation', videoUrl: finalPublicUrl, generationTime: result.generationTime, inputImageUrl, durationSeconds: durationSeconds || 4.0, fps: fps || 24, error: result.success ? undefined : result.errorMessage, r2Key: key },
     }).eq('id', taskId).select('id, status');
 
     if (updateError) {
@@ -356,7 +363,7 @@ export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (
     }
 
     if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
-    return { success: true, videoUrl: publicUrl, generationTime: result.generationTime };
+    return { success: true, videoUrl: finalPublicUrl, generationTime: result.generationTime };
   } catch (error) {
     await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'video_creation', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
     throw error;
@@ -433,7 +440,7 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
     
     let result = await callGpuLtx2Generate({
       job_id: gpuJobId,
-      input_image_url: inputImageUrl,
+      start_frame_url: inputImageUrl,
       prompt,
       negative_prompt: negative_prompt || undefined,
       duration_seconds,
@@ -441,7 +448,7 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
       aspect_ratio,
       width,
       height,
-      end_image_url: end_image_url || undefined,
+      end_frame_url: end_image_url || undefined,
       seed: seed || undefined,
       enhance_prompt,
       save_url: putUrl,
@@ -457,6 +464,8 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
 
     // Final status update with logging
     const finalStatus = result.success ? 'completed' : 'failed';
+    const finalPublicUrl = result.success ? getPublicUrl(key!) : undefined;
+
     console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
     
     const { error: updateError, data: updateData } = await supabase.from('tasks').update({
@@ -464,7 +473,7 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
       current_step: result.success ? 'Complete' : 'Failed',
       progress_percent: result.success ? 100 : 0,
       completed_at: new Date().toISOString(),
-      output_data: { success: result.success, type: 'ltx2_generation', videoUrl: result.success ? publicUrl : undefined, generationTime: result.generationTime, inputImageUrl, error: result.success ? undefined : result.errorMessage, r2Key: key },
+      output_data: { success: result.success, type: 'ltx2_generation', videoUrl: finalPublicUrl, generationTime: result.generationTime, inputImageUrl, error: result.success ? undefined : result.errorMessage, r2Key: key },
     }).eq('id', taskId).select('id, status');
 
     if (updateError) {
@@ -474,7 +483,7 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
     }
 
     if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
-    return { success: true, videoUrl: publicUrl, generationTime: result.generationTime };
+    return { success: true, videoUrl: finalPublicUrl, generationTime: result.generationTime };
   } catch (error) {
     await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'ltx2_generation', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
     throw error;
@@ -542,6 +551,8 @@ export const gpuLtx2InterpolateProcessor: Processor<GpuLtx2InterpolateJobData> =
 
     // Final status update with logging
     const finalStatus = result.success ? 'completed' : 'failed';
+    const finalPublicUrl = result.success ? getPublicUrl(key) : undefined;
+
     console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
     
     const { error: updateError, data: updateData } = await supabase.from('tasks').update({
@@ -549,7 +560,7 @@ export const gpuLtx2InterpolateProcessor: Processor<GpuLtx2InterpolateJobData> =
       current_step: result.success ? 'Complete' : 'Failed',
       progress_percent: result.success ? 100 : 0,
       completed_at: new Date().toISOString(),
-      output_data: { success: result.success, type: 'ltx2_interpolate', videoUrl: result.success ? publicUrl : undefined, generationTime: result.generationTime, error: result.success ? undefined : result.errorMessage, r2Key: key },
+      output_data: { success: result.success, type: 'ltx2_interpolate', videoUrl: finalPublicUrl, generationTime: result.generationTime, error: result.success ? undefined : result.errorMessage, r2Key: key },
     }).eq('id', taskId).select('id, status');
 
     if (updateError) {
@@ -559,7 +570,7 @@ export const gpuLtx2InterpolateProcessor: Processor<GpuLtx2InterpolateJobData> =
     }
 
     if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
-    return { success: true, videoUrl: publicUrl, generationTime: result.generationTime };
+    return { success: true, videoUrl: finalPublicUrl, generationTime: result.generationTime };
   } catch (error) {
     await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'ltx2_interpolate', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
     throw error;

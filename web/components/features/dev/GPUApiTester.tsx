@@ -75,15 +75,7 @@ interface TestResult {
 }
 
 type TestStatus = "idle" | "loading" | "success" | "error";
-type TabType =
-  | "system"
-  | "mode"
-  | "image"
-  | "image-edit"
-  | "video"
-  | "ltx2"
-  | "ltx2-interpolate"
-  | "loras";
+type TabType = "system" | "mode" | "image" | "image-edit" | "video" | "loras";
 type AspectRatio = "16:9" | "9:16";
 type FPS = 8 | 12 | 16 | 24 | 30;
 type ApiMode = "mock" | "real";
@@ -186,6 +178,11 @@ interface ModeData {
   is_busy: boolean;
   active_job_id: string | null;
   loaded_models: string[];
+  // Mode switching fields
+  is_switching?: boolean;
+  switching_target?: string | null;
+  switching_step?: string | null;
+  switching_progress?: number | null;
 }
 
 // ============================================================================
@@ -201,7 +198,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   // System/Mode State
   const [healthData, setHealthData] = useState<HealthData | null>(null);
   const [readinessData, setReadinessData] = useState<ReadinessData | null>(
-    null
+    null,
   );
   const [systemData, setSystemData] = useState<SystemData | null>(null);
   const [modeData, setModeData] = useState<ModeData | null>(null);
@@ -217,7 +214,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
 
   // Image Creation State
   const [imagePrompt, setImagePrompt] = useState(
-    "A beautiful sunset over mountains with golden light"
+    "A beautiful sunset over mountains with golden light",
   );
   const [imageAspectRatio, setImageAspectRatio] = useState<AspectRatio>("16:9");
   const [imageInferenceSteps, setImageInferenceSteps] = useState(8);
@@ -231,7 +228,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
 
   // Image Edit State
   const [editPrompt, setEditPrompt] = useState(
-    "Change the sky to nighttime with stars"
+    "Change the sky to nighttime with stars",
   );
   const [editSourceUrl, setEditSourceUrl] = useState("");
   const [editMaskUrl, setEditMaskUrl] = useState("");
@@ -243,7 +240,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
 
   // Video Creation State
   const [videoPrompt, setVideoPrompt] = useState(
-    "Camera slowly zooms in, subtle movement"
+    "Camera slowly zooms in, subtle movement",
   );
   const [videoStartFrameUrl, setVideoStartFrameUrl] = useState("");
   const [videoDuration, setVideoDuration] = useState(4);
@@ -257,52 +254,11 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   const [videoResult, setVideoResult] = useState<TestResult | null>(null);
   const [videoDebugExpanded, setVideoDebugExpanded] = useState(false);
 
-  // LTX-2 State
-  const [ltx2Prompt, setLtx2Prompt] = useState(
-    "Cinematic shot of a drone flying through a valley"
-  );
-  const [ltx2NegativePrompt, setLtx2NegativePrompt] = useState("");
-  const [ltx2InputImageUrl, setLtx2InputImageUrl] = useState("");
-  const [ltx2Duration, setLtx2Duration] = useState(5.0);
-  const [ltx2FrameRate, setLtx2FrameRate] = useState(24.0);
-  const [ltx2AspectRatio, setLtx2AspectRatio] = useState<AspectRatio>("16:9");
-  const [ltx2Width, setLtx2Width] = useState<string>("");
-  const [ltx2Height, setLtx2Height] = useState<string>("");
-  const [ltx2EndImageUrl, setLtx2EndImageUrl] = useState("");
-  const [ltx2Seed, setLtx2Seed] = useState<string>("");
-  const [ltx2EnhancePrompt, setLtx2EnhancePrompt] = useState(false);
-  const [ltx2Status, setLtx2Status] = useState<TestStatus>("idle");
-  const [ltx2Result, setLtx2Result] = useState<TestResult | null>(null);
-  const [ltx2DebugExpanded, setLtx2DebugExpanded] = useState(false);
-
-  // LTX-2 Interpolate State
-  const [interpPrompt, setInterpPrompt] = useState(
-    "Smooth transition between keyframes"
-  );
-  const [interpKeyframes, setInterpKeyframes] = useState<
-    { url: string; index: number; strength: number }[]
-  >([
-    { url: "", index: 0, strength: 1.0 },
-    { url: "", index: 120, strength: 1.0 },
-  ]);
-  const [interpNegativePrompt, setInterpNegativePrompt] = useState("");
-  const [interpDuration, setInterpDuration] = useState(5.0);
-  const [interpFrameRate, setInterpFrameRate] = useState(24.0);
-  const [interpAspectRatio, setInterpAspectRatio] =
-    useState<AspectRatio>("16:9");
-  const [interpWidth, setInterpWidth] = useState<string>("");
-  const [interpHeight, setInterpHeight] = useState<string>("");
-  const [interpSeed, setInterpSeed] = useState<string>("");
-  const [interpEnhancePrompt, setInterpEnhancePrompt] = useState(false);
-  const [interpStatus, setInterpStatus] = useState<TestStatus>("idle");
-  const [interpResult, setInterpResult] = useState<TestResult | null>(null);
-  const [interpDebugExpanded, setInterpDebugExpanded] = useState(false);
-
   // =========================================================================
   // QUEUE & BATCH STATE
   // =========================================================================
   const [trackedJobs, setTrackedJobs] = useState<Map<string, TrackedJob>>(
-    new Map()
+    new Map(),
   );
   const [trackedBatches, setTrackedBatches] = useState<
     Map<string, TrackedBatch>
@@ -347,13 +303,36 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
     }
   }, [activeTab]);
 
+  // Auto-poll mode status when switching is in progress
+  useEffect(() => {
+    if (!modeData?.is_switching) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch("/api/gpu-api/mode");
+        const data = await response.json();
+        if (data.success) {
+          setModeData(data.data);
+          // Stop polling when switching is complete
+          if (!data.data.is_switching) {
+            setModeStatus("success");
+          }
+        }
+      } catch {
+        // Ignore errors during polling
+      }
+    }, 2000);
+
+    return () => clearInterval(pollInterval);
+  }, [modeData?.is_switching]);
+
   // =========================================================================
   // POLLING HELPER
   // =========================================================================
 
   const pollForResult = async (
     taskId: string,
-    onUpdate?: (output: TestResult) => void
+    onUpdate?: (output: TestResult) => void,
   ): Promise<TestResult> => {
     const maxAttempts = 120;
     let attempts = 0;
@@ -388,13 +367,13 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   });
 
   const queuedJobCount = Array.from(trackedJobs.values()).filter(
-    (j) => j.status === "queued"
+    (j) => j.status === "queued",
   ).length;
   const pendingJobCount = Array.from(trackedJobs.values()).filter(
-    (j) => j.status === "pending"
+    (j) => j.status === "pending",
   ).length;
   const processingJobCount = Array.from(trackedJobs.values()).filter(
-    (j) => j.status === "processing"
+    (j) => j.status === "processing",
   ).length;
   const activeJobCount = queuedJobCount + pendingJobCount + processingJobCount;
 
@@ -424,7 +403,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           (job) =>
             (job.status === "pending" || job.status === "processing") &&
             job.taskId &&
-            !job.batchId
+            !job.batchId,
         );
 
         if (legacyJobs.length === 0) return;
@@ -434,10 +413,10 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
         const results = await Promise.allSettled(
           jobsBatch.map(async (job) => {
             const response = await fetch(
-              `/api/gpu-api/test/status?taskId=${job.taskId}`
+              `/api/gpu-api/test/status?taskId=${job.taskId}`,
             );
             return { job, data: await response.json() };
-          })
+          }),
         );
 
         for (const result of results) {
@@ -511,7 +490,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       for (const batchId of activeBatchIds) {
         try {
           const response = await fetch(
-            `/api/gpu-api/test/batch/status?batchId=${batchId}`
+            `/api/gpu-api/test/batch/status?batchId=${batchId}`,
           );
           const data = await response.json();
 
@@ -545,7 +524,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                 taskId: i.taskId,
                 status: i.status,
                 itemIndex: i.itemIndex,
-              })
+              }),
             ),
           });
 
@@ -554,7 +533,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
 
             // Debug: log current jobs for this batch
             const batchJobs = Array.from(newMap.values()).filter(
-              (j) => j.batchId === batchId
+              (j) => j.batchId === batchId,
             );
             console.log(
               `[GPUApiTester] Current tracked jobs for batch:`,
@@ -562,7 +541,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                 id: j.id,
                 batchItemIndex: j.batchItemIndex,
                 status: j.status,
-              }))
+              })),
             );
 
             for (const item of batchStatus.items) {
@@ -622,7 +601,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
         } catch (error) {
           console.error(
             `[GPUApiTester] Error polling batch ${batchId}:`,
-            error
+            error,
           );
         }
       }
@@ -665,20 +644,6 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           endFrameUrl: videoEndFrameUrl || undefined,
           seed: videoSeed ? parseInt(videoSeed) : undefined,
         };
-      case "ltx2":
-        return {
-          prompt: ltx2Prompt,
-          input_image_url: ltx2InputImageUrl || undefined,
-          negative_prompt: ltx2NegativePrompt || undefined,
-          duration_seconds: ltx2Duration,
-          frame_rate: ltx2FrameRate,
-          aspect_ratio: ltx2AspectRatio,
-          width: ltx2Width ? parseInt(ltx2Width) : undefined,
-          height: ltx2Height ? parseInt(ltx2Height) : undefined,
-          end_image_url: ltx2EndImageUrl || undefined,
-          seed: ltx2Seed ? parseInt(ltx2Seed) : undefined,
-          enhance_prompt: ltx2EnhancePrompt,
-        };
       default:
         return { prompt: "" };
     }
@@ -704,10 +669,8 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       job.type === "image"
         ? "/api/gpu-api/test/image"
         : job.type === "image-edit"
-        ? "/api/gpu-api/test/image-edit"
-        : job.type === "video"
-        ? "/api/gpu-api/test/video"
-        : "/api/gpu-api/test/ltx2";
+          ? "/api/gpu-api/test/image-edit"
+          : "/api/gpu-api/test/video";
 
     try {
       const response = await fetch(endpoint, {
@@ -752,7 +715,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   // Send ALL queued jobs to API using batch submission
   const handleSendAllQueued = async () => {
     const queuedJobs = Array.from(trackedJobs.values()).filter(
-      (j) => j.status === "queued"
+      (j) => j.status === "queued",
     );
 
     if (queuedJobs.length === 0) return;
@@ -835,7 +798,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
               if (existing) {
                 // Find the public URL for this item
                 const itemUrl = itemUrls?.find(
-                  (u: { index: number }) => u.index === index
+                  (u: { index: number }) => u.index === index,
                 );
                 newMap.set(job.id, {
                   ...existing,
@@ -864,12 +827,12 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           });
 
           console.log(
-            `[GPUApiTester] Submitted batch ${batchId} with ${jobs.length} ${type} jobs`
+            `[GPUApiTester] Submitted batch ${batchId} with ${jobs.length} ${type} jobs`,
           );
         } catch (error) {
           console.error(
             `[GPUApiTester] Failed to submit ${type} batch:`,
-            error
+            error,
           );
           // Mark jobs as failed
           setTrackedJobs((prev) => {
@@ -922,7 +885,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
 
   // Clear jobs from queue
   const handleClearQueue = (
-    clearType: "completed" | "failed" | "all" | "queued"
+    clearType: "completed" | "failed" | "all" | "queued",
   ) => {
     setTrackedJobs((prev) => {
       const newMap = new Map(prev);
@@ -961,7 +924,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       for (const batchId of activeBatchIds) {
         try {
           const response = await fetch(
-            `/api/gpu-api/test/batch/status?batchId=${batchId}`
+            `/api/gpu-api/test/batch/status?batchId=${batchId}`,
           );
           const data = await response.json();
 
@@ -1044,7 +1007,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
         } catch (error) {
           console.error(
             `[GPUApiTester] Error polling batch ${batchId}:`,
-            error
+            error,
           );
         }
       }
@@ -1199,7 +1162,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
         `/api/gpu-api/loras?name=${encodeURIComponent(loraName)}`,
         {
           method: "DELETE",
-        }
+        },
       );
       const data = await response.json();
       if (data.success) {
@@ -1240,7 +1203,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
     if (clearingStorage) return;
 
     const confirmed = window.confirm(
-      "Are you sure you want to delete all media from GPU API Tester R2 storage? This action cannot be undone."
+      "Are you sure you want to delete all media from GPU API Tester R2 storage? This action cannot be undone.",
     );
 
     if (!confirmed) return;
@@ -1254,7 +1217,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
 
       if (data.success) {
         alert(
-          `Successfully deleted ${data.data.deleted} files from R2 storage.`
+          `Successfully deleted ${data.data.deleted} files from R2 storage.`,
         );
       } else {
         alert(`Failed to clear storage: ${data.error}`);
@@ -1263,7 +1226,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       alert(
         `Error clearing storage: ${
           error instanceof Error ? error.message : "Unknown error"
-        }`
+        }`,
       );
     } finally {
       setClearingStorage(false);
@@ -1291,13 +1254,13 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           width: imageWidth
             ? parseInt(imageWidth)
             : imageAspectRatio === "9:16"
-            ? 1080
-            : 1920,
+              ? 1080
+              : 1920,
           height: imageHeight
             ? parseInt(imageHeight)
             : imageAspectRatio === "9:16"
-            ? 1920
-            : 1080,
+              ? 1920
+              : 1080,
         }),
       });
 
@@ -1305,7 +1268,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       if (!response.ok) throw new Error(data.error || "Failed to start test");
 
       const result = await pollForResult(data.taskId, (update) =>
-        setImageResult(update)
+        setImageResult(update),
       );
       setImageResult(result);
       setImageStatus(result.success ? "success" : "error");
@@ -1341,7 +1304,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       if (!response.ok) throw new Error(data.error || "Failed to start test");
 
       const result = await pollForResult(data.taskId, (update) =>
-        setEditResult(update)
+        setEditResult(update),
       );
       setEditResult(result);
       setEditStatus(result.success ? "success" : "error");
@@ -1373,13 +1336,13 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
           width: videoWidth
             ? parseInt(videoWidth)
             : videoAspectRatio === "9:16"
-            ? 1080
-            : 1920,
+              ? 1080
+              : 1920,
           height: videoHeight
             ? parseInt(videoHeight)
             : videoAspectRatio === "9:16"
-            ? 1920
-            : 1080,
+              ? 1920
+              : 1080,
           endFrameUrl: videoEndFrameUrl || undefined,
           seed: videoSeed ? parseInt(videoSeed) : undefined,
         }),
@@ -1389,7 +1352,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
       if (!response.ok) throw new Error(data.error || "Failed to start test");
 
       const result = await pollForResult(data.taskId, (update) =>
-        setVideoResult(update)
+        setVideoResult(update),
       );
       setVideoResult(result);
       setVideoStatus(result.success ? "success" : "error");
@@ -1401,114 +1364,6 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
         error: err instanceof Error ? err.message : "Unknown error",
       });
       setVideoStatus("error");
-    }
-  };
-
-  const handleTestLtx2Creation = async () => {
-    setLtx2Status("loading");
-    setLtx2Result(null);
-    try {
-      const response = await fetch("/api/gpu-api/test/ltx2", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: ltx2Prompt,
-          input_image_url: ltx2InputImageUrl || undefined,
-          negative_prompt: ltx2NegativePrompt || undefined,
-          duration_seconds: ltx2Duration,
-          frame_rate: ltx2FrameRate,
-          aspect_ratio: ltx2AspectRatio,
-          width: ltx2Width
-            ? parseInt(ltx2Width)
-            : ltx2AspectRatio === "9:16"
-            ? 1080
-            : 1920,
-          height: ltx2Height
-            ? parseInt(ltx2Height)
-            : ltx2AspectRatio === "9:16"
-            ? 1920
-            : 1080,
-          end_image_url: ltx2EndImageUrl || undefined,
-          seed: ltx2Seed ? parseInt(ltx2Seed) : undefined,
-          enhance_prompt: ltx2EnhancePrompt,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Failed to start test");
-
-      const result = await pollForResult(data.taskId, (update) =>
-        setLtx2Result(update)
-      );
-      setLtx2Result(result);
-      setLtx2Status(result.success ? "success" : "error");
-      setLtx2DebugExpanded(!result.success);
-    } catch (err) {
-      setLtx2Result({
-        success: false,
-        type: "ltx2_generation",
-        error: err instanceof Error ? err.message : "Unknown error",
-      });
-      setLtx2Status("error");
-    }
-  };
-
-  const handleTestLtx2Interpolation = async () => {
-    setInterpStatus("loading");
-    setInterpResult(null);
-    try {
-      // Filter out empty keyframes
-      const activeKeyframes = interpKeyframes.filter(
-        (kf) => kf.url.trim() !== ""
-      );
-      if (activeKeyframes.length === 0)
-        throw new Error("At least one keyframe URL is required");
-
-      const response = await fetch("/api/gpu-api/test/ltx2-interpolate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: interpPrompt,
-          keyframes: activeKeyframes.map((kf) => ({
-            image_url: kf.url,
-            frame_index: kf.index,
-            strength: kf.strength,
-          })),
-          negative_prompt: interpNegativePrompt || undefined,
-          duration_seconds: interpDuration,
-          frame_rate: interpFrameRate,
-          aspect_ratio: interpAspectRatio,
-          width: interpWidth
-            ? parseInt(interpWidth)
-            : interpAspectRatio === "9:16"
-            ? 1080
-            : 1920,
-          height: interpHeight
-            ? parseInt(interpHeight)
-            : interpAspectRatio === "9:16"
-            ? 1920
-            : 1080,
-          seed: interpSeed ? parseInt(interpSeed) : undefined,
-          enhance_prompt: interpEnhancePrompt,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Failed to start test");
-
-      const result = await pollForResult(data.taskId, (update) =>
-        setInterpResult(update)
-      );
-      setInterpResult(result);
-      setInterpStatus(result.success ? "success" : "error");
-      setInterpDebugExpanded(!result.success);
-    } catch (err) {
-      setInterpResult({
-        success: false,
-        type: "ltx2_interpolate",
-        error: err instanceof Error ? err.message : "Unknown error",
-      });
-      setInterpStatus("error");
     }
   };
 
@@ -1542,7 +1397,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
 
   const renderStatusBadge = (
     status: TestStatus,
-    result?: TestResult | null
+    result?: TestResult | null,
   ) => {
     // Check for queue position in finalJob
     const queuePos = result?.finalJob?.queue_position;
@@ -1606,7 +1461,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
     value: AspectRatio,
     onChange: (v: AspectRatio) => void,
     disabled: boolean,
-    color: string
+    color: string,
   ) => (
     <div className="flex gap-2 flex-wrap">
       {(["16:9", "9:16"] as AspectRatio[]).map((ratio) => (
@@ -1634,7 +1489,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   const renderDebugSection = (
     result: TestResult | null,
     expanded: boolean,
-    onToggle: () => void
+    onToggle: () => void,
   ) => {
     if (!result?.debug) return null;
 
@@ -1716,7 +1571,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                 <button
                   onClick={() =>
                     copyToClipboard(
-                      JSON.stringify(result.debug?.request, null, 2)
+                      JSON.stringify(result.debug?.request, null, 2),
                     )
                   }
                   className="text-neutral-500 hover:text-neutral-300"
@@ -1738,7 +1593,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                 <button
                   onClick={() =>
                     copyToClipboard(
-                      JSON.stringify(result.debug?.response, null, 2)
+                      JSON.stringify(result.debug?.response, null, 2),
                     )
                   }
                   className="text-neutral-500 hover:text-neutral-300"
@@ -1759,7 +1614,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
   const renderResult = (
     result: TestResult | null,
     debugExpanded: boolean,
-    onDebugToggle: () => void
+    onDebugToggle: () => void,
   ) => {
     if (!result) return null;
 
@@ -2061,40 +1916,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
               </span>
             )}
           </Button>
-          <Button
-            variant={activeTab === "ltx2" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setActiveTab("ltx2")}
-            className={
-              activeTab === "ltx2" ? "bg-cyan-600 hover:bg-cyan-700" : ""
-            }
-          >
-            <Sparkles className="w-4 h-4 mr-2" />
-            LTX-2
-            {ltx2Status !== "idle" && (
-              <span className="ml-2">
-                {renderStatusBadge(ltx2Status, ltx2Result)}
-              </span>
-            )}
-          </Button>
-          <Button
-            variant={activeTab === "ltx2-interpolate" ? "default" : "ghost"}
-            size="sm"
-            onClick={() => setActiveTab("ltx2-interpolate")}
-            className={
-              activeTab === "ltx2-interpolate"
-                ? "bg-emerald-600 hover:bg-emerald-700"
-                : ""
-            }
-          >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Interpolate
-            {interpStatus !== "idle" && (
-              <span className="ml-2">
-                {renderStatusBadge(interpStatus, interpResult)}
-              </span>
-            )}
-          </Button>
+
           <Button
             variant={activeTab === "loras" ? "default" : "ghost"}
             size="sm"
@@ -2317,7 +2139,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                                   {systemData.gpu.memory_total_gb.toFixed(1)} GB
                                   (
                                   {systemData.gpu.memory_usage_percent.toFixed(
-                                    1
+                                    1,
                                   )}
                                   %)
                                 </span>
@@ -2512,11 +2334,49 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       <h4 className="text-sm font-medium text-neutral-300 mb-3">
                         Current Mode
                       </h4>
+
+                      {/* Mode Switching Status */}
+                      {modeData.is_switching && (
+                        <div className="mb-4 p-3 bg-amber-900/30 rounded-lg border border-amber-600/50">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                            <span className="text-sm font-medium text-amber-400">
+                              Switching to{" "}
+                              {modeData.switching_target?.replace("_", " ") ||
+                                "new mode"}
+                              ...
+                            </span>
+                          </div>
+                          {modeData.switching_step && (
+                            <p className="text-xs text-amber-300/80 mb-2">
+                              {modeData.switching_step}
+                            </p>
+                          )}
+                          {modeData.switching_progress != null && (
+                            <div className="w-full bg-neutral-700 rounded-full h-2">
+                              <div
+                                className="bg-amber-500 h-2 rounded-full transition-all duration-500"
+                                style={{
+                                  width: `${Math.round(
+                                    modeData.switching_progress * 100,
+                                  )}%`,
+                                }}
+                              />
+                            </div>
+                          )}
+                          {modeData.switching_progress != null && (
+                            <p className="text-xs text-neutral-400 mt-1 text-right">
+                              {Math.round(modeData.switching_progress * 100)}%
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       <div className="space-y-2 text-sm mb-4">
                         <div className="flex justify-between">
                           <span className="text-neutral-400">Mode:</span>
                           <span className="text-purple-400 font-medium capitalize">
-                            {modeData.mode}
+                            {modeData.mode?.replace("_", " ")}
                           </span>
                         </div>
                         <div className="flex justify-between">
@@ -2587,7 +2447,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       setImageAspectRatio,
                       imageStatus === "loading" ||
                         !!(imageWidth || imageHeight),
-                      "purple"
+                      "purple",
                     )}
                     {(imageWidth || imageHeight) && (
                       <p className="text-xs text-amber-500 mt-1">
@@ -2621,7 +2481,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       <Input
                         type="number"
                         value={imageHeight}
-                        onChange={(e) => setImageHeight(e.target.value)}
+                        onChange={(e) => imageHeight(e.target.value)}
                         placeholder="e.g. 512"
                         className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
                         disabled={imageStatus === "loading"}
@@ -2761,7 +2621,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                   </div>
 
                   {renderResult(imageResult, imageDebugExpanded, () =>
-                    setImageDebugExpanded(!imageDebugExpanded)
+                    setImageDebugExpanded(!imageDebugExpanded),
                   )}
                 </div>
               )}
@@ -2830,7 +2690,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       editAspectRatio,
                       setEditAspectRatio,
                       editStatus === "loading",
-                      "amber"
+                      "amber",
                     )}
                   </div>
 
@@ -2909,7 +2769,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                   </div>
 
                   {renderResult(editResult, editDebugExpanded, () =>
-                    setEditDebugExpanded(!editDebugExpanded)
+                    setEditDebugExpanded(!editDebugExpanded),
                   )}
                 </div>
               )}
@@ -2928,6 +2788,22 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       value={videoStartFrameUrl}
                       onChange={(e) => setVideoStartFrameUrl(e.target.value)}
                       placeholder="https://... (leave empty for placeholder)"
+                      className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                      disabled={videoStatus === "loading"}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                      End Frame URL{" "}
+                      <span className="text-neutral-600">
+                        (optional, for interpolation)
+                      </span>
+                    </label>
+                    <Input
+                      value={videoEndFrameUrl}
+                      onChange={(e) => setVideoEndFrameUrl(e.target.value)}
+                      placeholder="https://..."
                       className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
                       disabled={videoStatus === "loading"}
                     />
@@ -3015,7 +2891,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       setVideoAspectRatio,
                       videoStatus === "loading" ||
                         !!(videoWidth || videoHeight),
-                      "teal"
+                      "teal",
                     )}
                     {(videoWidth || videoHeight) && (
                       <p className="text-xs text-amber-500 mt-1">
@@ -3061,22 +2937,6 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                         max={1920}
                       />
                     </div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                      End Frame URL{" "}
-                      <span className="text-neutral-600">
-                        (optional, for interpolation)
-                      </span>
-                    </label>
-                    <Input
-                      value={videoEndFrameUrl}
-                      onChange={(e) => setVideoEndFrameUrl(e.target.value)}
-                      placeholder="https://..."
-                      className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
-                      disabled={videoStatus === "loading"}
-                    />
                   </div>
 
                   <div>
@@ -3156,390 +3016,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                   </div>
 
                   {renderResult(videoResult, videoDebugExpanded, () =>
-                    setVideoDebugExpanded(!videoDebugExpanded)
-                  )}
-                </div>
-              )}
-
-              {/* LTX-2 Generation Tab */}
-              {activeTab === "ltx2" && (
-                <div className="space-y-6">
-                  <div>
-                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                      Input Image URL{" "}
-                      <span className="text-neutral-600">(optional)</span>
-                    </label>
-                    <Input
-                      value={ltx2InputImageUrl}
-                      onChange={(e) => setLtx2InputImageUrl(e.target.value)}
-                      placeholder="https://... (leave empty for placeholder)"
-                      className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                      disabled={ltx2Status === "loading"}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                      Prompt
-                    </label>
-                    <Textarea
-                      value={ltx2Prompt}
-                      onChange={(e) => setLtx2Prompt(e.target.value)}
-                      placeholder="Describe the video content..."
-                      className="min-h-[100px] bg-neutral-900 border-neutral-700 text-neutral-200"
-                      disabled={ltx2Status === "loading"}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                      Negative Prompt{" "}
-                      <span className="text-neutral-600">(optional)</span>
-                    </label>
-                    <Textarea
-                      value={ltx2NegativePrompt}
-                      onChange={(e) => setLtx2NegativePrompt(e.target.value)}
-                      placeholder="Describe what to avoid..."
-                      className="min-h-[60px] bg-neutral-900 border-neutral-700 text-neutral-200"
-                      disabled={ltx2Status === "loading"}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                        Duration{" "}
-                        <span className="text-neutral-600">(seconds)</span>
-                      </label>
-                      <Input
-                        type="number"
-                        value={ltx2Duration}
-                        onChange={(e) =>
-                          setLtx2Duration(parseFloat(e.target.value))
-                        }
-                        step={0.5}
-                        min={1}
-                        max={8}
-                        className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                        disabled={ltx2Status === "loading"}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                        Frame Rate{" "}
-                        <span className="text-neutral-600">(FPS)</span>
-                      </label>
-                      <Input
-                        type="number"
-                        value={ltx2FrameRate}
-                        onChange={(e) =>
-                          setLtx2FrameRate(parseFloat(e.target.value))
-                        }
-                        className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                        disabled={ltx2Status === "loading"}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                      Aspect Ratio
-                    </label>
-                    {renderAspectRatioSelector(
-                      ltx2AspectRatio,
-                      setLtx2AspectRatio,
-                      ltx2Status === "loading" || !!(ltx2Width || ltx2Height),
-                      "cyan"
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                        Width{" "}
-                        <span className="text-neutral-600">(512-1920)</span>
-                      </label>
-                      <Input
-                        type="number"
-                        value={ltx2Width}
-                        onChange={(e) => setLtx2Width(e.target.value)}
-                        placeholder="e.g. 1920"
-                        className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                        disabled={ltx2Status === "loading"}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                        Height{" "}
-                        <span className="text-neutral-600">(512-1920)</span>
-                      </label>
-                      <Input
-                        type="number"
-                        value={ltx2Height}
-                        onChange={(e) => setLtx2Height(e.target.value)}
-                        placeholder="e.g. 1080"
-                        className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                        disabled={ltx2Status === "loading"}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 bg-neutral-900 p-4 rounded-lg border border-neutral-800">
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-white">
-                        Enhance Prompt
-                      </p>
-                      <p className="text-xs text-neutral-500">
-                        Use AI to expand your prompt
-                      </p>
-                    </div>
-                    <Switch
-                      checked={ltx2EnhancePrompt}
-                      onCheckedChange={setLtx2EnhancePrompt}
-                      disabled={ltx2Status === "loading"}
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={() => handleQueueJob("ltx2")}
-                      disabled={!ltx2Prompt.trim()}
-                      className="w-1/5 bg-indigo-600 hover:bg-indigo-700"
-                      size="sm"
-                    >
-                      <Plus className="w-4 h-4 mr-1" />
-                      Queue
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setBatchJobType("ltx2");
-                        setBatchQueueOpen(true);
-                      }}
-                      disabled={!ltx2Prompt.trim()}
-                      className="w-1/5 bg-violet-600 hover:bg-violet-700"
-                      size="sm"
-                    >
-                      <Layers className="w-4 h-4 mr-1" />
-                      Batch
-                    </Button>
-                    <Button
-                      onClick={() => setQueuePanelOpen(true)}
-                      variant="outline"
-                      className="w-1/5 border-neutral-700"
-                      size="sm"
-                    >
-                      <List className="w-4 h-4 mr-1" />
-                      {activeJobCount > 0 ? `(${activeJobCount})` : "View"}
-                    </Button>
-                    <Button
-                      onClick={handleTestLtx2Creation}
-                      disabled={!ltx2Prompt.trim() || ltx2Status === "loading"}
-                      className="w-2/5 bg-cyan-600 hover:bg-cyan-700"
-                    >
-                      {ltx2Status === "loading" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Generating...
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-4 h-4 mr-2" />
-                          Generate
-                        </>
-                      )}
-                    </Button>
-                  </div>
-
-                  {renderResult(ltx2Result, ltx2DebugExpanded, () =>
-                    setLtx2DebugExpanded(!ltx2DebugExpanded)
-                  )}
-                </div>
-              )}
-
-              {/* LTX-2 Interpolation Tab */}
-              {activeTab === "ltx2-interpolate" && (
-                <div className="space-y-6">
-                  <div>
-                    <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                      Prompt
-                    </label>
-                    <Textarea
-                      value={interpPrompt}
-                      onChange={(e) => setInterpPrompt(e.target.value)}
-                      placeholder="Describe the transitions..."
-                      className="min-h-[80px] bg-neutral-900 border-neutral-700 text-neutral-200"
-                      disabled={interpStatus === "loading"}
-                    />
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-neutral-400">
-                        Keyframes
-                      </label>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          setInterpKeyframes([
-                            ...interpKeyframes,
-                            {
-                              url: "",
-                              index: interpKeyframes.length * 48,
-                              strength: 1.0,
-                            },
-                          ])
-                        }
-                        className="border-neutral-700 text-xs"
-                        disabled={interpStatus === "loading"}
-                      >
-                        Add Keyframe
-                      </Button>
-                    </div>
-
-                    <div className="space-y-3">
-                      {interpKeyframes.map((kf, i) => (
-                        <div
-                          key={i}
-                          className="p-3 bg-neutral-900 rounded-lg border border-neutral-800 space-y-2"
-                        >
-                          <div className="flex gap-2">
-                            <Input
-                              value={kf.url}
-                              onChange={(e) => {
-                                const newKfs = [...interpKeyframes];
-                                newKfs[i].url = e.target.value;
-                                setInterpKeyframes(newKfs);
-                              }}
-                              placeholder="Image URL"
-                              className="bg-neutral-800 border-neutral-700 text-xs"
-                              disabled={interpStatus === "loading"}
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() =>
-                                setInterpKeyframes(
-                                  interpKeyframes.filter((_, idx) => idx !== i)
-                                )
-                              }
-                              disabled={
-                                interpKeyframes.length <= 1 ||
-                                interpStatus === "loading"
-                              }
-                            >
-                              <X className="w-4 h-4 text-red-500" />
-                            </Button>
-                          </div>
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <label className="text-[10px] text-neutral-500 uppercase">
-                                Frame Index
-                              </label>
-                              <Input
-                                type="number"
-                                value={kf.index}
-                                onChange={(e) => {
-                                  const newKfs = [...interpKeyframes];
-                                  newKfs[i].index = parseInt(e.target.value);
-                                  setInterpKeyframes(newKfs);
-                                }}
-                                className="h-8 bg-neutral-800 border-neutral-700 text-xs"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-neutral-500 uppercase">
-                                Strength
-                              </label>
-                              <Input
-                                type="number"
-                                step={0.1}
-                                min={0}
-                                max={1}
-                                value={kf.strength}
-                                onChange={(e) => {
-                                  const newKfs = [...interpKeyframes];
-                                  newKfs[i].strength = parseFloat(
-                                    e.target.value
-                                  );
-                                  setInterpKeyframes(newKfs);
-                                }}
-                                className="h-8 bg-neutral-800 border-neutral-700 text-xs"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                        Duration
-                      </label>
-                      <Input
-                        type="number"
-                        value={interpDuration}
-                        onChange={(e) =>
-                          setInterpDuration(parseFloat(e.target.value))
-                        }
-                        className="bg-neutral-900 border-neutral-700"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                        Resolution
-                      </label>
-                      <div className="flex gap-2 text-[10px]">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setInterpWidth("1280");
-                            setInterpHeight("720");
-                          }}
-                        >
-                          720p
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setInterpWidth("1920");
-                            setInterpHeight("1080");
-                          }}
-                        >
-                          1080p
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3">
-                    <Button
-                      onClick={handleTestLtx2Interpolation}
-                      disabled={
-                        !interpPrompt.trim() || interpStatus === "loading"
-                      }
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700"
-                    >
-                      {interpStatus === "loading" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />{" "}
-                          Interpolating...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="w-4 h-4 mr-2" /> Start
-                          Interpolation
-                        </>
-                      )}
-                    </Button>
-                  </div>
-
-                  {renderResult(interpResult, interpDebugExpanded, () =>
-                    setInterpDebugExpanded(!interpDebugExpanded)
+                    setVideoDebugExpanded(!videoDebugExpanded),
                   )}
                 </div>
               )}
@@ -3815,10 +3292,10 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                                       job.status === "completed"
                                         ? "text-green-400"
                                         : job.status === "failed"
-                                        ? "text-red-400"
-                                        : job.status === "processing"
-                                        ? "text-blue-400"
-                                        : "text-yellow-400"
+                                          ? "text-red-400"
+                                          : job.status === "processing"
+                                            ? "text-blue-400"
+                                            : "text-yellow-400"
                                     }`}
                                   >
                                     {job.status}
@@ -3883,7 +3360,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                                           size="sm"
                                           onClick={() =>
                                             navigator.clipboard.writeText(
-                                              mediaUrl
+                                              mediaUrl,
                                             )
                                           }
                                           className="h-6 px-2 border-neutral-700"
@@ -3928,14 +3405,14 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                     {/* Job List */}
                     {filteredJobs
                       .sort(
-                        (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+                        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
                       )
                       .map((job) => (
                         <div
                           key={job.id}
                           onClick={() =>
                             setSelectedJobId(
-                              selectedJobId === job.id ? null : job.id
+                              selectedJobId === job.id ? null : job.id,
                             )
                           }
                           className={`bg-neutral-800 rounded-lg p-2 border text-xs cursor-pointer transition-colors ${
@@ -3967,22 +3444,22 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                                 job.status === "queued"
                                   ? "bg-orange-500/20 text-orange-400"
                                   : job.status === "pending"
-                                  ? "bg-yellow-500/20 text-yellow-400"
-                                  : job.status === "processing"
-                                  ? "bg-blue-500/20 text-blue-400"
-                                  : job.status === "completed"
-                                  ? "bg-green-500/20 text-green-400"
-                                  : "bg-red-500/20 text-red-400"
+                                    ? "bg-yellow-500/20 text-yellow-400"
+                                    : job.status === "processing"
+                                      ? "bg-blue-500/20 text-blue-400"
+                                      : job.status === "completed"
+                                        ? "bg-green-500/20 text-green-400"
+                                        : "bg-red-500/20 text-red-400"
                               }`}
                             >
                               {job.status === "queued"
                                 ? "Local"
                                 : job.status === "pending" && job.queuePosition
-                                ? `#${job.queuePosition}`
-                                : job.status === "processing" &&
-                                  job.progressPercent !== undefined
-                                ? `${job.progressPercent}%`
-                                : job.status}
+                                  ? `#${job.queuePosition}`
+                                  : job.status === "processing" &&
+                                      job.progressPercent !== undefined
+                                    ? `${job.progressPercent}%`
+                                    : job.status}
                             </span>
                           </div>
                           {job.status === "processing" &&
@@ -4064,7 +3541,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                 value={batchCount}
                 onChange={(e) =>
                   setBatchCount(
-                    Math.min(50, Math.max(1, parseInt(e.target.value) || 1))
+                    Math.min(50, Math.max(1, parseInt(e.target.value) || 1)),
                   )
                 }
                 min={1}

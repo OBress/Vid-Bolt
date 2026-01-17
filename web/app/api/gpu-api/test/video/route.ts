@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { prompt, startFrameUrl, durationSeconds, fps, aspectRatio, endFrameUrl, seed, width, height } = body;
+    const { prompt, startFrameUrl, durationSeconds, fps, aspectRatio, endFrameUrl, seed, width, height, webhook_url } = body;
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
       return NextResponse.json(
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
         name: `GPU Test: Video Creation`,
         status: "pending",
         steps: [],
-        input_data: { prompt, startFrameUrl, durationSeconds, fps, aspectRatio, endFrameUrl, seed, width, height, testType: 'video_creation' },
+        input_data: { prompt, startFrameUrl, durationSeconds, fps, aspectRatio, endFrameUrl, seed, width, height, webhook_url, testType: 'video_creation' },
         output_data: {},
       })
       .select()

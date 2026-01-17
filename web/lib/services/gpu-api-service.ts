@@ -622,6 +622,11 @@ export interface ModeStatusResponse {
   is_busy: boolean;
   active_job_id: string | null;
   loaded_models: string[];
+  // Mode switching fields - present when switching between modes
+  is_switching?: boolean;
+  switching_target?: string | null;
+  switching_step?: string | null;
+  switching_progress?: number | null;
 }
 
 export interface ModeSwitchResponse {
@@ -771,7 +776,7 @@ export async function callGpuGetJobStatus(jobId: string): Promise<{
 /** Request body for POST /api/v1/ltx2/generate */
 export interface LTX2GenerateRequest {
   job_id: string;
-  input_image_url: string;
+  start_frame_url: string;
   prompt: string;
   negative_prompt?: string;
   duration_seconds?: number;
@@ -779,7 +784,7 @@ export interface LTX2GenerateRequest {
   aspect_ratio?: AspectRatio;
   width?: number;
   height?: number;
-  end_image_url?: string;
+  end_frame_url?: string;
   seed?: number;
   enhance_prompt?: boolean;
   save_url: string;
