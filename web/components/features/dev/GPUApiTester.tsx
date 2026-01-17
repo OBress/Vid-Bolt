@@ -2481,7 +2481,7 @@ export function GPUApiTester({ isOpen, onClose }: GPUApiTesterProps) {
                       <Input
                         type="number"
                         value={imageHeight}
-                        onChange={(e) => imageHeight(e.target.value)}
+                        onChange={(e) => setImageHeight(e.target.value)}
                         placeholder="e.g. 512"
                         className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
                         disabled={imageStatus === "loading"}
