@@ -71,11 +71,16 @@ export async function POST(request: NextRequest) {
         lora?: string;
         sourceImageUrl?: string;
         maskImageUrl?: string;
+        // Video parameters - support both camelCase (frontend) and snake_case
         input_image_url?: string;
+        startFrameUrl?: string;  // camelCase from frontend
         negative_prompt?: string;
         duration_seconds?: number;
+        durationSeconds?: number;  // camelCase from frontend
         frame_rate?: number;
+        fps?: number;  // camelCase from frontend
         end_image_url?: string;
+        endFrameUrl?: string;  // camelCase from frontend
         enhance_prompt?: boolean;
       }>;
     };
@@ -157,6 +162,11 @@ export async function POST(request: NextRequest) {
             width: item.width,
             height: item.height,
             seed: item.seed,
+            // Video-specific parameters
+            startFrameUrl: item.startFrameUrl || item.input_image_url || item.sourceImageUrl,
+            endFrameUrl: item.endFrameUrl || item.end_image_url,
+            durationSeconds: item.durationSeconds || item.duration_seconds,
+            fps: item.fps || item.frame_rate,
           },
         })
         .select()
@@ -204,21 +214,21 @@ export async function POST(request: NextRequest) {
           case "video":
             await gpuVideoCreateQueue.add(`batch-${batchId}-${index}`, {
               ...commonJobData,
-              sourceImageUrl: item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
-              endImageUrl: item.end_image_url,
-              durationSeconds: item.duration_seconds || 5.0,
-              fps: item.frame_rate || 24,
+              startFrameUrl: item.startFrameUrl || item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
+              endFrameUrl: item.endFrameUrl || item.end_image_url,
+              durationSeconds: item.durationSeconds || item.duration_seconds || 5.0,
+              fps: item.fps || item.frame_rate || 24,
             });
             break;
 
           case "ltx2":
             await gpuLtx2CreateQueue.add(`batch-${batchId}-${index}`, {
               ...commonJobData,
-              sourceImageUrl: item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
+              sourceImageUrl: item.startFrameUrl || item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
               negativePrompt: item.negative_prompt,
-              endImageUrl: item.end_image_url,
-              durationSeconds: item.duration_seconds || 5.0,
-              frameRate: item.frame_rate || 24,
+              endImageUrl: item.endFrameUrl || item.end_image_url,
+              durationSeconds: item.durationSeconds || item.duration_seconds || 5.0,
+              frameRate: item.fps || item.frame_rate || 24,
               enhancePrompt: item.enhance_prompt || false,
             });
             break;
