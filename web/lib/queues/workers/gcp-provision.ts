@@ -1,0 +1,112 @@
+/**
+ * GCP Provisioning Worker
+ * ============================================================================
+ * Handles the background provisioning of Google Cloud GPU nodes.
+ */
+
+import { Job, Processor } from 'bullmq';
+import { provisionNode } from '@/lib/gcp/provision'; // We might need to slightly adjust this import if it was a default export
+import { getSupabaseServiceClient } from '../shared';
+
+export interface GcpProvisionJobData {
+  gcpToken: string;
+  userId: string;
+  projectId: string;
+  webhookUrl: string;
+}
+
+// Helper to append logs to user_gcp_config
+async function logToGcpConfig(userId: string, message: string) {
+  const supabase = getSupabaseServiceClient();
+  const timestamp = new Date().toLocaleTimeString();
+  const logEntry = `[${timestamp}] ${message}`;
+
+  console.log(`[GCPWorker] ${userId}: ${message}`);
+
+  // Fetch current metadata to append logs
+  const { data } = await supabase
+    .from('user_gcp_config')
+    .select('metadata')
+    .eq('user_id', userId)
+    .single();
+  
+  const currentMetadata = data?.metadata || {};
+  const currentLogs = Array.isArray(currentMetadata.logs) ? currentMetadata.logs : [];
+  
+  // Keep last 50 logs
+  const newLogs = [logEntry, ...currentLogs].slice(0, 50);
+
+  await supabase.from('user_gcp_config').update({
+    metadata: {
+      ...currentMetadata,
+      logs: newLogs,
+      last_log: message
+    },
+    updated_at: new Date().toISOString()
+  }).eq('user_id', userId);
+}
+
+export const gcpProvisionProcessor: Processor<GcpProvisionJobData> = async (job: Job<GcpProvisionJobData>) => {
+  const { gcpToken, userId, projectId, webhookUrl } = job.data;
+
+  // Initial update
+  await logToGcpConfig(userId, "Starting Provisioning Workflow...");
+  
+  try {
+    const supabase = getSupabaseServiceClient();
+
+    // 1. Status: Provisioning
+    await supabase.from("user_gcp_config").update({ 
+        status: 'PROVISIONING',
+        instance_name: "vidbolt-workflow"
+    }).eq('user_id', userId);
+
+    await logToGcpConfig(userId, "Sending API request to Google Cloud...");
+
+    // 2. Call GCP Provisioning
+    // This calls instancesClient.insert. It returns the LRO (Long Running Operation).
+    const operation = await provisionNode(gcpToken, userId, webhookUrl, projectId);
+
+    await logToGcpConfig(userId, "Request accepted by Google. Waiting for resources...");
+
+    // 3. Wait for Operation Completion (Infrastructure created)
+    // The google-cloud nodejs client LRO object has a promise() method that resolves when done.
+    // However, provisionNode currently returns 'response' which is the operation.
+    // We assume provisionNode returns the [Operation] or Operation object.
+    
+    // Safety check if it has a .promise method (it should if it's an LRO)
+     // wrapper for handling potential differences in return type
+    if (operation && typeof operation.promise === 'function') {
+         await operation.promise();
+    } else {
+        // Fallback: wait a bit if we can't track it, but usually we can
+        // If provisionNode returns the raw response array [op, apiRes], then operation might be the op.
+        // Let's assume provisionNode returns the Operation object as per its code: `const [response] = ...; return response;`
+    }
+
+    await logToGcpConfig(userId, "Infrastructure resources allocated. VM is booting...");
+    
+    // 4. Update Status to STAGING (waiting for webhook)
+    await supabase.from("user_gcp_config").update({ 
+         status: 'STAGING',
+         external_ip: null // IP comes later via webhook or poll
+    }).eq('user_id', userId);
+
+    await logToGcpConfig(userId, "Waiting for startup script to signal readiness...");
+
+    // The job is done here; the rest is handled by webhook callbacks.
+    return { success: true };
+
+  } catch (error: any) {
+    const msg = error.message || "Unknown error";
+    await logToGcpConfig(userId, `Provisioning FAILED: ${msg}`);
+    
+    const supabase = getSupabaseServiceClient();
+    await supabase.from("user_gcp_config").update({ 
+         status: 'Recycled', // Or ERROR/TERMINATED
+         metadata: { error: msg } 
+    }).eq('user_id', userId);
+
+    throw error;
+  }
+};

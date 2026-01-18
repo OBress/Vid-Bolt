@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { provisionNode, stopNode, startNode, getNodeStatus } from "@/lib/gcp/provision";
+import { gcpProvisioningQueue } from "@/lib/queues/queues";
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
 
-  if (!session) {
+  if (authError || !user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -28,9 +29,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const body = await req.json();
+    // Check if body exists
+    const textCtx = await req.text();
+    if (!textCtx) {
+        return NextResponse.json({ error: "Empty request body" }, { status: 400 });
+    }
+    const body = JSON.parse(textCtx);
     const { action, projectId } = body; // Get projectId from body
-    const userId = session.user.id;
+    const userId = user.id;
     // Helper to get base URL for webhook
     const webhookUrl = `${new URL(req.url).origin}/api/webhooks/gcp-startup`;
 
@@ -41,16 +47,28 @@ export async function POST(req: NextRequest) {
 
     let result;
         if (action === "provision") {
-        result = await provisionNode(gcpToken, userId, webhookUrl, projectId);
-        // Persist to DB (Upsert config with new state)
+        // Enqueue background job (BullMQ)
+        const job = await gcpProvisioningQueue.add('provision-node', {
+            gcpToken,
+            userId,
+            projectId,
+            webhookUrl
+        });
+
+        // Initialize status in DB immediately
         await supabase.from("user_gcp_config").upsert({
             user_id: userId,
             project_id: projectId,
             instance_name: "vidbolt-workflow",
             status: 'PROVISIONING',
-            metadata: result,
+            metadata: { 
+                jobId: job.id, 
+                logs: ["[System] Provisioning Job Queued..."] 
+            },
             updated_at: new Date().toISOString()
         }, { onConflict: 'user_id' });
+        
+        result = { status: 'QUEUED', jobId: job.id };
     } else if (action === "stop") {
         result = await stopNode(gcpToken, projectId);
         await supabase.from("user_gcp_config").update({ status: 'STOPPING' }).eq('user_id', userId);

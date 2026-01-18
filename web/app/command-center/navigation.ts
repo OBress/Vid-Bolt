@@ -45,11 +45,6 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "SYSTEM",
     icon: Settings,
     items: [
-      {
-        id: "devtools",
-        label: "Dev Tools",
-        href: "/command-center/devtools",
-      },
     ],
   },
 ];

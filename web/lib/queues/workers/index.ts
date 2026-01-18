@@ -16,3 +16,4 @@ export {
   gpuLtx2CreateProcessor,
   gpuLtx2InterpolateProcessor,
 } from './gpu-api-test';
+export { gcpProvisionProcessor } from './gcp-provision';

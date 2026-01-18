@@ -37,6 +37,7 @@ import {
   gpuVideoCreateProcessor,
   gpuLtx2CreateProcessor,
   gpuLtx2InterpolateProcessor,
+  gcpProvisionProcessor,
 } from './workers';
 
 // ============================================================================
@@ -111,6 +112,12 @@ const workerConfigs: WorkerConfig[] = [
     processor: gpuLtx2InterpolateProcessor,
     concurrency: 3,
     description: 'GPU LTX-2 interpolation',
+  },
+  {
+    queue: 'gcp-provisioning-queue',
+    processor: gcpProvisionProcessor,
+    concurrency: 2,
+    description: 'GCP VM Provisioning',
   },
 ];
 
