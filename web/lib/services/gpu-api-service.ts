@@ -122,7 +122,67 @@ export type GPUApiResponse =
 // CONFIGURATION
 // ============================================================================
 
+import { createClient } from "@supabase/supabase-js";
+
+// Cache for the GPU API URL to avoid repeated DB calls
+let cachedGpuApiUrl: string | null = null;
+let cacheTimestamp: number = 0;
+const CACHE_TTL_MS = 30000; // 30 second cache
+
+/**
+ * Get the GPU API URL from Supabase user_gcp_config (for dynamic cloud VMs)
+ * Falls back to GPU_API_URL env var if no config found
+ */
+export async function fetchDynamicGpuApiUrl(userId?: string): Promise<string> {
+  // Return cached value if still valid
+  if (cachedGpuApiUrl && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
+    return cachedGpuApiUrl;
+  }
+
+  // Check env var first as fallback
+  const envUrl = process.env.GPU_API_URL;
+
+  // If no Supabase connection details, use env var
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return envUrl || "http://localhost:8000";
+  }
+
+  try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+
+    // Get the first active GCP config with an external IP
+    const { data, error } = await supabase
+      .from("user_gcp_config")
+      .select("external_ip, status")
+      .eq("status", "RUNNING")
+      .not("external_ip", "is", null)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!error && data?.external_ip) {
+      cachedGpuApiUrl = `http://${data.external_ip}:8000`;
+      cacheTimestamp = Date.now();
+      console.log(`[GPUApiService] Using dynamic GPU URL: ${cachedGpuApiUrl}`);
+      return cachedGpuApiUrl;
+    }
+  } catch (err) {
+    console.log(`[GPUApiService] Failed to fetch dynamic GPU URL, using fallback`);
+  }
+
+  // Fallback to env var
+  return envUrl || "http://localhost:8000";
+}
+
 function getGpuApiUrl(): string {
+  // Sync version for backwards compatibility - returns cached or env
+  if (cachedGpuApiUrl && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
+    return cachedGpuApiUrl;
+  }
   return process.env.GPU_API_URL || "http://localhost:8000";
 }
 
@@ -147,7 +207,7 @@ async function callGpuApi<T>(
   rawResponse: unknown;
   statusCode: number;
 }> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   const url = `${baseUrl}${endpoint}`;
 
@@ -502,7 +562,8 @@ export async function callGpuHealth(): Promise<{
   data?: HealthResponse;
   error?: string;
 }> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
+  console.log(`[GPUApiService] Health Check URL: ${baseUrl}/health`);
   try {
     const response = await fetch(`${baseUrl}/health`);
     if (!response.ok) {
@@ -526,7 +587,7 @@ export async function callGpuHealthReady(): Promise<{
   data?: ReadinessResponse;
   error?: string;
 }> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   try {
     const response = await fetch(`${baseUrl}/health/ready`);
     if (!response.ok) {
@@ -594,7 +655,7 @@ export async function callGpuSystemStatus(): Promise<{
   data?: SystemStatusResponse;
   error?: string;
 }> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   try {
     const response = await fetch(`${baseUrl}/api/v1/system/status`, {
@@ -644,7 +705,7 @@ export async function callGpuGetMode(): Promise<{
   data?: ModeStatusResponse;
   error?: string;
 }> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   try {
     const response = await fetch(`${baseUrl}/api/v1/mode`, {
@@ -673,7 +734,7 @@ export async function callGpuSwitchMode(
   data?: ModeSwitchResponse;
   error?: string;
 }> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   try {
     const response = await fetch(`${baseUrl}/api/v1/mode/switch`, {
@@ -719,7 +780,7 @@ export async function callGpuListLoras(): Promise<{
   data?: LoraInfo[];
   error?: string;
 }> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   try {
     const response = await fetch(`${baseUrl}/api/v1/loras/z-image`, {
@@ -746,7 +807,7 @@ export async function callGpuGetJobStatus(jobId: string): Promise<{
   job?: any;
   error?: string;
 }> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   try {
     const response = await fetch(`${baseUrl}/api/v1/jobs/${jobId}`, {
@@ -976,7 +1037,7 @@ export async function callGpuGetVramMode(): Promise<{
   data?: VramModeResponse;
   error?: string;
 }> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   try {
     const response = await fetch(`${baseUrl}/api/v1/settings/vram-mode`, {
@@ -1003,7 +1064,7 @@ export async function callGpuSetVramMode(mode: VramMode): Promise<{
   data?: VramModeResponse;
   error?: string;
 }> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   try {
     const response = await fetch(`${baseUrl}/api/v1/settings/vram-mode`, {
@@ -1155,7 +1216,7 @@ export async function callGpuBatchImageGenerate(
   webhookUrl: string,
   webhookSecret?: string
 ): Promise<BatchSubmitResult> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   
   console.log(`[GPUApiService] Submitting batch image generation: ${batchId} (${items.length} items) with webhook: ${webhookUrl}`);
@@ -1215,7 +1276,7 @@ export async function callGpuBatchImageEdit(
   webhookUrl: string,
   webhookSecret?: string
 ): Promise<BatchSubmitResult> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   
   console.log(`[GPUApiService] Submitting batch image edit: ${batchId} (${items.length} items) with webhook: ${webhookUrl}`);
@@ -1275,7 +1336,7 @@ export async function callGpuBatchVideoGenerate(
   webhookUrl: string,
   webhookSecret?: string
 ): Promise<BatchSubmitResult> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   
   console.log(`[GPUApiService] Submitting batch video generation: ${batchId} (${items.length} items) with webhook: ${webhookUrl}`);
@@ -1326,7 +1387,7 @@ export async function callGpuBatchVideoGenerate(
  * Get batch status (non-destructive)
  */
 export async function callGpuGetBatchStatus(batchId: string): Promise<BatchStatusResult> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   
   try {
@@ -1356,7 +1417,7 @@ export async function callGpuGetBatchStatus(batchId: string): Promise<BatchStatu
  * Collect batch results and delete (destructive - use for final retrieval)
  */
 export async function callGpuDeleteBatch(batchId: string): Promise<BatchStatusResult> {
-  const baseUrl = getGpuApiUrl();
+  const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
   
   try {

@@ -5,7 +5,7 @@
  */
 
 import { Job, Processor } from 'bullmq';
-import { provisionNode } from '@/lib/gcp/provision'; // We might need to slightly adjust this import if it was a default export
+import { provisionNode, ensureFirewallRule, ensureIAPSSHRule } from '@/lib/gcp/provision';
 import { getSupabaseServiceClient } from '../shared';
 
 export interface GcpProvisionJobData {
@@ -61,10 +61,26 @@ export const gcpProvisionProcessor: Processor<GcpProvisionJobData> = async (job:
         instance_name: "vidbolt-workflow"
     }).eq('user_id', userId);
 
-    await logToGcpConfig(userId, "Sending API request to Google Cloud...");
+    // 2. Ensure Firewall Rule exists for port 8000
+    await logToGcpConfig(userId, "Checking firewall rules for port 8000...");
+    const firewallResult = await ensureFirewallRule(gcpToken, projectId);
+    if (firewallResult.created) {
+        await logToGcpConfig(userId, "Firewall rule created for port 8000.");
+    } else {
+        await logToGcpConfig(userId, "Firewall rule for port 8000 already exists.");
+    }
 
-    // 2. Call GCP Provisioning
-    // This calls instancesClient.insert. It returns the LRO (Long Running Operation).
+    // 2b. Ensure IAP SSH firewall rule exists (for browser-based SSH)
+    await logToGcpConfig(userId, "Checking IAP SSH firewall rule...");
+    const iapResult = await ensureIAPSSHRule(gcpToken, projectId);
+    if (iapResult.created) {
+        await logToGcpConfig(userId, "IAP SSH firewall rule created.");
+    } else {
+        await logToGcpConfig(userId, "IAP SSH firewall rule already exists.");
+    }
+
+    // 3. Create VM Instance
+    await logToGcpConfig(userId, "Creating VM instance with GPU...");
     const operation = await provisionNode(gcpToken, userId, webhookUrl, projectId);
 
     await logToGcpConfig(userId, "Request accepted by Google. Waiting for resources...");

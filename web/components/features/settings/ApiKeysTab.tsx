@@ -15,6 +15,8 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
 import {
   Card,
@@ -63,9 +65,12 @@ export function ApiKeysTab() {
   const [isConnected, setIsConnected] = useState(false);
   const [gcpToken, setGcpToken] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>(INITIAL_LOGS);
-  const [vmStatus, setVmStatus] = useState<string>("UNKNOWN");
+  const [vmStatus, setVmStatus] = useState<string>("NOT_FOUND");
   const [vmIp, setVmIp] = useState<string | null>(null);
   const [gcpLoading, setGcpLoading] = useState(false);
+  const [projectValid, setProjectValid] = useState<boolean | null>(null);
+  const [projectValidating, setProjectValidating] = useState(false);
+  const [apiReady, setApiReady] = useState(false);
 
   const addLog = (message: string) => {
     setLogs((prev) => [
@@ -118,18 +123,16 @@ export function ApiKeysTab() {
         if (gcpData.external_ip) setVmIp(gcpData.external_ip);
       }
 
-      // Check Session for GCP Token
+      // Check Session for GCP Token (respect user's disconnect choice)
+      const wasDisconnected =
+        localStorage.getItem("gcp_disconnected") === "true";
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (session && session.provider_token) {
+      if (session && session.provider_token && !wasDisconnected) {
         setGcpToken(session.provider_token);
         setIsConnected(true);
         addLog("GCP Session active.");
-        // We can fetch status immediately if we have project ID
-        if (gcpData?.project_id) {
-          // trigger fetch
-        }
       } else {
         addLog("No active GCP session found.");
       }
@@ -152,7 +155,25 @@ export function ApiKeysTab() {
         if (res.data.success) {
           const { status, ip } = res.data.data;
           setVmStatus(status || "NOT_FOUND");
-          if (ip) setVmIp(ip);
+          if (ip) {
+            setVmIp(ip);
+            // Check if API is actually reachable when VM is running
+            if (status === "RUNNING") {
+              try {
+                const healthRes = await fetch(`http://${ip}:8000/health`, {
+                  method: "GET",
+                  mode: "no-cors", // Bypass CORS for health check
+                  signal: AbortSignal.timeout(5000),
+                });
+                // no-cors returns opaque response, so we assume success if no error
+                setApiReady(true);
+              } catch {
+                setApiReady(false);
+              }
+            } else {
+              setApiReady(false);
+            }
+          }
         }
       } catch (e) {
         console.error(e);
@@ -231,6 +252,8 @@ export function ApiKeysTab() {
     setGcpLoading(true);
     try {
       addLog("Initiating OAuth flow...");
+      // Clear disconnect flag since user is explicitly connecting
+      localStorage.removeItem("gcp_disconnected");
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -354,25 +377,56 @@ export function ApiKeysTab() {
                     <label className="text-xs text-neutral-500 font-mono uppercase">
                       GCP Project ID
                     </label>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center">
                       <input
                         type="text"
                         value={projectId}
-                        onChange={(e) => setProjectId(e.target.value)}
+                        onChange={(e) => {
+                          setProjectId(e.target.value);
+                          setProjectValid(null); // Reset validation on change
+                        }}
+                        onBlur={async () => {
+                          // Validate on blur if we have token and projectId
+                          if (gcpToken && projectId && projectId.length > 3) {
+                            setProjectValidating(true);
+                            try {
+                              const res = await axios.post(
+                                "/api/gcp/vm",
+                                { action: "validate", projectId },
+                                { headers: { "x-gcp-token": gcpToken } },
+                              );
+                              const isValid = res.data.data?.valid || false;
+                              setProjectValid(isValid);
+
+                              // Auto-save if valid
+                              if (isValid && userId) {
+                                await supabase.from("user_gcp_config").upsert(
+                                  {
+                                    user_id: userId,
+                                    project_id: projectId,
+                                    updated_at: new Date().toISOString(),
+                                  },
+                                  { onConflict: "user_id" },
+                                );
+                                toast.success("Project ID saved");
+                              }
+                            } catch {
+                              setProjectValid(false);
+                            }
+                            setProjectValidating(false);
+                          }
+                        }}
                         placeholder="e.g. vidbolt-dev-1"
                         className="flex-1 bg-black/40 border border-neutral-800 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-orange-500 transition-colors"
                       />
-                      <Button
-                        onClick={handleSaveProjectId}
-                        disabled={!projectId || isSaving}
-                        variant="secondary"
-                      >
-                        {isSaving ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          "Save"
-                        )}
-                      </Button>
+                      {/* Validation Indicator */}
+                      {projectValidating ? (
+                        <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />
+                      ) : projectValid === true ? (
+                        <CheckCircle className="w-5 h-5 text-green-500" />
+                      ) : projectValid === false ? (
+                        <XCircle className="w-5 h-5 text-red-500" />
+                      ) : null}
                     </div>
                   </div>
 
@@ -386,20 +440,26 @@ export function ApiKeysTab() {
                       <div className="flex items-center gap-3 p-3 bg-black/20 rounded-lg border border-neutral-800">
                         <div
                           className={`w-3 h-3 rounded-full ${
-                            vmStatus === "RUNNING"
+                            vmStatus === "RUNNING" && apiReady
                               ? "bg-green-500 animate-pulse"
-                              : vmStatus === "PROVISIONING" ||
-                                  vmStatus === "STAGING"
+                              : vmStatus === "RUNNING" && !apiReady
                                 ? "bg-yellow-500 animate-pulse"
-                                : vmStatus === "STOPPED" ||
-                                    vmStatus === "TERMINATED" ||
-                                    vmStatus === "NOT_FOUND"
-                                  ? "bg-red-500"
-                                  : "bg-neutral-500"
+                                : vmStatus === "PROVISIONING" ||
+                                    vmStatus === "STAGING"
+                                  ? "bg-yellow-500 animate-pulse"
+                                  : vmStatus === "STOPPED" ||
+                                      vmStatus === "TERMINATED" ||
+                                      vmStatus === "NOT_FOUND"
+                                    ? "bg-red-500"
+                                    : "bg-neutral-500"
                           }`}
                         />
                         <span className="text-sm font-mono text-white tracking-wider">
-                          {vmStatus}
+                          {vmStatus === "RUNNING" && !apiReady
+                            ? "SETTING UP"
+                            : vmStatus === "RUNNING" && apiReady
+                              ? "READY"
+                              : vmStatus}
                         </span>
                       </div>
                       {vmIp && (
@@ -423,7 +483,8 @@ export function ApiKeysTab() {
                       </h4>
                       <div className="flex gap-2">
                         {vmStatus === "NOT_FOUND" ||
-                        vmStatus === "TERMINATED" ? (
+                        vmStatus === "TERMINATED" ||
+                        vmStatus === "UNKNOWN" ? (
                           <Button
                             onClick={() => performGCPAction("provision")}
                             disabled={gcpLoading}
@@ -497,6 +558,7 @@ export function ApiKeysTab() {
                       onClick={() => {
                         setIsConnected(false);
                         setGcpToken(null);
+                        localStorage.setItem("gcp_disconnected", "true");
                         toast.success("Disconnected from session");
                       }}
                       className="w-full border border-neutral-800 text-neutral-500 hover:text-white hover:bg-neutral-800"

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { callGpuGetMode, callGpuSwitchMode } from "@/lib/services/gpu-api-service";
 
 /**
  * GET /api/gpu-api/mode
@@ -38,40 +39,18 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   
-  const gpuApiUrl = process.env.GPU_API_URL || "http://localhost:8000";
-  const gpuApiKey = process.env.GPU_API_KEY;
+  const result = await callGpuGetMode();
   
-  if (!gpuApiKey) {
-    return NextResponse.json(
-      { error: "GPU_API_KEY not configured" },
-      { status: 500 }
-    );
-  }
-  
-  try {
-    const response = await fetch(`${gpuApiUrl}/api/v1/mode`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": gpuApiKey,
-      },
-    });
-
-    const data = await response.json();
-    
+  if (result.success) {
     return NextResponse.json({
-      success: response.ok,
-      statusCode: response.status,
-      data,
+      success: true,
+      data: result.data
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to connect to GPU API",
-      },
-      { status: 503 }
-    );
+  } else {
+    return NextResponse.json({
+      success: false,
+      error: result.error
+    }, { status: 503 });
   }
 }
 
@@ -82,20 +61,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   
-  const gpuApiUrl = process.env.GPU_API_URL || "http://localhost:8000";
-  const gpuApiKey = process.env.GPU_API_KEY;
-  
-  if (!gpuApiKey) {
-    return NextResponse.json(
-      { error: "GPU_API_KEY not configured" },
-      { status: 500 }
-    );
-  }
-  
   try {
     const body = await request.json();
     const { targetMode } = body;
     
+    // Basic validation
     if (!targetMode || !["image", "video"].includes(targetMode)) {
       return NextResponse.json(
         { error: "Invalid targetMode. Must be 'image' or 'video'" },
@@ -103,29 +73,27 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const response = await fetch(`${gpuApiUrl}/api/v1/mode/switch`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": gpuApiKey,
-      },
-      body: JSON.stringify({ target_mode: targetMode }),
-    });
-
-    const data = await response.json();
+    // Type assertion is safe here due to check above
+    const result = await callGpuSwitchMode(targetMode as "image" | "video");
     
-    return NextResponse.json({
-      success: response.ok,
-      statusCode: response.status,
-      data,
-    });
+    if (result.success) {
+      return NextResponse.json({
+        success: true,
+        data: result.data
+      });
+    } else {
+      return NextResponse.json({
+        success: false,
+        error: result.error
+      }, { status: 503 });
+    }
   } catch (error) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Failed to connect to GPU API",
+        error: error instanceof Error ? error.message : "Invalid request body",
       },
-      { status: 503 }
+      { status: 400 }
     );
   }
 }

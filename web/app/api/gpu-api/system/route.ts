@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { callGpuSystemStatus } from "@/lib/services/gpu-api-service";
 
 /**
  * GET /api/gpu-api/system
@@ -28,40 +29,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   
-  const gpuApiUrl = process.env.GPU_API_URL || "http://localhost:8000";
-  const gpuApiKey = process.env.GPU_API_KEY;
+  const result = await callGpuSystemStatus();
   
-  if (!gpuApiKey) {
-    return NextResponse.json(
-      { error: "GPU_API_KEY not configured" },
-      { status: 500 }
-    );
-  }
-  
-  try {
-    const response = await fetch(`${gpuApiUrl}/api/v1/system/status`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": gpuApiKey,
-      },
-    });
-
-    const data = await response.json();
-    
+  if (result.success) {
     return NextResponse.json({
-      success: response.ok,
-      statusCode: response.status,
-      data,
+      success: true,
+      data: result.data
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to connect to GPU API",
-        gpuApiUrl,
-      },
-      { status: 503 }
-    );
+  } else {
+    return NextResponse.json({
+      success: false,
+      error: result.error
+    }, { status: 503 });
   }
 }
