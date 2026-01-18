@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { stopNode, startNode, getNodeStatus } from "@/lib/gcp/provision";
 import { gcpProvisioningQueue } from "@/lib/queues/queues";
+import { getValidGCPToken } from "@/lib/gcp/token-refresh";
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
@@ -9,12 +10,6 @@ export async function POST(req: NextRequest) {
 
   if (authError || !user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Let's assume the CLIENT sends the GCP Access Token in a custom header 'x-gcp-token'
-  const gcpToken = req.headers.get("x-gcp-token");
-  if (!gcpToken) {
-     return NextResponse.json({ error: "Missing GCP Token. Please Connect Google Account again." }, { status: 400 });
   }
 
   try {
@@ -29,13 +24,46 @@ export async function POST(req: NextRequest) {
     const webhookUrl = `${new URL(req.url).origin}/api/webhooks/gcp-startup`;
 
     // Validate ProjectID (required for most actions)
-    if (!projectId && action !== "validate") {
+    if (!projectId && action !== "validate" && action !== "check-connection") {
          return NextResponse.json({ error: "Missing Project ID" }, { status: 400 });
+    }
+
+    // =====================================================
+    // GET VALID GCP TOKEN (Session or Refresh)
+    // =====================================================
+    // First try the header token (from active session)
+    // If not available, use stored refresh token
+    const headerToken = req.headers.get("x-gcp-token");
+    let gcpToken: string;
+    
+    try {
+      gcpToken = await getValidGCPToken(userId, headerToken);
+    } catch (tokenError: any) {
+      // Special case: check-connection action should not fail
+      if (action === "check-connection") {
+        return NextResponse.json({ 
+          success: true, 
+          data: { connected: false, reason: tokenError.message } 
+        });
+      }
+      return NextResponse.json({ 
+        error: tokenError.message || "Missing GCP Token. Please reconnect your Google account." 
+      }, { status: 401 });
     }
 
     let result;
     
-    if (action === "provision") {
+    // =====================================================
+    // ACTIONS
+    // =====================================================
+    
+    if (action === "check-connection") {
+      // Check if user has valid stored token or session token
+      return NextResponse.json({ 
+        success: true, 
+        data: { connected: true } 
+      });
+    } else if (action === "provision") {
         // Enqueue background job (BullMQ)
         const job = await gcpProvisioningQueue.add('provision-node', {
             gcpToken,

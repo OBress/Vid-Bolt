@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { storeRefreshToken } from '@/lib/gcp/token-refresh'
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
@@ -13,6 +14,21 @@ export async function GET(request: Request) {
     
     if (!error && session) {
       const user = session.user
+      
+      // =====================================================
+      // STORE GCP REFRESH TOKEN FOR PERSISTENT ACCESS
+      // =====================================================
+      // This allows the server to refresh access tokens without
+      // requiring the user to re-authenticate on every page load.
+      if (session.provider_refresh_token) {
+        try {
+          await storeRefreshToken(user.id, session.provider_refresh_token)
+          console.log('[Auth Callback] Stored GCP refresh token for user:', user.id)
+        } catch (err) {
+          console.error('[Auth Callback] Failed to store refresh token:', err)
+          // Non-fatal: continue with login even if token storage fails
+        }
+      }
       
       // Upsert user into public.users table if it doesn't exist
       // We do this to ensure we have a record to track onboarding

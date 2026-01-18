@@ -12,6 +12,7 @@ import { TaskStatusButton } from "@/components/features/tasks/TaskStatusButton";
 import { AdminButton } from "@/components/features/admin/AdminButton";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { useUserProfile } from "@/hooks/use-user-profile";
+import { VMStatus } from "@/components/layout/VMStatus";
 
 export function TopBar() {
   const pathname = usePathname();
@@ -101,6 +102,7 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-2">
+        <VMStatus />
         <TaskStatusButton />
         <Button
           variant="ghost"

@@ -283,6 +283,9 @@ if [ ! -d "$REPO_DIR" ]; then
 else
     cd "$REPO_DIR"
     report_status "checking_updates" "Checking for repository updates..."
+
+    # Allow git operations on this directory (since script runs as root but dir owned by ubuntu)
+    git config --global --add safe.directory "$REPO_DIR"
     
     # Configure git for token auth if needed
     if [ -n "$GITHUB_TOKEN" ]; then

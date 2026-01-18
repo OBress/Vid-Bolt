@@ -467,31 +467,47 @@ export function ApiKeysTab() {
                         Instance Status
                       </h4>
                       <div className="flex items-center gap-3 p-3 bg-black/20 rounded-lg border border-neutral-800">
-                        <div
-                          className={`w-3 h-3 rounded-full ${
-                            vmStatus === "RUNNING" && apiReady
-                              ? "bg-green-500 animate-pulse"
-                              : vmStatus === "RUNNING" && !apiReady
-                                ? "bg-yellow-500 animate-pulse"
-                                : vmStatus === "PROVISIONING" ||
-                                    vmStatus === "STAGING"
-                                  ? "bg-yellow-500 animate-pulse"
-                                  : vmStatus === "STOPPING"
-                                    ? "bg-orange-500 animate-pulse"
-                                    : vmStatus === "STOPPED" ||
-                                        vmStatus === "TERMINATED" ||
-                                        vmStatus === "NOT_FOUND"
-                                      ? "bg-red-500"
-                                      : "bg-neutral-500"
-                          }`}
-                        />
-                        <span className="text-sm font-mono text-white tracking-wider">
-                          {vmStatus === "RUNNING" && !apiReady
-                            ? "SETTING UP"
-                            : vmStatus === "RUNNING" && apiReady
-                              ? "READY"
-                              : vmStatus}
-                        </span>
+                        {(() => {
+                          // Compute display status locally to match VMStatus logic
+                          let displayStatus = "OFF";
+                          let statusColor = "bg-red-500";
+
+                          if (vmStatus === "NOT_FOUND") {
+                            displayStatus = "SETUP";
+                            statusColor = "bg-neutral-500";
+                          } else if (
+                            vmStatus === "PROVISIONING" ||
+                            vmStatus === "STAGING"
+                          ) {
+                            displayStatus = "SETTING UP";
+                            statusColor = "bg-yellow-500 animate-pulse";
+                          } else if (vmStatus === "RUNNING") {
+                            displayStatus = "ON";
+                            statusColor = apiReady
+                              ? "bg-green-500"
+                              : "bg-yellow-500 animate-pulse";
+                          } else if (vmStatus === "STOPPING") {
+                            displayStatus = "STOPPING";
+                            statusColor = "bg-orange-500 animate-pulse";
+                          } else if (
+                            vmStatus === "STOPPED" ||
+                            vmStatus === "TERMINATED"
+                          ) {
+                            displayStatus = "OFF";
+                            statusColor = "bg-red-500";
+                          }
+
+                          return (
+                            <>
+                              <div
+                                className={`w-3 h-3 rounded-full ${statusColor}`}
+                              />
+                              <span className="text-sm font-mono text-white tracking-wider">
+                                {displayStatus}
+                              </span>
+                            </>
+                          );
+                        })()}
                       </div>
                       {vmIp && (
                         <div className="flex items-center gap-2">
@@ -520,7 +536,7 @@ export function ApiKeysTab() {
                             className="w-full bg-neutral-800 text-neutral-400 border border-neutral-700"
                           >
                             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Starting...
+                            Turning On...
                           </Button>
                         ) : vmStatus === "STOPPING" ? (
                           <Button
@@ -528,41 +544,9 @@ export function ApiKeysTab() {
                             className="w-full bg-neutral-800 text-neutral-400 border border-neutral-700"
                           >
                             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Stopping...
+                            Turning Off...
                           </Button>
-                        ) : vmStatus === "NOT_FOUND" ||
-                          vmStatus === "TERMINATED" ||
-                          vmStatus === "UNKNOWN" ? (
-                          <Button
-                            onClick={() => performGCPAction("provision")}
-                            disabled={gcpLoading}
-                            className="w-full bg-green-600 hover:bg-green-700 font-bold"
-                          >
-                            {gcpLoading ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <span className="flex items-center">
-                                <Play className="w-4 h-4 mr-2" />
-                                Provision
-                              </span>
-                            )}
-                          </Button>
-                        ) : vmStatus === "STOPPED" ? (
-                          <Button
-                            onClick={() => performGCPAction("start")}
-                            disabled={gcpLoading}
-                            className="w-full bg-blue-600 hover:bg-blue-700 font-bold"
-                          >
-                            {gcpLoading ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <span className="flex items-center">
-                                <Play className="w-4 h-4 mr-2" />
-                                Start
-                              </span>
-                            )}
-                          </Button>
-                        ) : (
+                        ) : vmStatus === "RUNNING" ? (
                           <Button
                             onClick={() => performGCPAction("stop")}
                             disabled={gcpLoading}
@@ -574,7 +558,29 @@ export function ApiKeysTab() {
                             ) : (
                               <span className="flex items-center">
                                 <Square className="w-4 h-4 mr-2" />
-                                Stop
+                                Turn Off
+                              </span>
+                            )}
+                          </Button>
+                        ) : (
+                          <Button
+                            onClick={() =>
+                              performGCPAction(
+                                vmStatus === "NOT_FOUND" ||
+                                  vmStatus === "TERMINATED"
+                                  ? "provision"
+                                  : "start",
+                              )
+                            }
+                            disabled={gcpLoading}
+                            className="w-full bg-green-600 hover:bg-green-700 font-bold"
+                          >
+                            {gcpLoading ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <span className="flex items-center">
+                                <Play className="w-4 h-4 mr-2" />
+                                Turn On
                               </span>
                             )}
                           </Button>
@@ -603,11 +609,19 @@ export function ApiKeysTab() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => {
-                        setIsConnected(false);
-                        setGcpToken(null);
-                        localStorage.setItem("gcp_disconnected", "true");
-                        toast.success("Disconnected from session");
+                      onClick={async () => {
+                        try {
+                          await axios.post("/api/gcp/disconnect");
+                          setIsConnected(false);
+                          setGcpToken(null);
+                          localStorage.setItem("gcp_disconnected", "true");
+                          toast.success("GCP account disconnected");
+                        } catch (err: any) {
+                          toast.error(
+                            "Failed to disconnect: " +
+                              (err.message || "Unknown error"),
+                          );
+                        }
                       }}
                       className="w-full border border-neutral-800 text-neutral-500 hover:text-white hover:bg-neutral-800"
                     >
