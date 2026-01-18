@@ -213,8 +213,13 @@ export function useGCPVM(): UseGCPVMReturn {
     displayStatus = "SETTING UP";
     statusColor = "bg-yellow-500 animate-pulse";
   } else if (status === "RUNNING") {
-    displayStatus = "ON";
-    statusColor = apiReady ? "bg-green-500" : "bg-yellow-500 animate-pulse";
+    if (apiReady) {
+      displayStatus = "ON";
+      statusColor = "bg-green-500";
+    } else {
+      displayStatus = "SETTING UP";
+      statusColor = "bg-yellow-500 animate-pulse";
+    }
   } else if (status === "STOPPING") {
     displayStatus = "STOPPING";
     statusColor = "bg-orange-500 animate-pulse";
