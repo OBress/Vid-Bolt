@@ -431,18 +431,19 @@ CREATE OR REPLACE FUNCTION "public"."protect_admin_column"() RETURNS "trigger"
 BEGIN
   -- Check if is_admin is being changed
   IF NEW.is_admin IS DISTINCT FROM OLD.is_admin THEN
-    -- Check if the current role is service_role
-    -- We check the configuration parameter or the specialized function if available.
-    -- session_user is often the role connected to Postgres. 
-    -- auth.role() is Supabase specific.
-    -- A robust way in trigger context is checking current_setting('request.jwt.claim.role', true).
-    
+    -- 1. Allow service_role (used by backend/workers)
     IF (current_setting('request.jwt.claim.role', true) = 'service_role') THEN
       RETURN NEW;
     END IF;
 
-    -- If not service_role, raise an exception or revert the change.
-    RAISE EXCEPTION 'You are not authorized to change the is_admin status.';
+    -- 2. Allow postgres role (used by Supabase Dashboard / SQL Editor)
+    -- This allows the owner to change status from the Web UI
+    IF (session_user = 'postgres') THEN
+      RETURN NEW;
+    END IF;
+
+    -- If neither, block the update
+    RAISE EXCEPTION 'You are not authorized to change the is_admin status. This action is restricted to the Supabase Dashboard or Service Role.';
   END IF;
   RETURN NEW;
 END;

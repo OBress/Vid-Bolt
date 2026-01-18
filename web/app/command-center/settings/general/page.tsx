@@ -9,7 +9,13 @@ import { ApiKeysTab } from "@/components/features/settings/ApiKeysTab";
 
 import { PageHeader } from "@/components/shared/PageHeader";
 
-export default function GeneralSettingsPage() {
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+
+function GeneralSettingsContent() {
+  const searchParams = useSearchParams();
+  const defaultTab = searchParams.get("tab") || "account";
+
   const tabs = [
     { id: "account", label: "Account", icon: User, Component: AccountTab },
     {
@@ -24,7 +30,7 @@ export default function GeneralSettingsPage() {
   return (
     <div className="flex flex-col h-full bg-black text-white">
       <div className="border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
-        <Tabs defaultValue="account" className="w-full">
+        <Tabs defaultValue={defaultTab} className="w-full">
           <PageHeader
             title="General Settings"
             center={
@@ -57,5 +63,13 @@ export default function GeneralSettingsPage() {
         </Tabs>
       </div>
     </div>
+  );
+}
+
+export default function GeneralSettingsPage() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading settings...</div>}>
+      <GeneralSettingsContent />
+    </Suspense>
   );
 }
