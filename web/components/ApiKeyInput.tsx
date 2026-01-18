@@ -9,19 +9,29 @@ interface ApiKeyInputProps {
   label: string;
   value: string;
   onSave: (value: string) => Promise<boolean>;
+  tooltip?: string;
   placeholder?: string;
 }
+
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { CircleHelp } from "lucide-react";
 
 export default function ApiKeyInput({
   label,
   value,
   onSave,
   placeholder = "Enter API key...",
+  tooltip,
 }: ApiKeyInputProps) {
   const [inputValue, setInputValue] = useState(value);
   const [isVisible, setIsVisible] = useState(false);
   const [status, setStatus] = useState<"idle" | "saving" | "success" | "error">(
-    "idle"
+    "idle",
   );
   const initialValueRef = useRef(value);
 
@@ -58,9 +68,29 @@ export default function ApiKeyInput({
   };
 
   return (
-    <div className="flex flex-col gap-2 w-full max-w-2xl">
+    <div className="flex flex-col gap-2 w-full max-w-full">
       <div className="flex justify-between items-center px-1">
-        <label className="text-sm font-medium text-slate-400">{label}</label>
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-slate-400">{label}</label>
+          {tooltip && (
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <CircleHelp
+                    size={14}
+                    className="text-slate-500 hover:text-slate-300 cursor-help transition-colors"
+                  />
+                </TooltipTrigger>
+                <TooltipContent
+                  side="right"
+                  className="bg-neutral-900 border-neutral-800 text-slate-300 max-w-[250px]"
+                >
+                  <p>{tooltip}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
         <AnimatePresence>
           {status === "success" && (
             <motion.span
@@ -97,7 +127,7 @@ export default function ApiKeyInput({
             status === "error" &&
               "border-red-500/40 focus:border-red-500/40 focus:ring-red-500/5",
             status === "success" &&
-              "border-emerald-500/40 focus:border-emerald-500/40 focus:ring-emerald-500/5"
+              "border-emerald-500/40 focus:border-emerald-500/40 focus:ring-emerald-500/5",
           )}
         />
 

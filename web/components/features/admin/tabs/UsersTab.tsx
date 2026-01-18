@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { UserDetailModal } from "../UserDetailModal";
+import { DeleteUserDialog, type DeleteMode } from "../DeleteUserDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,7 +24,19 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
-import { MoreHorizontal, Search, RefreshCw, Filter } from "lucide-react";
+import {
+  MoreHorizontal,
+  Search,
+  RefreshCw,
+  Filter,
+  Eraser,
+  Trash2,
+  Copy,
+  CheckCircle,
+  PauseCircle,
+  PlayCircle,
+  ShieldCheck,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   Select,
@@ -57,6 +70,17 @@ export function UsersTab() {
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [totalUsers, setTotalUsers] = useState(0);
+
+  // Delete dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
+  const [deleteMode, setDeleteMode] = useState<DeleteMode>("wipe");
+
+  const openDeleteDialog = (userId: string, mode: DeleteMode) => {
+    setDeleteUserId(userId);
+    setDeleteMode(mode);
+    setDeleteDialogOpen(true);
+  };
 
   const supabase = createClient();
 
@@ -291,6 +315,7 @@ export function UsersTab() {
                           className="text-neutral-200 focus:bg-neutral-800 focus:text-neutral-100 cursor-pointer"
                           onClick={() => navigator.clipboard.writeText(user.id)}
                         >
+                          <Copy className="w-4 h-4 mr-2" />
                           Copy User ID
                         </DropdownMenuItem>
                         <DropdownMenuSeparator className="bg-neutral-800" />
@@ -300,6 +325,7 @@ export function UsersTab() {
                             className="text-green-500 focus:bg-green-500/10 focus:text-green-400 cursor-pointer font-medium"
                             onClick={() => updateUserStatus(user.id, "active")}
                           >
+                            <CheckCircle className="w-4 h-4 mr-2" />
                             Approve Access (Whitelist)
                           </DropdownMenuItem>
                         )}
@@ -312,15 +338,8 @@ export function UsersTab() {
                                 updateUserStatus(user.id, "paused")
                               }
                             >
+                              <PauseCircle className="w-4 h-4 mr-2" />
                               Pause Account
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="text-red-500 focus:bg-red-500/10 focus:text-red-400 cursor-pointer"
-                              onClick={() =>
-                                updateUserStatus(user.id, "banned")
-                              }
-                            >
-                              Ban User
                             </DropdownMenuItem>
                           </>
                         )}
@@ -330,6 +349,7 @@ export function UsersTab() {
                             className="text-green-500 focus:bg-green-500/10 focus:text-green-400 cursor-pointer"
                             onClick={() => updateUserStatus(user.id, "active")}
                           >
+                            <PlayCircle className="w-4 h-4 mr-2" />
                             Unpause (Restore)
                           </DropdownMenuItem>
                         )}
@@ -339,8 +359,35 @@ export function UsersTab() {
                             className="text-green-500 focus:bg-green-500/10 focus:text-green-400 cursor-pointer"
                             onClick={() => updateUserStatus(user.id, "active")}
                           >
+                            <ShieldCheck className="w-4 h-4 mr-2" />
                             Unban (Restore)
                           </DropdownMenuItem>
+                        )}
+
+                        {/* Deletion Actions - Hidden for admin users */}
+                        {!user.is_admin && (
+                          <>
+                            <DropdownMenuItem
+                              className="text-orange-500 focus:bg-orange-500/10 focus:text-orange-400 cursor-pointer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDeleteDialog(user.id, "wipe");
+                              }}
+                            >
+                              <Eraser className="w-4 h-4 mr-2" />
+                              Delete User Data
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-red-500 focus:bg-red-500/10 focus:text-red-400 cursor-pointer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDeleteDialog(user.id, "delete");
+                              }}
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete User
+                            </DropdownMenuItem>
+                          </>
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -384,6 +431,22 @@ export function UsersTab() {
           fetchUsers();
         }}
       />
+
+      {/* Delete User Dialog */}
+      {deleteUserId && (
+        <DeleteUserDialog
+          open={deleteDialogOpen}
+          onOpenChange={(open) => {
+            setDeleteDialogOpen(open);
+            if (!open) setDeleteUserId(null);
+          }}
+          userId={deleteUserId}
+          mode={deleteMode}
+          onSuccess={() => {
+            fetchUsers();
+          }}
+        />
+      )}
     </div>
   );
 }
