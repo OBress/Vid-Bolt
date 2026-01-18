@@ -79,25 +79,27 @@ export const gcpProvisionProcessor: Processor<GcpProvisionJobData> = async (job:
         await logToGcpConfig(userId, "IAP SSH firewall rule already exists.");
     }
 
-    // 3. Create VM Instance
-    await logToGcpConfig(userId, "Creating VM instance with GPU...");
+    // 3. Create or Start VM Instance
+    await logToGcpConfig(userId, "Checking existing VM or creating new one...");
     const operation = await provisionNode(gcpToken, userId, webhookUrl, projectId);
+
+    // provisionNode returns:
+    // - null if VM is already RUNNING/STAGING/PROVISIONING
+    // - start operation if VM was STOPPED/TERMINATED
+    // - insert operation if VM didn't exist
+    if (operation === null) {
+      await logToGcpConfig(userId, "VM is already running. Nothing to do.");
+      await supabase.from("user_gcp_config").update({ 
+        status: 'RUNNING'
+      }).eq('user_id', userId);
+      return { success: true, alreadyRunning: true };
+    }
 
     await logToGcpConfig(userId, "Request accepted by Google. Waiting for resources...");
 
-    // 3. Wait for Operation Completion (Infrastructure created)
-    // The google-cloud nodejs client LRO object has a promise() method that resolves when done.
-    // However, provisionNode currently returns 'response' which is the operation.
-    // We assume provisionNode returns the [Operation] or Operation object.
-    
-    // Safety check if it has a .promise method (it should if it's an LRO)
-     // wrapper for handling potential differences in return type
+    // Wait for Operation Completion (Infrastructure created or started)
     if (operation && typeof operation.promise === 'function') {
          await operation.promise();
-    } else {
-        // Fallback: wait a bit if we can't track it, but usually we can
-        // If provisionNode returns the raw response array [op, apiRes], then operation might be the op.
-        // Let's assume provisionNode returns the Operation object as per its code: `const [response] = ...; return response;`
     }
 
     await logToGcpConfig(userId, "Infrastructure resources allocated. VM is booting...");

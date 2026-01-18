@@ -72,6 +72,9 @@ export function ApiKeysTab() {
   const [projectValidating, setProjectValidating] = useState(false);
   const [apiReady, setApiReady] = useState(false);
 
+  // State to track desired/transitioning status to prevent polling from reverting optimistic UI
+  const [targetStatus, setTargetStatus] = useState<string | null>(null);
+
   const addLog = (message: string) => {
     setLogs((prev) => [
       `[${new Date().toLocaleTimeString()}] ${message}`,
@@ -81,6 +84,7 @@ export function ApiKeysTab() {
 
   // Initial Load (Keys + GCP Config)
   useEffect(() => {
+    // ... (keep existing init logic, just referencing it here contextually if needed, but we start replacing from below)
     async function init() {
       const {
         data: { user },
@@ -154,7 +158,28 @@ export function ApiKeysTab() {
         );
         if (res.data.success) {
           const { status, ip } = res.data.data;
-          setVmStatus(status || "NOT_FOUND");
+
+          // Logic to prevent stale poll data from overwriting optimistic transition state
+          let shouldUpdate = true;
+          if (targetStatus) {
+            if (targetStatus === "STOPPED") {
+              // Waiting for stop: Ignore RUNNING
+              if (status === "RUNNING") shouldUpdate = false;
+              // If we reached STOPPED or STOPPING (or TERMINATED), update and clear target if done
+              if (status === "STOPPED" || status === "TERMINATED")
+                setTargetStatus(null);
+            } else if (targetStatus === "RUNNING") {
+              // Waiting for start: Ignore STOPPED/TERMINATED
+              if (status === "STOPPED" || status === "TERMINATED")
+                shouldUpdate = false;
+              if (status === "RUNNING") setTargetStatus(null);
+            }
+          }
+
+          if (shouldUpdate) {
+            setVmStatus(status || "NOT_FOUND");
+          }
+
           if (ip) {
             setVmIp(ip);
             // Check if API is actually reachable when VM is running
@@ -194,20 +219,12 @@ export function ApiKeysTab() {
       if (data && data.metadata && (data.metadata as any).logs) {
         const remoteLogs = (data.metadata as any).logs as string[];
         if (remoteLogs.length > 0) {
-          // Merge or replace logs. Simpler to just show latest from DB + local system logs
-          // But we want to preserve local "Initiated..." messages maybe?
-          // Actually, the worker logs are authoritative for the process.
-          // Let's prepend them or just set them.
-          // To avoid jitter, let's just use the DB logs if we are in provisioning state.
-          // Or just setLogs to the DB logs (which are appended in order).
-          // The worker appends new logs to the front or back?
-          // Worker: `newLogs = [logEntry, ...currentLogs]` -> Newest first.
           setLogs(remoteLogs);
         }
       }
-    }, 5000); // 5s poll
+    }, 10000); // 10s poll
     return () => clearInterval(interval);
-  }, [gcpToken, projectId, userId]);
+  }, [gcpToken, projectId, userId, targetStatus]);
 
   const handleSaveKey = async (field: keyof ApiKeys, value: string) => {
     if (!userId) return false;
@@ -292,6 +309,18 @@ export function ApiKeysTab() {
       if (res.data.success) {
         toast.success(`Action ${action} initiated`);
         addLog(`Command ${action} successful.`);
+
+        // Optimistic UI update & Target Status Lock
+        if (action === "provision") {
+          setVmStatus("PROVISIONING");
+          setTargetStatus("RUNNING");
+        } else if (action === "start") {
+          setVmStatus("STAGING");
+          setTargetStatus("RUNNING");
+        } else if (action === "stop") {
+          setVmStatus("STOPPING");
+          setTargetStatus("STOPPED");
+        }
       } else {
         throw new Error(res.data.error || "Unknown error");
       }
@@ -447,11 +476,13 @@ export function ApiKeysTab() {
                                 : vmStatus === "PROVISIONING" ||
                                     vmStatus === "STAGING"
                                   ? "bg-yellow-500 animate-pulse"
-                                  : vmStatus === "STOPPED" ||
-                                      vmStatus === "TERMINATED" ||
-                                      vmStatus === "NOT_FOUND"
-                                    ? "bg-red-500"
-                                    : "bg-neutral-500"
+                                  : vmStatus === "STOPPING"
+                                    ? "bg-orange-500 animate-pulse"
+                                    : vmStatus === "STOPPED" ||
+                                        vmStatus === "TERMINATED" ||
+                                        vmStatus === "NOT_FOUND"
+                                      ? "bg-red-500"
+                                      : "bg-neutral-500"
                           }`}
                         />
                         <span className="text-sm font-mono text-white tracking-wider">
@@ -482,9 +513,26 @@ export function ApiKeysTab() {
                         Actions
                       </h4>
                       <div className="flex gap-2">
-                        {vmStatus === "NOT_FOUND" ||
-                        vmStatus === "TERMINATED" ||
-                        vmStatus === "UNKNOWN" ? (
+                        {vmStatus === "PROVISIONING" ||
+                        vmStatus === "STAGING" ? (
+                          <Button
+                            disabled
+                            className="w-full bg-neutral-800 text-neutral-400 border border-neutral-700"
+                          >
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Starting...
+                          </Button>
+                        ) : vmStatus === "STOPPING" ? (
+                          <Button
+                            disabled
+                            className="w-full bg-neutral-800 text-neutral-400 border border-neutral-700"
+                          >
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Stopping...
+                          </Button>
+                        ) : vmStatus === "NOT_FOUND" ||
+                          vmStatus === "TERMINATED" ||
+                          vmStatus === "UNKNOWN" ? (
                           <Button
                             onClick={() => performGCPAction("provision")}
                             disabled={gcpLoading}

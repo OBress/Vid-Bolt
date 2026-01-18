@@ -101,6 +101,51 @@ export async function provisionNode(accessToken: string, userId: string, webhook
   const authClient = await getGCPAuthClient(accessToken);
   const instancesClient = new InstancesClient({ authClient });
 
+  // First, check if the VM already exists
+  try {
+    const [instance] = await instancesClient.get({
+      project: projectId,
+      zone: ZONE,
+      instance: INSTANCE_NAME
+    });
+
+    const status = instance.status;
+    console.log(`[GCP] VM '${INSTANCE_NAME}' already exists with status: ${status}`);
+
+    // If VM exists and is stopped/terminated, start it
+    if (status === 'TERMINATED' || status === 'STOPPED') {
+      console.log(`[GCP] Starting existing VM...`);
+      const [startOp] = await instancesClient.start({
+        project: projectId,
+        zone: ZONE,
+        instance: INSTANCE_NAME
+      });
+      return startOp;
+    }
+
+    // If VM is already running or staging, return null (nothing to do)
+    if (status === 'RUNNING' || status === 'STAGING' || status === 'PROVISIONING') {
+      console.log(`[GCP] VM is already ${status}, no action needed.`);
+      return null;
+    }
+
+    // For other states (SUSPENDING, SUSPENDED, etc.), try to start
+    console.log(`[GCP] VM in state ${status}, attempting to start...`);
+    const [startOp] = await instancesClient.start({
+      project: projectId,
+      zone: ZONE,
+      instance: INSTANCE_NAME
+    });
+    return startOp;
+
+  } catch (error: any) {
+    // If 404 (NOT_FOUND), VM doesn't exist - proceed to create it
+    if (error.code !== 404 && error.code !== 5) {
+      throw error; // Re-throw unexpected errors
+    }
+    console.log(`[GCP] VM '${INSTANCE_NAME}' not found. Creating new instance...`);
+  }
+
   // Configuration from VMandRuleDetails.md
   const MACHINE_TYPE = `projects/${projectId}/zones/${ZONE}/machineTypes/g4-standard-48`;
   const ACCELERATOR_TYPE = `projects/${projectId}/zones/${ZONE}/acceleratorTypes/nvidia-rtx-pro-6000`;
@@ -218,12 +263,13 @@ else
 fi
 
 # ==============================================================================
-# PHASE 3: REPOSITORY SETUP (CHECKPOINT 2)
+# PHASE 3: REPOSITORY SETUP WITH UPDATE DETECTION
 # ==============================================================================
 REPO_DIR="/home/ubuntu/Vid-Bolt-GPU-API"
-report_status "cloning_repo" "Cloning repository..."
+NEEDS_REBUILD=false
 
 if [ ! -d "$REPO_DIR" ]; then
+    report_status "cloning_repo" "Cloning repository..."
     if [ -n "$GITHUB_TOKEN" ]; then
         # Inject token into URL for auth
         AUTH_REPO_URL=$(echo "$REPO_URL" | sed "s|https://|https://$GITHUB_TOKEN@|")
@@ -231,38 +277,75 @@ if [ ! -d "$REPO_DIR" ]; then
     else
         git clone "$REPO_URL" "$REPO_DIR"
     fi
-
-    # Fix permissions for ubuntu user
     chown -R ubuntu:ubuntu "$REPO_DIR"
+    NEEDS_REBUILD=true
+    log "Fresh clone completed. Will build from scratch."
 else
-    log "Repository exists. Pulling latest changes..."
     cd "$REPO_DIR"
-    git pull
+    report_status "checking_updates" "Checking for repository updates..."
+    
+    # Configure git for token auth if needed
+    if [ -n "$GITHUB_TOKEN" ]; then
+        AUTH_REPO_URL=$(echo "$REPO_URL" | sed "s|https://|https://$GITHUB_TOKEN@|")
+        git remote set-url origin "$AUTH_REPO_URL"
+    fi
+    
+    # Fetch latest from remote main branch
+    git fetch origin main 2>/dev/null || git fetch origin 2>/dev/null
+    
+    # Compare local HEAD with remote HEAD
+    LOCAL_HASH=$(git rev-parse HEAD)
+    REMOTE_HASH=$(git rev-parse origin/main 2>/dev/null || git rev-parse origin/HEAD 2>/dev/null)
+    
+    log "Local commit:  $LOCAL_HASH"
+    log "Remote commit: $REMOTE_HASH"
+    
+    if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
+        log "Updates detected! Pulling latest changes..."
+        report_status "updating_repo" "Updates found. Pulling latest code..."
+        git reset --hard origin/main 2>/dev/null || git reset --hard origin/HEAD 2>/dev/null
+        NEEDS_REBUILD=true
+    else
+        log "Repository is up-to-date. No code changes detected."
+    fi
+    
     chown -R ubuntu:ubuntu "$REPO_DIR"
 fi
 
 # ==============================================================================
-# PHASE 4: LAUNCH APPLICATION
+# PHASE 4: LAUNCH APPLICATION (CONDITIONAL REBUILD)
 # ==============================================================================
 cd "$REPO_DIR"
-report_status "building_docker" "Building Docker containers (this may take 10-20 minutes)..."
 
 # Ensure .env exists
 if [ ! -f .env ]; then
     log "Creating default .env..."
-    cp .env.example .env
+    cp .env.example .env 2>/dev/null || log "No .env.example found, skipping..."
 fi
 
-# Check if this is first build (no images exist)
-FIRST_BUILD_FLAG="/var/lib/docker_first_build_done"
-if [ ! -f "$FIRST_BUILD_FLAG" ]; then
-    log "First time build - using --no-cache..."
-    report_status "building_docker" "First time build with --no-cache (this takes longer)..."
+if [ "$NEEDS_REBUILD" = true ]; then
+    report_status "cleaning_docker" "Code changed. Cleaning old Docker resources..."
+    log "Running docker system prune to clear old images/containers..."
+    
+    # Stop existing containers gracefully
+    docker compose down --remove-orphans 2>/dev/null || true
+    
+    # Clean up Docker system (images, containers, volumes)
+    docker system prune -af --volumes 2>/dev/null || true
+    
+    report_status "building_docker" "Building fresh Docker containers (10-20 min)..."
     docker compose build --no-cache
-    touch "$FIRST_BUILD_FLAG"
 else
-    log "Subsequent build - using cache..."
-    docker compose build
+    log "No code changes. Checking if containers need starting..."
+    
+    # Check if containers are already running
+    if docker compose ps 2>/dev/null | grep -q "Up"; then
+        log "Containers already running. Restarting to ensure fresh state..."
+        docker compose restart
+    else
+        report_status "building_docker" "Starting containers..."
+        docker compose build
+    fi
 fi
 
 report_status "starting_app" "Starting Docker containers..."

@@ -212,7 +212,7 @@ async function callGpuApi<T>(
   const url = `${baseUrl}${endpoint}`;
 
   console.log(`[GPUApiService] Calling ${url}`);
-  console.log(`[GPUApiService] Request body:`, JSON.stringify(body, null, 2));
+  // console.log(`[GPUApiService] Request body:`, JSON.stringify(body, null, 2));
 
   const startTime = Date.now();
 
@@ -225,6 +225,8 @@ async function callGpuApi<T>(
       },
       body: JSON.stringify(body),
     });
+
+    console.log(`[GPUApiService] ${endpoint} returned ${response.status}`);
 
     const data = await response.json();
     const duration = Date.now() - startTime;
@@ -657,10 +659,12 @@ export async function callGpuSystemStatus(): Promise<{
 }> {
   const baseUrl = await fetchDynamicGpuApiUrl();
   const apiKey = getGpuApiKey();
+  console.log(`[GPUApiService] System Status URL: ${baseUrl}/api/v1/system/status`);
   try {
     const response = await fetch(`${baseUrl}/api/v1/system/status`, {
       headers: { "X-API-Key": apiKey },
     });
+    console.log(`[GPUApiService] System Status returned ${response.status}`);
     if (!response.ok) {
       return { success: false, error: `HTTP ${response.status}` };
     }
