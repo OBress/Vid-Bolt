@@ -37,6 +37,19 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Audience",
         href: "/command-center/analytics/audience",
       },
+
+    ],
+  },
+  {
+    id: "system",
+    label: "SYSTEM",
+    icon: Settings,
+    items: [
+      {
+        id: "devtools",
+        label: "Dev Tools",
+        href: "/command-center/devtools",
+      },
     ],
   },
 ];

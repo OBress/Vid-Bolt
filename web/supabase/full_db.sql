@@ -17,6 +17,13 @@ COMMENT ON SCHEMA "public" IS 'standard public schema';
 
 
 
+CREATE EXTENSION IF NOT EXISTS "moddatetime" WITH SCHEMA "extensions";
+
+
+
+
+
+
 CREATE EXTENSION IF NOT EXISTS "pg_graphql" WITH SCHEMA "graphql";
 
 
@@ -760,6 +767,26 @@ CREATE TABLE IF NOT EXISTS "public"."user_api_keys" (
 ALTER TABLE "public"."user_api_keys" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."user_gcp_config" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "project_id" "text",
+    "region" "text" DEFAULT 'us-east4'::"text",
+    "zone" "text" DEFAULT 'us-east4-c'::"text",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "instance_name" "text" DEFAULT 'vidbolt-workflow'::"text",
+    "machine_type" "text",
+    "external_ip" "text",
+    "status" "text" DEFAULT 'STOPPED'::"text",
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb",
+    "last_seen_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."user_gcp_config" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."user_settings" (
     "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
     "user_id" "uuid" NOT NULL,
@@ -900,6 +927,16 @@ ALTER TABLE ONLY "public"."user_api_keys"
 
 
 
+ALTER TABLE ONLY "public"."user_gcp_config"
+    ADD CONSTRAINT "user_gcp_config_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."user_gcp_config"
+    ADD CONSTRAINT "user_gcp_config_user_id_key" UNIQUE ("user_id");
+
+
+
 ALTER TABLE ONLY "public"."user_settings"
     ADD CONSTRAINT "user_settings_pkey" PRIMARY KEY ("id");
 
@@ -1015,6 +1052,10 @@ CREATE INDEX "idx_video_projects_user_status" ON "public"."video_projects" USING
 
 
 
+CREATE OR REPLACE TRIGGER "handle_updated_at" BEFORE UPDATE ON "public"."user_gcp_config" FOR EACH ROW EXECUTE FUNCTION "extensions"."moddatetime"('updated_at');
+
+
+
 CREATE OR REPLACE TRIGGER "protect_admin_column_trigger" BEFORE UPDATE ON "public"."users" FOR EACH ROW EXECUTE FUNCTION "public"."protect_admin_column"();
 
 
@@ -1091,6 +1132,11 @@ ALTER TABLE ONLY "public"."user_api_keys"
 
 
 
+ALTER TABLE ONLY "public"."user_gcp_config"
+    ADD CONSTRAINT "user_gcp_config_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."user_settings"
     ADD CONSTRAINT "user_settings_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
@@ -1131,11 +1177,19 @@ ALTER TABLE ONLY "public"."video_projects"
 
 
 
+CREATE POLICY "Users can delete their own config" ON "public"."user_gcp_config" FOR DELETE USING (("auth"."uid"() = "user_id"));
+
+
+
 CREATE POLICY "Users can insert own keys" ON "public"."user_api_keys" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
 CREATE POLICY "Users can insert own profile" ON "public"."users" FOR INSERT WITH CHECK (("auth"."uid"() = "id"));
+
+
+
+CREATE POLICY "Users can insert their own config" ON "public"."user_gcp_config" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
@@ -1183,6 +1237,10 @@ CREATE POLICY "Users can update own profile" ON "public"."users" FOR UPDATE USIN
 
 
 
+CREATE POLICY "Users can update their own config" ON "public"."user_gcp_config" FOR UPDATE USING (("auth"."uid"() = "user_id"));
+
+
+
 CREATE POLICY "Users can update their own statements" ON "public"."monthly_statements" FOR UPDATE USING (("auth"."uid"() = "user_id"));
 
 
@@ -1198,6 +1256,10 @@ CREATE POLICY "Users can view own profile" ON "public"."users" FOR SELECT USING 
 CREATE POLICY "Users can view steps for their own tasks" ON "public"."task_steps" USING ((EXISTS ( SELECT 1
    FROM "public"."tasks"
   WHERE (("tasks"."id" = "task_steps"."task_id") AND ("tasks"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "Users can view their own config" ON "public"."user_gcp_config" FOR SELECT USING (("auth"."uid"() = "user_id"));
 
 
 
@@ -1232,6 +1294,9 @@ ALTER TABLE "public"."tasks" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."user_api_keys" ENABLE ROW LEVEL SECURITY;
 
 
+ALTER TABLE "public"."user_gcp_config" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."user_settings" ENABLE ROW LEVEL SECURITY;
 
 
@@ -1254,6 +1319,9 @@ GRANT USAGE ON SCHEMA "public" TO "postgres";
 GRANT USAGE ON SCHEMA "public" TO "anon";
 GRANT USAGE ON SCHEMA "public" TO "authenticated";
 GRANT USAGE ON SCHEMA "public" TO "service_role";
+
+
+
 
 
 
@@ -1581,6 +1649,12 @@ GRANT ALL ON TABLE "public"."tasks" TO "service_role";
 GRANT ALL ON TABLE "public"."user_api_keys" TO "anon";
 GRANT ALL ON TABLE "public"."user_api_keys" TO "authenticated";
 GRANT ALL ON TABLE "public"."user_api_keys" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."user_gcp_config" TO "anon";
+GRANT ALL ON TABLE "public"."user_gcp_config" TO "authenticated";
+GRANT ALL ON TABLE "public"."user_gcp_config" TO "service_role";
 
 
 

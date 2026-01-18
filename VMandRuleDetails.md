@@ -35,6 +35,7 @@ Firewall rule:
 "port8000"
 ]
 }
+
 Setup the VM instance
 POST https://compute.googleapis.com/compute/v1/projects/i-crossbar-482114-g9/zones/us-east4-c/instances
 {
