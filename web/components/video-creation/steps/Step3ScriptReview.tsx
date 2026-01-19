@@ -28,13 +28,9 @@ export function Step3ScriptReview({
   const estimatedDuration = Math.ceil(wordCount / 150); // ~150 words per minute
 
   return (
-    <div className="flex flex-col items-center gap-6">
+    <div className="flex flex-col items-center gap-6 pt-12">
       {/* Header */}
       <div className="text-center space-y-3">
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-orange-500 text-xs font-mono uppercase tracking-widest">
-          <FileText className="w-3 h-3" />
-          Step 5 of 10
-        </div>
         <h2 className="text-3xl font-bold tracking-tight">
           Review Your Script
         </h2>

@@ -139,10 +139,29 @@ export function ApiKeysTab() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
+
       if (session && session.provider_token && !wasDisconnected) {
+        // Fresh session token available
         setGcpToken(session.provider_token);
         setIsConnected(true);
         addLog("GCP Session active.");
+      } else if (!wasDisconnected && gcpData?.project_id) {
+        // No session token, but check if we have a stored refresh token
+        addLog("Checking for stored GCP credentials...");
+        try {
+          const res = await axios.post("/api/gcp/vm", {
+            action: "check-connection",
+            projectId: gcpData.project_id,
+          });
+          if (res.data.success && res.data.data?.connected) {
+            setIsConnected(true);
+            addLog("GCP connection restored via stored credentials.");
+          } else {
+            addLog("No active GCP session found.");
+          }
+        } catch {
+          addLog("No active GCP session found.");
+        }
       } else {
         addLog("No active GCP session found.");
       }
@@ -164,14 +183,21 @@ export function ApiKeysTab() {
   }, [supabase]);
 
   // Polling for GCP status
+  // Dynamic interval: 5s during transitions, 60s when stable
   useEffect(() => {
-    if (!gcpToken || !projectId) return;
+    if (!isConnected || !projectId) return;
+
+    const isTransitioning = ["PROVISIONING", "STAGING", "STOPPING"].includes(
+      vmStatus,
+    );
+    const pollInterval = isTransitioning ? 5000 : 60000; // 5s or 60s
+
     const fetchStatus = async () => {
       try {
         const res = await axios.post(
           "/api/gcp/vm",
           { action: "status", projectId },
-          { headers: { "x-gcp-token": gcpToken } },
+          { headers: gcpToken ? { "x-gcp-token": gcpToken } : {} },
         );
         if (res.data.success) {
           const { status, ip } = res.data.data;
@@ -202,7 +228,7 @@ export function ApiKeysTab() {
             // Check if API is actually reachable when VM is running
             if (status === "RUNNING") {
               try {
-                const healthRes = await fetch(`http://${ip}:8000/health`, {
+                await fetch(`http://${ip}:8000/health`, {
                   method: "GET",
                   mode: "no-cors", // Bypass CORS for health check
                   signal: AbortSignal.timeout(5000),
@@ -221,12 +247,11 @@ export function ApiKeysTab() {
         console.error(e);
       }
     };
-    fetchStatus(); // Initial call
-    const interval = setInterval(async () => {
-      // 1. Fetch GCP real-time status (API)
-      fetchStatus();
 
-      // 2. Fetch logs from DB (for worker progress)
+    const fetchLogs = async () => {
+      // Fetch logs from DB (for worker progress) - only during transitions
+      if (!isTransitioning) return;
+
       const { data } = await supabase
         .from("user_gcp_config")
         .select("metadata, status")
@@ -239,9 +264,23 @@ export function ApiKeysTab() {
           setLogs(remoteLogs);
         }
       }
-    }, 10000); // 10s poll
+    };
+
+    fetchStatus(); // Initial call
+    const interval = setInterval(() => {
+      fetchStatus();
+      fetchLogs();
+    }, pollInterval);
     return () => clearInterval(interval);
-  }, [gcpToken, projectId, userId, targetStatus]);
+  }, [
+    isConnected,
+    projectId,
+    gcpToken,
+    targetStatus,
+    vmStatus,
+    userId,
+    supabase,
+  ]);
 
   const handleSaveKey = async (field: keyof ApiKeys, value: string) => {
     if (!userId) return false;

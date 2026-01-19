@@ -45,13 +45,9 @@ export function Step1PromptInput({
   ];
 
   return (
-    <div className="flex flex-col items-center gap-8">
+    <div className="flex flex-col items-center gap-8 pt-12">
       {/* Header */}
       <div className="text-center space-y-3">
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-orange-500 text-xs font-mono uppercase tracking-widest">
-          <Sparkles className="w-3 h-3" />
-          Step 1 of 5
-        </div>
         <h2 className="text-3xl font-bold tracking-tight">
           What's your video about?
         </h2>
@@ -70,8 +66,8 @@ export function Step1PromptInput({
               isLocked
                 ? "border-neutral-800 bg-neutral-900/50 opacity-50 cursor-not-allowed"
                 : isFocused
-                ? "border-orange-500 bg-orange-500/5"
-                : "border-neutral-800 bg-neutral-900/50"
+                  ? "border-orange-500 bg-orange-500/5"
+                  : "border-neutral-800 bg-neutral-900/50"
             }
           `}
         >

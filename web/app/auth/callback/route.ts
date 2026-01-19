@@ -20,14 +20,23 @@ export async function GET(request: Request) {
       // =====================================================
       // This allows the server to refresh access tokens without
       // requiring the user to re-authenticate on every page load.
+      console.log('[Auth Callback] Session received. Checking for provider tokens...')
+      console.log('[Auth Callback] provider_token present:', !!session.provider_token)
+      console.log('[Auth Callback] provider_refresh_token present:', !!session.provider_refresh_token)
+      
       if (session.provider_refresh_token) {
+        console.log('[Auth Callback] provider_refresh_token length:', session.provider_refresh_token.length)
         try {
           await storeRefreshToken(user.id, session.provider_refresh_token)
-          console.log('[Auth Callback] Stored GCP refresh token for user:', user.id)
+          console.log('[Auth Callback] ✅ Successfully stored GCP refresh token for user:', user.id)
         } catch (err) {
-          console.error('[Auth Callback] Failed to store refresh token:', err)
+          console.error('[Auth Callback] ❌ Failed to store refresh token:', err)
           // Non-fatal: continue with login even if token storage fails
         }
+      } else {
+        console.log('[Auth Callback] ⚠️ No provider_refresh_token in session!')
+        console.log('[Auth Callback] Session keys:', Object.keys(session))
+        console.log('[Auth Callback] User app_metadata:', JSON.stringify(user.app_metadata, null, 2))
       }
       
       // Upsert user into public.users table if it doesn't exist

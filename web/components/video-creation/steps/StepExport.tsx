@@ -98,7 +98,7 @@ export function StepExport({
 
     if (hasAudioChunks) {
       const sortedChunks = [...audioChunks].sort(
-        (a, b) => a.chapterNumber - b.chapterNumber
+        (a, b) => a.chapterNumber - b.chapterNumber,
       );
 
       for (const chunk of sortedChunks) {
@@ -232,7 +232,7 @@ export function StepExport({
 
       // Calculate total duration
       const maxEndTime = Math.max(
-        ...allItems.map((item) => item.display?.to || 0)
+        ...allItems.map((item) => item.display?.to || 0),
       );
 
       // Directly update the zustand store (bypassing event dispatch system)
@@ -244,7 +244,7 @@ export function StepExport({
       });
 
       console.log(
-        `[StepExport] Directly updated store with ${allItems.length} items in ${tracksToAdd.length} tracks`
+        `[StepExport] Directly updated store with ${allItems.length} items in ${tracksToAdd.length} tracks`,
       );
     }
   }, [audioChunks, shotList, trackItemsMap]);
@@ -302,7 +302,7 @@ export function StepExport({
       if (result.success) {
         setExportStatus("success");
         setExportMessage(
-          `Downloaded ${result.fileName} (${formatBytes(result.fileSize)})`
+          `Downloaded ${result.fileName} (${formatBytes(result.fileSize)})`,
         );
       } else {
         setExportStatus("error");
@@ -324,13 +324,9 @@ export function StepExport({
   };
 
   return (
-    <div className="flex flex-col items-center gap-6 text-center">
+    <div className="flex flex-col items-center gap-6 text-center pt-12">
       {/* Header */}
       <div className="space-y-2">
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-orange-500 text-xs font-mono uppercase tracking-widest">
-          <Share2 className="w-3 h-3" />
-          Export
-        </div>
         <h2 className="text-2xl font-bold tracking-tight">Export Your Video</h2>
         <p className="text-neutral-500 text-sm max-w-md">
           Download your video or share it directly to your favorite platforms.

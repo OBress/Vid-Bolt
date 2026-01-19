@@ -83,24 +83,40 @@ export function useGCPVM(): UseGCPVMReturn {
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session?.provider_token && !wasDisconnected) {
+        // Fresh session token available - use it
         setGcpToken(session.provider_token);
         setIsConnected(true);
         setConnectionChecked(true);
+      } else if (!wasDisconnected && gcpData?.project_id) {
+        // No session token, but user hasn't explicitly disconnected
+        // Check if we have a stored refresh token that can be used
+        // Don't set connectionChecked yet - let the checkConnection effect handle it
       }
     }
     init();
   }, [supabase]);
 
-  // Check connection after initial load (for persistent auth)
+  // Check connection after initial load (for persistent auth via refresh token)
   useEffect(() => {
-    if (userId && projectId && !connectionChecked && !isConnected) {
-      checkConnection();
+    // If we have userId and projectId but haven't confirmed connection yet,
+    // check with the server if we can authenticate via stored refresh token
+    if (userId && projectId && !connectionChecked) {
+      const wasDisconnected = localStorage.getItem("gcp_disconnected") === "true";
+      if (!wasDisconnected) {
+        checkConnection();
+      } else {
+        setConnectionChecked(true);
+      }
     }
-  }, [userId, projectId, connectionChecked, isConnected, checkConnection]);
+  }, [userId, projectId, connectionChecked, checkConnection]);
 
   // Polling for status (only when connected)
+  // Dynamic interval: 5s during transitions, 60s when stable
   useEffect(() => {
     if (!isConnected || !projectId) return;
+
+    const isTransitioning = ["PROVISIONING", "STAGING", "STOPPING"].includes(status);
+    const pollInterval = isTransitioning ? 5000 : 60000; // 5s or 60s
 
     const fetchStatus = async () => {
       try {
@@ -157,9 +173,9 @@ export function useGCPVM(): UseGCPVMReturn {
     };
 
     fetchStatus();
-    const interval = setInterval(fetchStatus, 10000);
+    const interval = setInterval(fetchStatus, pollInterval);
     return () => clearInterval(interval);
-  }, [isConnected, projectId, gcpToken, targetStatus]);
+  }, [isConnected, projectId, gcpToken, targetStatus, status]);
 
   // Perform GCP action
   const performAction = async (action: "provision" | "start" | "stop") => {

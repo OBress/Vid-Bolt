@@ -170,19 +170,19 @@ export function Step4UniversalScript({
     useProjectSettings(projectId);
   // Initialize view based on whether we have output
   const [view, setView] = useState<ViewState>(
-    initialOutput ? "output" : "config"
+    initialOutput ? "output" : "config",
   );
 
   const [taskId, setTaskId] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<string>(
-    initialOutput ? "completed" : "idle"
+    initialOutput ? "completed" : "idle",
   );
   const [progress, setProgress] = useState(0);
   const [currentPhase, setCurrentPhase] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [output, setOutput] = useState<UniversalScriptOutput | null>(
-    initialOutput || null
+    initialOutput || null,
   );
   const [selectedAsset, setSelectedAsset] = useState<any | null>(null);
   const [isAssetDetailOpen, setIsAssetDetailOpen] = useState(false);
@@ -193,16 +193,16 @@ export function Step4UniversalScript({
   // Priority: initialConfig (per-video) > projectSettings > hardcoded defaults
   const [topic, setTopic] = useState(initialConfig?.topic || initialTopic);
   const [genre, setGenre] = useState<ScriptGenre>(
-    initialConfig?.genre || projectSettings?.script?.genre || "documentary"
+    initialConfig?.genre || projectSettings?.script?.genre || "documentary",
   );
   const [researchToggle, setResearchToggle] = useState<ResearchToggle>(
     initialConfig?.researchToggle ||
       projectSettings?.script?.researchDepth ||
-      "full"
+      "full",
   );
   const [durationRange, setDurationRange] = useState(
     initialConfig?.durationRange ||
-      projectSettings?.basic_info?.videoDurationRange || [5, 10]
+      projectSettings?.basic_info?.videoDurationRange || [5, 10],
   ); // [min, max] in minutes
   const [angle, setAngle] = useState(initialConfig?.angle || "");
   const [activeTab, setActiveTab] = useState("script");
@@ -242,7 +242,7 @@ export function Step4UniversalScript({
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   );
 
   // Poll for task updates
@@ -251,7 +251,7 @@ export function Step4UniversalScript({
       const { data: statusData, error: statusError } = await supabase
         .from("tasks")
         .select(
-          "status, progress_percent, current_phase, current_step, error_message"
+          "status, progress_percent, current_phase, current_step, error_message",
         )
         .eq("id", id)
         .single();
@@ -301,7 +301,7 @@ export function Step4UniversalScript({
         setView("config");
       }
     },
-    [supabase, topic, genre, researchToggle, durationRange, angle, onSave]
+    [supabase, topic, genre, researchToggle, durationRange, angle, onSave],
   );
 
   // Polling effect
@@ -410,13 +410,9 @@ export function Step4UniversalScript({
   // =========================================================================
   if (view === "config") {
     return (
-      <div className="flex flex-col items-center gap-6">
+      <div className="flex flex-col items-center gap-6 pt-12">
         {/* Header */}
         <div className="text-center space-y-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-orange-500 text-xs font-mono uppercase tracking-widest">
-            <Wand2 className="w-3 h-3" />
-            Step 1 of 4
-          </div>
           <h2 className="text-3xl font-bold tracking-tight">
             Write Your Script
           </h2>
@@ -633,8 +629,8 @@ export function Step4UniversalScript({
                       isCompleted
                         ? "text-green-500"
                         : isCurrent
-                        ? "text-orange-500"
-                        : "text-neutral-600"
+                          ? "text-orange-500"
+                          : "text-neutral-600"
                     }
                   `}
                 >
@@ -646,8 +642,8 @@ export function Step4UniversalScript({
                         isCompleted
                           ? "bg-green-500/20 border border-green-500"
                           : isCurrent
-                          ? "bg-orange-500/20 border border-orange-500"
-                          : "bg-neutral-800 border border-neutral-700"
+                            ? "bg-orange-500/20 border border-orange-500"
+                            : "bg-neutral-800 border border-neutral-700"
                       }
                     `}
                   >
@@ -845,7 +841,7 @@ export function Step4UniversalScript({
                                 >
                                   {a}
                                 </span>
-                              )
+                              ),
                             )}
                           </div>
                         </div>
@@ -862,7 +858,7 @@ export function Step4UniversalScript({
                                 >
                                   {p}
                                 </span>
-                              )
+                              ),
                             )}
                           </div>
                         </div>

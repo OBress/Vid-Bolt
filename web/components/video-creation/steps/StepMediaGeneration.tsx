@@ -66,7 +66,7 @@ export function StepMediaGeneration({
   onBack,
 }: StepMediaGenerationProps) {
   const [progress, setProgress] = useState<MediaGenerationProgress | null>(
-    null
+    null,
   );
   const [shots, setShots] = useState<EnhancedShot[]>([]);
   const [isPolling, setIsPolling] = useState(false);
@@ -125,7 +125,7 @@ export function StepMediaGeneration({
     const total = progress.total_shots || 1;
 
     const getStatus = (
-      phase: string
+      phase: string,
     ): "waiting" | "in-progress" | "completed" | "failed" => {
       if (progress.status === "failed") return "failed";
 
@@ -163,7 +163,7 @@ export function StepMediaGeneration({
           if (progress.status === "videos") return "in-progress";
           if (
             ["av_script", "pending", "images", "image_edits"].includes(
-              progress.status
+              progress.status,
             )
           )
             return "waiting";
@@ -289,7 +289,7 @@ export function StepMediaGeneration({
         if (
           mediaProgress &&
           ["av_script", "images", "image_edits", "videos"].includes(
-            mediaProgress.status
+            mediaProgress.status,
           )
         ) {
           hasStartedRef.current = true;
@@ -370,7 +370,7 @@ export function StepMediaGeneration({
     (s) =>
       s.baseImageStatus === "failed" ||
       s.editedImageStatus === "failed" ||
-      s.videoStatus === "failed"
+      s.videoStatus === "failed",
   ).length;
 
   return (
@@ -384,12 +384,7 @@ export function StepMediaGeneration({
           <ChevronLeft className="w-5 h-5" />
         </button>
 
-        <div className="flex items-center gap-3">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/10 border border-orange-500/20 rounded text-orange-500 text-xs font-mono uppercase tracking-widest">
-            <Video className="w-3 h-3" />
-            Media Generation
-          </div>
-        </div>
+        <div className="flex items-center gap-3"></div>
 
         {progress?.status === "completed" && (
           <Button
@@ -402,7 +397,7 @@ export function StepMediaGeneration({
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-8">
+      <div className="flex-1 flex flex-col items-center justify-start p-8 pt-20 space-y-8">
         {/* Error State */}
         {error && (
           <div className="bg-red-900/20 border border-red-500/30 rounded-xl p-6 max-w-lg w-full text-center space-y-4">

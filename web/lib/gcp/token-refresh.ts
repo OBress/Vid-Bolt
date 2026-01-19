@@ -76,11 +76,12 @@ export async function refreshGoogleAccessToken(
 /**
  * Get a valid GCP access token for a user.
  * 
- * First tries to use the provided token (from session).
- * If not provided, attempts to refresh using stored refresh token.
+ * Uses cached access token if still valid (more than 5 min until expiry).
+ * Otherwise refreshes using stored refresh token.
+ * Falls back to provided session token if no refresh token is stored.
  * 
  * @param userId - The user's ID
- * @param providedToken - Optional access token from session
+ * @param providedToken - Optional access token from session (used as fallback only)
  * @returns Valid access token
  * @throws Error if no valid token can be obtained
  */
@@ -88,38 +89,64 @@ export async function getValidGCPToken(
   userId: string,
   providedToken?: string | null
 ): Promise<string> {
-  // If a token was provided from the session, use it
+  const supabase = createServiceClient();
+  
+  // Check if we have stored tokens
+  const { data: config, error } = await supabase
+    .from("user_gcp_config")
+    .select("gcp_refresh_token, gcp_token_expires_at, gcp_access_token")
+    .eq("user_id", userId)
+    .single();
+
+  // If we have a cached access token that's still valid (more than 5 min until expiry)
+  if (config?.gcp_access_token && config?.gcp_token_expires_at) {
+    const expiresAt = new Date(config.gcp_token_expires_at);
+    const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
+    
+    if (expiresAt > fiveMinutesFromNow) {
+      // Token is still valid, use cached version
+      return config.gcp_access_token;
+    }
+  }
+
+  // Need to refresh - check if we have a refresh token
+  if (config?.gcp_refresh_token) {
+    try {
+      const { accessToken, expiresAt } = await refreshGoogleAccessToken(
+        config.gcp_refresh_token
+      );
+
+      // Cache the new access token and expiry
+      await supabase
+        .from("user_gcp_config")
+        .update({ 
+          gcp_access_token: accessToken,
+          gcp_token_expires_at: expiresAt.toISOString() 
+        })
+        .eq("user_id", userId);
+
+      return accessToken;
+    } catch (refreshError: any) {
+      console.error('[GCP Token] Refresh failed:', refreshError.message);
+      // If refresh fails and we have a provided token, try that as last resort
+      if (providedToken) {
+        return providedToken;
+      }
+      throw new Error(
+        `GCP token refresh failed: ${refreshError.message}. Please reconnect your Google account.`
+      );
+    }
+  }
+
+  // No refresh token stored - use provided session token if available
   if (providedToken) {
     return providedToken;
   }
 
-  // Otherwise, try to refresh using stored refresh token
-  const supabase = createServiceClient();
-  
-  const { data: config, error } = await supabase
-    .from("user_gcp_config")
-    .select("gcp_refresh_token, gcp_token_expires_at")
-    .eq("user_id", userId)
-    .single();
-
-  if (error || !config?.gcp_refresh_token) {
-    throw new Error(
-      "No GCP authentication found. Please connect your Google Cloud account."
-    );
-  }
-
-  // Refresh the token
-  const { accessToken, expiresAt } = await refreshGoogleAccessToken(
-    config.gcp_refresh_token
+  // No tokens available at all
+  throw new Error(
+    "No GCP authentication found. Please connect your Google Cloud account."
   );
-
-  // Store the new expiry time (optional optimization for future)
-  await supabase
-    .from("user_gcp_config")
-    .update({ gcp_token_expires_at: expiresAt.toISOString() })
-    .eq("user_id", userId);
-
-  return accessToken;
 }
 
 /**

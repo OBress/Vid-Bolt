@@ -49,11 +49,11 @@ export function StepProcessing({ videoId, onComplete }: StepProcessingProps) {
         // Check Image Status
         const currentShotList: ShotEvent[] = metadata.shot_list || [];
         const shotsWithPrompts = currentShotList.filter(
-          (s) => s.visual_prompt && s.media_type === "image"
+          (s) => s.visual_prompt && s.media_type === "image",
         );
         const totalImages = shotsWithPrompts.length;
         const completedImages = shotsWithPrompts.filter(
-          (s: any) => s.startImageUrl
+          (s: any) => s.startImageUrl,
         ).length;
 
         // Determine states
@@ -119,7 +119,7 @@ export function StepProcessing({ videoId, onComplete }: StepProcessingProps) {
   }, [videoId, onComplete, showDetails]);
 
   return (
-    <div className="flex flex-col items-center justify-start min-h-[400px] w-full max-w-4xl mx-auto p-8 space-y-8">
+    <div className="flex flex-col items-center justify-start min-h-[400px] w-full max-w-4xl mx-auto p-8 pt-20 space-y-8">
       <div className="text-center space-y-2">
         <h2 className="text-3xl font-bold tracking-tight">Processing Video</h2>
         <p className="text-neutral-400">
@@ -136,8 +136,8 @@ export function StepProcessing({ videoId, onComplete }: StepProcessingProps) {
                 status.avScript === "processing"
                   ? "bg-blue-500/20 text-blue-500"
                   : status.avScript === "completed"
-                  ? "bg-green-500/20 text-green-500"
-                  : "bg-neutral-800 text-neutral-500"
+                    ? "bg-green-500/20 text-green-500"
+                    : "bg-neutral-800 text-neutral-500"
               }`}
             >
               <FileText className="w-6 h-6" />
@@ -185,8 +185,8 @@ export function StepProcessing({ videoId, onComplete }: StepProcessingProps) {
                 status.images === "processing"
                   ? "bg-purple-500/20 text-purple-500"
                   : status.images === "completed"
-                  ? "bg-green-500/20 text-green-500"
-                  : "bg-neutral-800 text-neutral-500"
+                    ? "bg-green-500/20 text-green-500"
+                    : "bg-neutral-800 text-neutral-500"
               }`}
             >
               <ImageIcon className="w-6 h-6" />

@@ -1030,7 +1030,8 @@ CREATE TABLE IF NOT EXISTS "public"."user_gcp_config" (
     "metadata" "jsonb" DEFAULT '{}'::"jsonb",
     "last_seen_at" timestamp with time zone DEFAULT "now"(),
     "gcp_refresh_token" "text",
-    "gcp_token_expires_at" timestamp with time zone
+    "gcp_token_expires_at" timestamp with time zone,
+    "gcp_access_token" "text"
 );
 
 
@@ -1038,6 +1039,10 @@ ALTER TABLE "public"."user_gcp_config" OWNER TO "postgres";
 
 
 COMMENT ON COLUMN "public"."user_gcp_config"."gcp_refresh_token" IS 'Encrypted Google OAuth refresh token for persistent GCP API access';
+
+
+
+COMMENT ON COLUMN "public"."user_gcp_config"."gcp_access_token" IS 'Cached Google OAuth access token (expires after 1 hour)';
 
 
 

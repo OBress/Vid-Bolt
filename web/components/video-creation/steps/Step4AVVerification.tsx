@@ -139,7 +139,7 @@ export function Step4AVVerification({
   const hasValidAudio = audioUrl && audioUrl !== "/placeholder-audio.mp3";
 
   return (
-    <div className="flex flex-col items-center gap-6">
+    <div className="flex flex-col items-center gap-6 pt-12">
       {/* Hidden audio element */}
       {hasValidAudio && (
         <audio ref={audioRef} src={audioUrl} preload="metadata" />
@@ -147,10 +147,6 @@ export function Step4AVVerification({
 
       {/* Header */}
       <div className="text-center space-y-3">
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-orange-500 text-xs font-mono uppercase tracking-widest">
-          <Video className="w-3 h-3" />
-          Step 8 of 10
-        </div>
         <h2 className="text-3xl font-bold tracking-tight">
           Verify Audio & AV Script
         </h2>
