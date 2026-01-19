@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
         description: description || null,
         metadata: metadata || {},
         status: "draft",
-        current_stage: "idea",
+        current_stage: "outline",
         progress_percent: 0,
       })
       .select()

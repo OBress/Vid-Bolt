@@ -115,7 +115,7 @@ export async function POST(
         },
         ...(skipAvScript ? {} : { shot_list: [], av_script_completed: false }),
       },
-      current_stage: 'media',
+      current_stage: 'shot_planning',
       status: 'processing',
     }).eq("id", videoId);
 

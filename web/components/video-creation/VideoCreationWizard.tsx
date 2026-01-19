@@ -5,7 +5,9 @@ import { WizardProgress } from "./WizardProgress";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { Step4UniversalScript } from "./steps/Step4UniversalScript";
 import { Step2Audio } from "./steps/Step2Audio";
+import { Step5ShotCreation } from "./steps/Step5ShotCreation";
 // import { StepMediaGeneration } from "./steps/StepMediaGeneration"; // Removing old Step 3
+import { Step6SceneReview } from "./steps/Step6SceneReview";
 import { StepEditor } from "./steps/StepEditor";
 import { StepExport } from "./steps/StepExport";
 import { PlaceholderStep } from "./steps/PlaceholderStep";
@@ -75,22 +77,27 @@ const STEPS = [
   { id: 2, label: "Stock Media", type: "stock" }, // New Placeholder
   { id: 3, label: "Script", type: "script" }, // Old Step 1
   { id: 4, label: "Audio", type: "audio" }, // Old Step 2
-  { id: 5, label: "References", type: "refs" }, // New Placeholder (replaces Media)
-  { id: 6, label: "Generations", type: "generations" }, // New Placeholder (replaces Media)
-  { id: 7, label: "Editor", type: "editor" }, // Old Step 4
+  { id: 5, label: "Shot Creation", type: "generations" }, // Moved from Step 6
+  { id: 6, label: "Scene Review", type: "refs" }, // Moved from Step 7
+  { id: 7, label: "Editor", type: "editor" }, // Restored Editor
   { id: 8, label: "Export", type: "final" }, // Old Step 5
 ] as const;
 
 // Helper function to map video stage to wizard step number
+// Helper function to map video stage to wizard step number
 function stageToStepNumber(stage: VideoStage): number {
   const stageMapping: Record<VideoStage, number> = {
-    idea: 1, // Step 1: Outline
-    script: 3, // Step 3: Script
-    audio: 4, // Step 4: Audio
-    media: 5, // Step 5: References (maps to 5, user can advance to 6 manually)
-    video: 7, // Step 7: Editor
-    export: 8, // Step 8: Export
-    completed: 8, // Step 8: Export (if completed)
+    idea: 1, // Legacy -> Step 1
+    outline: 1, // Step 1
+    stock: 2, // Step 2
+    script: 3, // Step 3
+    audio: 4, // Step 4
+    media: 5, // Legacy -> Step 5
+    shot_planning: 5, // Step 5
+    shot_creation: 6, // Step 6
+    video: 7, // Step 7
+    export: 8, // Step 8
+    completed: 8, // Step 8
   };
   return stageMapping[stage] || 1;
 }
@@ -600,24 +607,34 @@ export function VideoCreationWizard({
           />
         );
 
-      case 5:
+      case 5: // Shot Creation (was Step 6)
         return (
-          <PlaceholderStep
-            title="Image Reference creation + First Step AV Script Creation"
-            description="Script + Reference Image generation. AV Script of general shots."
-            onNext={() => advanceToStep(6)}
+          <Step5ShotCreation
+            onNext={async () => {
+              if (state.videoId) {
+                try {
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ current_stage: "shot_creation" }),
+                  });
+                } catch (err) {
+                  console.error("Failed to save step:", err);
+                }
+              }
+              advanceToStep(6);
+            }}
             onBack={() => goToStep(4)}
             {...lock}
           />
         );
 
-      case 6:
+      case 6: // Scene Review (was Step 7)
         return (
-          <PlaceholderStep
-            title="Second step AV creation + All image, infographic, & Video generations"
-            description="AV Script Generation for specific images, infographics, & videos. Image, Infographic, & Video generations."
-            onNext={async () => {
-              // We simulate the end of 'media' stage by updating to 'video' for editor
+          <Step6SceneReview
+            videoId={state.videoId!}
+            projectId={projectId}
+            onContinue={async () => {
               if (state.videoId) {
                 try {
                   await fetch(`/api/videos/${state.videoId}`, {
@@ -636,7 +653,7 @@ export function VideoCreationWizard({
           />
         );
 
-      case 7: // Old Step 4: Video Editor
+      case 7: // Editor (restored)
         return (
           <StepEditor
             videoId={state.videoId!}
@@ -645,7 +662,6 @@ export function VideoCreationWizard({
             audioChunks={state.audioChunks}
             shotList={state.shotList}
             onContinue={async () => {
-              // Persist the step navigation to the database
               if (state.videoId) {
                 try {
                   await fetch(`/api/videos/${state.videoId}`, {

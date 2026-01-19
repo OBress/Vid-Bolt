@@ -1098,7 +1098,7 @@ CREATE TABLE IF NOT EXISTS "public"."video_projects" (
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "completed_at" timestamp with time zone,
-    CONSTRAINT "video_projects_current_stage_check" CHECK (("current_stage" = ANY (ARRAY['idea'::"text", 'script'::"text", 'audio'::"text", 'media'::"text", 'video'::"text", 'export'::"text", 'completed'::"text"]))),
+    CONSTRAINT "video_projects_current_stage_check" CHECK (("current_stage" = ANY (ARRAY['outline'::"text", 'stock'::"text", 'script'::"text", 'audio'::"text", 'shot_planning'::"text", 'shot_creation'::"text", 'video'::"text", 'export'::"text", 'completed'::"text", 'idea'::"text"]))),
     CONSTRAINT "video_projects_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
     CONSTRAINT "video_projects_status_check" CHECK (("status" = ANY (ARRAY['draft'::"text", 'processing'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"])))
 );
@@ -1115,7 +1115,7 @@ COMMENT ON COLUMN "public"."video_projects"."status" IS 'Overall video status: d
 
 
 
-COMMENT ON COLUMN "public"."video_projects"."current_stage" IS 'Current pipeline stage: idea, script, audio, video, export, completed';
+COMMENT ON COLUMN "public"."video_projects"."current_stage" IS 'Current pipeline stage: outline, stock, script, audio, shot_planning, shot_creation, video, export, completed';
 
 
 

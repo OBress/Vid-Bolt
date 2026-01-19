@@ -105,7 +105,7 @@ export async function POST(
       .from("video_projects")
       .update({
         status: "processing",
-        current_stage: "idea",
+        current_stage: "outline",
         current_step: "Expanding idea...",
         updated_at: new Date().toISOString(),
       })

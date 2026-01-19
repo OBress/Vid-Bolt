@@ -58,7 +58,9 @@ function determineResumeAction(video: VideoProject, voiceSettings?: any): Resume
 
   switch (current_stage) {
     case "idea":
-    case "script":
+    case "outline": // Step 1
+    case "stock":   // Step 2
+    case "script":  // Step 3
       return {
         action: "Generate script",
         taskType: "writing",
@@ -73,6 +75,12 @@ function determineResumeAction(video: VideoProject, voiceSettings?: any): Resume
           numberOfChapters: 1,
         },
       };
+
+    case "shot_planning":
+    case "shot_creation":
+      // These steps are complex and driven by the UI (trigger-media-gen)
+      // We cannot simply "resume" them from a single button click outside the wizard yet.
+      throw new Error(`Please open the video to continue from '${current_stage}' stage.`);
 
     case "audio":
       if (!script_content) {
@@ -187,7 +195,7 @@ export async function POST(
     const resumeAction = determineResumeAction(typedVideo, voiceSettings);
 
     // Update video status to processing
-    const nextStage = getNextStage(typedVideo);
+    const nextStage = getNextStage(typedVideo.current_stage);
     const { data: updatedVideo, error: updateError } = await supabase
       .from("video_projects")
       .update({
