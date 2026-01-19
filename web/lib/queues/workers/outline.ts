@@ -266,7 +266,7 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
           outlineOutput: output,
           outlineConfig: input,
         },
-        current_stage: 'stock', // Advance to Step 2
+        current_stage: input.stockMediaLevel === 'none' ? 'script' : 'stock', // Skip if 'none', else Step 2
       })
       .eq('id', videoId);
 

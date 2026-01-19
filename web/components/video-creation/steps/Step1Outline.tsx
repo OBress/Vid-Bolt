@@ -49,6 +49,7 @@ type ScriptGenre =
   | "tutorial"
   | "news";
 type ResearchToggle = "deep" | "full" | "light" | "off";
+type StockMediaLevel = "none" | "standard" | "extensive";
 
 interface OutlineOutput {
   researchDossier?: {
@@ -127,6 +128,7 @@ interface Step1OutlineProps {
     researchToggle: ResearchToggle;
     durationRange: number[];
     angle: string;
+    stockMediaLevel?: StockMediaLevel;
   } | null;
   onComplete: (output: OutlineOutput, config: any) => void;
   onSave: (output: OutlineOutput, config: any) => void;
@@ -188,6 +190,9 @@ export function Step1Outline({
       projectSettings?.basic_info?.videoDurationRange || [5, 10],
   );
   const [angle, setAngle] = useState(initialConfig?.angle || "");
+  const [stockMediaLevel, setStockMediaLevel] = useState<StockMediaLevel>(
+    initialConfig?.stockMediaLevel ?? "standard",
+  );
   const [activeTab, setActiveTab] = useState("spine");
 
   // Editing state for output
@@ -212,6 +217,8 @@ export function Step1Outline({
       if (initialConfig.durationRange)
         setDurationRange(initialConfig.durationRange);
       if (initialConfig.angle) setAngle(initialConfig.angle);
+      if (initialConfig.stockMediaLevel)
+        setStockMediaLevel(initialConfig.stockMediaLevel);
     }
   }, [initialConfig]);
 
@@ -286,6 +293,7 @@ export function Step1Outline({
             researchToggle,
             durationRange,
             angle,
+            stockMediaLevel,
           });
         }
       } else if (statusData.status === "failed") {
@@ -293,7 +301,16 @@ export function Step1Outline({
         setView("config");
       }
     },
-    [supabase, topic, genre, researchToggle, durationRange, angle, onSave],
+    [
+      supabase,
+      topic,
+      genre,
+      researchToggle,
+      durationRange,
+      angle,
+      stockMediaLevel,
+      onSave,
+    ],
   );
 
   // Polling effect
@@ -322,6 +339,7 @@ export function Step1Outline({
           topic,
           genre,
           researchToggle,
+          stockMediaLevel,
           durationRange: {
             minMinutes: durationRange[0],
             maxMinutes: durationRange[1],
@@ -369,6 +387,7 @@ export function Step1Outline({
         researchToggle,
         durationRange,
         angle,
+        stockMediaLevel,
       });
       setHasChanges(false);
     } finally {
@@ -389,6 +408,7 @@ export function Step1Outline({
         researchToggle,
         durationRange,
         angle,
+        stockMediaLevel,
       });
     }
   };
@@ -500,19 +520,21 @@ export function Step1Outline({
             />
           </div>
 
-          {/* Angle and Genre Row */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label className="text-neutral-400">Angle/Focus (optional)</Label>
-              <Input
-                value={angle}
-                onChange={(e) => setAngle(e.target.value)}
-                placeholder="e.g., 'Focus on the economic factors'"
-                className="bg-neutral-900 border-neutral-700"
-                disabled={isLocked}
-              />
-            </div>
+          {/* Angle Input (Large Textarea) */}
+          <div className="space-y-2">
+            <Label className="text-neutral-400">Angle/Focus (optional)</Label>
+            <Textarea
+              value={angle}
+              onChange={(e) => setAngle(e.target.value)}
+              placeholder="e.g., 'Focus on the economic factors'"
+              className="bg-neutral-900 border-neutral-700 min-h-[80px]"
+              disabled={isLocked}
+            />
+          </div>
 
+          {/* 2x2 Settings Grid */}
+          <div className="grid grid-cols-2 gap-4">
+            {/* Genre */}
             <div className="space-y-2">
               <Label className="text-neutral-400">Genre</Label>
               <Select
@@ -538,10 +560,8 @@ export function Step1Outline({
                 </SelectContent>
               </Select>
             </div>
-          </div>
 
-          {/* Research and Duration Row */}
-          <div className="grid grid-cols-2 gap-4">
+            {/* Research Depth */}
             <div className="space-y-2">
               <Label className="text-neutral-400">Research Depth</Label>
               <Select
@@ -553,18 +573,34 @@ export function Step1Outline({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="deep">
-                    Deep Research (Recent Events)
-                  </SelectItem>
+                  <SelectItem value="deep">Deep Research</SelectItem>
                   <SelectItem value="full">Full Research</SelectItem>
-                  <SelectItem value="light">
-                    Light (Verification Only)
-                  </SelectItem>
+                  <SelectItem value="light">Light</SelectItem>
                   <SelectItem value="off">No Research</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
+            {/* Stock Media Level */}
+            <div className="space-y-2">
+              <Label className="text-neutral-400">Stock Media</Label>
+              <Select
+                value={stockMediaLevel}
+                onValueChange={(v) => setStockMediaLevel(v as StockMediaLevel)}
+                disabled={isLocked}
+              >
+                <SelectTrigger className="bg-neutral-900 border-neutral-700">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="standard">Standard</SelectItem>
+                  <SelectItem value="extensive">Extensive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Duration Range */}
             <div className="space-y-2">
               <div className="flex justify-between items-center text-sm">
                 <Label className="text-neutral-400">Duration Range</Label>

@@ -34,6 +34,15 @@ export const RESEARCH_TOGGLES = ['deep', 'full', 'light', 'off'] as const;
 export type ResearchToggle = typeof RESEARCH_TOGGLES[number];
 
 /**
+ * Stock media scraping levels
+ * - 'none': Do not scrape stock media (skip step)
+ * - 'standard': Standard amount of media
+ * - 'extensive': Scrape more media
+ */
+export const STOCK_MEDIA_LEVELS = ['none', 'standard', 'extensive'] as const;
+export type StockMediaLevel = typeof STOCK_MEDIA_LEVELS[number];
+
+/**
  * Beat types for spine generation
  */
 export const BEAT_TYPES = [
@@ -108,6 +117,8 @@ export interface UniversalScriptInput {
   durationRange: DurationRange;
   /** Research depth toggle */
   researchToggle: ResearchToggle;
+  /** Stock media scraping level */
+  stockMediaLevel?: StockMediaLevel;
   
   // Optional inputs
   /** Tone/style preferences */
