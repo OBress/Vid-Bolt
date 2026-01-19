@@ -113,7 +113,9 @@ export function Sidebar() {
           !isVisuallyCollapsed ? "md:block" : ""
         }`}
       >
-        <div className="p-4 flex flex-col h-full">
+        <div
+          className={`flex flex-col h-full ${isVisuallyCollapsed ? "p-2" : "p-4"}`}
+        >
           <div className="flex items-center justify-between mb-8">
             <div
               className={`transition-all duration-300 ${
@@ -146,7 +148,9 @@ export function Sidebar() {
           <nav className="space-y-4 mb-8 flex-1 overflow-y-auto custom-scrollbar">
             <Link
               href="/command-center"
-              className={`w-full flex items-center gap-3 p-3 rounded transition-colors mb-4 ${
+              className={`w-full flex items-center rounded transition-colors mb-4 ${
+                isVisuallyCollapsed ? "justify-center p-2 gap-0" : "p-3 gap-3"
+              } ${
                 pathname === "/command-center"
                   ? "bg-orange-500 text-white"
                   : "text-neutral-400 hover:text-white hover:bg-neutral-800"
@@ -259,7 +263,11 @@ export function Sidebar() {
                 <Link
                   key={item.id}
                   href={item.href}
-                  className={`w-full flex items-center gap-3 p-3 rounded transition-colors ${
+                  className={`w-full flex items-center rounded transition-colors ${
+                    isVisuallyCollapsed
+                      ? "justify-center p-2 gap-0"
+                      : "p-3 gap-3"
+                  } ${
                     pathname === item.href ||
                     pathname.startsWith(item.href + "/")
                       ? isAdmin

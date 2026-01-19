@@ -5,9 +5,10 @@ import { WizardProgress } from "./WizardProgress";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { Step4UniversalScript } from "./steps/Step4UniversalScript";
 import { Step2Audio } from "./steps/Step2Audio";
-import { StepMediaGeneration } from "./steps/StepMediaGeneration";
+// import { StepMediaGeneration } from "./steps/StepMediaGeneration"; // Removing old Step 3
 import { StepEditor } from "./steps/StepEditor";
 import { StepExport } from "./steps/StepExport";
+import { PlaceholderStep } from "./steps/PlaceholderStep";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
 import { useVideos } from "@/hooks/use-videos";
 import { Loader2 } from "lucide-react";
@@ -68,25 +69,28 @@ export interface WizardState {
   generationError?: string | null;
 }
 
-// Step configuration for the wizard - 5 steps
+// Step configuration for the wizard - 8 steps
 const STEPS = [
-  { id: 1, label: "Script", type: "script" }, // Universal script generation
-  { id: 2, label: "Audio", type: "audio" }, // Audio generation & review
-  { id: 3, label: "Media", type: "media-gen" }, // Image & video generation
-  { id: 4, label: "Editor", type: "editor" }, // Video editor
-  { id: 5, label: "Export", type: "final" }, // Export
+  { id: 1, label: "Outline", type: "outline" }, // New Placeholder
+  { id: 2, label: "Stock Media", type: "stock" }, // New Placeholder
+  { id: 3, label: "Script", type: "script" }, // Old Step 1
+  { id: 4, label: "Audio", type: "audio" }, // Old Step 2
+  { id: 5, label: "References", type: "refs" }, // New Placeholder (replaces Media)
+  { id: 6, label: "Generations", type: "generations" }, // New Placeholder (replaces Media)
+  { id: 7, label: "Editor", type: "editor" }, // Old Step 4
+  { id: 8, label: "Export", type: "final" }, // Old Step 5
 ] as const;
 
 // Helper function to map video stage to wizard step number
 function stageToStepNumber(stage: VideoStage): number {
   const stageMapping: Record<VideoStage, number> = {
-    idea: 1, // Step 1: Script
-    script: 1, // Step 1: Script
-    audio: 2, // Step 2: Audio
-    media: 3, // Step 3: Media Generation
-    video: 4, // Step 4: Editor
-    export: 5, // Step 5: Export
-    completed: 5, // Step 5: Export (if completed)
+    idea: 1, // Step 1: Outline
+    script: 3, // Step 3: Script
+    audio: 4, // Step 4: Audio
+    media: 5, // Step 5: References (maps to 5, user can advance to 6 manually)
+    video: 7, // Step 7: Editor
+    export: 8, // Step 8: Export
+    completed: 8, // Step 8: Export (if completed)
   };
   return stageMapping[stage] || 1;
 }
@@ -200,7 +204,7 @@ export function VideoCreationWizard({
         const rawAudioChunks = data.audioChunks || [];
         console.log(
           "[Wizard DEBUG] rawAudioChunks from API:",
-          JSON.stringify(rawAudioChunks, null, 2)
+          JSON.stringify(rawAudioChunks, null, 2),
         );
 
         const normalizedAudioChunks = rawAudioChunks.map((c: any) => ({
@@ -210,7 +214,7 @@ export function VideoCreationWizard({
 
         console.log(
           "[Wizard DEBUG] normalizedAudioChunks:",
-          JSON.stringify(normalizedAudioChunks, null, 2)
+          JSON.stringify(normalizedAudioChunks, null, 2),
         );
 
         setState({
@@ -259,7 +263,7 @@ export function VideoCreationWizard({
         }
 
         console.log(
-          `Resumed video at step ${targetStep} (stage: ${video.current_stage})`
+          `Resumed video at step ${targetStep} (stage: ${video.current_stage})`,
         );
       } catch (err) {
         console.error("Error loading video data:", err);
@@ -307,12 +311,32 @@ export function VideoCreationWizard({
     console.log(
       `[Wizard Render] Step: ${currentStep}, AudioChunks: ${
         state.audioChunks.length
-      }, Error: ${state.generationError ? "YES" : "NO"}`
+      }, Error: ${state.generationError ? "YES" : "NO"}`,
     );
 
     switch (currentStep) {
       case 1:
-        // Step 1: Universal Script Generation
+        return (
+          <PlaceholderStep
+            title="Outline Generation + Research"
+            description="Creates outline and does research."
+            onNext={() => advanceToStep(2)}
+            onBack={onBack}
+            {...lock}
+          />
+        );
+      case 2:
+        return (
+          <PlaceholderStep
+            title="Stock Media Scraping (Optional)"
+            description="Scrapes the Stock Media. Allow media uploads and automatic labeling."
+            onNext={() => advanceToStep(3)}
+            onBack={() => goToStep(1)}
+            {...lock}
+          />
+        );
+
+      case 3: // Old Step 1: Universal Script Generation
         return (
           <Step4UniversalScript
             videoId={state.videoId!}
@@ -391,7 +415,7 @@ export function VideoCreationWizard({
                   // Trigger audio generation workflow via resume API
                   const response = await fetch(
                     `/api/videos/${state.videoId}/resume`,
-                    { method: "POST" }
+                    { method: "POST" },
                   );
                   const data = await response.json();
 
@@ -404,14 +428,14 @@ export function VideoCreationWizard({
                 }
               }
 
-              advanceToStep(2);
+              advanceToStep(4);
             }}
-            onBack={onBack}
+            onBack={() => goToStep(2)}
             {...lock}
           />
         );
 
-      case 2: // Step 2: Audio Generation & Review
+      case 4: // Old Step 2: Audio Generation & Review
         // Check for explicit generation error
         if (state.generationError) {
           console.log("[Wizard Render] FORCE RENDERING FIXED ERROR UI");
@@ -431,7 +455,7 @@ export function VideoCreationWizard({
                   onClick={() => {
                     console.log("[Wizard] Resetting error");
                     updateState({ generationError: null });
-                    goToStep(1);
+                    goToStep(3);
                   }}
                   className="w-full py-3 bg-white hover:bg-neutral-200 text-black font-bold rounded-lg transition-colors"
                 >
@@ -465,11 +489,11 @@ export function VideoCreationWizard({
                   }
                 }
                 // Proceed to Media Generation
-                advanceToStep(3);
+                advanceToStep(5);
               }}
               onBack={() => {
                 // If they want to go back to script
-                goToStep(1);
+                goToStep(3);
               }}
             />
           );
@@ -508,7 +532,7 @@ export function VideoCreationWizard({
                 if (state.videoId) {
                   try {
                     const response = await fetch(
-                      `/api/videos/${state.videoId}`
+                      `/api/videos/${state.videoId}`,
                     );
                     const data = await response.json();
                     if (data.audioChunks && data.audioChunks.length > 0) {
@@ -517,7 +541,7 @@ export function VideoCreationWizard({
                         chapterNumber: c.chapterNumber ?? c.chunkIndex,
                       }));
                       console.log(
-                        "[Wizard] Recovered audio chunks from metadata"
+                        "[Wizard] Recovered audio chunks from metadata",
                       );
                     }
                   } catch (e) {
@@ -528,7 +552,7 @@ export function VideoCreationWizard({
                 // Double check after recovery attempt
                 if (audioChunks.length === 0) {
                   console.error(
-                    "[Wizard] Audio generation completed with 0 chunks."
+                    "[Wizard] Audio generation completed with 0 chunks.",
                   );
 
                   // Clear invalid task ID from DB so it doesn't persist
@@ -553,7 +577,7 @@ export function VideoCreationWizard({
               // Update state with just audio chunks (AV script generated later)
               console.log(
                 "[Wizard] Audio generation complete. chunks:",
-                audioChunks.length
+                audioChunks.length,
               );
 
               updateState({
@@ -576,30 +600,43 @@ export function VideoCreationWizard({
           />
         );
 
-      case 3: // Step 3: Media Generation (Images & Videos)
+      case 5:
         return (
-          <StepMediaGeneration
-            videoId={state.videoId!}
-            onComplete={async () => {
-              // Reload shot list from API
-              try {
-                const response = await fetch(`/api/videos/${state.videoId}`);
-                const data = await response.json();
-                const metadata = data.video?.metadata || {};
-                updateState({
-                  shotList: metadata.shot_list || [],
-                });
-              } catch (err) {
-                console.error("Failed to load shot list:", err);
-              }
-              // Proceed to Editor
-              advanceToStep(4);
-            }}
-            onBack={() => goToStep(2)}
+          <PlaceholderStep
+            title="Image Reference creation + First Step AV Script Creation"
+            description="Script + Reference Image generation. AV Script of general shots."
+            onNext={() => advanceToStep(6)}
+            onBack={() => goToStep(4)}
+            {...lock}
           />
         );
 
-      case 4: // Step 4: Video Editor
+      case 6:
+        return (
+          <PlaceholderStep
+            title="Second step AV creation + All image, infographic, & Video generations"
+            description="AV Script Generation for specific images, infographics, & videos. Image, Infographic, & Video generations."
+            onNext={async () => {
+              // We simulate the end of 'media' stage by updating to 'video' for editor
+              if (state.videoId) {
+                try {
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ current_stage: "video" }),
+                  });
+                } catch (err) {
+                  console.error("Failed to save step:", err);
+                }
+              }
+              advanceToStep(7);
+            }}
+            onBack={() => goToStep(5)}
+            {...lock}
+          />
+        );
+
+      case 7: // Old Step 4: Video Editor
         return (
           <StepEditor
             videoId={state.videoId!}
@@ -620,14 +657,14 @@ export function VideoCreationWizard({
                   console.error("Failed to save step:", err);
                 }
               }
-              advanceToStep(5);
+              advanceToStep(8);
             }}
-            onBack={() => goToStep(3)}
+            onBack={() => goToStep(6)}
             {...lock}
           />
         );
 
-      case 5: // Step 5: Export
+      case 8: // Old Step 5: Export
         return (
           <StepExport
             videoId={state.videoId!}
@@ -647,7 +684,7 @@ export function VideoCreationWizard({
                   console.error("Failed to save step:", err);
                 }
               }
-              goToStep(4);
+              goToStep(7);
             }}
             onClose={async () => {
               if (state.videoId) {
@@ -668,19 +705,26 @@ export function VideoCreationWizard({
     }
   };
 
-  // Check if current step needs full width (Script, Audio, Media, and Editor)
+  // Check if current step needs full width (Script, Audio, References, Generations, Editor)
+  // Basically everything except Placeholder steps 1 & 2 maybe?
+  // Actually, Script (3), Audio (4), Editor (7) are full width confirmed.
+  // Original: 1, 2, 3, 4 were full width. 5 was narrow.
+  // New map:
+  // 3 (Script) -> Full
+  // 4 (Audio) -> Full
+  // 7 (Editor) -> Full
+  // 8 (Export) -> Narrow? (Original 5 was narrow).
+  // Placeholders: Default narrow is fine, but maybe full width looks better?
+  // Let's keep strict equality for now.
   const isFullWidthStep =
-    currentStep === 1 ||
-    currentStep === 2 ||
     currentStep === 3 ||
-    currentStep === 4;
+    currentStep === 4 ||
+    currentStep === 5 ||
+    currentStep === 6 ||
+    currentStep === 7;
 
   return (
-    <div
-      className={`flex flex-col h-full w-full ${
-        isFullWidthStep ? "" : "max-w-5xl"
-      } mx-auto`}
-    >
+    <div className="flex flex-col h-full w-full mx-auto">
       {/* Progress indicator with back button */}
       <div className="flex-shrink-0 pt-2">
         <WizardProgress

@@ -1,4 +1,4 @@
-import { Monitor, Target, Settings, type LucideIcon } from "lucide-react";
+import { Monitor, Target, Settings, Folder, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   id: string;
@@ -26,7 +26,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     id: "media",
     label: "MEDIA PROJECTS",
-    icon: Monitor,
+    icon: Folder,
     items: [], // Dynamically loaded from Supabase
     dynamic: true,
   },

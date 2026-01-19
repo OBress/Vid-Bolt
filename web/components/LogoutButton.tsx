@@ -36,7 +36,9 @@ export function LogoutButton({ isCollapsed }: { isCollapsed?: boolean }) {
       variant="ghost"
       onClick={handleLogout}
       disabled={isLoading}
-      className="text-neutral-400 hover:text-red-400 hover:bg-red-950/20 hover:shadow-[0_0_20px_rgba(239,68,68,0.2)] border border-transparent hover:border-red-500/20 gap-2 font-mono text-xs uppercase tracking-wider transition-all duration-300 group"
+      className={`text-neutral-400 hover:text-red-400 hover:bg-red-950/20 hover:shadow-[0_0_20px_rgba(239,68,68,0.2)] border border-transparent hover:border-red-500/20 font-mono text-xs uppercase tracking-wider transition-all duration-300 group w-full ${
+        isCollapsed ? "justify-center p-2 gap-0" : "justify-start gap-2"
+      }`}
     >
       <div className="flex items-center justify-center">
         {isLoading ? (
