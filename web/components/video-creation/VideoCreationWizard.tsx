@@ -4,6 +4,8 @@ import { useState, useCallback, useEffect } from "react";
 import { WizardProgress } from "./WizardProgress";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { Step4UniversalScript } from "./steps/Step4UniversalScript";
+import { Step1Outline } from "./steps/Step1Outline";
+import { Step3Script } from "./steps/Step3Script";
 import { Step2Audio } from "./steps/Step2Audio";
 import { Step5ShotCreation } from "./steps/Step5ShotCreation";
 // import { StepMediaGeneration } from "./steps/StepMediaGeneration"; // Removing old Step 3
@@ -65,9 +67,14 @@ export interface WizardState {
   expandTaskId: string | null;
   writeTaskId: string | null;
   audioTaskId: string | null;
-  // Universal script output
+  // Outline output (Step 1)
+  outlineOutput: any | null;
+  outlineConfig: any | null;
+  outlineTaskId: string | null;
+  // Universal script output (Step 3)
   scriptConfig: any; // Store script generation configuration
   universalScriptOutput: UniversalScriptOutput | null;
+  scriptOutput: any | null; // Output from script-writing worker
   generationError?: string | null;
 }
 
@@ -163,8 +170,12 @@ export function VideoCreationWizard({
     expandTaskId: null,
     writeTaskId: null,
     audioTaskId: null,
+    outlineOutput: null,
+    outlineConfig: null,
+    outlineTaskId: null,
     scriptConfig: null,
     universalScriptOutput: null,
+    scriptOutput: null,
   });
 
   // Cleanup on unmount
@@ -224,6 +235,11 @@ export function VideoCreationWizard({
           JSON.stringify(normalizedAudioChunks, null, 2),
         );
 
+        // Load outline data from metadata
+        const outlineOutput = (video.metadata as any)?.outlineOutput || null;
+        const outlineConfig = (video.metadata as any)?.outlineConfig || null;
+        const scriptOutput = (video.metadata as any)?.scriptOutput || null;
+
         setState({
           prompt: video.idea || "",
           expandedIdea: expandedIdea,
@@ -235,9 +251,13 @@ export function VideoCreationWizard({
           videoId: video.id,
           expandTaskId: null,
           writeTaskId: null,
-          audioTaskId: video.audio_task_id || null, // FIX: Load the audio task ID
+          audioTaskId: video.audio_task_id || null,
+          outlineOutput,
+          outlineConfig,
+          outlineTaskId: null,
           scriptConfig,
           universalScriptOutput,
+          scriptOutput,
         });
 
         // Set the video name in the navigation store
@@ -322,12 +342,69 @@ export function VideoCreationWizard({
     );
 
     switch (currentStep) {
-      case 1:
+      case 1: // Outline Generation + Research
         return (
-          <PlaceholderStep
-            title="Outline Generation + Research"
-            description="Creates outline and does research."
-            onNext={() => advanceToStep(2)}
+          <Step1Outline
+            videoId={state.videoId!}
+            projectId={projectId}
+            initialTopic={state.prompt}
+            initialOutput={state.outlineOutput}
+            initialConfig={state.outlineConfig}
+            onSave={async (outlineOutput, config) => {
+              // Update local state
+              updateState({
+                outlineOutput,
+                outlineConfig: config,
+              });
+
+              // Persist to database (Auto-save)
+              if (state.videoId) {
+                try {
+                  console.log("[Wizard] Auto-saving outline data...");
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      metadata: {
+                        outlineOutput,
+                        outlineConfig: config,
+                      },
+                    }),
+                  });
+                  console.log("[Wizard] Outline auto-save complete");
+                } catch (err) {
+                  console.error("Failed to auto-save outline:", err);
+                }
+              }
+            }}
+            onComplete={async (outlineOutput, config) => {
+              // Save the outline and update state
+              updateState({
+                outlineOutput,
+                outlineConfig: config,
+              });
+
+              // Persist to database and update stage
+              if (state.videoId) {
+                try {
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      current_stage: "stock",
+                      metadata: {
+                        outlineOutput,
+                        outlineConfig: config,
+                      },
+                    }),
+                  });
+                } catch (err) {
+                  console.error("Failed to save outline:", err);
+                }
+              }
+
+              advanceToStep(2);
+            }}
             onBack={onBack}
             {...lock}
           />
@@ -343,67 +420,37 @@ export function VideoCreationWizard({
           />
         );
 
-      case 3: // Old Step 1: Universal Script Generation
+      case 3: // Script Writing (uses outline from Step 1)
         return (
-          <Step4UniversalScript
+          <Step3Script
             videoId={state.videoId!}
             projectId={projectId}
-            initialTopic={state.prompt}
-            initialOutput={state.universalScriptOutput}
-            initialConfig={state.scriptConfig}
-            onSave={async (scriptOutput, config) => {
-              // Extract script from expanded beats or final script
-              const script = scriptOutput.expandedBeats
-                ? scriptOutput.expandedBeats
-                    .map((b) => b.narration)
-                    .join("\n\n")
-                : scriptOutput.finalScript || "";
-
+            outlineData={state.outlineOutput}
+            outlineConfig={state.outlineConfig}
+            initialScriptOutput={state.scriptOutput}
+            onSave={(script) => {
               // Update local state
-              updateState({
-                script,
-                universalScriptOutput: scriptOutput,
-                scriptConfig: config,
-              });
+              updateState({ script });
 
               // Persist to database (Auto-save)
               if (state.videoId) {
-                try {
-                  console.log("[Wizard] Auto-saving script data...");
-                  await fetch(`/api/videos/${state.videoId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      script_content: script,
-                      // Don't change stage, keep at 'script' or 'idea' until confirmed
-                      metadata: {
-                        universalScriptOutput: scriptOutput,
-                        scriptConfig: config,
-                      },
-                    }),
-                  });
-                  console.log("[Wizard] Auto-save complete");
-                } catch (err) {
-                  console.error("Failed to auto-save script:", err);
-                }
+                fetch(`/api/videos/${state.videoId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    script_content: script,
+                  }),
+                }).catch(console.error);
               }
             }}
-            onComplete={async (scriptOutput, config) => {
-              // Extract script
-              const script = scriptOutput.expandedBeats
-                ? scriptOutput.expandedBeats
-                    .map((b) => b.narration)
-                    .join("\n\n")
-                : scriptOutput.finalScript || "";
-
+            onComplete={async (script, scriptOutput) => {
               // Save the script and update state
               updateState({
                 script,
-                universalScriptOutput: scriptOutput,
-                scriptConfig: config,
+                scriptOutput,
               });
 
-              // Persist to database (Final confirm)
+              // Persist to database and update stage
               if (state.videoId) {
                 try {
                   await fetch(`/api/videos/${state.videoId}`, {
@@ -413,8 +460,7 @@ export function VideoCreationWizard({
                       script_content: script,
                       current_stage: "audio",
                       metadata: {
-                        universalScriptOutput: scriptOutput,
-                        scriptConfig: config,
+                        scriptOutput,
                       },
                     }),
                   });
