@@ -671,7 +671,7 @@ export function ApiKeysTab() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="w-full border border-neutral-800 text-neutral-600 hover:text-white hover:bg-neutral-800 h-7 text-[9px] uppercase tracking-widest font-mono mt-2"
+                      className="w-full border border-red-900/30 text-red-500/50 hover:text-red-400 hover:bg-red-950/20 hover:border-red-500/50 h-7 text-[9px] uppercase tracking-widest font-mono mt-2 transition-all duration-300 shadow-[0_0_8px_rgba(220,38,38,0.05)] hover:shadow-[0_0_12px_rgba(220,38,38,0.15)]"
                     >
                       Disconnect Account
                     </Button>
