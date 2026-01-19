@@ -761,7 +761,9 @@ export function VideoCreationWizard({
           </div>
         </div>
       ) : isFullWidthStep ? (
-        <div className="flex-1 overflow-hidden">{renderStep()}</div>
+        <div key={currentStep} className="flex-1 min-h-0 overflow-hidden">
+          {renderStep()}
+        </div>
       ) : (
         <div className="flex-1 overflow-hidden">
           <div className="flex items-center justify-center h-full p-6">

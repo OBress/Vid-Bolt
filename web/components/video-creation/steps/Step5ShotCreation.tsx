@@ -85,104 +85,109 @@ export function Step5ShotCreation({
       : elements.filter((e) => e.type === activeTab);
 
   return (
-    <div className="flex h-full w-full bg-black text-white overflow-hidden">
-      {/* LEFT COLUMN: Configuration & Assets (400px fixed or percentage) */}
-      <div className="w-[450px] flex flex-col border-r border-neutral-800 bg-neutral-900/10">
-        {/* Elements Section */}
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="p-6 pb-2 shrink-0">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-xl font-bold text-white">Elements</h2>
-                <p className="text-neutral-400 text-sm">
-                  Manage consistency assets
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-neutral-400 hover:text-white"
-              >
-                <Search className="w-4 h-4" />
-              </Button>
-            </div>
-
-            {/* Tabs */}
-            <div className="flex gap-1 bg-neutral-900/50 p-1 rounded-lg border border-neutral-800 mb-2 overflow-x-auto no-scrollbar">
-              {["all", "character", "location", "object", "stock"].map(
-                (tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab as ElementType)}
-                    className={cn(
-                      "px-3 py-1.5 rounded-md text-xs font-medium transition-all capitalize whitespace-nowrap flex-1",
-                      activeTab === tab
-                        ? "bg-neutral-700 text-white shadow-sm"
-                        : "text-neutral-400 hover:text-white hover:bg-neutral-800/50",
-                    )}
-                  >
-                    {tab === "stock" ? "Stock Media" : tab}
-                  </button>
-                ),
-              )}
-            </div>
-          </div>
-
-          {/* Scrollable Elements Grid */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar px-6 pb-6">
-            <div className="grid grid-cols-2 gap-3">
-              {filteredElements.map((element) => (
-                <div
-                  key={element.id}
-                  className="group relative aspect-[3/4] bg-neutral-800 rounded-lg overflow-hidden border border-neutral-800 hover:border-neutral-600 transition-all cursor-pointer"
+    <div
+      id="shot-creation-layout-static"
+      className="flex h-full w-full bg-black text-white overflow-hidden"
+    >
+      {/* LEFT COLUMN: Configuration & Assets (40% fixed) */}
+      <div className="flex flex-col w-[40%] border-r border-neutral-800 bg-neutral-900/10 shrink-0">
+        <div className="flex flex-col h-full w-full shrink-0">
+          {/* Elements Section */}
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className="p-6 pb-2 shrink-0">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-xl font-bold text-white">Elements</h2>
+                  <p className="text-neutral-400 text-sm">
+                    Manage consistency assets
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-neutral-400 hover:text-white"
                 >
-                  {/* Type Icon Badge */}
-                  <div className="absolute top-2 left-2 z-10 p-1 bg-black/50 backdrop-blur-sm rounded border border-white/10">
-                    {element.type === "character" && (
-                      <User className="w-3 h-3 text-white" />
-                    )}
-                    {element.type === "object" && (
-                      <Box className="w-3 h-3 text-white" />
-                    )}
-                    {element.type === "location" && (
-                      <MapPin className="w-3 h-3 text-white" />
-                    )}
-                    {element.type === "stock" && (
-                      <Film className="w-3 h-3 text-white" />
-                    )}
-                  </div>
+                  <Search className="w-4 h-4" />
+                </Button>
+              </div>
 
-                  {/* Image or Placeholder */}
-                  {element.image ? (
-                    <img
-                      src={element.image}
-                      alt={element.name}
-                      className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gradient-to-br from-neutral-800 to-neutral-700 flex flex-col items-center justify-center gap-2">
-                      <Box className="w-8 h-8 text-neutral-600" />
+              {/* Tabs */}
+              <div className="flex gap-1 bg-neutral-900/50 p-1 rounded-lg border border-neutral-800 mb-2 overflow-x-auto no-scrollbar">
+                {["all", "character", "location", "object", "stock"].map(
+                  (tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab as ElementType)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-md text-xs font-medium transition-all capitalize whitespace-nowrap flex-1",
+                        activeTab === tab
+                          ? "bg-neutral-700 text-white shadow-sm"
+                          : "text-neutral-400 hover:text-white hover:bg-neutral-800/50",
+                      )}
+                    >
+                      {tab === "stock" ? "Stock" : tab}
+                    </button>
+                  ),
+                )}
+              </div>
+            </div>
+
+            {/* Scrollable Elements Grid */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar px-6 pb-6">
+              <div className="grid grid-cols-2 gap-3">
+                {filteredElements.map((element) => (
+                  <div
+                    key={element.id}
+                    className="group relative aspect-[3/4] bg-neutral-800 rounded-lg overflow-hidden border border-neutral-800 hover:border-neutral-600 transition-all cursor-pointer"
+                  >
+                    {/* Type Icon Badge */}
+                    <div className="absolute top-2 left-2 z-10 p-1 bg-black/50 backdrop-blur-sm rounded border border-white/10">
+                      {element.type === "character" && (
+                        <User className="w-3 h-3 text-white" />
+                      )}
+                      {element.type === "object" && (
+                        <Box className="w-3 h-3 text-white" />
+                      )}
+                      {element.type === "location" && (
+                        <MapPin className="w-3 h-3 text-white" />
+                      )}
+                      {element.type === "stock" && (
+                        <Film className="w-3 h-3 text-white" />
+                      )}
                     </div>
-                  )}
 
-                  {/* Label Overlay */}
-                  <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-8">
-                    <p className="font-medium text-white text-sm leading-tight truncate">
-                      {element.name}
-                    </p>
-                    <p className="text-[10px] text-neutral-400 uppercase tracking-wider mt-0.5">
-                      {element.type}
-                    </p>
+                    {/* Image or Placeholder */}
+                    {element.image ? (
+                      <img
+                        src={element.image}
+                        alt={element.name}
+                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-gradient-to-br from-neutral-800 to-neutral-700 flex flex-col items-center justify-center gap-2">
+                        <Box className="w-8 h-8 text-neutral-600" />
+                      </div>
+                    )}
+
+                    {/* Label Overlay */}
+                    <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-8">
+                      <p className="font-medium text-white text-sm leading-tight truncate">
+                        {element.name}
+                      </p>
+                      <p className="text-[10px] text-neutral-400 uppercase tracking-wider mt-0.5">
+                        {element.type}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
 
-              {/* Add New Empty State */}
-              <div className="aspect-[3/4] flex flex-col items-center justify-center rounded-lg border border-dashed border-neutral-700 bg-neutral-900/30 text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/50 hover:border-neutral-500 transition-all cursor-pointer gap-2">
-                <div className="p-2 rounded-full bg-neutral-800">
-                  <Grid className="w-4 h-4" />
+                {/* Add New Empty State */}
+                <div className="aspect-[3/4] flex flex-col items-center justify-center rounded-lg border border-dashed border-neutral-700 bg-neutral-900/30 text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/50 hover:border-neutral-500 transition-all cursor-pointer gap-2">
+                  <div className="p-2 rounded-full bg-neutral-800">
+                    <Grid className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-medium">Add New</span>
                 </div>
-                <span className="text-xs font-medium">Add New</span>
               </div>
             </div>
           </div>
@@ -190,7 +195,10 @@ export function Step5ShotCreation({
       </div>
 
       {/* RIGHT COLUMN: Shot Planning (Flex Grow) */}
-      <div className="flex-1 flex flex-col bg-neutral-950 relative">
+      <div
+        id="shot-planning-main"
+        className="flex flex-col flex-1 bg-neutral-950 relative min-w-0"
+      >
         {/* Header */}
         <div className="p-6 px-8 border-b border-neutral-800 shrink-0 flex justify-between items-center bg-neutral-900/20 backdrop-blur-sm z-10">
           <div>

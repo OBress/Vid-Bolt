@@ -7,7 +7,9 @@
 export { getRedisConnection, closeRedisConnection, isRedisReady } from './redis';
 export { 
   writingQueue, 
-  universalScriptQueue, 
+  universalScriptQueue,
+  outlineQueue,
+  scriptWritingQueue,
   audioQueue, 
   avScriptQueue, 
   visualDirectorQueue, 

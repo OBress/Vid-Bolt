@@ -49,8 +49,14 @@ function createQueue(name: string, options?: Partial<QueueOptions>): Queue {
 /** Script generation (research → outline → chapters → cleanup) */
 export const writingQueue = createQueue('writing-workflow');
 
-/** Universal script generation (6-phase pipeline) */
+/** Universal script generation (6-phase pipeline) - DEPRECATED, use outline + scriptWriting */
 export const universalScriptQueue = createQueue('universal-script-workflow');
+
+/** Outline generation (phases 1-4: research, scoping, spine, assets) */
+export const outlineQueue = createQueue('outline-workflow');
+
+/** Script writing (phases 5-6: expansion, assembly) */
+export const scriptWritingQueue = createQueue('script-writing-workflow');
 
 /** TTS audio generation with chunked processing */
 export const audioQueue = createQueue('audio-workflow');
@@ -93,6 +99,8 @@ export const gcpProvisioningQueue = createQueue('gcp-provisioning-queue');
 export const allQueues = [
   writingQueue,
   universalScriptQueue,
+  outlineQueue,
+  scriptWritingQueue,
   audioQueue,
   avScriptQueue,
   visualDirectorQueue,
