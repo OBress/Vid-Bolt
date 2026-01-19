@@ -27,6 +27,7 @@ import {
 interface AVScriptTesterProps {
   isOpen: boolean;
   onClose: () => void;
+  inline?: boolean;
 }
 
 interface TaskStatus {
@@ -86,7 +87,11 @@ And Jamie Dimon? He kept his job, though he had to face a very uncomfortable Sen
 // COMPONENT
 // ============================================================================
 
-export function AVScriptTester({ isOpen, onClose }: AVScriptTesterProps) {
+export function AVScriptTester({
+  isOpen,
+  onClose,
+  inline = false,
+}: AVScriptTesterProps) {
   const [mounted, setMounted] = useState(false);
   const [scriptInput, setScriptInput] = useState(DEFAULT_SCRIPT_INPUT);
   const [taskStatus, setTaskStatus] = useState<TaskStatus>({
@@ -172,10 +177,26 @@ export function AVScriptTester({ isOpen, onClose }: AVScriptTesterProps) {
   // =========================================================================
 
   const content = (
-    <div className="fixed inset-0 z-[9999] bg-neutral-950 flex flex-col">
+    <div
+      className={
+        inline
+          ? "relative flex flex-col h-full bg-neutral-950 overflow-hidden"
+          : "fixed inset-0 z-[9999] bg-neutral-950 flex flex-col"
+      }
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
         <div className="flex items-center gap-4">
+          {inline && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              className="text-neutral-400 hover:text-white -ml-2"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+          )}
           <div className="w-10 h-10 bg-teal-500/20 rounded-lg flex items-center justify-center">
             <Video className="w-5 h-5 text-teal-500" />
           </div>
@@ -188,14 +209,16 @@ export function AVScriptTester({ isOpen, onClose }: AVScriptTesterProps) {
             </p>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="text-neutral-400 hover:text-white"
-        >
-          <X className="w-5 h-5" />
-        </Button>
+        {!inline && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="text-neutral-400 hover:text-white"
+          >
+            <X className="w-5 h-5" />
+          </Button>
+        )}
       </div>
 
       {/* Main Content */}
@@ -378,8 +401,8 @@ export function AVScriptTester({ isOpen, onClose }: AVScriptTesterProps) {
               {selectedShot
                 ? `Shot ${selectedShot.shotIndex} Details`
                 : selectedScene
-                ? `Scene ${selectedScene.sceneIndex} Shots`
-                : "Select a Scene"}
+                  ? `Scene ${selectedScene.sceneIndex} Shots`
+                  : "Select a Scene"}
             </h2>
           </div>
 
@@ -563,6 +586,9 @@ export function AVScriptTester({ isOpen, onClose }: AVScriptTesterProps) {
       </div>
     </div>
   );
-
+  // For inline mode, render directly; for overlay mode, use portal
+  if (inline) {
+    return content;
+  }
   return createPortal(content, document.body);
 }

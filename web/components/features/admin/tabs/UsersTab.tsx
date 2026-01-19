@@ -155,7 +155,7 @@ export function UsersTab() {
   const totalPages = Math.ceil(totalUsers / perPage);
 
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-center gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-2 top-2.5 h-4 w-4 text-neutral-500" />

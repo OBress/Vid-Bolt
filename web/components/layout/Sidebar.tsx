@@ -10,7 +10,9 @@ import {
   Loader2,
   Settings,
   CreditCard,
+  Shield,
 } from "lucide-react";
+import { useUserProfile } from "@/hooks/use-user-profile";
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/LogoutButton";
 import { useSidebar } from "./SidebarContext";
@@ -55,6 +57,7 @@ export function Sidebar() {
     loading: projectsLoading,
     createProject,
   } = useMediaProjects();
+  const { profile } = useUserProfile();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [sourceProjectId, setSourceProjectId] = useState("default");
@@ -88,7 +91,7 @@ export function Sidebar() {
     setExpandedGroups((prev) =>
       prev.includes(groupId)
         ? prev.filter((id) => id !== groupId)
-        : [...prev, groupId]
+        : [...prev, groupId],
     );
   };
 
@@ -242,16 +245,29 @@ export function Sidebar() {
           </nav>
 
           <div className="mt-auto space-y-2">
-            {FOOTER_NAV_ITEMS.map((item) => {
-              const Icon = item.icon === "Settings" ? Settings : CreditCard;
+            {FOOTER_NAV_ITEMS.filter(
+              (item) => !item.adminOnly || profile?.is_admin,
+            ).map((item) => {
+              const iconMap: Record<string, typeof Settings> = {
+                Settings: Settings,
+                CreditCard: CreditCard,
+                Shield: Shield,
+              };
+              const Icon = iconMap[item.icon] || Settings;
+              const isAdmin = item.id === "admin";
               return (
                 <Link
                   key={item.id}
                   href={item.href}
                   className={`w-full flex items-center gap-3 p-3 rounded transition-colors ${
-                    pathname === item.href
-                      ? "bg-neutral-800 text-orange-500 border border-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.1)]"
-                      : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+                    pathname === item.href ||
+                    pathname.startsWith(item.href + "/")
+                      ? isAdmin
+                        ? "bg-red-500/10 text-red-500 border border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.1)]"
+                        : "bg-neutral-800 text-orange-500 border border-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.1)]"
+                      : isAdmin
+                        ? "text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        : "text-neutral-400 hover:text-white hover:bg-neutral-800"
                   }`}
                 >
                   <Icon className="w-5 h-5" />
@@ -269,24 +285,6 @@ export function Sidebar() {
             })}
             <div className="pt-2">
               <LogoutButton isCollapsed={isVisuallyCollapsed} />
-            </div>
-          </div>
-
-          <div
-            className={`mt-8 p-4 bg-neutral-800 border border-neutral-700 rounded transition-all duration-300 ${
-              isVisuallyCollapsed
-                ? "opacity-0 h-0 p-0 border-0 overflow-hidden mt-0"
-                : "opacity-100 h-auto"
-            }`}
-          >
-            <div className="flex items-center gap-2 mb-2 whitespace-nowrap">
-              <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-              <span className="text-xs text-white">SYSTEM ONLINE</span>
-            </div>
-            <div className="text-xs text-neutral-500 whitespace-nowrap">
-              <div>UPTIME: 72:14:33</div>
-              <div>AGENTS: 847 ACTIVE</div>
-              <div>MISSIONS: 23 ONGOING</div>
             </div>
           </div>
         </div>

@@ -8,17 +8,13 @@ import { getActiveLabel } from "@/app/command-center/navigation";
 import { useMediaProjects } from "@/hooks/use-media-projects";
 import { useMemo } from "react";
 import { TaskStatusButton } from "@/components/features/tasks/TaskStatusButton";
-// DevButton moved to Admin Panel
-import { AdminButton } from "@/components/features/admin/AdminButton";
 import { useNavigationStore } from "@/store/use-navigation-store";
-import { useUserProfile } from "@/hooks/use-user-profile";
 import { VMStatus } from "@/components/layout/VMStatus";
 
 export function TopBar() {
   const pathname = usePathname();
   const { projects } = useMediaProjects();
   const { currentVideoName } = useNavigationStore();
-  const { profile } = useUserProfile();
   const [lastUpdate, setLastUpdate] = useState<string>("LOADING...");
 
   useEffect(() => {
@@ -94,11 +90,6 @@ export function TopBar() {
             <>COMMAND CENTER / {displayLabel}</>
           )}
         </div>
-      </div>
-
-      {/* Center - Admin Button (Dev Tools included) */}
-      <div className="fixed left-1/2 transform -translate-x-1/2 flex items-center gap-2 z-50">
-        {profile?.is_admin && <AdminButton />}
       </div>
 
       <div className="flex items-center gap-2">

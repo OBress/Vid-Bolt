@@ -14,6 +14,14 @@ export interface NavGroup {
   dynamic?: boolean; // If true, items are loaded from DB
 }
 
+export interface FooterNavItem {
+  id: string;
+  label: string;
+  href: string;
+  icon: string;
+  adminOnly?: boolean;
+}
+
 export const NAV_GROUPS: NavGroup[] = [
   {
     id: "media",
@@ -40,16 +48,16 @@ export const NAV_GROUPS: NavGroup[] = [
 
     ],
   },
-  {
-    id: "system",
-    label: "SYSTEM",
-    icon: Settings,
-    items: [
-    ],
-  },
 ];
 
-export const FOOTER_NAV_ITEMS = [
+export const FOOTER_NAV_ITEMS: FooterNavItem[] = [
+  {
+    id: "admin",
+    label: "Admin",
+    href: "/command-center/admin",
+    icon: "Shield",
+    adminOnly: true,
+  },
   {
     id: "payments",
     label: "Payments",

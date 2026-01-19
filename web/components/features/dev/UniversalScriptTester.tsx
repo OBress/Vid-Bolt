@@ -149,6 +149,7 @@ interface AVScene {
 interface UniversalScriptTesterProps {
   isOpen: boolean;
   onClose: () => void;
+  inline?: boolean;
 }
 
 type ScriptGenre =
@@ -164,6 +165,7 @@ type ResearchToggle = "full" | "light" | "off";
 export function UniversalScriptTester({
   isOpen,
   onClose,
+  inline = false,
 }: UniversalScriptTesterProps) {
   const [mounted, setMounted] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -193,7 +195,7 @@ export function UniversalScriptTester({
 
   // Form state
   const [topic, setTopic] = useState(
-    "The collapse of the Bronze Age civilizations"
+    "The collapse of the Bronze Age civilizations",
   );
   const [genre, setGenre] = useState<ScriptGenre>("documentary");
   const [researchToggle, setResearchToggle] = useState<ResearchToggle>("full");
@@ -202,7 +204,7 @@ export function UniversalScriptTester({
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   );
 
   // Mount effect for portal
@@ -215,14 +217,14 @@ export function UniversalScriptTester({
   const fetchTaskStatus = useCallback(
     async (id: string, isCompletionCheck = false) => {
       console.log(
-        `[UI:Poll] Fetching status for task ${id} (isCompletionCheck: ${isCompletionCheck})`
+        `[UI:Poll] Fetching status for task ${id} (isCompletionCheck: ${isCompletionCheck})`,
       );
 
       // 1. First poll only for status (lightweight)
       const { data: statusData, error: statusError } = await supabase
         .from("tasks")
         .select(
-          "status, progress_percent, current_phase, current_step, error_message"
+          "status, progress_percent, current_phase, current_step, error_message",
         )
         .eq("id", id)
         .single();
@@ -254,7 +256,7 @@ export function UniversalScriptTester({
         statusData.progress_percent === 100
       ) {
         console.log(
-          `[UI:Poll] Task appears COMPLETED (status=${statusData.status}, progress=${statusData.progress_percent}). Fetching full output...`
+          `[UI:Poll] Task appears COMPLETED (status=${statusData.status}, progress=${statusData.progress_percent}). Fetching full output...`,
         );
 
         const { data: outputData, error: outputError } = await supabase
@@ -273,19 +275,19 @@ export function UniversalScriptTester({
             outputData?.output_data
               ? Object.keys(outputData.output_data).join(", ")
               : "none"
-          }`
+          }`,
         );
 
         if (outputData?.output_data) {
           console.log(
-            "[UI:Poll] SUCCESS - Setting output and stopping generation"
+            "[UI:Poll] SUCCESS - Setting output and stopping generation",
           );
           setOutput(outputData.output_data as UniversalScriptOutput);
           setIsGenerating(false);
           setTaskStatus("completed");
         } else {
           console.warn(
-            "[UI:Poll] output_data is empty/null despite completed status!"
+            "[UI:Poll] output_data is empty/null despite completed status!",
           );
         }
       } else if (statusData.status === "failed") {
@@ -296,14 +298,14 @@ export function UniversalScriptTester({
         console.log(`[UI:Poll] Task still running, will poll again...`);
       }
     },
-    [supabase]
+    [supabase],
   );
 
   // Polling effect
   useEffect(() => {
     if (!isGenerating || !taskId) {
       console.log(
-        `[UI:Poll] Polling disabled - isGenerating: ${isGenerating}, taskId: ${taskId}`
+        `[UI:Poll] Polling disabled - isGenerating: ${isGenerating}, taskId: ${taskId}`,
       );
       return;
     }
@@ -413,7 +415,7 @@ export function UniversalScriptTester({
 
       const avTaskId = data.taskId;
       console.log(
-        `[UniversalScriptTester] AV Script task started: ${avTaskId}`
+        `[UniversalScriptTester] AV Script task started: ${avTaskId}`,
       );
 
       // Poll for results - increased timeout for chunked scene-by-scene processing
@@ -426,12 +428,12 @@ export function UniversalScriptTester({
           await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait 2 seconds
 
           const statusRes = await fetch(
-            `/api/visual-director/test?taskId=${avTaskId}`
+            `/api/visual-director/test?taskId=${avTaskId}`,
           );
           const statusData = await statusRes.json();
 
           console.log(
-            `[UniversalScriptTester] Poll ${attempts}: status=${statusData.status}, step=${statusData.currentStep}`
+            `[UniversalScriptTester] Poll ${attempts}: status=${statusData.status}, step=${statusData.currentStep}`,
           );
 
           if (statusData.status === "completed") {
@@ -464,10 +466,26 @@ export function UniversalScriptTester({
   if (!mounted || !isOpen) return null;
 
   const content = (
-    <div className="fixed inset-0 z-[9999] bg-neutral-950 flex flex-col">
+    <div
+      className={
+        inline
+          ? "relative flex flex-col h-full bg-neutral-950 overflow-hidden"
+          : "fixed inset-0 z-[9999] bg-neutral-950 flex flex-col"
+      }
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
         <div className="flex items-center gap-4">
+          {inline && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              className="text-neutral-400 hover:text-white -ml-2"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+          )}
           <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center">
             <FileText className="w-5 h-5 text-orange-500" />
           </div>
@@ -480,14 +498,16 @@ export function UniversalScriptTester({
             </p>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="text-neutral-400 hover:text-white"
-        >
-          <X className="w-5 h-5" />
-        </Button>
+        {!inline && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="text-neutral-400 hover:text-white"
+          >
+            <X className="w-5 h-5" />
+          </Button>
+        )}
       </div>
 
       <div className="flex-1 flex overflow-hidden">
@@ -628,8 +648,8 @@ export function UniversalScriptTester({
                       {taskStatus === "completed"
                         ? "Complete!"
                         : taskStatus === "failed"
-                        ? "Failed"
-                        : currentPhase || "Starting..."}
+                          ? "Failed"
+                          : currentPhase || "Starting..."}
                     </span>
                   </div>
                   <span className="text-neutral-500 text-sm">{progress}%</span>
@@ -705,7 +725,7 @@ export function UniversalScriptTester({
                         <div className="text-white font-medium">
                           {output.expandedBeats.reduce(
                             (sum, b) => sum + b.wordCount,
-                            0
+                            0,
                           )}
                         </div>
                       </div>
@@ -801,7 +821,7 @@ export function UniversalScriptTester({
                           {output.expandedBeats.length} beats •{" "}
                           {output.expandedBeats.reduce(
                             (sum, b) => sum + b.wordCount,
-                            0
+                            0,
                           )}{" "}
                           words
                         </div>
@@ -836,8 +856,8 @@ export function UniversalScriptTester({
                           score >= 8
                             ? "text-green-400 bg-green-500/20"
                             : score >= 6
-                            ? "text-yellow-400 bg-yellow-500/20"
-                            : "text-red-400 bg-red-500/20";
+                              ? "text-yellow-400 bg-yellow-500/20"
+                              : "text-red-400 bg-red-500/20";
 
                         return (
                           <div
@@ -941,8 +961,8 @@ export function UniversalScriptTester({
                                     fact.confidence === "verified"
                                       ? "bg-green-500/20 text-green-400"
                                       : fact.confidence === "high"
-                                      ? "bg-blue-500/20 text-blue-400"
-                                      : "bg-yellow-500/20 text-yellow-400"
+                                        ? "bg-blue-500/20 text-blue-400"
+                                        : "bg-yellow-500/20 text-yellow-400"
                                   }`}
                                 >
                                   {fact.confidence}
@@ -995,8 +1015,8 @@ export function UniversalScriptTester({
                                     entity.type === "person"
                                       ? "bg-purple-500/20 text-purple-400"
                                       : entity.type === "location"
-                                      ? "bg-blue-500/20 text-blue-400"
-                                      : "bg-orange-500/20 text-orange-400"
+                                        ? "bg-blue-500/20 text-blue-400"
+                                        : "bg-orange-500/20 text-orange-400"
                                   }`}
                                 >
                                   {entity.name}
@@ -1044,7 +1064,7 @@ export function UniversalScriptTester({
                                       </span>
                                     </div>
                                   </div>
-                                )
+                                ),
                               )}
                             </div>
                           </div>
@@ -1151,7 +1171,7 @@ export function UniversalScriptTester({
                           <div>
                             <div className="text-2xl font-bold text-white">
                               {Math.round(
-                                output.spine.totalDurationSeconds / 60
+                                output.spine.totalDurationSeconds / 60,
                               )}
                             </div>
                             <div className="text-xs text-neutral-500">
@@ -1334,7 +1354,7 @@ export function UniversalScriptTester({
                                 <p className="text-white font-medium">
                                   {selectedAvShot.cameraMovement.replace(
                                     /_/g,
-                                    " "
+                                    " ",
                                   )}
                                 </p>
                               </div>
@@ -1480,7 +1500,7 @@ export function UniversalScriptTester({
                                 >
                                   {a}
                                 </span>
-                              )
+                              ),
                             )}
                           </div>
                         </div>
@@ -1497,7 +1517,7 @@ export function UniversalScriptTester({
                                 >
                                   {p}
                                 </span>
-                              )
+                              ),
                             )}
                           </div>
                         </div>
@@ -1624,6 +1644,9 @@ export function UniversalScriptTester({
       </Dialog>
     </div>
   );
-
+  // For inline mode, render directly; for overlay mode, use portal
+  if (inline) {
+    return content;
+  }
   return createPortal(content, document.body);
 }

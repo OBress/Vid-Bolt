@@ -43,8 +43,8 @@ export function VMStatus() {
     <Popover>
       <PopoverTrigger asChild>
         <button className="flex flex-row items-center gap-3 p-2 rounded-lg hover:bg-neutral-800/50 transition-colors group">
-          <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest group-hover:text-neutral-400">
-            VM STATUS
+          <span className="text-[12px] font-mono text-neutral-500 uppercase tracking-widest group-hover:text-neutral-400">
+            VM
           </span>
           <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-md group-hover:border-neutral-700 transition-colors min-w-[120px]">
             <div className={`w-2 h-2 rounded-full ${statusColor}`} />
