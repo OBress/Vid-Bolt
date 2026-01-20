@@ -3,10 +3,51 @@
  * ============================================================================
  * Cloudflare R2 storage service using the S3-compatible API.
  * Used for storing TTS audio files and other media assets.
+ * 
+ * Storage Structure:
+ *   {userId}/{videoId}/audio/{tts,sound-effects,background-music,stock}/
+ *   {userId}/{videoId}/images/{reference/{characters,settings,objects},stock,generated}/
+ *   {userId}/{videoId}/footage/{stock,generated}/
+ *   {userId}/{videoId}/exports/
+ *   {userId}/gpu-api-test/
  */
 
 import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+// ============================================================================
+// Storage Path Constants
+// ============================================================================
+
+export const STORAGE_PATHS = {
+  // Top-level folders under userId
+  VIDEOS: 'videos',
+  PAYMENT_PROOFS: 'payment-proofs',
+  REVENUE_PROOFS: 'revenue-proofs',
+  GPU_TEST: 'gpu-api-test',
+  
+  // Nested paths under videos/{videoId}/
+  AUDIO: {
+    TTS: 'audio/tts',
+    SOUND_EFFECTS: 'audio/sound-effects',
+    BACKGROUND_MUSIC: 'audio/background-music',
+    STOCK: 'audio/stock',
+  },
+  IMAGES: {
+    REFERENCE: {
+      CHARACTERS: 'images/reference/characters',
+      SETTINGS: 'images/reference/settings',
+      OBJECTS: 'images/reference/objects',
+    },
+    STOCK: 'images/stock',
+    GENERATED: 'images/generated',
+  },
+  FOOTAGE: {
+    STOCK: 'footage/stock',
+    GENERATED: 'footage/generated',
+  },
+  EXPORTS: 'exports',
+} as const;
 
 // Initialize S3 client for R2
 let s3Client: S3Client | null = null;
@@ -107,35 +148,82 @@ export function getPublicUrl(key: string): string {
   return `${baseUrl}/${key}`;
 }
 
+// ============================================================================
+// Key Generation Functions
+// ============================================================================
+
 /**
- * Generate a unique storage key for audio files.
+ * Generate a storage key for project media files.
+ * Path format: {userId}/videos/{videoId}/{storagePath}/{filename}
+ * 
+ * @param userId - User ID
+ * @param videoId - Video project ID
+ * @param storagePath - Path from STORAGE_PATHS (e.g., STORAGE_PATHS.AUDIO.TTS)
+ * @param filename - The filename with extension
+ * @returns Storage key
+ */
+export function generateMediaKey(
+  userId: string,
+  videoId: string,
+  storagePath: string,
+  filename: string
+): string {
+  return `${userId}/${STORAGE_PATHS.VIDEOS}/${videoId}/${storagePath}/${filename}`;
+}
+
+/**
+ * Generate a storage key for payment proof uploads.
+ * Path format: {userId}/payment-proofs/{statementId}/{timestamp}.{ext}
+ */
+export function generatePaymentProofKey(
+  userId: string,
+  statementId: string,
+  extension: string
+): string {
+  const timestamp = Date.now();
+  return `${userId}/${STORAGE_PATHS.PAYMENT_PROOFS}/${statementId}/${timestamp}.${extension}`;
+}
+
+/**
+ * Generate a storage key for revenue proof uploads.
+ * Path format: {userId}/revenue-proofs/{statementId}/{timestamp}.{ext}
+ */
+export function generateRevenueProofKey(
+  userId: string,
+  statementId: string,
+  extension: string
+): string {
+  const timestamp = Date.now();
+  return `${userId}/${STORAGE_PATHS.REVENUE_PROOFS}/${statementId}/${timestamp}.${extension}`;
+}
+
+/**
+ * Generate a storage key for TTS audio chunk.
+ * Path format: {userId}/{videoId}/audio/tts/chunk_XXX.mp3
  * 
  * @param userId - User ID
  * @param videoId - Video project ID
  * @param chunkIndex - Index of the audio chunk
- * @param extension - File extension (default: mp3)
  * @returns Storage key
  */
-export function generateAudioKey(
+export function generateTtsKey(
   userId: string,
   videoId: string,
-  chunkIndex: number,
-  extension: string = "mp3"
+  chunkIndex: number
 ): string {
-  const timestamp = Date.now();
-  return `audio/${userId}/${videoId}/${timestamp}_chunk_${chunkIndex.toString().padStart(3, "0")}.${extension}`;
+  const filename = `chunk_${chunkIndex.toString().padStart(3, "0")}.mp3`;
+  return generateMediaKey(userId, videoId, STORAGE_PATHS.AUDIO.TTS, filename);
 }
 
 /**
- * Generate storage key for final merged audio.
+ * Generate storage key for final merged TTS audio.
+ * Path format: {userId}/{videoId}/audio/tts/final.mp3
  */
-export function generateFinalAudioKey(
+export function generateFinalTtsKey(
   userId: string,
-  videoId: string,
-  extension: string = "mp3"
+  videoId: string
 ): string {
-  const timestamp = Date.now();
-  return `audio/${userId}/${videoId}/${timestamp}_final.${extension}`;
+  return generateMediaKey(userId, videoId, STORAGE_PATHS.AUDIO.TTS, 'final.mp3');
 }
 
 /**
@@ -190,11 +278,12 @@ export async function generatePresignedPutUrl(
 
 /**
  * Generate storage key for GPU API test outputs.
+ * Path format: {userId}/gpu-api-test/{type}_{timestamp}_{random}.{ext}
  * 
  * @param userId - User ID
  * @param type - Type of asset (image or video)
  * @param extension - File extension (default: png for images, mp4 for videos)
- * @returns Storage key in format: gpu-api-test/{userId}/{type}_{timestamp}_{random}.{ext}
+ * @returns Storage key
  */
 export function generateGpuTestKey(
   userId: string,
@@ -204,7 +293,7 @@ export function generateGpuTestKey(
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 9);
   const ext = extension || (type === "video" ? "mp4" : "png");
-  return `gpu-api-test/${userId}/${type}_${timestamp}_${random}.${ext}`;
+  return `${userId}/${STORAGE_PATHS.GPU_TEST}/${type}_${timestamp}_${random}.${ext}`;
 }
 
 /**
@@ -222,7 +311,7 @@ export function isR2Configured(): boolean {
 
 /**
  * Delete all files under a given prefix from R2 storage.
- * Used to clean up all files for a video project (e.g., audio/{userId}/{videoId}/).
+ * Used to clean up all files for a video project (e.g., {userId}/{videoId}/).
  * 
  * @param prefix - The prefix (folder path) to delete all files from
  * @returns Object with count of deleted files and any errors encountered

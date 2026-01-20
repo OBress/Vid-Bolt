@@ -1,7 +1,7 @@
 "use server";
 
 import { generateSpeech } from "@/lib/services/inworld-tts";
-import { uploadAudioBuffer, generateAudioKey } from "@/lib/services/r2-storage";
+import { uploadAudioBuffer, generateTtsKey } from "@/lib/services/r2-storage";
 import { createClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 
@@ -61,7 +61,7 @@ export async function regenerateAudioClip(
     const ttsResult = await generateSpeech(userId, newText);
 
     // 3. Upload to R2
-    const key = generateAudioKey(userId, videoId, chunkIndex, "mp3");
+    const key = generateTtsKey(userId, videoId, chunkIndex);
     const uploadResult = await uploadAudioBuffer(ttsResult.audioBuffer, key, "audio/mpeg");
 
     // 4. Update Task Data

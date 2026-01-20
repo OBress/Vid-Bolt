@@ -111,13 +111,13 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
         });
 
         // Upload to R2
-        const { uploadAudioBuffer, generateAudioKey, isR2Configured } = await import('@/lib/services/r2-storage');
+        const { uploadAudioBuffer, generateTtsKey, isR2Configured } = await import('@/lib/services/r2-storage');
 
         if (!isR2Configured()) {
           throw new Error('R2 storage is not configured.');
         }
 
-        const key = generateAudioKey(userId, videoId, chunk.index, 'mp3');
+        const key = generateTtsKey(userId, videoId, chunk.index);
         const uploadResult = await uploadAudioBuffer(ttsResult.audioBuffer, key, 'audio/mpeg');
 
         await completeStep(taskId, chunkStepId);

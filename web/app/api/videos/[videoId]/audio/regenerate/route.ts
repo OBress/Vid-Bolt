@@ -87,22 +87,14 @@ export async function POST(
     });
 
     // 3. Upload to R2
-    const { uploadAudioBuffer, generateAudioKey, isR2Configured } = await import("@/lib/services/r2-storage");
+    const { uploadAudioBuffer, generateTtsKey, isR2Configured } = await import("@/lib/services/r2-storage");
     
     if (!isR2Configured()) {
        throw new Error("R2 storage is not configured.");
     }
 
-    // Use a timestamp to prevent caching issues if generating multiple times
-    const timestamp = Date.now();
-    // We append a random string or timestamp to key to ensure uniqueness for regeneration?
-    // Actually generateAudioKey usually uses userId/videoId/chunkIndex. 
-    // If we overwrite, we might have browser caching issues. 
-    // Let's add a query param to the URL or modify the key slightly?
-    // r2-storage generateAudioKey: `audio/${userId}/${videoId}/${index}.${extension}`
-    // Let's assume we can overwrite but we should return a URL with ?t=... to bust cache on frontend
-    
-    const key = generateAudioKey(user.id, videoId, chunkIndex, "mp3");
+    // Path: {userId}/{videoId}/audio/tts/chunk_XXX.mp3
+    const key = generateTtsKey(user.id, videoId, chunkIndex);
     const uploadResult = await uploadAudioBuffer(ttsResult.audioBuffer, key, "audio/mpeg");
 
     // 4. Update Metadata
@@ -121,7 +113,7 @@ export async function POST(
         durationSeconds: ttsResult.durationSeconds,
         wordTimestamps: ttsResult.wordTimestamps,
         text,
-        lastUpdated: timestamp
+        lastUpdated: Date.now()
     };
 
     // Update specific index

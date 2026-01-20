@@ -118,3 +118,24 @@ export async function getGenAiApiKey(userId: string): Promise<string> {
 
   return platformKey;
 }
+
+/**
+ * Get OpenRouter API key for a user.
+ * Falls back to platform default if user doesn't have their own key.
+ */
+export async function getOpenRouterApiKey(userId: string): Promise<string> {
+  const userKeys = await getUserApiKeys(userId);
+  
+  if (userKeys?.openrouter_key) {
+    return userKeys.openrouter_key;
+  }
+
+  const platformKey = process.env.OPENROUTER_API_KEY;
+  if (!platformKey) {
+    throw new Error(
+      "No OpenRouter API key found. Please configure your OpenRouter key in Settings → API Keys."
+    );
+  }
+
+  return platformKey;
+}

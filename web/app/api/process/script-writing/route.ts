@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
       .from("tasks")
       .insert({
         user_id: user.id,
-        type: "script-writing",
+        type: "script_writing",
         name: `Script: ${outlineConfig?.topic?.substring(0, 50) || video.idea?.substring(0, 50) || 'Untitled'}...`,
         status: "pending",
         steps: [],

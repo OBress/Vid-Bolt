@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { generatePresignedPutUrl } from "@/lib/services/r2-storage";
+import { generatePresignedPutUrl, generatePaymentProofKey, generateRevenueProofKey } from "@/lib/services/r2-storage";
 import { randomUUID } from "crypto";
 
 export type CostItem = {
@@ -126,11 +126,11 @@ export async function getProofUploadUrl(
     throw new Error("Unauthorized");
   }
 
-  const timestamp = Date.now();
-  // Store both in payment-proofs, distinguish by filename prefix
-  const key = `payment-proofs/${user.id}/${statementId}/${type}-${timestamp}.${extension}`;
+  // Use centralized key generators from r2-storage
+  const key = type === "payment" 
+    ? generatePaymentProofKey(user.id, statementId, extension)
+    : generateRevenueProofKey(user.id, statementId, extension);
   
-  // Use the existing R2 service
   const { putUrl, publicUrl } = await generatePresignedPutUrl(
     key,
     `image/${extension === 'png' ? 'png' : 'jpeg'}`,
