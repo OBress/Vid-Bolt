@@ -6,6 +6,8 @@
 
 export { writingProcessor } from './writing';
 export { universalScriptProcessor } from './universal-script';
+export { outlineProcessor } from './outline';
+export { scriptWritingProcessor } from './script-writing';
 export { audioProcessor } from './audio';
 export { avScriptProcessor } from './av-script';
 export { visualDirectorProcessor } from './visual-director';

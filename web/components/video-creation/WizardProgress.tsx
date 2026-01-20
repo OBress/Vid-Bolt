@@ -14,6 +14,7 @@ interface WizardProgressProps {
   maxStepReached: number;
   onBack?: () => void;
   onStepClick?: (step: number) => void;
+  skippedSteps?: number[];
 }
 
 export function WizardProgress({
@@ -22,6 +23,7 @@ export function WizardProgress({
   maxStepReached,
   onBack,
   onStepClick,
+  skippedSteps = [],
 }: WizardProgressProps) {
   // Calculate specific positions for the progress line
   // We want the line to start at the center of the first step and end at the center of the last step.
@@ -85,13 +87,15 @@ export function WizardProgress({
               const isReached = step.id <= maxStepReached;
               const isCompleted = currentStep > step.id && isReached;
               const isCurrent = currentStep === step.id;
-              const isFutureReached = step.id > currentStep && isReached;
+              const isSkipped = skippedSteps.includes(step.id);
+              const isFutureReached =
+                step.id > currentStep && isReached && !isSkipped;
 
               return (
                 <button
                   key={step.id}
-                  onClick={() => onStepClick?.(step.id)}
-                  className="flex flex-col items-center group/step focus:outline-none"
+                  onClick={() => !isSkipped && onStepClick?.(step.id)}
+                  className={`flex flex-col items-center group/step focus:outline-none ${isSkipped ? "cursor-default" : ""}`}
                 >
                   {/* Step dot */}
                   <div
@@ -103,13 +107,35 @@ export function WizardProgress({
                           ? "bg-orange-500 text-white ring-4 ring-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.4)] scale-110"
                           : isCompleted
                             ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20"
-                            : isFutureReached
-                              ? "bg-neutral-950 border-2 border-orange-500/40 text-orange-500/60"
-                              : "bg-neutral-800 text-neutral-500 group-hover/step:bg-neutral-700 group-hover/step:text-neutral-300"
+                            : isSkipped
+                              ? "bg-neutral-800 text-neutral-600 border border-neutral-700"
+                              : isFutureReached
+                                ? "bg-neutral-950 border-2 border-orange-500/40 text-orange-500/60"
+                                : "bg-neutral-800 text-neutral-500 group-hover/step:bg-neutral-700 group-hover/step:text-neutral-300"
                       }
+                      relative overflow-hidden
                     `}
                   >
-                    {isCompleted ? (
+                    {isSkipped && (
+                      <div className="absolute inset-0 z-20">
+                        <svg
+                          width="100%"
+                          height="100%"
+                          viewBox="0 0 32 32"
+                          className="text-neutral-500/50"
+                        >
+                          <line
+                            x1="0"
+                            y1="32"
+                            x2="32"
+                            y2="0"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          />
+                        </svg>
+                      </div>
+                    )}
+                    {isCompleted && !isSkipped ? (
                       <svg
                         className="w-4 h-4"
                         fill="none"
@@ -134,13 +160,15 @@ export function WizardProgress({
                       mt-3 text-[10px] font-mono uppercase tracking-wider text-center px-1
                       transition-all duration-300
                       ${
-                        isCurrent
-                          ? "text-orange-500 font-bold scale-105"
-                          : isCompleted
-                            ? "text-neutral-400 font-medium"
-                            : isFutureReached
-                              ? "text-orange-500/40"
-                              : "text-neutral-600 group-hover/step:text-neutral-400"
+                        isSkipped
+                          ? "text-neutral-600 line-through decoration-neutral-600"
+                          : isCurrent
+                            ? "text-orange-500 font-bold scale-105"
+                            : isCompleted
+                              ? "text-neutral-400 font-medium"
+                              : isFutureReached
+                                ? "text-orange-500/40"
+                                : "text-neutral-600 group-hover/step:text-neutral-400"
                       }
                     `}
                   >

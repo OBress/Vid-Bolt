@@ -29,6 +29,8 @@ import { allQueues, closeAllQueues } from './queues';
 import { 
   writingProcessor, 
   universalScriptProcessor,
+  outlineProcessor,
+  scriptWritingProcessor,
   audioProcessor,
   avScriptProcessor,
   visualDirectorProcessor,
@@ -64,6 +66,18 @@ const workerConfigs: WorkerConfig[] = [
     processor: universalScriptProcessor,
     concurrency: 3,
     description: 'Universal script generation (6-phase pipeline)',
+  },
+  {
+    queue: 'outline-workflow',
+    processor: outlineProcessor,
+    concurrency: 3,
+    description: 'Outline generation (phases 1-4: research, scoping, spine, assets)',
+  },
+  {
+    queue: 'script-writing-workflow',
+    processor: scriptWritingProcessor,
+    concurrency: 3,
+    description: 'Script writing (phases 5-6: expansion, assembly)',
   },
   {
     queue: 'audio-workflow',

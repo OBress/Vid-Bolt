@@ -132,6 +132,7 @@ interface Step1OutlineProps {
   } | null;
   onComplete: (output: OutlineOutput, config: any) => void;
   onSave: (output: OutlineOutput, config: any) => void;
+  onStockMediaChange?: (level: StockMediaLevel) => void;
   onBack: () => void;
   isLocked?: boolean;
   lockedMessage?: string;
@@ -149,6 +150,7 @@ export function Step1Outline({
   initialConfig,
   onComplete,
   onSave,
+  onStockMediaChange,
   onBack,
   isLocked,
   lockedMessage,
@@ -196,8 +198,9 @@ export function Step1Outline({
   const [activeTab, setActiveTab] = useState("spine");
 
   // Editing state for output
-  const [editingSpine, setEditingSpine] =
-    useState<(typeof output)["spine"]>(null);
+  const [editingSpine, setEditingSpine] = useState<NonNullable<
+    OutlineOutput["spine"]
+  > | null>(null);
 
   // Update state when props change
   useEffect(() => {
@@ -437,8 +440,8 @@ export function Step1Outline({
     if (!editingSpine) return;
 
     const updatedBeats = editingSpine.beats
-      .filter((_, i) => i !== beatIndex)
-      .map((beat, i) => ({ ...beat, index: i }));
+      .filter((_: any, i: number) => i !== beatIndex)
+      .map((beat: any, i: number) => ({ ...beat, index: i }));
 
     setEditingSpine({
       ...editingSpine,
@@ -586,7 +589,11 @@ export function Step1Outline({
               <Label className="text-neutral-400">Stock Media</Label>
               <Select
                 value={stockMediaLevel}
-                onValueChange={(v) => setStockMediaLevel(v as StockMediaLevel)}
+                onValueChange={(v) => {
+                  const level = v as StockMediaLevel;
+                  setStockMediaLevel(level);
+                  onStockMediaChange?.(level);
+                }}
                 disabled={isLocked}
               >
                 <SelectTrigger className="bg-neutral-900 border-neutral-700">
@@ -781,48 +788,53 @@ export function Step1Outline({
     (output?.assetRegistry?.objects?.length || 0);
 
   return (
-    <div className="flex h-[calc(100vh-160px)] gap-6 w-full max-w-[96vw] mx-auto px-8 py-6">
-      {/* LEFT SIDEBAR */}
-      <div className="w-80 shrink-0 flex flex-col gap-6 h-full">
-        {/* Header & Stats */}
-        <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl p-5 space-y-4 shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 bg-green-500/10 border border-green-500/20 rounded-full text-green-500 text-[10px] font-mono uppercase tracking-widest">
-              <CheckCircle className="w-3 h-3" />
-              Complete
-            </div>
-            <h2 className="text-xl font-bold tracking-tight whitespace-nowrap">
-              Outline & Assets
-            </h2>
+    <div className="flex h-[calc(100vh-160px)] gap-6 px-6 py-4 justify-center w-full">
+      {/* LEFT SIDEBAR - Widened to approx 200px for 2x2 squares */}
+      <div className="w-52 md:w-56 shrink-0 flex flex-col gap-4 h-full">
+        {/* Header - No Box */}
+        <div className="shrink-0 flex flex-col items-center justify-center gap-1 py-2">
+          <h1 className="text-3xl font-extrabold tracking-tight text-white uppercase">
+            Outline
+          </h1>
+          <div className="inline-flex items-center gap-1 px-3 py-0.5 bg-green-500/10 border border-green-500/20 rounded-full text-green-500 text-[10px] font-mono uppercase tracking-widest w-fit">
+            <Check className="w-3 h-3" />
+            Done
           </div>
+        </div>
 
+        {/* SCROLLABLE SIDEBAR CONTENT */}
+        <div className="flex-1 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
           {output && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 bg-neutral-800/50 rounded-lg text-center">
-                <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-0.5">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+                <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Beats
                 </div>
-                <div className="text-lg font-mono text-white">{beatCount}</div>
+                <div className="text-2xl font-mono text-white leading-none font-bold">
+                  {beatCount}
+                </div>
               </div>
-              <div className="p-3 bg-neutral-800/50 rounded-lg text-center">
-                <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-0.5">
+              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+                <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Assets
                 </div>
-                <div className="text-lg font-mono text-white">{assetCount}</div>
+                <div className="text-2xl font-mono text-white leading-none font-bold">
+                  {assetCount}
+                </div>
               </div>
-              <div className="p-3 bg-neutral-800/50 rounded-lg text-center">
-                <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-0.5">
+              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+                <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Facts
                 </div>
-                <div className="text-lg font-mono text-white">
+                <div className="text-2xl font-mono text-white leading-none font-bold">
                   {output.researchDossier?.metadata?.factCount || 0}
                 </div>
               </div>
-              <div className="p-3 bg-neutral-800/50 rounded-lg text-center">
-                <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-0.5">
-                  Est. Time
+              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+                <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
+                  Time
                 </div>
-                <div className="text-lg font-mono text-white">
+                <div className="text-xl font-mono text-white leading-none font-bold">
                   {Math.round(
                     (output.durationDecision?.recommendedDurationSeconds || 0) /
                       60,
@@ -830,225 +842,258 @@ export function Step1Outline({
                   m
                 </div>
               </div>
+              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+                <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
+                  Chars
+                </div>
+                <div className="text-xl font-mono text-white leading-none font-bold">
+                  {(
+                    (editingSpine?.beats || output.spine?.beats || []).reduce(
+                      (acc, beat) => acc + (beat.contentSummary?.length || 0),
+                      0,
+                    ) / 1000
+                  ).toFixed(1)}
+                  k
+                </div>
+              </div>
+              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+                <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
+                  Words
+                </div>
+                <div className="text-xl font-mono text-white leading-none font-bold">
+                  {(editingSpine?.beats || output.spine?.beats || []).reduce(
+                    (acc, beat) =>
+                      acc + (beat.contentSummary?.split(/\s+/).length || 0),
+                    0,
+                  )}
+                </div>
+              </div>
             </div>
           )}
+          {/* Navigation Tabs */}
+          <div className="flex-1 bg-neutral-900/50 border border-neutral-800 rounded-xl overflow-hidden flex flex-col shrink-0 min-h-0">
+            <Tabs
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="flex flex-col h-full"
+              orientation="vertical"
+            >
+              <TabsList className="bg-transparent flex-col items-stretch p-0 gap-0 w-full h-full">
+                <TabsTrigger
+                  value="spine"
+                  className="flex-1 flex-col justify-center items-center gap-2 px-2 py-4 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/80 text-neutral-400 data-[state=active]:text-orange-500 transition-all text-[11px] uppercase tracking-widest font-black h-auto"
+                >
+                  <Layout className="w-7 h-7" />
+                  Spine
+                </TabsTrigger>
+                <div className="h-[1px] bg-neutral-800 w-full" />
+                <TabsTrigger
+                  value="assets"
+                  className="flex-1 flex-col justify-center items-center gap-2 px-2 py-4 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/80 text-neutral-400 data-[state=active]:text-orange-500 transition-all text-[11px] uppercase tracking-widest font-black h-auto"
+                >
+                  <Users className="w-7 h-7" />
+                  Assets
+                </TabsTrigger>
+                <div className="h-[1px] bg-neutral-800 w-full" />
+                <TabsTrigger
+                  value="research"
+                  className="flex-1 flex-col justify-center items-center gap-2 px-2 py-4 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/80 text-neutral-400 data-[state=active]:text-orange-500 transition-all text-[11px] uppercase tracking-widest font-black h-auto"
+                >
+                  <Search className="w-7 h-7" />
+                  Docs
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
         </div>
 
-        {/* Navigation Tabs */}
-        <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl overflow-hidden flex-1 flex flex-col">
-          <Tabs
-            value={activeTab}
-            onValueChange={setActiveTab}
-            className="flex-1 flex flex-col"
-            orientation="vertical"
-          >
-            <TabsList className="bg-transparent flex-col flex-1 items-stretch p-0 gap-0 border-b border-neutral-800 w-full">
-              <TabsTrigger
-                value="spine"
-                className="flex-1 justify-center gap-3 px-6 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/50 text-neutral-400 data-[state=active]:text-white transition-all text-sm uppercase tracking-wider font-medium"
-              >
-                <Layout className="w-5 h-5" />
-                Spine
-              </TabsTrigger>
-              <TabsTrigger
-                value="assets"
-                className="flex-1 justify-center gap-3 px-6 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/50 text-neutral-400 data-[state=active]:text-white transition-all text-sm uppercase tracking-wider font-medium"
-              >
-                <Users className="w-5 h-5" />
-                Assets
-              </TabsTrigger>
-              <TabsTrigger
-                value="research"
-                className="flex-1 justify-center gap-3 px-6 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/50 text-neutral-400 data-[state=active]:text-white transition-all text-sm uppercase tracking-wider font-medium"
-              >
-                <Search className="w-5 h-5" />
-                Research
-              </TabsTrigger>
-            </TabsList>
-
-            {/* Action Buttons */}
-            <div className="mt-auto p-5 border-t border-neutral-800 space-y-3 shrink-0">
-              {hasChanges && (
-                <Button
-                  onClick={handleSaveChanges}
-                  disabled={isSaving}
-                  variant="outline"
-                  className="w-full h-10 border-orange-500 text-orange-500 hover:bg-orange-500/10 gap-2"
-                >
-                  {isSaving ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Save className="w-4 h-4" />
-                  )}
-                  Save Changes
-                </Button>
+        {/* FOOTER ACTIONS */}
+        <div className="mt-auto pt-2 space-y-2 shrink-0">
+          {hasChanges && (
+            <Button
+              onClick={handleSaveChanges}
+              disabled={isSaving}
+              variant="outline"
+              className="w-full h-10 border-orange-500/50 text-orange-500 hover:bg-orange-500/10 gap-1.5 text-[10px] font-bold tracking-tight uppercase"
+            >
+              {isSaving ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Save className="w-3.5 h-3.5" />
               )}
-              <Button
-                onClick={handleConfirm}
-                className="w-full h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest gap-2"
-              >
-                <Check className="w-4 h-4" />
-                Continue to Stock Media
-              </Button>
-            </div>
-          </Tabs>
+              Save
+            </Button>
+          )}
+          <Button
+            onClick={handleConfirm}
+            className="w-full h-11 bg-orange-600 hover:bg-orange-500 text-white font-bold uppercase tracking-widest gap-1.5 shadow-lg shadow-orange-500/10 text-xs"
+          >
+            <Check className="w-4 h-4" />
+            Next
+          </Button>
         </div>
       </div>
 
-      {/* RIGHT CONTENT AREA */}
-      <div className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden h-full">
-        <div className="h-full overflow-y-auto p-6">
-          {activeTab === "spine" && editingSpine && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-bold">
-                  {editingSpine.title || "Video Outline"}
-                </h3>
-                <div className="flex items-center gap-2 text-xs text-neutral-500">
-                  <Edit3 className="w-3 h-3" />
-                  Click any beat to edit
+      {/* RIGHT CONTENT AREA - Fixed width unit to sit next to sidebar */}
+      <div className="w-full max-w-5xl h-full flex flex-col min-w-0">
+        <div className="w-full h-full bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden flex flex-col">
+          <div className="h-full overflow-y-auto p-6">
+            {activeTab === "spine" && editingSpine && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-lg font-bold">
+                    {editingSpine.title || "Video Outline"}
+                  </h3>
+                  <div className="flex items-center gap-2 text-xs text-neutral-500">
+                    <Edit3 className="w-3 h-3" />
+                    Click any beat to edit
+                  </div>
                 </div>
+                {editingSpine.beats.map((beat, index) => (
+                  <EditableBeatCard
+                    key={index}
+                    beat={beat}
+                    index={index}
+                    onChange={handleBeatChange}
+                    onDelete={handleDeleteBeat}
+                    onAddAfter={handleAddBeat}
+                  />
+                ))}
               </div>
-              {editingSpine.beats.map((beat, index) => (
-                <EditableBeatCard
-                  key={index}
-                  beat={beat}
-                  index={index}
-                  onChange={handleBeatChange}
-                  onDelete={handleDeleteBeat}
-                  onAddAfter={handleAddBeat}
-                />
-              ))}
-            </div>
-          )}
+            )}
 
-          {activeTab === "assets" && output?.assetRegistry && (
-            <div className="space-y-6">
-              {/* Characters */}
-              {output.assetRegistry.characters?.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                    <Users className="w-5 h-5 text-orange-500" />
-                    Characters
-                  </h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    {output.assetRegistry.characters.map((char) => (
-                      <div
-                        key={char.id}
-                        className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
-                      >
-                        <div className="font-medium text-white">
-                          {char.name}
+            {activeTab === "assets" && output?.assetRegistry && (
+              <div className="space-y-6">
+                {/* Characters */}
+                {output.assetRegistry.characters?.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                      <Users className="w-5 h-5 text-orange-500" />
+                      Characters
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      {output.assetRegistry.characters.map((char) => (
+                        <div
+                          key={char.id}
+                          className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
+                        >
+                          <div className="font-medium text-white">
+                            {char.name}
+                          </div>
+                          <div className="text-sm text-neutral-500">
+                            {char.role}
+                          </div>
                         </div>
-                        <div className="text-sm text-neutral-500">
-                          {char.role}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Locations */}
-              {output.assetRegistry.locations?.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                    <MapPin className="w-5 h-5 text-blue-500" />
-                    Locations
-                  </h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    {output.assetRegistry.locations.map((loc) => (
-                      <div
-                        key={loc.id}
-                        className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
-                      >
-                        <div className="font-medium text-white">{loc.name}</div>
-                        <div className="text-sm text-neutral-500">
-                          {loc.essence}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Objects */}
-              {output.assetRegistry.objects?.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-bold mb-4">Objects</h3>
-                  <div className="grid grid-cols-3 gap-4">
-                    {output.assetRegistry.objects.map((obj) => (
-                      <div
-                        key={obj.id}
-                        className="p-3 bg-neutral-800/50 border border-neutral-700 rounded-lg"
-                      >
-                        <div className="font-medium text-white text-sm">
-                          {obj.name}
-                        </div>
-                        <div className="text-xs text-neutral-500">
-                          {obj.type}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === "research" && output?.researchDossier && (
-            <div className="space-y-6">
-              {/* Facts */}
-              <div>
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                  <CheckCircle className="w-5 h-5 text-green-500" />
-                  Verified Facts ({output.researchDossier.facts?.length || 0})
-                </h3>
-                <div className="space-y-3">
-                  {output.researchDossier.facts?.map((fact) => (
-                    <div
-                      key={fact.id}
-                      className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
-                    >
-                      <div className="text-white text-sm">{fact.statement}</div>
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-400">
-                          {fact.confidence}
-                        </span>
-                        {fact.sources?.map((source, i) => (
-                          <span key={i} className="text-xs text-neutral-500">
-                            {source.title}
-                          </span>
-                        ))}
-                      </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </div>
+                )}
 
-              {/* Quotes */}
-              {output.researchDossier.quotes?.length > 0 && (
+                {/* Locations */}
+                {output.assetRegistry.locations?.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                      <MapPin className="w-5 h-5 text-blue-500" />
+                      Locations
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      {output.assetRegistry.locations.map((loc) => (
+                        <div
+                          key={loc.id}
+                          className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
+                        >
+                          <div className="font-medium text-white">
+                            {loc.name}
+                          </div>
+                          <div className="text-sm text-neutral-500">
+                            {loc.essence}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Objects */}
+                {output.assetRegistry.objects?.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-bold mb-4">Objects</h3>
+                    <div className="grid grid-cols-3 gap-4">
+                      {output.assetRegistry.objects.map((obj) => (
+                        <div
+                          key={obj.id}
+                          className="p-3 bg-neutral-800/50 border border-neutral-700 rounded-lg"
+                        >
+                          <div className="font-medium text-white text-sm">
+                            {obj.name}
+                          </div>
+                          <div className="text-xs text-neutral-500">
+                            {obj.type}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === "research" && output?.researchDossier && (
+              <div className="space-y-6">
+                {/* Facts */}
                 <div>
-                  <h3 className="text-lg font-bold mb-4">Quotes</h3>
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-500" />
+                    Verified Facts ({output.researchDossier.facts?.length || 0})
+                  </h3>
                   <div className="space-y-3">
-                    {output.researchDossier.quotes?.map((quote) => (
+                    {output.researchDossier.facts?.map((fact) => (
                       <div
-                        key={quote.id}
+                        key={fact.id}
                         className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
                       >
-                        <div className="text-white text-sm italic">
-                          "{quote.quote}"
+                        <div className="text-white text-sm">
+                          {fact.statement}
                         </div>
-                        <div className="text-xs text-neutral-500 mt-2">
-                          — {quote.speaker}
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-400">
+                            {fact.confidence}
+                          </span>
+                          {fact.sources?.map((source, i) => (
+                            <span key={i} className="text-xs text-neutral-500">
+                              {source.title}
+                            </span>
+                          ))}
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
-              )}
-            </div>
-          )}
+
+                {/* Quotes */}
+                {output.researchDossier.quotes?.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-bold mb-4">Quotes</h3>
+                    <div className="space-y-3">
+                      {output.researchDossier.quotes?.map((quote) => (
+                        <div
+                          key={quote.id}
+                          className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
+                        >
+                          <div className="text-white text-sm italic">
+                            "{quote.quote}"
+                          </div>
+                          <div className="text-xs text-neutral-500 mt-2">
+                            — {quote.speaker}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -1088,20 +1133,17 @@ function EditableBeatCard({
         className="flex items-center gap-3 p-4 cursor-pointer hover:bg-neutral-800/50 transition-colors"
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        <div className="w-8 h-8 rounded-lg bg-orange-500/20 border border-orange-500/30 flex items-center justify-center text-orange-500 font-mono text-sm font-bold">
+        <div className="w-8 h-8 rounded-lg bg-orange-500/20 border border-orange-500/30 flex items-center justify-center text-orange-500 font-mono text-sm font-bold shrink-0">
           {index + 1}
         </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-xs px-2 py-0.5 rounded bg-neutral-700 text-neutral-300 font-mono uppercase">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm px-2.5 py-1 rounded bg-orange-500/20 text-orange-400 font-bold uppercase tracking-wide">
               {beat.classification?.type || "beat"}
             </span>
-            <span className="text-xs text-neutral-500">
+            <span className="text-sm text-neutral-400 font-medium">
               {beat.classification?.section}
             </span>
-          </div>
-          <div className="text-sm text-white mt-1 line-clamp-1">
-            {beat.contentSummary}
           </div>
         </div>
         <div className="flex items-center gap-2">

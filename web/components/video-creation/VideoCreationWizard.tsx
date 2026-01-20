@@ -377,6 +377,14 @@ export function VideoCreationWizard({
                 }
               }
             }}
+            onStockMediaChange={(level) => {
+              updateState({
+                outlineConfig: {
+                  ...(state.outlineConfig || {}),
+                  stockMediaLevel: level,
+                },
+              });
+            }}
             onComplete={async (outlineOutput, config) => {
               // Save the outline and update state
               updateState({
@@ -403,7 +411,12 @@ export function VideoCreationWizard({
                 }
               }
 
-              advanceToStep(2);
+              // Check if we should skip step 2 (Stock Media)
+              if (config?.stockMediaLevel === "none") {
+                advanceToStep(3);
+              } else {
+                advanceToStep(2);
+              }
             }}
             onBack={onBack}
             {...lock}
@@ -483,7 +496,14 @@ export function VideoCreationWizard({
 
               advanceToStep(4);
             }}
-            onBack={() => goToStep(2)}
+            onBack={() => {
+              // Check if we should skip back to step 1
+              if (state.outlineConfig?.stockMediaLevel === "none") {
+                goToStep(1);
+              } else {
+                goToStep(2);
+              }
+            }}
             {...lock}
           />
         );
@@ -779,6 +799,7 @@ export function VideoCreationWizard({
   // Placeholders: Default narrow is fine, but maybe full width looks better?
   // Let's keep strict equality for now.
   const isFullWidthStep =
+    currentStep === 1 ||
     currentStep === 3 ||
     currentStep === 4 ||
     currentStep === 5 ||
@@ -795,6 +816,9 @@ export function VideoCreationWizard({
           maxStepReached={maxStepReached}
           onBack={onBack}
           onStepClick={goToStep}
+          skippedSteps={
+            state.outlineConfig?.stockMediaLevel === "none" ? [2] : []
+          }
         />
       </div>
 
