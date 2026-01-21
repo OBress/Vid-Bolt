@@ -462,98 +462,103 @@ export function VideoCreationWizard({
     setConfirmDialog({ isOpen: true, direction: "next" });
   }, [canGoNext]);
 
-  const handleConfirmNavigation = useCallback(async () => {
+  const handleConfirmNavigation = useCallback(() => {
     if (!confirmDialog) return;
+
+    // OPTIMISTIC: Close dialog immediately
+    setConfirmDialog(null);
 
     if (confirmDialog.direction === "next") {
       const nextStep = getNextStep(currentStep);
+
       if (nextStep > STEPS.length) {
-        // Final step - trigger completion
-        if (state.videoId) {
-          try {
-            await updateVideo(state.videoId, { status: "completed" });
-          } catch (err) {
-            console.error("Failed to mark video as completed:");
-          }
-        }
+        // Final step - trigger completion immediately, fire backend in background
         onComplete(state.videoId!);
+        if (state.videoId) {
+          updateVideo(state.videoId, { status: "completed" }).catch((err) =>
+            console.error("Failed to mark video as completed:", err),
+          );
+        }
       } else if (currentStep === 3 && step3Ref.current) {
-        // Trigger Step 3 completion via ref
+        // Step 3 → 4: Trigger script completion (which handles its own optimistic navigation)
         step3Ref.current.handleConfirm();
       } else if (currentStep === 4 && state.audioChunks.length > 0) {
-        // Step 4 → Step 5: Trigger AV Script Part 1 generation
+        // Step 4 → Step 5: OPTIMISTIC - Navigate immediately, start AV Script task in background
+        // The AV Script loading screen will appear because avScriptTaskId will be set
+
         if (state.videoId) {
-          try {
-            // Update stage
-            await fetch(`/api/videos/${state.videoId}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ current_stage: "shot_planning" }),
-            });
+          // Prepare data for background call
+          const wordTimestamps = state.audioChunks.flatMap(
+            (chunk: any) => chunk.wordTimestamps || chunk.word_timestamps || [],
+          );
+          const totalDuration = state.audioChunks.reduce(
+            (sum, chunk) => sum + (chunk.duration_seconds || 0),
+            0,
+          );
 
-            // Trigger AV Script Part 1 generation
-            console.log(
-              "[Wizard] Navigation arrow: Triggering AV Script Part 1...",
-            );
+          // Fire background API calls (non-blocking)
+          console.log(
+            "[Wizard] OPTIMISTIC: Navigating to Step 5, firing AV Script task in background...",
+          );
 
-            // Get word timestamps from audio chunks if available
-            // Note: Check both camelCase (from audio worker) and snake_case (legacy)
-            const wordTimestamps = state.audioChunks.flatMap(
-              (chunk: any) =>
-                chunk.wordTimestamps || chunk.word_timestamps || [],
-            );
+          // Update stage in background
+          fetch(`/api/videos/${state.videoId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ current_stage: "shot_planning" }),
+          }).catch((err) =>
+            console.error("[Wizard] Failed to update stage:", err),
+          );
 
-            // Calculate total duration
-            const totalDuration = state.audioChunks.reduce(
-              (sum, chunk) => sum + (chunk.duration_seconds || 0),
-              0,
-            );
-
-            const response = await fetch("/api/process/av-script-part1", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                videoId: state.videoId,
-                script: state.script,
-                wordTimestamps,
-                totalDurationSeconds: totalDuration,
-                outlineAssets: state.outlineOutput?.assetRegistry || null,
-              }),
-            });
-
-            const data = await response.json();
-
-            if (data.taskId) {
-              console.log(
-                "[Wizard] AV Script Part 1 task created:",
-                data.taskId,
+          // Trigger AV Script in background and update state when ready
+          fetch("/api/process/av-script-part1", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              videoId: state.videoId,
+              script: state.script,
+              wordTimestamps,
+              totalDurationSeconds: totalDuration,
+              outlineAssets: state.outlineOutput?.assetRegistry || null,
+            }),
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.taskId) {
+                console.log(
+                  "[Wizard] AV Script Part 1 task created:",
+                  data.taskId,
+                );
+                setState((prev) => ({
+                  ...prev,
+                  avScriptTaskId: data.taskId,
+                }));
+              } else {
+                console.error(
+                  "[Wizard] Failed to create AV Script task:",
+                  data,
+                );
+              }
+            })
+            .catch((err) => {
+              console.error(
+                "[Wizard] Failed to trigger AV Script Part 1:",
+                err,
               );
-              setState((prev) => ({
-                ...prev,
-                avScriptTaskId: data.taskId,
-              }));
-              // Don't advance yet - loading screen will show and advance on completion
-            } else {
-              console.error("[Wizard] Failed to create AV Script task:", data);
-              // Fallback: proceed without AV script
-              advanceToStep(5);
-            }
-          } catch (err) {
-            console.error("[Wizard] Failed to trigger AV Script Part 1:", err);
-            // Fallback: proceed without AV script
-            advanceToStep(5);
-          }
-        } else {
-          advanceToStep(5);
+            });
         }
+
+        // OPTIMISTIC: Advance to step 5 immediately
+        advanceToStep(5);
       } else {
+        // Default: advance immediately
         advanceToStep(nextStep);
       }
     } else {
+      // PREV navigation - immediate
       const prevStep = getPrevStep(currentStep);
       goToStep(prevStep);
     }
-    setConfirmDialog(null);
   }, [
     confirmDialog,
     currentStep,
@@ -562,6 +567,9 @@ export function VideoCreationWizard({
     advanceToStep,
     goToStep,
     state.videoId,
+    state.audioChunks,
+    state.script,
+    state.outlineOutput?.assetRegistry,
     updateVideo,
     onComplete,
   ]);
@@ -706,45 +714,57 @@ export function VideoCreationWizard({
               // Update wizard state so navigation button gets enabled
               updateState({ script, scriptOutput });
             }}
-            onComplete={async (script, scriptOutput) => {
-              // Save the script and update state
+            onComplete={(script, scriptOutput) => {
+              // OPTIMISTIC: Update state and navigate immediately
               updateState({
                 script,
                 scriptOutput,
               });
 
-              // Persist to database and update stage
-              if (state.videoId) {
-                try {
-                  await fetch(`/api/videos/${state.videoId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      script_content: script,
-                      current_stage: "audio",
-                      metadata: {
-                        scriptOutput,
-                      },
-                    }),
-                  });
-
-                  // Trigger audio generation workflow via resume API
-                  const response = await fetch(
-                    `/api/videos/${state.videoId}/resume`,
-                    { method: "POST" },
-                  );
-                  const data = await response.json();
-
-                  if (data.taskId) {
-                    setState((prev) => ({ ...prev, audioTaskId: data.taskId }));
-                    await new Promise((resolve) => setTimeout(resolve, 50));
-                  }
-                } catch (err) {
-                  console.error("Failed to save script or start audio:", err);
-                }
-              }
-
+              // OPTIMISTIC: Advance to Step 4 immediately
               advanceToStep(4);
+
+              // Fire API calls in background (non-blocking)
+              if (state.videoId) {
+                console.log(
+                  "[Wizard] OPTIMISTIC: Navigated to Step 4, firing backend calls in background...",
+                );
+
+                // Persist to database and trigger audio generation in background
+                fetch(`/api/videos/${state.videoId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    script_content: script,
+                    current_stage: "audio",
+                    metadata: {
+                      scriptOutput,
+                    },
+                  }),
+                })
+                  .then(() => {
+                    // Trigger audio generation workflow via resume API
+                    return fetch(`/api/videos/${state.videoId}/resume`, {
+                      method: "POST",
+                    });
+                  })
+                  .then((response) => response.json())
+                  .then((data) => {
+                    if (data.taskId) {
+                      console.log("[Wizard] Audio task created:", data.taskId);
+                      setState((prev) => ({
+                        ...prev,
+                        audioTaskId: data.taskId,
+                      }));
+                    }
+                  })
+                  .catch((err) => {
+                    console.error(
+                      "[Wizard] Failed to save script or start audio:",
+                      err,
+                    );
+                  });
+              }
             }}
             onBack={() => {
               // Check if we should skip back to step 1
