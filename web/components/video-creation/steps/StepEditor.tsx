@@ -57,21 +57,6 @@ export function StepEditor({
             {isLocked ? "Editor Locked" : "Edit your video"}
           </span>
         </div>
-
-        {isLocked ? (
-          <div className="px-4 h-8 flex items-center bg-neutral-800 border border-neutral-700 rounded text-neutral-500 font-mono text-[10px] uppercase tracking-widest pointer-events-auto">
-            {lockedMessage}
-          </div>
-        ) : (
-          <Button
-            onClick={onContinue}
-            size="sm"
-            className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white text-xs font-bold uppercase tracking-widest gap-1.5 h-8"
-          >
-            Continue to Export
-            <ArrowRight className="w-3 h-3" />
-          </Button>
-        )}
       </div>
 
       {/* Full-bleed Editor with dark theme wrapper */}

@@ -740,14 +740,6 @@ export function Step3Script({
                     </>
                   )}
                 </Button>
-                <Button
-                  onClick={onBack}
-                  variant="ghost"
-                  className="w-full text-neutral-500 hover:text-white gap-2"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  Back to Stock Media
-                </Button>
               </div>
             </Tabs>
           </div>

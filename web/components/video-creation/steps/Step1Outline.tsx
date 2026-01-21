@@ -649,33 +649,23 @@ export function Step1Outline({
                 {lockedMessage}
               </div>
             ) : (
-              <>
-                <Button
-                  onClick={onBack}
-                  variant="outline"
-                  className="flex-1 h-12 border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800 gap-2"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  Back
-                </Button>
-                <Button
-                  onClick={startGeneration}
-                  disabled={isStarting || !topic.trim()}
-                  className="flex-[2] h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest gap-2"
-                >
-                  {isStarting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Starting...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4" />
-                      Generate Outline
-                    </>
-                  )}
-                </Button>
-              </>
+              <Button
+                onClick={startGeneration}
+                disabled={isStarting || !topic.trim()}
+                className="w-full h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest gap-2"
+              >
+                {isStarting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4" />
+                    Generate Outline
+                  </>
+                )}
+              </Button>
             )}
           </div>
         </div>
@@ -924,13 +914,6 @@ export function Step1Outline({
               Save
             </Button>
           )}
-          <Button
-            onClick={handleConfirm}
-            className="w-full h-11 bg-orange-600 hover:bg-orange-500 text-white font-bold uppercase tracking-widest gap-1.5 shadow-lg shadow-orange-500/10 text-xs"
-          >
-            <Check className="w-4 h-4" />
-            Next
-          </Button>
         </div>
       </div>
 

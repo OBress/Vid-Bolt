@@ -466,23 +466,13 @@ export function StepExport({
             {lockedMessage}
           </div>
         ) : (
-          <>
-            <Button
-              onClick={onBack}
-              variant="outline"
-              className="flex-1 h-12 border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800"
-              disabled={exportStatus === "exporting"}
-            >
-              Back to Editor
-            </Button>
-            <Button
-              onClick={onClose}
-              className="flex-1 h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest"
-              disabled={exportStatus === "exporting"}
-            >
-              Done
-            </Button>
-          </>
+          <Button
+            onClick={onClose}
+            className="w-full h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest"
+            disabled={exportStatus === "exporting"}
+          >
+            Done
+          </Button>
         )}
       </div>
     </div>

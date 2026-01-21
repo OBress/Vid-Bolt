@@ -448,16 +448,6 @@ export function Step5ShotCreation({
             </div>
           </div>
         </div>
-
-        {/* Footer Actions */}
-        <div className="absolute bottom-8 right-8 z-20">
-          <Button
-            onClick={onNext}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-6 rounded-xl text-lg font-semibold shadow-2xl shadow-blue-900/40 border border-blue-500/20 hover:scale-[1.02] transition-all"
-          >
-            Generate Storyboard <ChevronRight className="w-5 h-5 ml-2" />
-          </Button>
-        </div>
       </div>
 
       {/* --- MODALS --- */}

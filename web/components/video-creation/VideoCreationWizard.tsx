@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { WizardProgress } from "./WizardProgress";
+import { StepNavigationConfirmDialog } from "./StepNavigationConfirmDialog";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { Step4UniversalScript } from "./steps/Step4UniversalScript";
 import { Step1Outline } from "./steps/Step1Outline";
 import { Step3Script } from "./steps/Step3Script";
 import { Step2Audio } from "./steps/Step2Audio";
+import { Step2StockMedia } from "./steps/Step2StockMedia";
 import { Step5ShotCreation } from "./steps/Step5ShotCreation";
 // import { StepMediaGeneration } from "./steps/StepMediaGeneration"; // Removing old Step 3
 import { Step6SceneReview } from "./steps/Step6SceneReview";
@@ -331,6 +333,137 @@ export function VideoCreationWizard({
     return { isLocked, lockedMessage };
   };
 
+  // =========================================================================
+  // STEP COMPLETION GATING
+  // =========================================================================
+  const getStepCompletionStatus = useCallback(
+    (stepId: number): boolean => {
+      switch (stepId) {
+        case 1: // Outline
+          return !!state.outlineOutput?.spine?.beats?.length;
+        case 2: // Stock Media
+          return true; // Always completable (optional step)
+        case 3: // Script
+          return !!state.scriptOutput || !!state.script;
+        case 4: // Audio
+          return state.audioChunks.length > 0;
+        case 5: // Shot Creation
+          return true; // No blocking requirements
+        case 6: // Scene Review
+          return true; // No blocking requirements
+        case 7: // Editor
+          return true; // No blocking requirements
+        case 8: // Export
+          return true; // Final step, always completable
+        default:
+          return false;
+      }
+    },
+    [state.outlineOutput, state.scriptOutput, state.script, state.audioChunks],
+  );
+
+  const canGoNext = useMemo(
+    () => getStepCompletionStatus(currentStep),
+    [currentStep, getStepCompletionStatus],
+  );
+  const canGoPrev = currentStep > 1;
+  const isFirstStep = currentStep === 1;
+  const isLastStep = currentStep === STEPS.length;
+
+  // =========================================================================
+  // CONFIRMATION DIALOG STATE
+  // =========================================================================
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    direction: "next" | "prev";
+  } | null>(null);
+
+  // Get skipped steps for navigation calculations
+  const skippedSteps = useMemo(
+    () => (state.outlineConfig?.stockMediaLevel === "none" ? [2] : []),
+    [state.outlineConfig?.stockMediaLevel],
+  );
+
+  // Calculate actual next/prev step accounting for skips
+  const getNextStep = useCallback(
+    (fromStep: number): number => {
+      let next = fromStep + 1;
+      while (skippedSteps.includes(next) && next <= STEPS.length) {
+        next++;
+      }
+      return Math.min(next, STEPS.length);
+    },
+    [skippedSteps],
+  );
+
+  const getPrevStep = useCallback(
+    (fromStep: number): number => {
+      let prev = fromStep - 1;
+      while (skippedSteps.includes(prev) && prev >= 1) {
+        prev--;
+      }
+      return Math.max(prev, 1);
+    },
+    [skippedSteps],
+  );
+
+  const handlePrevStepRequest = useCallback(() => {
+    if (!canGoPrev) return;
+    setConfirmDialog({ isOpen: true, direction: "prev" });
+  }, [canGoPrev]);
+
+  const handleNextStepRequest = useCallback(() => {
+    if (!canGoNext) return;
+    setConfirmDialog({ isOpen: true, direction: "next" });
+  }, [canGoNext]);
+
+  const handleConfirmNavigation = useCallback(async () => {
+    if (!confirmDialog) return;
+
+    if (confirmDialog.direction === "next") {
+      const nextStep = getNextStep(currentStep);
+      if (nextStep > STEPS.length) {
+        // Final step - trigger completion
+        if (state.videoId) {
+          try {
+            await updateVideo(state.videoId, { status: "completed" });
+          } catch (err) {
+            console.error("Failed to mark video as completed:");
+          }
+        }
+        onComplete(state.videoId!);
+      } else {
+        advanceToStep(nextStep);
+      }
+    } else {
+      const prevStep = getPrevStep(currentStep);
+      goToStep(prevStep);
+    }
+    setConfirmDialog(null);
+  }, [
+    confirmDialog,
+    currentStep,
+    getNextStep,
+    getPrevStep,
+    advanceToStep,
+    goToStep,
+    state.videoId,
+    updateVideo,
+    onComplete,
+  ]);
+
+  const handleCloseConfirmDialog = useCallback(() => {
+    setConfirmDialog(null);
+  }, []);
+
+  // Get step names for dialog
+  const currentStepName = STEPS.find((s) => s.id === currentStep)?.label || "";
+  const targetStepName =
+    confirmDialog?.direction === "next"
+      ? STEPS.find((s) => s.id === getNextStep(currentStep))?.label || "Next"
+      : STEPS.find((s) => s.id === getPrevStep(currentStep))?.label ||
+        "Previous";
+
   // Render the appropriate step content
   const renderStep = () => {
     const lock = getLockState(currentStep);
@@ -424,9 +557,7 @@ export function VideoCreationWizard({
         );
       case 2:
         return (
-          <PlaceholderStep
-            title="Stock Media Scraping (Optional)"
-            description="Scrapes the Stock Media. Allow media uploads and automatic labeling."
+          <Step2StockMedia
             onNext={() => advanceToStep(3)}
             onBack={() => goToStep(1)}
             {...lock}
@@ -800,6 +931,7 @@ export function VideoCreationWizard({
   // Let's keep strict equality for now.
   const isFullWidthStep =
     currentStep === 1 ||
+    currentStep === 2 ||
     currentStep === 3 ||
     currentStep === 4 ||
     currentStep === 5 ||
@@ -808,7 +940,7 @@ export function VideoCreationWizard({
 
   return (
     <div className="flex flex-col h-full w-full mx-auto">
-      {/* Progress indicator with back button */}
+      {/* Progress indicator with navigation buttons */}
       <div className="flex-shrink-0 pt-2">
         <WizardProgress
           steps={STEPS}
@@ -816,9 +948,13 @@ export function VideoCreationWizard({
           maxStepReached={maxStepReached}
           onBack={onBack}
           onStepClick={goToStep}
-          skippedSteps={
-            state.outlineConfig?.stockMediaLevel === "none" ? [2] : []
-          }
+          skippedSteps={skippedSteps}
+          onPrevStep={handlePrevStepRequest}
+          onNextStep={handleNextStepRequest}
+          canGoPrev={canGoPrev}
+          canGoNext={canGoNext}
+          isFirstStep={isFirstStep}
+          isLastStep={isLastStep}
         />
       </div>
 
@@ -841,6 +977,16 @@ export function VideoCreationWizard({
           </div>
         </div>
       )}
+
+      {/* Confirmation Dialog */}
+      <StepNavigationConfirmDialog
+        isOpen={confirmDialog?.isOpen ?? false}
+        onClose={handleCloseConfirmDialog}
+        onConfirm={handleConfirmNavigation}
+        direction={confirmDialog?.direction ?? "next"}
+        currentStepName={currentStepName}
+        targetStepName={targetStepName}
+      />
     </div>
   );
 }

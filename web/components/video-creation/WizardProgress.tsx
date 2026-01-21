@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 
 interface Step {
   id: number;
@@ -15,6 +15,13 @@ interface WizardProgressProps {
   onBack?: () => void;
   onStepClick?: (step: number) => void;
   skippedSteps?: number[];
+  // Navigation buttons
+  onPrevStep?: () => void;
+  onNextStep?: () => void;
+  canGoPrev?: boolean;
+  canGoNext?: boolean;
+  isFirstStep?: boolean;
+  isLastStep?: boolean;
 }
 
 export function WizardProgress({
@@ -24,6 +31,12 @@ export function WizardProgress({
   onBack,
   onStepClick,
   skippedSteps = [],
+  onPrevStep,
+  onNextStep,
+  canGoPrev = true,
+  canGoNext = true,
+  isFirstStep = false,
+  isLastStep = false,
 }: WizardProgressProps) {
   // Calculate specific positions for the progress line
   // We want the line to start at the center of the first step and end at the center of the last step.
@@ -33,8 +46,8 @@ export function WizardProgress({
 
   return (
     <div className="w-full flex items-center justify-between px-6 py-4">
-      {/* Left: Back Button Area (Fixed width to balance right side) */}
-      <div className="w-32 flex-shrink-0 flex justify-start z-20">
+      {/* Left: Exit Button */}
+      <div className="w-24 flex-shrink-0 flex justify-start z-20">
         {onBack && (
           <button
             onClick={onBack}
@@ -42,13 +55,13 @@ export function WizardProgress({
           >
             <ArrowLeft className="w-4 h-4 text-neutral-400 group-hover:text-orange-500 transition-colors" />
             <span className="text-xs font-mono text-neutral-400 group-hover:text-orange-500 uppercase tracking-widest transition-colors">
-              Back
+              Exit
             </span>
           </button>
         )}
       </div>
 
-      {/* Center: Progress Bar (Perfectly centered due to balanced spacers) */}
+      {/* Center: Progress Bar with inline navigation */}
       <div className="flex-1 max-w-[95%] px-4">
         <div className="relative w-full">
           {/* Background track */}
@@ -76,14 +89,14 @@ export function WizardProgress({
             />
           </div>
 
-          {/* Step indicators */}
+          {/* Step indicators with inline nav buttons */}
           <div
-            className="relative z-10 grid w-full"
+            className="relative z-10 grid w-full items-start"
             style={{
               gridTemplateColumns: `repeat(${stepCount}, minmax(0, 1fr))`,
             }}
           >
-            {steps.map((step) => {
+            {steps.map((step, index) => {
               const isReached = step.id <= maxStepReached;
               const isCompleted = currentStep > step.id && isReached;
               const isCurrent = currentStep === step.id;
@@ -91,68 +104,138 @@ export function WizardProgress({
               const isFutureReached =
                 step.id > currentStep && isReached && !isSkipped;
 
+              // Determine if prev/next buttons should appear adjacent to this step
+              const showPrevButton = isCurrent && !isFirstStep && onPrevStep;
+              const showNextButton = isCurrent && onNextStep;
+
               return (
-                <button
+                <div
                   key={step.id}
-                  onClick={() => !isSkipped && onStepClick?.(step.id)}
-                  className={`flex flex-col items-center group/step focus:outline-none ${isSkipped ? "cursor-default" : ""}`}
+                  className="flex flex-col items-center relative"
                 >
+                  {/* Prev button - Red circular, centered between current and prev step */}
+                  {showPrevButton && (
+                    <button
+                      onClick={onPrevStep}
+                      disabled={!canGoPrev}
+                      className={`absolute z-20 w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${
+                        canGoPrev
+                          ? "bg-red-600 hover:bg-red-500"
+                          : "bg-neutral-700 cursor-not-allowed opacity-50"
+                      }`}
+                      style={{
+                        left: "0",
+                        transform: "translateX(-50%)",
+                        top: "-4px",
+                        boxShadow: canGoPrev
+                          ? "0 4px 15px rgba(239, 68, 68, 0.35), 0 2px 8px rgba(0, 0, 0, 0.25)"
+                          : "0 2px 6px rgba(0, 0, 0, 0.3)",
+                      }}
+                    >
+                      <ArrowLeft
+                        className={`w-5 h-5 ${
+                          canGoPrev ? "text-white" : "text-neutral-500"
+                        }`}
+                      />
+                    </button>
+                  )}
+
                   {/* Step dot */}
-                  <div
-                    className={`
-                      w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold
-                      transition-all duration-500 ease-out z-10
-                      ${
-                        isCurrent
-                          ? "bg-orange-500 text-white ring-4 ring-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.4)] scale-110"
-                          : isCompleted
-                            ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20"
-                            : isSkipped
-                              ? "bg-neutral-800 text-neutral-600 border border-neutral-700"
-                              : isFutureReached
-                                ? "bg-neutral-950 border-2 border-orange-500/40 text-orange-500/60"
-                                : "bg-neutral-800 text-neutral-500 group-hover/step:bg-neutral-700 group-hover/step:text-neutral-300"
-                      }
-                      relative overflow-hidden
-                    `}
+                  <button
+                    onClick={() => !isSkipped && onStepClick?.(step.id)}
+                    className={`flex flex-col items-center group/step focus:outline-none ${isSkipped ? "cursor-default" : ""}`}
                   >
-                    {isSkipped && (
-                      <div className="absolute inset-0 z-20">
+                    <div
+                      className={`
+                        w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold
+                        transition-all duration-500 ease-out z-10
+                        ${
+                          isCurrent
+                            ? "bg-orange-500 text-white ring-4 ring-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.4)] scale-110"
+                            : isCompleted
+                              ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20"
+                              : isSkipped
+                                ? "bg-neutral-800 text-neutral-600 border border-neutral-700"
+                                : isFutureReached
+                                  ? "bg-neutral-950 border-2 border-orange-500/40 text-orange-500/60"
+                                  : "bg-neutral-800 text-neutral-500 group-hover/step:bg-neutral-700 group-hover/step:text-neutral-300"
+                        }
+                        relative overflow-hidden
+                      `}
+                    >
+                      {isSkipped && (
+                        <div className="absolute inset-0 z-20">
+                          <svg
+                            width="100%"
+                            height="100%"
+                            viewBox="0 0 32 32"
+                            className="text-neutral-500/50"
+                          >
+                            <line
+                              x1="0"
+                              y1="32"
+                              x2="32"
+                              y2="0"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            />
+                          </svg>
+                        </div>
+                      )}
+                      {isCompleted && !isSkipped ? (
                         <svg
-                          width="100%"
-                          height="100%"
-                          viewBox="0 0 32 32"
-                          className="text-neutral-500/50"
+                          className="w-4 h-4"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
                         >
-                          <line
-                            x1="0"
-                            y1="32"
-                            x2="32"
-                            y2="0"
-                            stroke="currentColor"
-                            strokeWidth="2"
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={3}
+                            d="M5 13l4 4L19 7"
                           />
                         </svg>
-                      </div>
-                    )}
-                    {isCompleted && !isSkipped ? (
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={3}
-                          d="M5 13l4 4L19 7"
+                      ) : (
+                        step.id
+                      )}
+                    </div>
+                  </button>
+
+                  {/* Next button - Green circular, centered between current and next step */}
+                  {showNextButton && (
+                    <button
+                      onClick={onNextStep}
+                      disabled={!canGoNext}
+                      className={`absolute z-20 w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${
+                        canGoNext
+                          ? "bg-green-600 hover:bg-green-500"
+                          : "bg-neutral-700 cursor-not-allowed opacity-50"
+                      }`}
+                      style={{
+                        left: "100%",
+                        transform: "translateX(-50%)",
+                        top: "-4px",
+                        boxShadow: canGoNext
+                          ? "0 4px 15px rgba(34, 197, 94, 0.35), 0 2px 8px rgba(0, 0, 0, 0.25)"
+                          : "0 2px 6px rgba(0, 0, 0, 0.3)",
+                      }}
+                    >
+                      {isLastStep ? (
+                        <Check
+                          className={`w-5 h-5 ${
+                            canGoNext ? "text-white" : "text-neutral-500"
+                          }`}
                         />
-                      </svg>
-                    ) : (
-                      step.id
-                    )}
-                  </div>
+                      ) : (
+                        <ArrowRight
+                          className={`w-5 h-5 ${
+                            canGoNext ? "text-white" : "text-neutral-500"
+                          }`}
+                        />
+                      )}
+                    </button>
+                  )}
 
                   {/* Step label */}
                   <span
@@ -174,7 +257,7 @@ export function WizardProgress({
                   >
                     {step.label}
                   </span>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -182,7 +265,7 @@ export function WizardProgress({
       </div>
 
       {/* Right spacer (Balances Left) */}
-      <div className="w-32 flex-shrink-0" />
+      <div className="w-24 flex-shrink-0" />
     </div>
   );
 }

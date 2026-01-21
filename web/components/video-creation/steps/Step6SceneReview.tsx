@@ -76,31 +76,6 @@ export function Step6SceneReview({
             Review and generate videos for each scene
           </p>
         </div>
-
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            onClick={onBack}
-            className="text-neutral-400 hover:text-white"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
-          </Button>
-
-          {isLocked ? (
-            <div className="px-4 py-2 bg-neutral-800 rounded text-neutral-500 text-sm">
-              {lockedMessage}
-            </div>
-          ) : (
-            <Button
-              onClick={onContinue}
-              className="bg-orange-600 hover:bg-orange-700 text-white"
-            >
-              Continue to Export
-              <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
-          )}
-        </div>
       </div>
 
       {/* Main Layout */}
