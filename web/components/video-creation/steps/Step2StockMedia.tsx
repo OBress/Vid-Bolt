@@ -37,7 +37,7 @@ interface Step2StockMediaProps {
   isLocked?: boolean;
 }
 
-type MediaCategory = "all" | "video" | "image" | "audio";
+type MediaCategory = "all" | "video" | "image" | "audio" | "uploaded";
 
 interface MediaItem {
   id: string;
@@ -236,7 +236,15 @@ export function Step2StockMedia({
   // Filter media based on active tab and search
   const filteredMedia = useMemo(() => {
     return mediaItems.filter((item) => {
-      const matchesTab = activeTab === "all" || item.type === activeTab;
+      // For "uploaded" tab, only show items with source "uploaded"
+      // For type tabs (video, image, audio), show all items of that type regardless of source
+      // For "all" tab, show everything
+      const tabFilter =
+        activeTab === "all"
+          ? true
+          : activeTab === "uploaded"
+            ? item.source === "uploaded"
+            : item.type === activeTab;
       const matchesSearch =
         searchQuery === "" ||
         item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -244,7 +252,7 @@ export function Step2StockMedia({
         item.tags.some((tag) =>
           tag.toLowerCase().includes(searchQuery.toLowerCase()),
         );
-      return matchesTab && matchesSearch;
+      return tabFilter && matchesSearch;
     });
   }, [mediaItems, activeTab, searchQuery]);
 
@@ -294,6 +302,7 @@ export function Step2StockMedia({
     video: mediaItems.filter((m) => m.type === "video").length,
     image: mediaItems.filter((m) => m.type === "image").length,
     audio: mediaItems.filter((m) => m.type === "audio").length,
+    uploaded: mediaItems.filter((m) => m.source === "uploaded").length,
   };
 
   // Get quality color
@@ -371,27 +380,24 @@ export function Step2StockMedia({
                 {stats.audioDuration}
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* Actions - in boxed section */}
-        <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl p-4 space-y-3 shrink-0">
-          <Button
-            onClick={onNext}
-            disabled={isLocked}
-            className="w-full h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest gap-2"
-          >
-            <ArrowRight className="w-4 h-4" />
-            Create Script
-          </Button>
-          <Button
-            onClick={onBack}
-            variant="ghost"
-            className="w-full text-neutral-500 hover:text-white gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </Button>
+            {/* Rating */}
+            <div className="flex-1 p-4 bg-neutral-800/50 rounded-lg flex flex-col items-center justify-center">
+              <div className="flex items-center gap-2 mb-2">
+                <Star className="w-5 h-5 text-yellow-400" />
+                <span className="text-sm text-neutral-400">Rating</span>
+              </div>
+              <div className="flex items-center gap-0.5">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <Star
+                    key={star}
+                    className="w-5 h-5 text-yellow-400 fill-yellow-400"
+                  />
+                ))}
+              </div>
+              <div className="text-xs text-neutral-500 mt-1">5.0 / 5.0</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -402,27 +408,34 @@ export function Step2StockMedia({
           <div className="flex items-center gap-4">
             {/* Category Tabs */}
             <div className="flex gap-1 bg-neutral-800/50 p-1 rounded-lg">
-              {(["all", "video", "image", "audio"] as MediaCategory[]).map(
-                (tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={cn(
-                      "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all capitalize",
-                      activeTab === tab
-                        ? "bg-neutral-700 text-white"
-                        : "text-neutral-400 hover:text-white hover:bg-neutral-700/50",
-                    )}
-                  >
-                    {tab === "video" && <Film className="w-3.5 h-3.5" />}
-                    {tab === "image" && <Image className="w-3.5 h-3.5" />}
-                    {tab === "audio" && <Music className="w-3.5 h-3.5" />}
-                    {tab === "all" && <Grid3X3 className="w-3.5 h-3.5" />}
-                    <span>{tab}</span>
-                    <span className="text-neutral-500">({counts[tab]})</span>
-                  </button>
-                ),
-              )}
+              {(
+                [
+                  "all",
+                  "video",
+                  "image",
+                  "audio",
+                  "uploaded",
+                ] as MediaCategory[]
+              ).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all capitalize",
+                    activeTab === tab
+                      ? "bg-neutral-700 text-white"
+                      : "text-neutral-400 hover:text-white hover:bg-neutral-700/50",
+                  )}
+                >
+                  {tab === "video" && <Film className="w-3.5 h-3.5" />}
+                  {tab === "image" && <Image className="w-3.5 h-3.5" />}
+                  {tab === "audio" && <Music className="w-3.5 h-3.5" />}
+                  {tab === "all" && <Grid3X3 className="w-3.5 h-3.5" />}
+                  {tab === "uploaded" && <Upload className="w-3.5 h-3.5" />}
+                  <span>{tab}</span>
+                  <span className="text-neutral-500">({counts[tab]})</span>
+                </button>
+              ))}
             </div>
 
             {/* Search + Upload */}

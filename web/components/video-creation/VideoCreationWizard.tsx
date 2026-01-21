@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { WizardProgress } from "./WizardProgress";
 import { StepNavigationConfirmDialog } from "./StepNavigationConfirmDialog";
 import { useNavigationStore } from "@/store/use-navigation-store";
@@ -40,6 +40,11 @@ export interface ShotEvent {
     | "emotional-beat";
   text: string;
   visual_prompt?: string;
+  summary?: string;
+  media_type?: "image" | "video";
+  character_refs?: string[];
+  location_refs?: string[];
+  object_refs?: string[];
 }
 
 // Type for universal script output
@@ -77,6 +82,9 @@ export interface WizardState {
   scriptConfig: any; // Store script generation configuration
   universalScriptOutput: UniversalScriptOutput | null;
   scriptOutput: any | null; // Output from script-writing worker
+  // AV Script Part 1 (Step 4→5 transition)
+  avScriptTaskId: string | null;
+  avScriptPart1Output: any | null;
   generationError?: string | null;
 }
 
@@ -178,7 +186,12 @@ export function VideoCreationWizard({
     scriptConfig: null,
     universalScriptOutput: null,
     scriptOutput: null,
+    avScriptTaskId: null,
+    avScriptPart1Output: null,
   });
+
+  // Step 3 ref for manual trigger
+  const step3Ref = useRef<any>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -238,7 +251,37 @@ export function VideoCreationWizard({
         );
 
         // Load outline data from metadata
-        const outlineOutput = (video.metadata as any)?.outlineOutput || null;
+        let outlineOutput = (video.metadata as any)?.outlineOutput || null;
+
+        // RECOVERY: If outline missing in metadata, try to recover from linked task
+        // This handles cases where metadata was inadvertently overwritten
+        if (!outlineOutput && (video as any).outline_task_id) {
+          console.log(
+            "[Wizard] Attempting to recover outline from task:",
+            (video as any).outline_task_id,
+          );
+          try {
+            const tRes = await fetch(
+              `/api/tasks/${(video as any).outline_task_id}`,
+            );
+            const tData = await tRes.json();
+            if (tRes.ok && tData.task?.output_data) {
+              outlineOutput = tData.task.output_data;
+              console.log(
+                "[Wizard] Successfully recovered outline output from task!",
+              );
+            }
+          } catch (err) {
+            console.error("[Wizard] Outline recovery failed:", err);
+          }
+        }
+        console.log(
+          "[Wizard DEBUG] Loaded outlineOutput:",
+          outlineOutput
+            ? `Present (assetRegistry keys: ${Object.keys(outlineOutput.assetRegistry || {}).join(", ")})`
+            : "NULL",
+        );
+
         const outlineConfig = (video.metadata as any)?.outlineConfig || null;
         const scriptOutput = (video.metadata as any)?.scriptOutput || null;
 
@@ -260,6 +303,8 @@ export function VideoCreationWizard({
           scriptConfig,
           universalScriptOutput,
           scriptOutput,
+          avScriptTaskId: null,
+          avScriptPart1Output: (video.metadata as any)?.av_script_part1 || null,
         });
 
         // Set the video name in the navigation store
@@ -432,6 +477,75 @@ export function VideoCreationWizard({
           }
         }
         onComplete(state.videoId!);
+      } else if (currentStep === 3 && step3Ref.current) {
+        // Trigger Step 3 completion via ref
+        step3Ref.current.handleConfirm();
+      } else if (currentStep === 4 && state.audioChunks.length > 0) {
+        // Step 4 → Step 5: Trigger AV Script Part 1 generation
+        if (state.videoId) {
+          try {
+            // Update stage
+            await fetch(`/api/videos/${state.videoId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ current_stage: "shot_planning" }),
+            });
+
+            // Trigger AV Script Part 1 generation
+            console.log(
+              "[Wizard] Navigation arrow: Triggering AV Script Part 1...",
+            );
+
+            // Get word timestamps from audio chunks if available
+            // Note: Check both camelCase (from audio worker) and snake_case (legacy)
+            const wordTimestamps = state.audioChunks.flatMap(
+              (chunk: any) =>
+                chunk.wordTimestamps || chunk.word_timestamps || [],
+            );
+
+            // Calculate total duration
+            const totalDuration = state.audioChunks.reduce(
+              (sum, chunk) => sum + (chunk.duration_seconds || 0),
+              0,
+            );
+
+            const response = await fetch("/api/process/av-script-part1", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                videoId: state.videoId,
+                script: state.script,
+                wordTimestamps,
+                totalDurationSeconds: totalDuration,
+                outlineAssets: state.outlineOutput?.assetRegistry || null,
+              }),
+            });
+
+            const data = await response.json();
+
+            if (data.taskId) {
+              console.log(
+                "[Wizard] AV Script Part 1 task created:",
+                data.taskId,
+              );
+              setState((prev) => ({
+                ...prev,
+                avScriptTaskId: data.taskId,
+              }));
+              // Don't advance yet - loading screen will show and advance on completion
+            } else {
+              console.error("[Wizard] Failed to create AV Script task:", data);
+              // Fallback: proceed without AV script
+              advanceToStep(5);
+            }
+          } catch (err) {
+            console.error("[Wizard] Failed to trigger AV Script Part 1:", err);
+            // Fallback: proceed without AV script
+            advanceToStep(5);
+          }
+        } else {
+          advanceToStep(5);
+        }
       } else {
         advanceToStep(nextStep);
       }
@@ -567,6 +681,7 @@ export function VideoCreationWizard({
       case 3: // Script Writing (uses outline from Step 1)
         return (
           <Step3Script
+            ref={step3Ref}
             videoId={state.videoId!}
             projectId={projectId}
             outlineData={state.outlineOutput}
@@ -586,6 +701,10 @@ export function VideoCreationWizard({
                   }),
                 }).catch(console.error);
               }
+            }}
+            onScriptGenerated={(script, scriptOutput) => {
+              // Update wizard state so navigation button gets enabled
+              updateState({ script, scriptOutput });
             }}
             onComplete={async (script, scriptOutput) => {
               // Save the script and update state
@@ -670,6 +789,52 @@ export function VideoCreationWizard({
           );
         }
 
+        // Check if we need to generate AV script Part 1 (loading state)
+        console.log(
+          "[Wizard] Case 4 render check: avScriptTaskId=",
+          state.avScriptTaskId,
+          "avScriptPart1Output=",
+          !!state.avScriptPart1Output,
+        );
+        if (state.avScriptTaskId && !state.avScriptPart1Output) {
+          console.log("[Wizard] SHOWING AV Script Loading Screen!");
+          // Show loading screen for AV script generation
+          return (
+            <AsyncLoadingStep
+              title="Creating Shot Breakdown"
+              subtitle="Analyzing script and generating scene structure..."
+              steps={[
+                "Analyzing content structure",
+                "Segmenting timeline",
+                "Generating shot summaries",
+                "Finalizing breakdown",
+              ]}
+              taskId={state.avScriptTaskId}
+              onComplete={async (output) => {
+                console.log("[Wizard] AV Script Part 1 complete:", output);
+                const avOutput = output as any;
+
+                // Update state with AV script output
+                updateState({
+                  avScriptPart1Output: avOutput,
+                  avScriptTaskId: null,
+                });
+
+                // Advance to Step 5
+                advanceToStep(5);
+              }}
+              onError={(error) => {
+                console.error("[Wizard] AV Script Part 1 failed:", error);
+                updateState({
+                  avScriptTaskId: null,
+                  generationError: `Shot breakdown failed: ${error}`,
+                });
+              }}
+              fallbackDuration={15000}
+            />
+          );
+        }
+
         // If we have audio chunks, show the editor/review screen
         if (state.audioChunks.length > 0) {
           return (
@@ -686,14 +851,75 @@ export function VideoCreationWizard({
                     await fetch(`/api/videos/${state.videoId}`, {
                       method: "PATCH",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ current_stage: "media" }),
+                      body: JSON.stringify({ current_stage: "shot_planning" }),
                     });
                   } catch (err) {
                     console.error("Failed to save step:", err);
                   }
+
+                  // Trigger AV Script Part 1 generation
+                  try {
+                    console.log("[Wizard] Triggering AV Script Part 1...");
+
+                    // Get word timestamps from audio chunks if available
+                    // Note: Check both camelCase (from audio worker) and snake_case (legacy)
+                    const wordTimestamps = state.audioChunks.flatMap(
+                      (chunk: any) =>
+                        chunk.wordTimestamps || chunk.word_timestamps || [],
+                    );
+
+                    // Calculate total duration
+                    const totalDuration = state.audioChunks.reduce(
+                      (sum, chunk) => sum + (chunk.duration_seconds || 0),
+                      0,
+                    );
+
+                    const response = await fetch(
+                      "/api/process/av-script-part1",
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          videoId: state.videoId,
+                          script: state.script,
+                          wordTimestamps,
+                          totalDurationSeconds: totalDuration,
+                          outlineAssets:
+                            state.outlineOutput?.assetRegistry || null,
+                        }),
+                      },
+                    );
+
+                    const data = await response.json();
+
+                    if (data.taskId) {
+                      console.log(
+                        "[Wizard] AV Script Part 1 task created:",
+                        data.taskId,
+                      );
+                      setState((prev) => ({
+                        ...prev,
+                        avScriptTaskId: data.taskId,
+                      }));
+                    } else {
+                      console.error(
+                        "[Wizard] Failed to create AV Script task:",
+                        data,
+                      );
+                      // Fallback: proceed without AV script
+                      advanceToStep(5);
+                    }
+                  } catch (err) {
+                    console.error(
+                      "[Wizard] Failed to trigger AV Script Part 1:",
+                      err,
+                    );
+                    // Fallback: proceed without AV script
+                    advanceToStep(5);
+                  }
+                } else {
+                  advanceToStep(5);
                 }
-                // Proceed to Media Generation
-                advanceToStep(5);
               }}
               onBack={() => {
                 // If they want to go back to script
@@ -805,6 +1031,12 @@ export function VideoCreationWizard({
         );
 
       case 5: // Shot Creation (was Step 6)
+        console.log(
+          "[Wizard] Rendering Step 5 with outlineAssets:",
+          state.outlineOutput?.assetRegistry
+            ? `Present (characters: ${state.outlineOutput.assetRegistry.characters?.length || 0}, locations: ${state.outlineOutput.assetRegistry.locations?.length || 0})`
+            : "NULL - will show mock data",
+        );
         return (
           <Step5ShotCreation
             onNext={async () => {
@@ -822,6 +1054,8 @@ export function VideoCreationWizard({
               advanceToStep(6);
             }}
             onBack={() => goToStep(4)}
+            outlineAssets={state.outlineOutput?.assetRegistry}
+            avScriptShots={state.avScriptPart1Output?.shots}
             {...lock}
           />
         );

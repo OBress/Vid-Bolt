@@ -34,87 +34,110 @@ interface Step5ShotCreationProps {
   onNext: () => void;
   onBack: () => void;
   isLocked?: boolean;
+  outlineAssets?: {
+    characters?: Array<{
+      id: string;
+      name: string;
+      role: string;
+      physicalCharacteristics?: any;
+    }>;
+    locations?: Array<{ id: string; name: string; essence: string }>;
+    objects?: Array<{
+      id: string;
+      name: string;
+      type: string;
+      physicalDescription?: any;
+    }>;
+  };
+  avScriptShots?: Array<{
+    segment_index: number;
+    start_seconds: number;
+    end_seconds: number;
+    duration_seconds: number;
+    content_type: string;
+    media_type?: "image" | "video";
+    text: string;
+    summary?: string;
+    character_refs?: string[];
+    location_refs?: string[];
+    object_refs?: string[];
+  }>;
 }
 
 type ElementType = "all" | "character" | "object" | "location" | "stock";
 
 interface ElementItem {
-  id: number;
+  id: string;
   type: ElementType;
   name: string;
-  image: string | null;
+  image: string | null; // null = placeholder
   prompt?: string;
+  originalId?: string; // Reference to outline asset ID
 }
 
 export function Step5ShotCreation({
   onNext,
   onBack,
   isLocked = false,
+  outlineAssets,
+  avScriptShots,
 }: Step5ShotCreationProps) {
   const [activeTab, setActiveTab] = useState<ElementType>("all");
 
-  // State for elements
-  const [elements, setElements] = useState<ElementItem[]>([
-    {
-      id: 1,
-      type: "character",
-      name: "Isabella Moretti",
-      image:
-        "https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=300&auto=format&fit=crop",
-      prompt:
-        "A portrait of Isabella Moretti, warm lighting, detailed features",
-    },
-    {
-      id: 2,
-      type: "object",
-      name: "Watch",
-      image: null,
-      prompt: "A vintage gold watch",
-    },
-    {
-      id: 3,
-      type: "location",
-      name: "Villa Archway",
-      image:
-        "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?q=80&w=300&auto=format&fit=crop",
-      prompt: "An ancient roman villa archway, sunny day",
-    },
-    {
-      id: 4,
-      type: "location",
-      name: "Villa Threshold",
-      image:
-        "https://images.unsplash.com/photo-1528642474498-1af0c17fd8c3?q=80&w=300&auto=format&fit=crop",
-      prompt: "Stone threshold of a mediterranean villa",
-    },
-    {
-      id: 5,
-      type: "character",
-      name: "Marcus (Test)",
-      image:
-        "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?q=80&w=300&auto=format&fit=crop",
-      prompt: "Marcus, a middle aged man with a beard, serious expression",
-    },
-    {
-      id: 6,
-      type: "location",
-      name: "Garden",
-      image:
-        "https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?q=80&w=300&auto=format&fit=crop",
-      prompt: "Lush green garden with blooming flowers",
-    },
-    {
-      id: 7,
-      type: "stock",
-      name: "Italian Vineyard",
-      image:
-        "https://images.unsplash.com/photo-1506306449619-735a22543c8d?q=80&w=300&auto=format&fit=crop",
-      prompt: "Aerial view of an italian vineyard at sunset",
-    },
-  ]);
+  // Convert outline assets to element format, or use mock data as fallback
+  const [elements, setElements] = useState<ElementItem[]>(() => {
+    if (outlineAssets) {
+      const converted: ElementItem[] = [];
+      let idCounter = 1;
+
+      // Add characters
+      (outlineAssets.characters || []).forEach((char) => {
+        converted.push({
+          id: String(idCounter++),
+          type: "character",
+          name: char.name,
+          image: null, // Placeholder - no generated image yet
+          prompt: char.role,
+          originalId: char.id,
+        });
+      });
+
+      // Add locations
+      (outlineAssets.locations || []).forEach((loc) => {
+        converted.push({
+          id: String(idCounter++),
+          type: "location",
+          name: loc.name,
+          image: null, // Placeholder - no generated image yet
+          prompt: loc.essence,
+          originalId: loc.id,
+        });
+      });
+
+      // Add objects
+      (outlineAssets.objects || []).forEach((obj) => {
+        converted.push({
+          id: String(idCounter++),
+          type: "object",
+          name: obj.name,
+          image: null, // Placeholder - no generated image yet
+          prompt: obj.type,
+          originalId: obj.id,
+        });
+      });
+
+      return converted;
+    }
+    // No outline assets available - return empty array instead of misleading mock data
+    // User needs to go back to Step 1 to regenerate outline
+    return [];
+  });
+
+  // Check if we have missing elements (outline was lost)
+  const hasNoElements = elements.length === 0 && !outlineAssets;
 
   // Delete State
-  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   // Edit State
   const [editingElement, setEditingElement] = useState<ElementItem | null>(
@@ -132,7 +155,7 @@ export function Step5ShotCreation({
 
   // --- Handlers ---
 
-  const handleDeleteClick = (id: number) => {
+  const handleDeleteClick = (id: string) => {
     setDeleteId(id);
   };
 
@@ -342,7 +365,17 @@ export function Step5ShotCreation({
             </div>
             <div className="flex items-center gap-2">
               <div className="text-xs text-neutral-500 font-medium px-3 py-1 bg-neutral-900 rounded-full border border-neutral-800">
-                Total Duration: <span className="text-neutral-300">0:21</span>
+                Total Duration:{" "}
+                <span className="text-neutral-300">
+                  {avScriptShots && avScriptShots.length > 0
+                    ? formatDuration(
+                        avScriptShots.reduce(
+                          (sum, s) => sum + s.duration_seconds,
+                          0,
+                        ),
+                      )
+                    : "0:00"}
+                </span>
               </div>
             </div>
           </div>
@@ -351,101 +384,95 @@ export function Step5ShotCreation({
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-6 pt-6">
           <div className="max-w-4xl mx-auto space-y-6 pb-24">
-            {/* Scene 1 */}
-            <div className="border border-neutral-800 rounded-xl bg-neutral-900/20 overflow-hidden shadow-sm">
-              <div className="flex items-center justify-between p-4 bg-neutral-900/50 cursor-pointer hover:bg-neutral-800/50 transition-colors border-b border-neutral-800/50">
-                <div className="flex items-center gap-3">
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-                  <h3 className="font-semibold text-lg text-neutral-200">
-                    Commanding the Courtyard
-                  </h3>
-                </div>
-                <ChevronDown className="w-5 h-5 text-neutral-500" />
-              </div>
-
-              {/* Shots List */}
-              <div className="p-1 space-y-[1px] bg-neutral-900/30">
-                {/* Shot 1 */}
-                <div className="flex gap-4 p-4 bg-neutral-950 hover:bg-neutral-900/80 transition-colors group relative border-b border-neutral-800/50 last:border-0">
-                  <div className="absolute left-0 top-0 bottom-0 w-1 bg-transparent group-hover:bg-blue-500/50 transition-colors"></div>
-                  <div className="flex flex-col items-center pt-1 gap-2 min-w-[60px]">
-                    <span className="text-[10px] font-bold text-neutral-600 bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800 group-hover:border-neutral-700 transition-colors">
-                      SHOT 1
-                    </span>
-                    <MoreHorizontal className="w-4 h-4 text-neutral-700 group-hover:text-neutral-500 cursor-grab active:cursor-grabbing" />
+            {/* Dynamic shots from avScriptShots */}
+            {avScriptShots && avScriptShots.length > 0 ? (
+              <div className="border border-neutral-800 rounded-xl bg-neutral-900/20 overflow-hidden shadow-sm">
+                <div className="flex items-center justify-between p-4 bg-neutral-900/50 cursor-pointer hover:bg-neutral-800/50 transition-colors border-b border-neutral-800/50">
+                  <div className="flex items-center gap-3">
+                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+                    <h3 className="font-semibold text-lg text-neutral-200">
+                      All Shots ({avScriptShots.length})
+                    </h3>
                   </div>
-
-                  <div className="flex-1">
-                    <div className="text-sm text-neutral-300 leading-7 font-light">
-                      <span className="inline-flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 px-2 py-0.5 rounded-full text-xs text-blue-200 font-medium mx-1 align-middle">
-                        <User className="w-3 h-3" /> Isabella Moretti
-                      </span>
-                      standing poised in the
-                      <span className="inline-flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 px-2 py-0.5 rounded-full text-xs text-emerald-200 font-medium mx-1 align-middle">
-                        <MapPin className="w-3 h-3" /> Villa Courtyard
-                      </span>
-                      during the golden hour, her deep emerald green velvet slip
-                      dress reflecting the warm sunlight; lush green ivy climbs
-                      the ochre-colored stucco walls.
-                    </div>
-                    <div className="mt-3 flex items-center gap-2">
-                      <span className="text-[10px] font-medium text-neutral-500 bg-neutral-900 px-2 py-1 rounded">
-                        Medium shot
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Shot Thumbnail Mock */}
-                  <div className="w-24 aspect-video bg-neutral-900 rounded border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center shrink-0">
-                    <Smartphone className="w-4 h-4 text-neutral-700" />
-                  </div>
+                  <ChevronDown className="w-5 h-5 text-neutral-500" />
                 </div>
 
-                {/* Shot 2 */}
-                <div className="flex gap-4 p-4 bg-neutral-950 hover:bg-neutral-900/80 transition-colors group relative">
-                  <div className="absolute left-0 top-0 bottom-0 w-1 bg-transparent group-hover:bg-blue-500/50 transition-colors"></div>
-                  <div className="flex flex-col items-center pt-1 gap-2 min-w-[60px]">
-                    <span className="text-[10px] font-bold text-neutral-600 bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800 group-hover:border-neutral-700 transition-colors">
-                      SHOT 2
-                    </span>
-                    <MoreHorizontal className="w-4 h-4 text-neutral-700 group-hover:text-neutral-500 cursor-grab active:cursor-grabbing" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm text-neutral-300 leading-7 font-light">
-                      Close-up of
-                      <span className="inline-flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 px-2 py-0.5 rounded-full text-xs text-blue-200 font-medium mx-1 align-middle">
-                        <User className="w-3 h-3" /> Isabella Moretti
-                      </span>
-                      &apos;s face as she gazes confidently into the distance,
-                      her long dark wavy hair framing her oval face.
-                    </div>
-                    <div className="mt-3 flex items-center gap-2">
-                      <span className="text-[10px] font-medium text-neutral-500 bg-neutral-900 px-2 py-1 rounded">
-                        Close-up
-                      </span>
-                    </div>
-                  </div>
+                {/* Shots List */}
+                <div className="p-1 space-y-[1px] bg-neutral-900/30">
+                  {avScriptShots.map((shot, index) => (
+                    <div
+                      key={shot.segment_index}
+                      className="flex gap-4 p-4 bg-neutral-950 hover:bg-neutral-900/80 transition-colors group relative border-b border-neutral-800/50 last:border-0"
+                    >
+                      <div className="absolute left-0 top-0 bottom-0 w-1 bg-transparent group-hover:bg-blue-500/50 transition-colors"></div>
+                      <div className="flex flex-col items-center pt-1 gap-2 min-w-[60px]">
+                        <span className="text-[10px] font-bold text-neutral-600 bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800 group-hover:border-neutral-700 transition-colors">
+                          SHOT {shot.segment_index + 1}
+                        </span>
+                        <MoreHorizontal className="w-4 h-4 text-neutral-700 group-hover:text-neutral-500 cursor-grab active:cursor-grabbing" />
+                      </div>
 
-                  {/* Shot Thumbnail Mock */}
-                  <div className="w-24 aspect-video bg-neutral-900 rounded border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center shrink-0">
-                    <User className="w-4 h-4 text-neutral-700" />
-                  </div>
+                      <div className="flex-1">
+                        <div className="text-sm text-neutral-300 leading-7 font-light">
+                          {shot.summary ||
+                            shot.text.substring(0, 150) +
+                              (shot.text.length > 150 ? "..." : "")}
+                        </div>
+                        <div className="mt-3 flex items-center gap-2 flex-wrap">
+                          <span
+                            className={cn(
+                              "text-[10px] font-medium px-2 py-1 rounded",
+                              shot.content_type === "concept"
+                                ? "bg-purple-900/50 text-purple-300"
+                                : shot.content_type === "list-item"
+                                  ? "bg-blue-900/50 text-blue-300"
+                                  : shot.content_type === "comparison"
+                                    ? "bg-amber-900/50 text-amber-300"
+                                    : shot.content_type === "transition"
+                                      ? "bg-neutral-800 text-neutral-400"
+                                      : shot.content_type === "emotional-beat"
+                                        ? "bg-rose-900/50 text-rose-300"
+                                        : "bg-neutral-900 text-neutral-500",
+                            )}
+                          >
+                            {shot.content_type}
+                          </span>
+                          <span className="text-[10px] text-neutral-600">
+                            {shot.duration_seconds.toFixed(1)}s
+                          </span>
+                          {shot.media_type === "video" && (
+                            <span className="text-[10px] font-medium bg-emerald-900/50 text-emerald-300 px-2 py-1 rounded">
+                              <Film className="w-3 h-3 inline mr-1" />
+                              Video
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Shot Thumbnail Placeholder */}
+                      <div className="w-24 aspect-video bg-neutral-900 rounded border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center shrink-0">
+                        {shot.media_type === "video" ? (
+                          <Film className="w-4 h-4 text-neutral-700" />
+                        ) : (
+                          <Smartphone className="w-4 h-4 text-neutral-700" />
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
-
-            {/* Scene 2 (Collapsed) */}
-            <div className="border border-neutral-800 rounded-xl bg-neutral-900/20 overflow-hidden shadow-sm opacity-70 hover:opacity-100 transition-opacity">
-              <div className="flex items-center justify-between p-4 bg-neutral-900/50 cursor-pointer hover:bg-neutral-800/50 transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-1.5 h-1.5 rounded-full bg-neutral-600"></div>
-                  <h3 className="font-semibold text-lg text-neutral-400">
-                    Reclining in Niche
-                  </h3>
-                </div>
-                <ChevronDown className="w-5 h-5 text-neutral-600 transform rotate-[-90deg]" />
+            ) : (
+              /* Fallback empty state */
+              <div className="border border-dashed border-neutral-700 rounded-xl p-8 text-center">
+                <Grid className="w-8 h-8 text-neutral-600 mx-auto mb-3" />
+                <h3 className="text-neutral-400 font-medium mb-1">
+                  No shots available
+                </h3>
+                <p className="text-neutral-600 text-sm">
+                  Shot breakdown will appear here after generation
+                </p>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
@@ -610,4 +637,11 @@ export function Step5ShotCreation({
       </Dialog>
     </div>
   );
+}
+
+// Helper to format seconds as mm:ss
+function formatDuration(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
 }

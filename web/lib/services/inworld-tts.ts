@@ -27,7 +27,7 @@ export interface TTSResult {
 }
 
 const DEFAULT_OPTIONS: Required<TTSOptions> = {
-  modelId: "inworld-tts-1-max",
+  modelId: "inworld-tts-1.5-max",
   voiceId: "Hades",
   speakingRate: 1.0,
   temperature: 1.0,
@@ -177,8 +177,8 @@ export async function listVoices(userId: string): Promise<InworldVoice[]> {
 }
 
 export const INWORLD_MODELS = {
-  STANDARD: "inworld-tts-1",
-  MAX: "inworld-tts-1-max",
+  STANDARD: "inworld-tts-1.5-max-mini",
+  MAX: "inworld-tts-1.5-max",
 } as const;
 
 export type InworldModel = typeof INWORLD_MODELS[keyof typeof INWORLD_MODELS];

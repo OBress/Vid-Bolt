@@ -141,11 +141,36 @@ export async function PATCH(
 
     const supabase = getServiceClient();
 
+    // If metadata is being updated, we need to merge it carefully
+    // to avoid overwriting existing metadata fields (like audio_chunks wiping outlineOutput)
+    let updateBody = { ...body };
+    
+    if (body.metadata) {
+      // Fetch current metadata first
+      const { data: currentVideo, error: fetchError } = await supabase
+        .from("video_projects")
+        .select("metadata")
+        .eq("id", videoId)
+        .eq("user_id", user.id)
+        .single();
+        
+      if (!fetchError && currentVideo) {
+        const currentMetadata = (currentVideo.metadata as any) || {};
+        updateBody.metadata = {
+          ...currentMetadata,
+          ...body.metadata,
+        };
+        console.log("[API] Merging metadata for video", videoId);
+        console.log("[API] Old keys:", Object.keys(currentMetadata));
+        console.log("[API] New/Updated keys:", Object.keys(body.metadata || {}));
+      }
+    }
+
     // Update video (RLS will ensure user owns it)
     const { data: video, error } = await supabase
       .from("video_projects")
       .update({
-        ...body,
+        ...updateBody,
         updated_at: new Date().toISOString(),
       })
       .eq("id", videoId)

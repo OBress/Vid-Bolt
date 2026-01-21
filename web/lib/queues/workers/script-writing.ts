@@ -292,7 +292,7 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
           scriptOutput: output,
           universalScriptOutput: fullOutput, // For backward compatibility
         },
-        current_stage: 'audio', // Advance to Step 4
+        // Note: current_stage is NOT updated here - it's updated in the wizard when user navigates
       })
       .eq('id', videoId);
 
