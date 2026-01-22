@@ -54,6 +54,36 @@ export interface ShotEvent {
   visual_prompt?: string;
 }
 
+/**
+ * Generated media item for a shot (Step 6: Scene Review)
+ * Tracks the generation status and result for each shot's visual media
+ */
+export interface GeneratedMedia {
+  /** Links to ShotPart1.segment_index */
+  shot_index: number;
+  /** Type of media to generate */
+  media_type: 'image' | 'video' | 'motiongraphic';
+  /** Current generation status */
+  generation_status: 'pending' | 'generating' | 'completed' | 'failed';
+  /** R2 URL for the generated media */
+  media_url?: string;
+  /** Thumbnail URL for video/motion content */
+  thumbnail_url?: string;
+  /** The visual prompt used for generation */
+  visual_prompt: string;
+  /** Parameters used for generation (future expansion) */
+  generation_params?: {
+    model?: string;
+    style?: string;
+    seed?: number;
+  };
+  /** Error message if generation failed */
+  error_message?: string;
+  /** Timestamps */
+  created_at?: string;
+  updated_at?: string;
+}
+
 // ============================================================================
 // MAIN VIDEO PROJECT TYPE
 // ============================================================================

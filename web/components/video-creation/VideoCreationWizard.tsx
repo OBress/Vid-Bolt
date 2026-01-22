@@ -17,7 +17,7 @@ import { PlaceholderStep } from "./steps/PlaceholderStep";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
 import { useVideos } from "@/hooks/use-videos";
 import { Loader2 } from "lucide-react";
-import type { VideoStage, VideoProject } from "@/types/video";
+import type { VideoStage, VideoProject, GeneratedMedia } from "@/types/video";
 
 export interface AudioChunk {
   chapterNumber: number;
@@ -86,6 +86,11 @@ export interface WizardState {
   avScriptPart1Output: any | null;
   isAvScriptLoading: boolean; // Flag to show loading immediately
   isAudioLoading: boolean; // Flag to show audio loading immediately (Step 3→4)
+  // AV Script Part 2 + Media Generation (Step 5→6 transition)
+  avScriptPart2TaskId: string | null;
+  isMediaGenerating: boolean; // Flag to show media gen loading immediately
+  // Step 6: Scene Review - generated media
+  generatedMedia: GeneratedMedia[];
   generationError?: string | null;
 }
 
@@ -191,6 +196,9 @@ export function VideoCreationWizard({
     avScriptPart1Output: null,
     isAvScriptLoading: false,
     isAudioLoading: false,
+    avScriptPart2TaskId: null,
+    isMediaGenerating: false,
+    generatedMedia: [],
   });
 
   // Step 3 ref for manual trigger
@@ -310,6 +318,9 @@ export function VideoCreationWizard({
           avScriptPart1Output: (video.metadata as any)?.av_script_part1 || null,
           isAvScriptLoading: false,
           isAudioLoading: false,
+          avScriptPart2TaskId: null,
+          isMediaGenerating: false,
+          generatedMedia: (video.metadata as any)?.generatedMedia || [],
         });
 
         // Set the video name in the navigation store
@@ -639,6 +650,81 @@ export function VideoCreationWizard({
 
         // OPTIMISTIC: Advance to step 5 immediately
         advanceToStep(5);
+      } else if (
+        currentStep === 5 &&
+        state.avScriptPart1Output?.shots?.length > 0
+      ) {
+        // Step 5 → Step 6: OPTIMISTIC - Navigate immediately, start media generation in background
+        // The media generation loading screen will appear because isMediaGenerating will be set
+
+        if (state.videoId) {
+          console.log(
+            "[Wizard] OPTIMISTIC: Navigating to Step 6, firing AV Script Part 2 in background...",
+          );
+
+          // Set loading flag IMMEDIATELY so Step 6 shows loading screen
+          setState((prev) => ({
+            ...prev,
+            isMediaGenerating: true,
+          }));
+
+          // Update stage in background
+          fetch(`/api/videos/${state.videoId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ current_stage: "shot_creation" }),
+          }).catch((err) =>
+            console.error("[Wizard] Failed to update stage:", err),
+          );
+
+          // Trigger AV Script Part 2 (visual prompts + placeholder media) in background
+          fetch("/api/process/av-script-part2", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              videoId: state.videoId,
+              shots: state.avScriptPart1Output.shots,
+              outlineAssets: state.outlineOutput?.assetRegistry || null,
+            }),
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.taskId) {
+                console.log(
+                  "[Wizard] AV Script Part 2 task created:",
+                  data.taskId,
+                );
+                setState((prev) => ({
+                  ...prev,
+                  avScriptPart2TaskId: data.taskId,
+                }));
+              } else {
+                console.error(
+                  "[Wizard] Failed to create AV Script Part 2 task:",
+                  data,
+                );
+                // Clear loading on failure
+                setState((prev) => ({
+                  ...prev,
+                  isMediaGenerating: false,
+                }));
+              }
+            })
+            .catch((err) => {
+              console.error(
+                "[Wizard] Failed to trigger AV Script Part 2:",
+                err,
+              );
+              // Clear loading on error
+              setState((prev) => ({
+                ...prev,
+                isMediaGenerating: false,
+              }));
+            });
+        }
+
+        // OPTIMISTIC: Advance to step 6 immediately
+        advanceToStep(6);
       } else {
         // Default: advance immediately
         advanceToStep(nextStep);
@@ -1223,10 +1309,81 @@ export function VideoCreationWizard({
         );
 
       case 6: // Scene Review (was Step 7)
+        // Show loading screen while media is being generated
+        if (
+          (state.isMediaGenerating || state.avScriptPart2TaskId) &&
+          (!state.generatedMedia || state.generatedMedia.length === 0)
+        ) {
+          console.log(
+            "[Wizard] Step 6: Showing media generation loading screen",
+          );
+          return (
+            <AsyncLoadingStep
+              title="Generating Scene Media"
+              subtitle="Creating visuals for each shot..."
+              steps={[
+                "Generating visual prompts",
+                "Processing images",
+                "Processing videos",
+                "Finalizing media",
+              ]}
+              taskId={state.avScriptPart2TaskId}
+              onComplete={async (output) => {
+                console.log("[Wizard] AV Script Part 2 complete:", output);
+                const mediaOutput = output as any;
+
+                // Extract generated media from output
+                const generatedMedia = mediaOutput?.generatedMedia || [];
+
+                // Update state with generated media and clear loading flags
+                updateState({
+                  generatedMedia,
+                  avScriptPart2TaskId: null,
+                  isMediaGenerating: false,
+                });
+              }}
+              onError={(error) => {
+                console.error("[Wizard] AV Script Part 2 failed:", error);
+                updateState({
+                  avScriptPart2TaskId: null,
+                  isMediaGenerating: false,
+                  generationError: `Media generation failed: ${error}`,
+                });
+              }}
+              fallbackDuration={20000}
+            />
+          );
+        }
+
         return (
           <Step6SceneReview
             videoId={state.videoId!}
             projectId={projectId}
+            shots={state.avScriptPart1Output?.shots || []}
+            outlineAssets={state.outlineOutput?.assetRegistry}
+            generatedMedia={state.generatedMedia}
+            onUpdateMedia={async (media) => {
+              console.log("[Wizard] Updating generated media:", media.length);
+              updateState({ generatedMedia: media });
+
+              // Persist to database
+              if (state.videoId) {
+                try {
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      metadata: {
+                        generatedMedia: media,
+                      },
+                    }),
+                  });
+                  console.log("[Wizard] Persisted generated media to DB");
+                } catch (err) {
+                  console.error("Failed to save generated media:", err);
+                }
+              }
+            }}
             onContinue={async () => {
               if (state.videoId) {
                 try {

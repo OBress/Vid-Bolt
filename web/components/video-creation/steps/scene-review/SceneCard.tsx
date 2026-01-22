@@ -1,93 +1,246 @@
+"use client";
+
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { GripVertical, Sparkles, Video } from "lucide-react";
+import {
+  GripVertical,
+  Sparkles,
+  Play,
+  Image,
+  Film,
+  Layers,
+  Loader2,
+  AlertCircle,
+  Clock,
+  Edit2,
+  CheckCircle2,
+} from "lucide-react";
+import type { GeneratedMedia } from "@/types/video";
+
+// Shot data type (from av-script worker)
+interface ShotData {
+  segment_index: number;
+  start_seconds: number;
+  end_seconds: number;
+  duration_seconds: number;
+  content_type: string;
+  media_type?: "image" | "video" | "motiongraphic";
+  text: string;
+  summary?: string;
+}
+
+// Content type colors
+const CONTENT_TYPE_COLORS: Record<string, string> = {
+  concept: "bg-purple-900/50 text-purple-300 border-purple-700/50",
+  "list-item": "bg-blue-900/50 text-blue-300 border-blue-700/50",
+  comparison: "bg-amber-900/50 text-amber-300 border-amber-700/50",
+  transition: "bg-neutral-800 text-neutral-400 border-neutral-700",
+  "emotional-beat": "bg-rose-900/50 text-rose-300 border-rose-700/50",
+};
+
+// Placeholder gradients by media type
+const PLACEHOLDER_GRADIENTS: Record<string, string> = {
+  image: "from-sky-900/40 to-sky-800/20",
+  video: "from-emerald-900/40 to-emerald-800/20",
+  motiongraphic: "from-indigo-900/40 to-indigo-800/20",
+};
 
 interface SceneCardProps {
-  sceneNumber: number;
-  imageUrl?: string;
-  description: string;
+  shot: ShotData;
+  media?: GeneratedMedia;
   isSelected?: boolean;
+  hasPendingChanges?: boolean;
   onSelect?: () => void;
-  onEditImage?: () => void;
-  onGenerateVideo?: () => void;
+  onEdit?: () => void;
+  onGenerate?: () => void;
 }
 
 export function SceneCard({
-  sceneNumber,
-  imageUrl,
-  description,
+  shot,
+  media,
   isSelected,
+  hasPendingChanges = false,
   onSelect,
-  onEditImage,
-  onGenerateVideo,
+  onEdit,
+  onGenerate,
 }: SceneCardProps) {
+  const mediaType = media?.media_type || shot.media_type || "image";
+  const status = media?.generation_status || "pending";
+  const hasMedia = !!media?.media_url;
+
+  // Format duration as m:ss
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return mins > 0
+      ? `${mins}:${secs.toString().padStart(2, "0")}`
+      : `${secs}s`;
+  };
+
   return (
     <div
       onClick={onSelect}
       className={cn(
-        "flex-shrink-0 w-[400px] bg-neutral-900/50 border rounded-xl overflow-hidden transition-all duration-200 cursor-pointer group",
+        "flex-shrink-0 w-[340px] bg-neutral-900/50 border rounded-xl overflow-hidden transition-all duration-200 cursor-pointer group",
         isSelected
           ? "border-orange-500/50 ring-1 ring-orange-500/50"
-          : "border-neutral-800 hover:border-neutral-700",
+          : hasPendingChanges
+            ? "border-amber-500/50 ring-1 ring-amber-500/30"
+            : "border-neutral-800 hover:border-neutral-700",
       )}
     >
       {/* Header */}
-      <div className="px-4 py-3 flex items-center gap-2 border-b border-white/5">
+      <div className="px-4 py-3 flex items-center gap-2 border-b border-white/5 bg-neutral-900/30">
         <GripVertical className="w-4 h-4 text-neutral-600" />
         <span className="text-sm font-medium text-neutral-300">
-          Scene {sceneNumber}
+          Shot {shot.segment_index + 1}
         </span>
-      </div>
 
-      {/* Image Area */}
-      <div className="relative aspect-video w-full bg-black/40 group-hover:bg-black/60 transition-colors">
-        {imageUrl ? (
-          <img
-            src={imageUrl}
-            alt={`Scene ${sceneNumber}`}
-            className="absolute inset-0 w-full h-full object-cover"
-          />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-neutral-700 font-mono text-xs">
-              NO IMAGE GENERATED
-            </div>
-          </div>
+        {/* Duration badge */}
+        <div className="ml-auto flex items-center gap-1.5 text-neutral-500">
+          <Clock className="w-3 h-3" />
+          <span className="text-xs font-mono">
+            {formatDuration(shot.duration_seconds)}
+          </span>
+        </div>
+
+        {/* Status indicator */}
+        {status === "completed" && hasMedia && (
+          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+        )}
+        {status === "generating" && (
+          <Loader2 className="w-4 h-4 text-orange-500 animate-spin" />
+        )}
+        {status === "failed" && (
+          <AlertCircle className="w-4 h-4 text-red-500" />
+        )}
+        {hasPendingChanges && (
+          <span className="text-[9px] font-bold text-amber-400 bg-amber-900/30 px-1.5 py-0.5 rounded">
+            EDITED
+          </span>
         )}
       </div>
 
-      {/* Actions Toolbar */}
-      <div className="flex items-center gap-2 p-3 border-b border-white/5 bg-black/20">
-        <Button
-          size="sm"
-          variant="secondary"
-          className="h-8 text-xs gap-1.5 bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 hover:text-blue-300 border border-blue-500/20"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEditImage?.();
-          }}
-        >
-          <Sparkles className="w-3 h-3" />
-          Edit Image
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          className="h-8 text-xs gap-1.5 bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-300 border border-white/5"
-          onClick={(e) => {
-            e.stopPropagation();
-            onGenerateVideo?.();
-          }}
-        >
-          <Video className="w-3 h-3" />
-          Generate Video
-        </Button>
+      {/* Image/Video Area */}
+      <div className="relative aspect-video w-full bg-black/40">
+        {hasMedia && media?.media_url ? (
+          // Show generated media
+          <img
+            src={media.media_url}
+            alt={`Shot ${shot.segment_index + 1}`}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : (
+          // Placeholder with gradient based on media type
+          <div
+            className={cn(
+              "absolute inset-0 flex flex-col items-center justify-center gap-2 bg-gradient-to-br",
+              PLACEHOLDER_GRADIENTS[mediaType] || PLACEHOLDER_GRADIENTS.image,
+            )}
+          >
+            {status === "generating" ? (
+              <>
+                <Loader2 className="w-10 h-10 text-orange-500 animate-spin" />
+                <span className="text-xs text-neutral-400">Generating...</span>
+              </>
+            ) : status === "failed" ? (
+              <>
+                <AlertCircle className="w-10 h-10 text-red-500" />
+                <span className="text-xs text-red-400">Generation Failed</span>
+              </>
+            ) : (
+              <>
+                {mediaType === "video" ? (
+                  <Film className="w-10 h-10 text-neutral-600" />
+                ) : mediaType === "motiongraphic" ? (
+                  <Layers className="w-10 h-10 text-neutral-600" />
+                ) : (
+                  <Image className="w-10 h-10 text-neutral-600" />
+                )}
+                <span className="text-xs text-neutral-500 font-medium uppercase tracking-wide">
+                  {mediaType === "motiongraphic" ? "Motion Graphic" : mediaType}
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Hover overlay with actions */}
+        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            className="bg-white/10 hover:bg-white/20 text-white border-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit?.();
+            }}
+          >
+            <Edit2 className="w-3.5 h-3.5 mr-1" />
+            Edit
+          </Button>
+          <Button
+            size="sm"
+            className="bg-orange-600 hover:bg-orange-700 text-white"
+            onClick={(e) => {
+              e.stopPropagation();
+              onGenerate?.();
+            }}
+            disabled={status === "generating"}
+          >
+            {status === "generating" ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5 mr-1" />
+                {hasMedia ? "Regen" : "Generate"}
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
-      {/* Description */}
+      {/* Content Type & Media Type Badges */}
+      <div className="flex items-center gap-2 p-3 border-b border-white/5 bg-neutral-900/20">
+        {/* Content type badge */}
+        <span
+          className={cn(
+            "text-[10px] font-medium px-2 py-1 rounded border",
+            CONTENT_TYPE_COLORS[shot.content_type] ||
+              "bg-neutral-800 text-neutral-400",
+          )}
+        >
+          {shot.content_type}
+        </span>
+
+        {/* Media type badge */}
+        <span
+          className={cn(
+            "text-[10px] font-medium px-2 py-1 rounded border",
+            mediaType === "image"
+              ? "bg-sky-900/30 text-sky-300 border-sky-700/50"
+              : mediaType === "video"
+                ? "bg-emerald-900/30 text-emerald-300 border-emerald-700/50"
+                : "bg-indigo-900/30 text-indigo-300 border-indigo-700/50",
+          )}
+        >
+          {mediaType === "motiongraphic" ? "motion" : mediaType}
+        </span>
+
+        {/* Video play icon for video type */}
+        {mediaType === "video" && hasMedia && (
+          <Play className="w-3 h-3 text-neutral-500 ml-auto" />
+        )}
+      </div>
+
+      {/* Summary/Description */}
       <div className="p-4">
-        <p className="text-xs text-neutral-400 leading-relaxed line-clamp-4">
-          {description}
+        <p className="text-xs text-neutral-400 leading-relaxed line-clamp-3">
+          {media?.visual_prompt || shot.summary || shot.text.substring(0, 150)}
+          {!media?.visual_prompt &&
+            !shot.summary &&
+            shot.text.length > 150 &&
+            "..."}
         </p>
       </div>
     </div>
