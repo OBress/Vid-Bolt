@@ -8,7 +8,7 @@ import type {
   ShotEvent,
 } from "@/components/video-creation/VideoCreationWizard";
 
-interface StepEditorProps {
+interface Step7EditorProps {
   videoId: string;
   projectId: string;
   audioUrl?: string | null;
@@ -20,7 +20,7 @@ interface StepEditorProps {
   lockedMessage?: string;
 }
 
-export function StepEditor({
+export function Step7Editor({
   videoId,
   projectId,
   audioUrl,
@@ -29,9 +29,9 @@ export function StepEditor({
   onContinue,
   isLocked,
   lockedMessage,
-}: StepEditorProps) {
+}: Step7EditorProps) {
   // Debug logging
-  console.log("[StepEditor Debug] Props received:", {
+  console.log("[Step7Editor Debug] Props received:", {
     videoId,
     projectId,
     audioUrl,

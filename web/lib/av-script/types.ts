@@ -34,6 +34,17 @@ export const CONTENT_DURATION_RANGES: Record<ContentType, { min: number; target:
 };
 
 /**
+ * Definitions for each content type to help users understand their purpose.
+ */
+export const CONTENT_TYPE_DEFINITIONS: Record<ContentType, string> = {
+  'concept': "A rich, detailed scene or illustration representing a core idea or theme.",
+  'list-item': "Focused imagery highlighting a specific point, item, or step in a sequence.",
+  'comparison': "A split-screen or contrasted visual showing difference between two elements.",
+  'transition': "Neutral or abstract imagery used to bridge two distinct topics smoothly.",
+  'emotional-beat': "Atmospheric, evocative imagery designed to emphasize a feeling or moment.",
+};
+
+/**
  * Absolute segment boundaries
  */
 export const SEGMENT_BOUNDS = {
@@ -66,7 +77,7 @@ export interface ShotEvent {
   content_type: ContentType;
   
   /** Media type classification */
-  media_type?: 'image' | 'video';
+  media_type?: 'image' | 'video' | 'motiongraphic';
   
   /** Transcript text for this segment */
   text: string;

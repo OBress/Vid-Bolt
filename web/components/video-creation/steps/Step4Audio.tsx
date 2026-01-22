@@ -6,21 +6,23 @@ import { AudioCard } from "../audio/AudioCard";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, ArrowRight } from "lucide-react";
 
-interface Step2AudioProps {
+interface Step4AudioProps {
   videoId: string;
   audioChunks: AudioChunk[];
+  audioUrl?: string | null;
   onComplete: () => void;
   onBack: () => void;
   onUpdateChunks: (newChunks: AudioChunk[]) => void;
 }
 
-export function Step2Audio({
+export function Step4Audio({
   videoId,
   audioChunks,
+  audioUrl,
   onComplete,
   onBack,
   onUpdateChunks,
-}: Step2AudioProps) {
+}: Step4AudioProps) {
   const {
     state,
     togglePlay,
@@ -183,6 +185,7 @@ export function Step2Audio({
             isPlaying={state.isPlaying}
             isLoading={state.isLoading}
             playbackSpeed={playbackSpeed}
+            audioUrl={audioUrl}
             onSeek={seekTo}
             onTogglePlay={togglePlay}
             onSkipPrev={skipToPrevChunk}

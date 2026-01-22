@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   ChevronRight,
   ChevronDown,
@@ -16,10 +16,15 @@ import {
   ArrowRight,
   RefreshCw,
   Save,
+  Image,
+  Video,
+  Layers,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -28,7 +33,72 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+
+// Type for a shot item
+type ShotItem = {
+  segment_index: number;
+  start_seconds: number;
+  end_seconds: number;
+  duration_seconds: number;
+  content_type: string;
+  media_type?: "image" | "video" | "motiongraphic";
+  text: string;
+  summary?: string;
+  character_refs?: string[];
+  location_refs?: string[];
+  object_refs?: string[];
+};
+
+// Content type options for the dropdown
+const CONTENT_TYPE_OPTIONS = [
+  {
+    value: "concept",
+    label: "Concept",
+    color: "bg-purple-900/50 text-purple-300",
+  },
+  {
+    value: "list-item",
+    label: "List Item",
+    color: "bg-blue-900/50 text-blue-300",
+  },
+  {
+    value: "comparison",
+    label: "Comparison",
+    color: "bg-amber-900/50 text-amber-300",
+  },
+  {
+    value: "transition",
+    label: "Transition",
+    color: "bg-neutral-800 text-neutral-400",
+  },
+  {
+    value: "emotional-beat",
+    label: "Emotional Beat",
+    color: "bg-rose-900/50 text-rose-300",
+  },
+] as const;
+
+// Descriptions for helper text
+const CONTENT_TYPE_DESCRIPTIONS: Record<string, string> = {
+  concept:
+    "A rich, detailed scene or illustration representing a core idea or theme.",
+  "list-item":
+    "Focused imagery highlighting a specific point, item, or step in a sequence.",
+  comparison:
+    "A split-screen or contrasted visual showing difference between two elements.",
+  transition:
+    "Neutral or abstract imagery used to bridge two distinct topics smoothly.",
+  "emotional-beat":
+    "Atmospheric, evocative imagery designed to emphasize a feeling or moment.",
+};
 
 interface Step5ShotCreationProps {
   onNext: () => void;
@@ -49,19 +119,8 @@ interface Step5ShotCreationProps {
       physicalDescription?: any;
     }>;
   };
-  avScriptShots?: Array<{
-    segment_index: number;
-    start_seconds: number;
-    end_seconds: number;
-    duration_seconds: number;
-    content_type: string;
-    media_type?: "image" | "video";
-    text: string;
-    summary?: string;
-    character_refs?: string[];
-    location_refs?: string[];
-    object_refs?: string[];
-  }>;
+  avScriptShots?: ShotItem[];
+  onUpdateShots?: (shots: ShotItem[]) => Promise<void>;
 }
 
 type ElementType = "all" | "character" | "object" | "location" | "stock";
@@ -81,6 +140,7 @@ export function Step5ShotCreation({
   isLocked = false,
   outlineAssets,
   avScriptShots,
+  onUpdateShots,
 }: Step5ShotCreationProps) {
   const [activeTab, setActiveTab] = useState<ElementType>("all");
 
@@ -208,6 +268,106 @@ export function Step5ShotCreation({
       );
       setEditingElement(null);
     }
+  };
+
+  // =========================================================================
+  // SHOT EDITING STATE & HANDLERS
+  // =========================================================================
+
+  // Track which shot is currently being edited
+  const [editingShot, setEditingShot] = useState<ShotItem | null>(null);
+
+  // Form state for the shot being edited
+  const [editedShotSummary, setEditedShotSummary] = useState("");
+  const [editedShotContentType, setEditedShotContentType] = useState("");
+  const [editedShotMediaType, setEditedShotMediaType] = useState<
+    "image" | "video" | "motiongraphic"
+  >("image");
+
+  // Track all pending changes (key = segment_index, value = modified shot)
+  const [pendingShotChanges, setPendingShotChanges] = useState<
+    Map<number, ShotItem>
+  >(new Map());
+
+  // Saving state
+  const [isSavingShots, setIsSavingShots] = useState(false);
+
+  // Count of pending changes
+  const pendingChangesCount = pendingShotChanges.size;
+
+  // Open shot edit modal
+  const handleShotClick = (shot: ShotItem) => {
+    // Check if there's a pending change for this shot
+    const pendingShot = pendingShotChanges.get(shot.segment_index);
+    const shotToEdit = pendingShot || shot;
+
+    setEditingShot(shotToEdit);
+    setEditedShotSummary(shotToEdit.summary || "");
+    setEditedShotContentType(shotToEdit.content_type);
+    setEditedShotMediaType(shotToEdit.media_type || "image");
+  };
+
+  // Save changes from modal to pending changes map
+  const handleSaveShotEdit = () => {
+    if (!editingShot) return;
+
+    const updatedShot: ShotItem = {
+      ...editingShot,
+      summary: editedShotSummary,
+      content_type: editedShotContentType,
+      media_type: editedShotMediaType,
+    };
+
+    // Add to pending changes
+    setPendingShotChanges((prev) => {
+      const newMap = new Map(prev);
+      newMap.set(editingShot.segment_index, updatedShot);
+      return newMap;
+    });
+
+    // Close modal
+    setEditingShot(null);
+  };
+
+  // Cancel editing without saving
+  const handleCancelShotEdit = () => {
+    setEditingShot(null);
+  };
+
+  // Save all pending changes to database
+  const handleSaveAllShots = async () => {
+    if (!onUpdateShots || pendingChangesCount === 0 || !avScriptShots) return;
+
+    setIsSavingShots(true);
+
+    try {
+      // Merge pending changes with original shots
+      const updatedShots = avScriptShots.map((shot) => {
+        const pendingChange = pendingShotChanges.get(shot.segment_index);
+        return pendingChange || shot;
+      });
+
+      // Call the update callback
+      await onUpdateShots(updatedShots);
+
+      // Clear pending changes on success
+      setPendingShotChanges(new Map());
+
+      console.log("[Step5] Saved all shot changes successfully");
+    } catch (error) {
+      console.error("[Step5] Failed to save shot changes:", error);
+    } finally {
+      setIsSavingShots(false);
+    }
+  };
+
+  // Check if a shot has pending changes
+  const hasPendingChange = (segmentIndex: number) =>
+    pendingShotChanges.has(segmentIndex);
+
+  // Get display data for a shot (pending changes take priority)
+  const getDisplayShot = (shot: ShotItem): ShotItem => {
+    return pendingShotChanges.get(shot.segment_index) || shot;
   };
 
   return (
@@ -399,66 +559,113 @@ export function Step5ShotCreation({
 
                 {/* Shots List */}
                 <div className="p-1 space-y-[1px] bg-neutral-900/30">
-                  {avScriptShots.map((shot, index) => (
-                    <div
-                      key={shot.segment_index}
-                      className="flex gap-4 p-4 bg-neutral-950 hover:bg-neutral-900/80 transition-colors group relative border-b border-neutral-800/50 last:border-0"
-                    >
-                      <div className="absolute left-0 top-0 bottom-0 w-1 bg-transparent group-hover:bg-blue-500/50 transition-colors"></div>
-                      <div className="flex flex-col items-center pt-1 gap-2 min-w-[60px]">
-                        <span className="text-[10px] font-bold text-neutral-600 bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800 group-hover:border-neutral-700 transition-colors">
-                          SHOT {shot.segment_index + 1}
-                        </span>
-                        <MoreHorizontal className="w-4 h-4 text-neutral-700 group-hover:text-neutral-500 cursor-grab active:cursor-grabbing" />
-                      </div>
+                  {avScriptShots.map((shot, index) => {
+                    const displayShot = getDisplayShot(shot);
+                    const hasChanges = hasPendingChange(shot.segment_index);
 
-                      <div className="flex-1">
-                        <div className="text-sm text-neutral-300 leading-7 font-light">
-                          {shot.summary ||
-                            shot.text.substring(0, 150) +
-                              (shot.text.length > 150 ? "..." : "")}
-                        </div>
-                        <div className="mt-3 flex items-center gap-2 flex-wrap">
+                    return (
+                      <div
+                        key={shot.segment_index}
+                        onClick={() => handleShotClick(shot)}
+                        className={cn(
+                          "flex gap-4 p-4 bg-neutral-950 hover:bg-neutral-900/80 transition-colors group relative border-b border-neutral-800/50 last:border-0 cursor-pointer",
+                          hasChanges && "ring-1 ring-amber-500/50",
+                        )}
+                      >
+                        {/* Left accent bar - shows amber when has pending changes */}
+                        <div
+                          className={cn(
+                            "absolute left-0 top-0 bottom-0 w-1 transition-colors",
+                            hasChanges
+                              ? "bg-amber-500"
+                              : "bg-transparent group-hover:bg-blue-500/50",
+                          )}
+                        ></div>
+
+                        <div className="flex flex-col items-center pt-1 gap-2 min-w-[60px]">
                           <span
                             className={cn(
-                              "text-[10px] font-medium px-2 py-1 rounded",
-                              shot.content_type === "concept"
-                                ? "bg-purple-900/50 text-purple-300"
-                                : shot.content_type === "list-item"
-                                  ? "bg-blue-900/50 text-blue-300"
-                                  : shot.content_type === "comparison"
-                                    ? "bg-amber-900/50 text-amber-300"
-                                    : shot.content_type === "transition"
-                                      ? "bg-neutral-800 text-neutral-400"
-                                      : shot.content_type === "emotional-beat"
-                                        ? "bg-rose-900/50 text-rose-300"
-                                        : "bg-neutral-900 text-neutral-500",
+                              "text-[10px] font-bold px-2 py-0.5 rounded border transition-colors",
+                              hasChanges
+                                ? "text-amber-400 bg-amber-900/30 border-amber-700"
+                                : "text-neutral-600 bg-neutral-900 border-neutral-800 group-hover:border-neutral-700",
                             )}
                           >
-                            {shot.content_type}
+                            SHOT {shot.segment_index + 1}
                           </span>
-                          <span className="text-[10px] text-neutral-600">
-                            {shot.duration_seconds.toFixed(1)}s
-                          </span>
-                          {shot.media_type === "video" && (
-                            <span className="text-[10px] font-medium bg-emerald-900/50 text-emerald-300 px-2 py-1 rounded">
-                              <Film className="w-3 h-3 inline mr-1" />
-                              Video
+                          {hasChanges ? (
+                            <span className="text-[9px] text-amber-400 font-medium">
+                              EDITED
                             </span>
+                          ) : (
+                            <Edit2 className="w-3.5 h-3.5 text-neutral-700 group-hover:text-neutral-400 transition-colors" />
+                          )}
+                        </div>
+
+                        <div className="flex-1">
+                          <div className="text-sm text-neutral-300 leading-7 font-light">
+                            {displayShot.summary ||
+                              displayShot.text.substring(0, 150) +
+                                (displayShot.text.length > 150 ? "..." : "")}
+                          </div>
+                          <div className="mt-3 flex items-center gap-2 flex-wrap">
+                            <span
+                              className={cn(
+                                "text-[10px] font-medium px-2 py-1 rounded",
+                                displayShot.content_type === "concept"
+                                  ? "bg-purple-900/50 text-purple-300"
+                                  : displayShot.content_type === "list-item"
+                                    ? "bg-blue-900/50 text-blue-300"
+                                    : displayShot.content_type === "comparison"
+                                      ? "bg-amber-900/50 text-amber-300"
+                                      : displayShot.content_type ===
+                                          "transition"
+                                        ? "bg-neutral-800 text-neutral-400"
+                                        : displayShot.content_type ===
+                                            "emotional-beat"
+                                          ? "bg-rose-900/50 text-rose-300"
+                                          : "bg-neutral-900 text-neutral-500",
+                              )}
+                            >
+                              {displayShot.content_type}
+                            </span>
+                            <span className="text-[10px] text-neutral-600">
+                              {shot.duration_seconds.toFixed(1)}s
+                            </span>
+                            {displayShot.media_type === "video" && (
+                              <span className="text-[10px] font-medium bg-emerald-900/50 text-emerald-300 px-2 py-1 rounded">
+                                <Film className="w-3 h-3 inline mr-1" />
+                                Video
+                              </span>
+                            )}
+                            {displayShot.media_type === "image" && (
+                              <span className="text-[10px] font-medium bg-sky-900/50 text-sky-300 px-2 py-1 rounded">
+                                <Image className="w-3 h-3 inline mr-1" />
+                                Image
+                              </span>
+                            )}
+                            {displayShot.media_type === "motiongraphic" && (
+                              <span className="text-[10px] font-medium bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded">
+                                <Layers className="w-3 h-3 inline mr-1" />
+                                Motion
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Shot Thumbnail Placeholder */}
+                        <div className="w-24 aspect-video bg-neutral-900 rounded border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center shrink-0">
+                          {displayShot.media_type === "video" ? (
+                            <Film className="w-4 h-4 text-neutral-700" />
+                          ) : displayShot.media_type === "motiongraphic" ? (
+                            <Layers className="w-4 h-4 text-neutral-700" />
+                          ) : (
+                            <Image className="w-4 h-4 text-neutral-700" />
                           )}
                         </div>
                       </div>
-
-                      {/* Shot Thumbnail Placeholder */}
-                      <div className="w-24 aspect-video bg-neutral-900 rounded border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center shrink-0">
-                        {shot.media_type === "video" ? (
-                          <Film className="w-4 h-4 text-neutral-700" />
-                        ) : (
-                          <Smartphone className="w-4 h-4 text-neutral-700" />
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : (
@@ -635,6 +842,215 @@ export function Step5ShotCreation({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Shot Edit Modal */}
+      <Dialog
+        open={!!editingShot}
+        onOpenChange={(open) => !open && handleCancelShotEdit()}
+      >
+        <DialogContent className="bg-neutral-950 border-neutral-800 text-white sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Edit Shot {editingShot ? editingShot.segment_index + 1 : ""}
+            </DialogTitle>
+            <DialogDescription className="text-neutral-400">
+              Modify the shot details. Changes will be saved when you click
+              "Save All Changes".
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 my-4">
+            {/* Timing Info (Read-only) */}
+            <div className="flex items-center gap-4 p-3 bg-neutral-900/50 rounded-lg border border-neutral-800">
+              <div className="text-center">
+                <div className="text-xs text-neutral-500 uppercase">Start</div>
+                <div className="text-sm font-mono text-neutral-300">
+                  {editingShot?.start_seconds.toFixed(1)}s
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-neutral-600" />
+              <div className="text-center">
+                <div className="text-xs text-neutral-500 uppercase">End</div>
+                <div className="text-sm font-mono text-neutral-300">
+                  {editingShot?.end_seconds.toFixed(1)}s
+                </div>
+              </div>
+              <div className="ml-auto text-center">
+                <div className="text-xs text-neutral-500 uppercase">
+                  Duration
+                </div>
+                <div className="text-sm font-mono text-neutral-300">
+                  {editingShot?.duration_seconds.toFixed(1)}s
+                </div>
+              </div>
+            </div>
+
+            {/* Summary/Description */}
+            <div className="space-y-2">
+              <Label htmlFor="shot-summary" className="text-neutral-300">
+                Visual Summary
+              </Label>
+              <Textarea
+                id="shot-summary"
+                value={editedShotSummary}
+                onChange={(e) => setEditedShotSummary(e.target.value)}
+                className="bg-neutral-900 border-neutral-800 min-h-[100px] focus:ring-blue-600 text-white"
+                placeholder="Describe what should be shown visually in this shot..."
+              />
+            </div>
+
+            {/* Content Type Select */}
+            <div className="space-y-2">
+              <Label htmlFor="shot-content-type" className="text-neutral-300">
+                Content Type
+              </Label>
+              <Select
+                value={editedShotContentType}
+                onValueChange={setEditedShotContentType}
+              >
+                <SelectTrigger className="bg-neutral-900 border-neutral-800 text-white">
+                  <SelectValue placeholder="Select content type" />
+                </SelectTrigger>
+                <SelectContent className="bg-neutral-900 border-neutral-800">
+                  {CONTENT_TYPE_OPTIONS.map((option) => (
+                    <SelectItem
+                      key={option.value}
+                      value={option.value}
+                      className="text-white hover:bg-neutral-800 focus:bg-neutral-800"
+                    >
+                      <span
+                        className={cn(
+                          "inline-block px-2 py-0.5 rounded text-xs font-medium mr-2",
+                          option.color,
+                        )}
+                      >
+                        {option.label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {editedShotContentType &&
+                CONTENT_TYPE_DESCRIPTIONS[editedShotContentType] && (
+                  <p className="text-xs text-neutral-500 mt-1 italic">
+                    {CONTENT_TYPE_DESCRIPTIONS[editedShotContentType]}
+                  </p>
+                )}
+            </div>
+
+            {/* Media Type Toggle */}
+            <div className="space-y-2">
+              <Label className="text-neutral-300">Media Type</Label>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant={
+                    editedShotMediaType === "image" ? "default" : "outline"
+                  }
+                  className={cn(
+                    "flex-1",
+                    editedShotMediaType === "image"
+                      ? "bg-sky-600 hover:bg-sky-700 text-white"
+                      : "border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800",
+                  )}
+                  onClick={() => setEditedShotMediaType("image")}
+                >
+                  <Image className="w-4 h-4 mr-2" />
+                  Image
+                </Button>
+                <Button
+                  type="button"
+                  variant={
+                    editedShotMediaType === "video" ? "default" : "outline"
+                  }
+                  className={cn(
+                    "flex-1",
+                    editedShotMediaType === "video"
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                      : "border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800",
+                  )}
+                  onClick={() => setEditedShotMediaType("video")}
+                >
+                  <Video className="w-4 h-4 mr-2" />
+                  Video
+                </Button>
+                <Button
+                  type="button"
+                  variant={
+                    editedShotMediaType === "motiongraphic"
+                      ? "default"
+                      : "outline"
+                  }
+                  className={cn(
+                    "flex-1",
+                    editedShotMediaType === "motiongraphic"
+                      ? "bg-indigo-600 hover:bg-indigo-700 text-white"
+                      : "border-neutral-700 text-neutral-400 hover:text-white hover:bg-neutral-800",
+                  )}
+                  onClick={() => setEditedShotMediaType("motiongraphic")}
+                >
+                  <Layers className="w-4 h-4 mr-2" />
+                  Motion
+                </Button>
+              </div>
+            </div>
+
+            {/* Original Script Text (Read-only) */}
+            <div className="space-y-2">
+              <Label className="text-neutral-500">
+                Script Text (read-only)
+              </Label>
+              <div className="p-3 bg-neutral-900/30 rounded-lg border border-neutral-800/50 text-sm text-neutral-400 max-h-32 overflow-y-auto">
+                {editingShot?.text}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="flex gap-2 justify-end pt-4 border-t border-neutral-800">
+            <Button
+              variant="ghost"
+              onClick={handleCancelShotEdit}
+              className="text-neutral-300 hover:bg-neutral-800"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveShotEdit}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              <Check className="w-4 h-4 mr-2" />
+              Apply Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Floating Save All Changes Button */}
+      {pendingChangesCount > 0 && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
+          <div className="bg-amber-900/90 text-amber-200 px-4 py-2 rounded-lg text-sm font-medium shadow-lg border border-amber-700/50">
+            {pendingChangesCount} unsaved{" "}
+            {pendingChangesCount === 1 ? "change" : "changes"}
+          </div>
+          <Button
+            onClick={handleSaveAllShots}
+            disabled={isSavingShots}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg px-6 py-5"
+          >
+            {isSavingShots ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4 mr-2" />
+                Save All Changes
+              </>
+            )}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

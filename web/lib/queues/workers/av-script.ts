@@ -40,7 +40,7 @@ export interface ShotPart1 {
   end_seconds: number;
   duration_seconds: number;
   content_type: string;
-  media_type: 'image' | 'video';
+  media_type: 'image' | 'video' | 'motiongraphic';
   text: string;
   summary: string;  // Brief summary of what happens visually
   // Entity references detected in the text
@@ -261,7 +261,7 @@ async function generateShotSummaries(
     duration_seconds: number;
     content_type: string;
     text: string;
-    media_type?: 'image' | 'video';
+    media_type?: 'image' | 'video' | 'motiongraphic';
   }>,
   outlineAssets?: AVScriptJobData['outlineAssets']
 ): Promise<ShotPart1[]> {
@@ -278,20 +278,26 @@ async function generateShotSummaries(
       summaries: Array<{ 
         index: number; 
         summary: string; 
-        media_type: 'image' | 'video';
+        media_type: 'image' | 'video' | 'motiongraphic';
       }> 
     }>(
       userId,
       `You are a visual director creating brief shot descriptions for a video.
 For each segment, provide:
 1. A 1-sentence summary of what should be shown visually
-2. Whether it should be a static image or video clip
+2. Whether it should be a static image, video clip, or motion graphic
 
 Guidelines:
 - Keep summaries concise (under 20 words)
 - Focus on the key visual element
 - Use "video" for action sequences, transitions, emotional moments
 - Use "image" for static concepts, portraits, objects
+- Use "motiongraphic" for:
+  - Abstract concepts or metaphors
+  - Data visualization (charts, graphs)
+  - Text-heavy segments or lists
+  - Kinetic typography
+  - "Transition" content types where a graphical element bridges scenes
 - Match the visual style to the content type`,
       `Generate visual summaries for these ${segments.length} video segments:
 

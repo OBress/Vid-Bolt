@@ -4,16 +4,15 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { WizardProgress } from "./WizardProgress";
 import { StepNavigationConfirmDialog } from "./StepNavigationConfirmDialog";
 import { useNavigationStore } from "@/store/use-navigation-store";
-import { Step4UniversalScript } from "./steps/Step4UniversalScript";
+// Legacy imports removed: Step4UniversalScript, StepMediaGeneration
 import { Step1Outline } from "./steps/Step1Outline";
 import { Step3Script } from "./steps/Step3Script";
-import { Step2Audio } from "./steps/Step2Audio";
+import { Step4Audio } from "./steps/Step4Audio";
 import { Step2StockMedia } from "./steps/Step2StockMedia";
 import { Step5ShotCreation } from "./steps/Step5ShotCreation";
-// import { StepMediaGeneration } from "./steps/StepMediaGeneration"; // Removing old Step 3
 import { Step6SceneReview } from "./steps/Step6SceneReview";
-import { StepEditor } from "./steps/StepEditor";
-import { StepExport } from "./steps/StepExport";
+import { Step7Editor } from "./steps/Step7Editor";
+import { Step8Export } from "./steps/Step8Export";
 import { PlaceholderStep } from "./steps/PlaceholderStep";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
 import { useVideos } from "@/hooks/use-videos";
@@ -85,6 +84,8 @@ export interface WizardState {
   // AV Script Part 1 (Step 4→5 transition)
   avScriptTaskId: string | null;
   avScriptPart1Output: any | null;
+  isAvScriptLoading: boolean; // Flag to show loading immediately
+  isAudioLoading: boolean; // Flag to show audio loading immediately (Step 3→4)
   generationError?: string | null;
 }
 
@@ -188,6 +189,8 @@ export function VideoCreationWizard({
     scriptOutput: null,
     avScriptTaskId: null,
     avScriptPart1Output: null,
+    isAvScriptLoading: false,
+    isAudioLoading: false,
   });
 
   // Step 3 ref for manual trigger
@@ -305,6 +308,8 @@ export function VideoCreationWizard({
           scriptOutput,
           avScriptTaskId: null,
           avScriptPart1Output: (video.metadata as any)?.av_script_part1 || null,
+          isAvScriptLoading: false,
+          isAudioLoading: false,
         });
 
         // Set the video name in the navigation store
@@ -488,18 +493,60 @@ export function VideoCreationWizard({
 
         if (state.videoId) {
           // Prepare data for background call
-          const wordTimestamps = state.audioChunks.flatMap(
-            (chunk: any) => chunk.wordTimestamps || chunk.word_timestamps || [],
+          // IMPORTANT: Apply cumulative time offset to word timestamps from each chunk
+          // Each chunk's word timestamps start from 0, so we need to add the offset
+          const sortedChunks = [...state.audioChunks].sort(
+            (a: any, b: any) =>
+              (a.chapterNumber || a.chunkIndex || 0) -
+              (b.chapterNumber || b.chunkIndex || 0),
           );
-          const totalDuration = state.audioChunks.reduce(
-            (sum, chunk) => sum + (chunk.duration_seconds || 0),
+
+          let timeOffset = 0;
+          const wordTimestamps: Array<{
+            word: string;
+            start_seconds: number;
+            end_seconds: number;
+          }> = [];
+
+          for (const chunk of sortedChunks) {
+            const chunkData = chunk as any;
+            const chunkTimestamps =
+              chunkData.wordTimestamps || chunkData.word_timestamps || [];
+            for (const wt of chunkTimestamps) {
+              wordTimestamps.push({
+                word: wt.word,
+                start_seconds: wt.start_seconds + timeOffset,
+                end_seconds: wt.end_seconds + timeOffset,
+              });
+            }
+            // Add this chunk's duration to the offset for the next chunk
+            timeOffset +=
+              chunkData.duration_seconds || chunkData.durationSeconds || 0;
+          }
+
+          const totalDuration = sortedChunks.reduce(
+            (sum, chunk) =>
+              sum +
+              ((chunk as any).duration_seconds ||
+                (chunk as any).durationSeconds ||
+                0),
             0,
+          );
+
+          console.log(
+            `[Wizard] Prepared ${wordTimestamps.length} word timestamps spanning ${totalDuration.toFixed(1)}s`,
           );
 
           // Fire background API calls (non-blocking)
           console.log(
             "[Wizard] OPTIMISTIC: Navigating to Step 5, firing AV Script task in background...",
           );
+
+          // Set loading flag IMMEDIATELY so Step 5 shows loading screen
+          setState((prev) => ({
+            ...prev,
+            isAvScriptLoading: true,
+          }));
 
           // Update stage in background
           fetch(`/api/videos/${state.videoId}`, {
@@ -538,6 +585,11 @@ export function VideoCreationWizard({
                   "[Wizard] Failed to create AV Script task:",
                   data,
                 );
+                // Clear loading on failure
+                setState((prev) => ({
+                  ...prev,
+                  isAvScriptLoading: false,
+                }));
               }
             })
             .catch((err) => {
@@ -545,6 +597,11 @@ export function VideoCreationWizard({
                 "[Wizard] Failed to trigger AV Script Part 1:",
                 err,
               );
+              // Clear loading on error
+              setState((prev) => ({
+                ...prev,
+                isAvScriptLoading: false,
+              }));
             });
         }
 
@@ -719,6 +776,7 @@ export function VideoCreationWizard({
               updateState({
                 script,
                 scriptOutput,
+                isAudioLoading: true, // Set loading flag immediately
               });
 
               // OPTIMISTIC: Advance to Step 4 immediately
@@ -756,6 +814,12 @@ export function VideoCreationWizard({
                         ...prev,
                         audioTaskId: data.taskId,
                       }));
+                    } else {
+                      // Clear loading flag on failure
+                      setState((prev) => ({
+                        ...prev,
+                        isAudioLoading: false,
+                      }));
                     }
                   })
                   .catch((err) => {
@@ -763,6 +827,11 @@ export function VideoCreationWizard({
                       "[Wizard] Failed to save script or start audio:",
                       err,
                     );
+                    // Clear loading flag on error
+                    setState((prev) => ({
+                      ...prev,
+                      isAudioLoading: false,
+                    }));
                   });
               }
             }}
@@ -809,137 +878,20 @@ export function VideoCreationWizard({
           );
         }
 
-        // Check if we need to generate AV script Part 1 (loading state)
-        console.log(
-          "[Wizard] Case 4 render check: avScriptTaskId=",
-          state.avScriptTaskId,
-          "avScriptPart1Output=",
-          !!state.avScriptPart1Output,
-        );
-        if (state.avScriptTaskId && !state.avScriptPart1Output) {
-          console.log("[Wizard] SHOWING AV Script Loading Screen!");
-          // Show loading screen for AV script generation
-          return (
-            <AsyncLoadingStep
-              title="Creating Shot Breakdown"
-              subtitle="Analyzing script and generating scene structure..."
-              steps={[
-                "Analyzing content structure",
-                "Segmenting timeline",
-                "Generating shot summaries",
-                "Finalizing breakdown",
-              ]}
-              taskId={state.avScriptTaskId}
-              onComplete={async (output) => {
-                console.log("[Wizard] AV Script Part 1 complete:", output);
-                const avOutput = output as any;
-
-                // Update state with AV script output
-                updateState({
-                  avScriptPart1Output: avOutput,
-                  avScriptTaskId: null,
-                });
-
-                // Advance to Step 5
-                advanceToStep(5);
-              }}
-              onError={(error) => {
-                console.error("[Wizard] AV Script Part 1 failed:", error);
-                updateState({
-                  avScriptTaskId: null,
-                  generationError: `Shot breakdown failed: ${error}`,
-                });
-              }}
-              fallbackDuration={15000}
-            />
-          );
-        }
-
         // If we have audio chunks, show the editor/review screen
         if (state.audioChunks.length > 0) {
           return (
-            <Step2Audio
+            <Step4Audio
               videoId={state.videoId!}
               audioChunks={state.audioChunks}
+              audioUrl={state.audioUrl}
               onUpdateChunks={(newChunks) =>
                 updateState({ audioChunks: newChunks })
               }
               onComplete={async () => {
-                // Persist the step navigation to the database
-                if (state.videoId) {
-                  try {
-                    await fetch(`/api/videos/${state.videoId}`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ current_stage: "shot_planning" }),
-                    });
-                  } catch (err) {
-                    console.error("Failed to save step:", err);
-                  }
-
-                  // Trigger AV Script Part 1 generation
-                  try {
-                    console.log("[Wizard] Triggering AV Script Part 1...");
-
-                    // Get word timestamps from audio chunks if available
-                    // Note: Check both camelCase (from audio worker) and snake_case (legacy)
-                    const wordTimestamps = state.audioChunks.flatMap(
-                      (chunk: any) =>
-                        chunk.wordTimestamps || chunk.word_timestamps || [],
-                    );
-
-                    // Calculate total duration
-                    const totalDuration = state.audioChunks.reduce(
-                      (sum, chunk) => sum + (chunk.duration_seconds || 0),
-                      0,
-                    );
-
-                    const response = await fetch(
-                      "/api/process/av-script-part1",
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          videoId: state.videoId,
-                          script: state.script,
-                          wordTimestamps,
-                          totalDurationSeconds: totalDuration,
-                          outlineAssets:
-                            state.outlineOutput?.assetRegistry || null,
-                        }),
-                      },
-                    );
-
-                    const data = await response.json();
-
-                    if (data.taskId) {
-                      console.log(
-                        "[Wizard] AV Script Part 1 task created:",
-                        data.taskId,
-                      );
-                      setState((prev) => ({
-                        ...prev,
-                        avScriptTaskId: data.taskId,
-                      }));
-                    } else {
-                      console.error(
-                        "[Wizard] Failed to create AV Script task:",
-                        data,
-                      );
-                      // Fallback: proceed without AV script
-                      advanceToStep(5);
-                    }
-                  } catch (err) {
-                    console.error(
-                      "[Wizard] Failed to trigger AV Script Part 1:",
-                      err,
-                    );
-                    // Fallback: proceed without AV script
-                    advanceToStep(5);
-                  }
-                } else {
-                  advanceToStep(5);
-                }
+                // This path is for internal button - use global nav for loading screen
+                // Just advance to step 5, the isAvScriptLoading check will handle the rest
+                advanceToStep(5);
               }}
               onBack={() => {
                 // If they want to go back to script
@@ -949,7 +901,8 @@ export function VideoCreationWizard({
           );
         }
 
-        // Otherwise show loading/generation
+        // Show loading screen while audio is being generated
+        // Check both isAudioLoading (immediate flag) and audioTaskId (task in progress)
         return (
           <AsyncLoadingStep
             title="Generating Audio"
@@ -976,7 +929,6 @@ export function VideoCreationWizard({
               }));
 
               // Handle "silent failure" where task completes but 0 chunks are produced
-              // Do this BEFORE polling for AV script to avoid waiting 60s for nothing
               if (audioChunks.length === 0) {
                 // Try to recover from metadata first
                 if (state.videoId) {
@@ -1017,6 +969,7 @@ export function VideoCreationWizard({
                   setState((prev) => ({
                     ...prev,
                     audioTaskId: null,
+                    isAudioLoading: false,
                     generationError:
                       "Audio generation completed but produced no audio. This usually happens if the script was too short or the AI service timed out. Please try regenerating.",
                   }));
@@ -1024,7 +977,7 @@ export function VideoCreationWizard({
                 }
               }
 
-              // Update state with just audio chunks (AV script generated later)
+              // Update state with audio chunks and clear loading flag
               console.log(
                 "[Wizard] Audio generation complete. chunks:",
                 audioChunks.length,
@@ -1033,24 +986,67 @@ export function VideoCreationWizard({
               updateState({
                 audioUrl,
                 audioChunks,
-                shotList: [], // Clean slate for editor
+                shotList: [],
                 avScript: [],
+                audioTaskId: null,
+                isAudioLoading: false,
               });
-
-              // If valid audio, this will trigger re-render to Step2Audio
-              // If invalid (0 chunks), the error state set above will trigger re-render to Error UI
             }}
             onError={(error) => {
               console.error("Audio generation failed:", error);
-              // Use fallback? Or just stay here?
-              // For robustness, maybe we should allow retry?
-              // Existing logic advanced anyway, let's keep it simple for now
+              setState((prev) => ({
+                ...prev,
+                audioTaskId: null,
+                isAudioLoading: false,
+                generationError: `Audio generation failed: ${error}`,
+              }));
             }}
             fallbackDuration={8000}
           />
         );
 
       case 5: // Shot Creation (was Step 6)
+        // Show loading screen while AV Script is being generated
+        if (
+          (state.isAvScriptLoading || state.avScriptTaskId) &&
+          !state.avScriptPart1Output
+        ) {
+          console.log("[Wizard] Step 5: Showing AV Script loading screen");
+          return (
+            <AsyncLoadingStep
+              title="Creating Shot Breakdown"
+              subtitle="Analyzing script and generating scene structure..."
+              steps={[
+                "Analyzing content structure",
+                "Segmenting timeline",
+                "Generating shot summaries",
+                "Finalizing breakdown",
+              ]}
+              taskId={state.avScriptTaskId}
+              onComplete={async (output) => {
+                console.log("[Wizard] AV Script Part 1 complete:", output);
+                const avOutput = output as any;
+
+                // Update state with AV script output and clear loading flag
+                updateState({
+                  avScriptPart1Output: avOutput,
+                  avScriptTaskId: null,
+                  isAvScriptLoading: false,
+                });
+              }}
+              onError={(error) => {
+                console.error("[Wizard] AV Script Part 1 failed:", error);
+                updateState({
+                  avScriptTaskId: null,
+                  isAvScriptLoading: false,
+                  generationError: `Shot breakdown failed: ${error}`,
+                });
+              }}
+              fallbackDuration={15000}
+            />
+          );
+        }
+
         console.log(
           "[Wizard] Rendering Step 5 with outlineAssets:",
           state.outlineOutput?.assetRegistry
@@ -1076,6 +1072,51 @@ export function VideoCreationWizard({
             onBack={() => goToStep(4)}
             outlineAssets={state.outlineOutput?.assetRegistry}
             avScriptShots={state.avScriptPart1Output?.shots}
+            onUpdateShots={async (updatedShots) => {
+              console.log("[Wizard] Updating shots:", updatedShots.length);
+
+              // 1. Update local state immediately
+              const currentOutput = state.avScriptPart1Output || {
+                shots: [],
+                metadata: {},
+              };
+              const updatedOutput = {
+                ...currentOutput,
+                shots: updatedShots,
+                metadata: {
+                  ...currentOutput.metadata,
+                  total_segments: updatedShots.length,
+                  total_duration_seconds: updatedShots.reduce(
+                    (acc, s) => acc + s.duration_seconds,
+                    0,
+                  ),
+                },
+              };
+
+              // Update the state using any cast to avoid strict type issues with differing local/global types
+              updateState({
+                avScriptPart1Output: updatedOutput as any,
+              });
+
+              // 2. Persist to Database
+              if (state.videoId) {
+                try {
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      metadata: {
+                        av_script_part1: updatedOutput,
+                      },
+                    }),
+                  });
+                  console.log("[Wizard] Persisted updated shots to DB");
+                } catch (err) {
+                  console.error("Failed to save updated shots to DB:", err);
+                  // Optionally resort to previous state or show error
+                }
+              }
+            }}
             {...lock}
           />
         );
@@ -1106,7 +1147,7 @@ export function VideoCreationWizard({
 
       case 7: // Editor (restored)
         return (
-          <StepEditor
+          <Step7Editor
             videoId={state.videoId!}
             projectId={projectId}
             audioUrl={state.audioUrl}
@@ -1133,7 +1174,7 @@ export function VideoCreationWizard({
 
       case 8: // Old Step 5: Export
         return (
-          <StepExport
+          <Step8Export
             videoId={state.videoId!}
             projectId={projectId}
             audioChunks={state.audioChunks}

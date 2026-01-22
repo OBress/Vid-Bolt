@@ -26,7 +26,7 @@ import type {
 // DaVinci Resolve icon
 const DaVinciIcon = () => <Clapperboard className="w-5 h-5" />;
 
-interface StepExportProps {
+interface Step8ExportProps {
   videoId: string;
   projectId: string;
   onBack: () => void;
@@ -39,7 +39,7 @@ interface StepExportProps {
 
 type ExportStatus = "idle" | "exporting" | "success" | "error";
 
-export function StepExport({
+export function Step8Export({
   videoId,
   projectId,
   onBack,
@@ -48,7 +48,7 @@ export function StepExport({
   shotList,
   isLocked,
   lockedMessage,
-}: StepExportProps) {
+}: Step8ExportProps) {
   const [exportStatus, setExportStatus] = useState<ExportStatus>("idle");
   const [exportProgress, setExportProgress] = useState(0);
   const [exportMessage, setExportMessage] = useState("");
@@ -70,7 +70,7 @@ export function StepExport({
 
     const existingItems = Object.keys(trackItemsMap).length;
     if (existingItems > 0) {
-      console.log("[StepExport] Store already has items, skipping population");
+      console.log("[Step8Export] Store already has items, skipping population");
       hasPopulatedRef.current = true;
       return;
     }
@@ -80,11 +80,11 @@ export function StepExport({
     const hasShotList = shotList && shotList.length > 0;
 
     if (!hasAudioChunks && !hasShotList) {
-      console.log("[StepExport] No audio chunks or shot list to populate");
+      console.log("[Step8Export] No audio chunks or shot list to populate");
       return;
     }
 
-    console.log("[StepExport] Populating store with track items:", {
+    console.log("[Step8Export] Populating store with track items:", {
       audioChunksCount: audioChunks?.length || 0,
       shotListCount: shotList?.length || 0,
     });
@@ -244,7 +244,7 @@ export function StepExport({
       });
 
       console.log(
-        `[StepExport] Directly updated store with ${allItems.length} items in ${tracksToAdd.length} tracks`,
+        `[Step8Export] Directly updated store with ${allItems.length} items in ${tracksToAdd.length} tracks`,
       );
     }
   }, [audioChunks, shotList, trackItemsMap]);

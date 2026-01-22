@@ -7,6 +7,7 @@ import {
   SkipForward,
   ChevronDown,
   Loader2,
+  Download,
 } from "lucide-react";
 import { PLAYBACK_SPEEDS, PlaybackSpeed } from "@/hooks/use-sequenced-audio";
 
@@ -18,6 +19,7 @@ interface AudioTimelineProps {
   isPlaying: boolean;
   isLoading: boolean;
   playbackSpeed: PlaybackSpeed;
+  audioUrl?: string | null;
   onSeek: (time: number) => void;
   onTogglePlay: () => void;
   onSkipPrev: () => void;
@@ -33,6 +35,7 @@ export function AudioTimeline({
   isPlaying,
   isLoading,
   playbackSpeed,
+  audioUrl,
   onSeek,
   onTogglePlay,
   onSkipPrev,
@@ -51,7 +54,7 @@ export function AudioTimeline({
       (chunk) =>
         ((chunk.duration_seconds || totalDuration / chunks.length) /
           totalDuration) *
-        100
+        100,
     );
   }, [chunks, totalDuration]);
 
@@ -119,6 +122,18 @@ export function AudioTimeline({
           >
             <SkipForward className="w-5 h-5" />
           </button>
+
+          {/* Download Button */}
+          {audioUrl && (
+            <a
+              href={audioUrl}
+              download="combined-audio.mp3"
+              className="p-2 rounded-lg transition-all hover:bg-white/10 text-neutral-300 hover:text-white"
+              title="Download combined audio"
+            >
+              <Download className="w-5 h-5" />
+            </a>
+          )}
 
           {/* Speed Control */}
           <div className="relative ml-4">
