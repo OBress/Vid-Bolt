@@ -1,1 +1,1 @@
-supabase db dump -f supabase/full_db.sql
+supabase db dump -f supabase/schema.sql
