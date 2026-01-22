@@ -1,4 +1,7 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
+import { AudioChunk } from "@/types/video";
+import { EntityReference, createEntityLookup } from "../entity-reference";
+import { ShotPlayerPanel } from "../ShotPlayerPanel";
 import {
   ChevronRight,
   ChevronDown,
@@ -20,6 +23,7 @@ import {
   Video,
   Layers,
   Check,
+  Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -121,6 +125,8 @@ interface Step5ShotCreationProps {
   };
   avScriptShots?: ShotItem[];
   onUpdateShots?: (shots: ShotItem[]) => Promise<void>;
+  audioChunks?: AudioChunk[];
+  script?: string;
 }
 
 type ElementType = "all" | "character" | "object" | "location" | "stock";
@@ -141,8 +147,16 @@ export function Step5ShotCreation({
   outlineAssets,
   avScriptShots,
   onUpdateShots,
+  audioChunks,
+  script,
 }: Step5ShotCreationProps) {
   const [activeTab, setActiveTab] = useState<ElementType>("all");
+  const [sidebarMode, setSidebarMode] = useState<"elements" | "player">(
+    "elements",
+  );
+  const [highlightedShotIndex, setHighlightedShotIndex] = useState<
+    number | null
+  >(null);
 
   // Convert outline assets to element format, or use mock data as fallback
   const [elements, setElements] = useState<ElementItem[]>(() => {
@@ -195,6 +209,12 @@ export function Step5ShotCreation({
 
   // Check if we have missing elements (outline was lost)
   const hasNoElements = elements.length === 0 && !outlineAssets;
+
+  // Create entity lookup for rendering @(EntityName) references
+  const entityLookup = useMemo(
+    () => createEntityLookup(outlineAssets),
+    [outlineAssets],
+  );
 
   // Delete State
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -381,130 +401,179 @@ export function Step5ShotCreation({
           {/* Elements Section */}
           <div className="flex-1 flex flex-col min-h-0">
             <div className="shrink-0 bg-neutral-900/10">
-              <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-bold text-white">Elements</h2>
-                  <p className="text-neutral-400 text-sm">
-                    Manage consistency assets
-                  </p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-neutral-400 hover:text-white"
-                >
-                  <Search className="w-4 h-4" />
-                </Button>
-              </div>
-
-              {/* Tabs */}
-              <div className="px-6 py-4">
-                <div className="flex gap-1 bg-neutral-900/50 p-1 rounded-lg border border-neutral-800 overflow-x-auto no-scrollbar">
-                  {["all", "character", "location", "object", "stock"].map(
-                    (tab) => (
-                      <button
-                        key={tab}
-                        onClick={() => setActiveTab(tab as ElementType)}
-                        className={cn(
-                          "px-3 py-1.5 rounded-md text-xs font-medium transition-all capitalize whitespace-nowrap flex-1",
-                          activeTab === tab
-                            ? "bg-neutral-700 text-white shadow-sm"
-                            : "text-neutral-400 hover:text-white hover:bg-neutral-800/50",
-                        )}
-                      >
-                        {tab === "stock" ? "Stock" : tab}
-                      </button>
-                    ),
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Scrollable Elements Grid */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar px-6 pb-6 pt-0">
-              <div className="grid grid-cols-2 gap-3">
-                {filteredElements.map((element) => (
-                  <div
-                    key={element.id}
-                    className="group relative aspect-[3/4] bg-neutral-800 rounded-lg overflow-hidden border border-neutral-800 hover:border-neutral-600 transition-all cursor-pointer"
-                    onClick={() => handleEditClick(element)}
-                  >
-                    {/* Hover Actions (Top Right) */}
-                    <div className="absolute top-2 right-2 z-20 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        size="icon"
-                        variant="secondary"
-                        className="h-7 w-7 bg-black/60 hover:bg-black/80 text-white border border-white/10"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEditClick(element);
-                        }}
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="destructive"
-                        className="h-7 w-7 bg-red-900/80 hover:bg-red-900 text-white border border-red-500/20"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteClick(element.id);
-                        }}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-
-                    {/* Type Icon Badge */}
-                    <div className="absolute top-2 left-2 z-10 p-1 bg-black/50 backdrop-blur-sm rounded border border-white/10 pointer-events-none">
-                      {element.type === "character" && (
-                        <User className="w-3 h-3 text-white" />
-                      )}
-                      {element.type === "object" && (
-                        <Box className="w-3 h-3 text-white" />
-                      )}
-                      {element.type === "location" && (
-                        <MapPin className="w-3 h-3 text-white" />
-                      )}
-                      {element.type === "stock" && (
-                        <Film className="w-3 h-3 text-white" />
-                      )}
-                    </div>
-
-                    {/* Image or Placeholder */}
-                    {element.image ? (
-                      <img
-                        src={element.image}
-                        alt={element.name}
-                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                      />
-                    ) : (
-                      <div className="w-full h-full bg-gradient-to-br from-neutral-800 to-neutral-700 flex flex-col items-center justify-center gap-2">
-                        <Box className="w-8 h-8 text-neutral-600" />
-                      </div>
+              {/* Mode Toggle (Elements / Player) */}
+              <div className="p-4 border-b border-neutral-800">
+                <div className="flex gap-1 bg-neutral-900 p-1 rounded-lg border border-neutral-800">
+                  <button
+                    onClick={() => setSidebarMode("elements")}
+                    className={cn(
+                      "flex-1 px-3 py-2 rounded-md text-sm font-medium transition-all flex items-center justify-center gap-2",
+                      sidebarMode === "elements"
+                        ? "bg-neutral-800 text-white shadow-sm"
+                        : "text-neutral-400 hover:text-white hover:bg-neutral-800/50",
                     )}
-
-                    {/* Label Overlay */}
-                    <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-8 pointer-events-none">
-                      <p className="font-medium text-white text-sm leading-tight truncate">
-                        {element.name}
-                      </p>
-                      <p className="text-[10px] text-neutral-400 uppercase tracking-wider mt-0.5">
-                        {element.type}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-
-                {/* Add New Empty State */}
-                <div className="aspect-[3/4] flex flex-col items-center justify-center rounded-lg border border-dashed border-neutral-700 bg-neutral-900/30 text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/50 hover:border-neutral-500 transition-all cursor-pointer gap-2">
-                  <div className="p-2 rounded-full bg-neutral-800">
+                  >
                     <Grid className="w-4 h-4" />
-                  </div>
-                  <span className="text-xs font-medium">Add New</span>
+                    Elements
+                  </button>
+                  <button
+                    onClick={() => setSidebarMode("player")}
+                    className={cn(
+                      "flex-1 px-3 py-2 rounded-md text-sm font-medium transition-all flex items-center justify-center gap-2",
+                      sidebarMode === "player"
+                        ? "bg-orange-600 text-white shadow-sm"
+                        : "text-neutral-400 hover:text-white hover:bg-neutral-800/50",
+                    )}
+                  >
+                    <Play className="w-4 h-4" />
+                    Player
+                  </button>
                 </div>
               </div>
+
+              {/* Elements Header (only show when in elements mode) */}
+              {sidebarMode === "elements" && (
+                <>
+                  <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-bold text-white">Elements</h2>
+                      <p className="text-neutral-400 text-sm">
+                        Manage consistency assets
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-neutral-400 hover:text-white"
+                    >
+                      <Search className="w-4 h-4" />
+                    </Button>
+                  </div>
+
+                  {/* Element Type Tabs */}
+                  <div className="px-6 py-4">
+                    <div className="flex gap-1 bg-neutral-900/50 p-1 rounded-lg border border-neutral-800 overflow-x-auto no-scrollbar">
+                      {["all", "character", "location", "object", "stock"].map(
+                        (tab) => (
+                          <button
+                            key={tab}
+                            onClick={() => setActiveTab(tab as ElementType)}
+                            className={cn(
+                              "px-3 py-1.5 rounded-md text-xs font-medium transition-all capitalize whitespace-nowrap flex-1",
+                              activeTab === tab
+                                ? "bg-neutral-700 text-white shadow-sm"
+                                : "text-neutral-400 hover:text-white hover:bg-neutral-800/50",
+                            )}
+                          >
+                            {tab === "stock" ? "Stock" : tab}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
+
+            {/* Sidebar Content (Elements Grid OR Player Panel) */}
+            {sidebarMode === "elements" ? (
+              <div className="flex-1 overflow-y-auto custom-scrollbar px-6 pb-6 pt-0">
+                <div className="grid grid-cols-2 gap-3">
+                  {filteredElements.map((element) => (
+                    <div
+                      key={element.id}
+                      className="group relative aspect-[3/4] bg-neutral-800 rounded-lg overflow-hidden border border-neutral-800 hover:border-neutral-600 transition-all cursor-pointer"
+                      onClick={() => handleEditClick(element)}
+                    >
+                      {/* Hover Actions (Top Right) */}
+                      <div className="absolute top-2 right-2 z-20 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button
+                          size="icon"
+                          variant="secondary"
+                          className="h-7 w-7 bg-black/60 hover:bg-black/80 text-white border border-white/10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditClick(element);
+                          }}
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="destructive"
+                          className="h-7 w-7 bg-red-900/80 hover:bg-red-900 text-white border border-red-500/20"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteClick(element.id);
+                          }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+
+                      {/* Type Icon Badge */}
+                      <div className="absolute top-2 left-2 z-10 p-1 bg-black/50 backdrop-blur-sm rounded border border-white/10 pointer-events-none">
+                        {element.type === "character" && (
+                          <User className="w-3 h-3 text-white" />
+                        )}
+                        {element.type === "object" && (
+                          <Box className="w-3 h-3 text-white" />
+                        )}
+                        {element.type === "location" && (
+                          <MapPin className="w-3 h-3 text-white" />
+                        )}
+                        {element.type === "stock" && (
+                          <Film className="w-3 h-3 text-white" />
+                        )}
+                      </div>
+
+                      {/* Image or Placeholder */}
+                      {element.image ? (
+                        <img
+                          src={element.image}
+                          alt={element.name}
+                          className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gradient-to-br from-neutral-800 to-neutral-700 flex flex-col items-center justify-center gap-2">
+                          <Box className="w-8 h-8 text-neutral-600" />
+                        </div>
+                      )}
+
+                      {/* Label Overlay */}
+                      <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-8 pointer-events-none">
+                        <p className="font-medium text-white text-sm leading-tight truncate">
+                          {element.name}
+                        </p>
+                        <p className="text-[10px] text-neutral-400 uppercase tracking-wider mt-0.5">
+                          {element.type}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Add New Empty State */}
+                  <div className="aspect-[3/4] flex flex-col items-center justify-center rounded-lg border border-dashed border-neutral-700 bg-neutral-900/30 text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/50 hover:border-neutral-500 transition-all cursor-pointer gap-2">
+                    <div className="p-2 rounded-full bg-neutral-800">
+                      <Grid className="w-4 h-4" />
+                    </div>
+                    <span className="text-xs font-medium">Add New</span>
+                  </div>
+                </div>
+              </div>
+            ) : /* Player Panel */
+            audioChunks && audioChunks.length > 0 && script ? (
+              <ShotPlayerPanel
+                audioChunks={audioChunks}
+                script={script}
+                shots={avScriptShots || []}
+                onShotHighlight={setHighlightedShotIndex}
+              />
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-neutral-500">
+                <p className="text-sm">Audio not available</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -570,15 +639,19 @@ export function Step5ShotCreation({
                         className={cn(
                           "flex gap-4 p-4 bg-neutral-950 hover:bg-neutral-900/80 transition-colors group relative border-b border-neutral-800/50 last:border-0 cursor-pointer",
                           hasChanges && "ring-1 ring-amber-500/50",
+                          highlightedShotIndex === shot.segment_index &&
+                            "ring-2 ring-orange-500 bg-orange-950/20",
                         )}
                       >
-                        {/* Left accent bar - shows amber when has pending changes */}
+                        {/* Left accent bar - shows amber when has pending changes, orange when playing */}
                         <div
                           className={cn(
                             "absolute left-0 top-0 bottom-0 w-1 transition-colors",
-                            hasChanges
-                              ? "bg-amber-500"
-                              : "bg-transparent group-hover:bg-blue-500/50",
+                            highlightedShotIndex === shot.segment_index
+                              ? "bg-orange-500"
+                              : hasChanges
+                                ? "bg-amber-500"
+                                : "bg-transparent group-hover:bg-blue-500/50",
                           )}
                         ></div>
 
@@ -604,9 +677,14 @@ export function Step5ShotCreation({
 
                         <div className="flex-1">
                           <div className="text-sm text-neutral-300 leading-7 font-light">
-                            {displayShot.summary ||
-                              displayShot.text.substring(0, 150) +
-                                (displayShot.text.length > 150 ? "..." : "")}
+                            <EntityReference
+                              text={
+                                displayShot.summary ||
+                                displayShot.text.substring(0, 150) +
+                                  (displayShot.text.length > 150 ? "..." : "")
+                              }
+                              entities={entityLookup}
+                            />
                           </div>
                           <div className="mt-3 flex items-center gap-2 flex-wrap">
                             <span

@@ -427,6 +427,37 @@ export function VideoCreationWizard({
     isOpen: boolean;
     direction: "next" | "prev";
   } | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
+
+  // =========================================================================
+  // RESET WARNING HELPER
+  // =========================================================================
+  const getResetWarning = useCallback(
+    (stepId: number): string | null => {
+      switch (stepId) {
+        case 2: // Stock Media
+          return null; // No persistent data to reset
+        case 3: // Script
+          return "Your generated script content";
+        case 4: // Audio
+          const chunkCount = state.audioChunks.length;
+          return chunkCount > 0
+            ? `Generated TTS audio files (${chunkCount} chunks)`
+            : "Generated TTS audio files";
+        case 5: // Shot Creation
+          return "AV Script shot list and timing data";
+        case 6: // Scene Review
+          return "Generated scene images and videos";
+        case 7: // Editor
+          return "Editor timeline and settings";
+        case 8: // Export
+          return "Exported video file";
+        default:
+          return null;
+      }
+    },
+    [state.audioChunks.length],
+  );
 
   // Get skipped steps for navigation calculations
   const skippedSteps = useMemo(
@@ -467,13 +498,14 @@ export function VideoCreationWizard({
     setConfirmDialog({ isOpen: true, direction: "next" });
   }, [canGoNext]);
 
-  const handleConfirmNavigation = useCallback(() => {
+  const handleConfirmNavigation = useCallback(async () => {
     if (!confirmDialog) return;
 
-    // OPTIMISTIC: Close dialog immediately
-    setConfirmDialog(null);
-
+    // For NEXT navigation: Close dialog immediately (optimistic)
+    // For PREV navigation: Keep dialog open during reset, close after
     if (confirmDialog.direction === "next") {
+      setConfirmDialog(null);
+
       const nextStep = getNextStep(currentStep);
 
       if (nextStep > STEPS.length) {
@@ -612,8 +644,74 @@ export function VideoCreationWizard({
         advanceToStep(nextStep);
       }
     } else {
-      // PREV navigation - immediate
+      // PREV navigation - call reset API then navigate
       const prevStep = getPrevStep(currentStep);
+
+      // If we have a videoId, call the reset API
+      if (state.videoId) {
+        setIsResetting(true);
+
+        try {
+          const response = await fetch(
+            `/api/videos/${state.videoId}/reset-step`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                fromStep: currentStep,
+                toStep: prevStep,
+              }),
+            },
+          );
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            console.error("[Wizard] Reset step failed:", data.error);
+            // Still allow navigation even if reset fails
+          } else {
+            console.log(
+              `[Wizard] Reset step ${currentStep} -> ${prevStep}:`,
+              data,
+            );
+
+            // Clear local state based on what was reset
+            const stateUpdates: Partial<WizardState> = {};
+
+            switch (currentStep) {
+              case 3: // Script
+                stateUpdates.script = "";
+                stateUpdates.scriptOutput = null;
+                break;
+              case 4: // Audio
+                stateUpdates.audioUrl = null;
+                stateUpdates.audioChunks = [];
+                stateUpdates.audioTaskId = null;
+                stateUpdates.isAudioLoading = false;
+                break;
+              case 5: // Shot Creation
+                stateUpdates.shotList = [];
+                stateUpdates.avScriptTaskId = null;
+                stateUpdates.avScriptPart1Output = null;
+                stateUpdates.isAvScriptLoading = false;
+                break;
+            }
+
+            if (Object.keys(stateUpdates).length > 0) {
+              updateState(stateUpdates);
+            }
+          }
+        } catch (err) {
+          console.error("[Wizard] Reset step error:", err);
+          // Still allow navigation even if reset fails
+        } finally {
+          setIsResetting(false);
+        }
+      }
+
+      // Close dialog and navigate
+      setConfirmDialog(null);
+      setMaxStepReached(prevStep); // Reset max step to match navigation target
       goToStep(prevStep);
     }
   }, [
@@ -629,6 +727,7 @@ export function VideoCreationWizard({
     state.outlineOutput?.assetRegistry,
     updateVideo,
     onComplete,
+    updateState,
   ]);
 
   const handleCloseConfirmDialog = useCallback(() => {
@@ -1072,6 +1171,8 @@ export function VideoCreationWizard({
             onBack={() => goToStep(4)}
             outlineAssets={state.outlineOutput?.assetRegistry}
             avScriptShots={state.avScriptPart1Output?.shots}
+            audioChunks={state.audioChunks}
+            script={state.script}
             onUpdateShots={async (updatedShots) => {
               console.log("[Wizard] Updating shots:", updatedShots.length);
 
@@ -1281,6 +1382,12 @@ export function VideoCreationWizard({
         direction={confirmDialog?.direction ?? "next"}
         currentStepName={currentStepName}
         targetStepName={targetStepName}
+        resetWarning={
+          confirmDialog?.direction === "prev"
+            ? getResetWarning(currentStep)
+            : null
+        }
+        isResetting={isResetting}
       />
     </div>
   );

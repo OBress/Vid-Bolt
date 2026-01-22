@@ -249,6 +249,42 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
 // ============================================================================
 
 /**
+ * Build a prompt section instructing the AI to use @(EntityName) syntax.
+ */
+function buildEntityPromptSection(outlineAssets?: AVScriptJobData['outlineAssets']): string {
+  const characters = outlineAssets?.characters?.map(c => c.name) || [];
+  const locations = outlineAssets?.locations?.map(l => l.name) || [];
+  const objects = outlineAssets?.objects?.map(o => o.name) || [];
+
+  if (characters.length === 0 && locations.length === 0 && objects.length === 0) {
+    return '';
+  }
+
+  let section = `
+IMPORTANT: When your summary references any of the following entities, wrap their name in @() syntax.
+This helps the UI render rich entity badges.`;
+
+  if (characters.length > 0) {
+    section += `
+- Characters: ${characters.join(', ')}`;
+  }
+  if (locations.length > 0) {
+    section += `
+- Locations: ${locations.join(', ')}`;
+  }
+  if (objects.length > 0) {
+    section += `
+- Objects: ${objects.join(', ')}`;
+  }
+
+  section += `
+
+Example: "@(Isabella Moretti) gazes at the @(Vintage Watch) on the @(Villa Table)"`;
+
+  return section;
+}
+
+/**
  * Generate brief visual summaries for each shot segment.
  * Also detects references to characters, locations, and objects from the outline.
  */
@@ -272,6 +308,9 @@ async function generateShotSummaries(
   const locationNames = outlineAssets?.locations?.map(l => ({ id: l.id, name: l.name.toLowerCase() })) || [];
   const objectNames = outlineAssets?.objects?.map(o => ({ id: o.id, name: o.name.toLowerCase() })) || [];
 
+  // Build entity lists for the prompt
+  const entityPromptSection = buildEntityPromptSection(outlineAssets);
+
   try {
     // Generate summaries using AI
     const response = await generateJSON<{ 
@@ -288,7 +327,7 @@ For each segment, provide:
 2. Whether it should be a static image, video clip, or motion graphic
 
 Guidelines:
-- Keep summaries concise (under 20 words)
+- Keep summaries concise (under 25 words)
 - Focus on the key visual element
 - Use "video" for action sequences, transitions, emotional moments
 - Use "image" for static concepts, portraits, objects
@@ -298,7 +337,8 @@ Guidelines:
   - Text-heavy segments or lists
   - Kinetic typography
   - "Transition" content types where a graphical element bridges scenes
-- Match the visual style to the content type`,
+- Match the visual style to the content type
+${entityPromptSection}`,
       `Generate visual summaries for these ${segments.length} video segments:
 
 ${JSON.stringify(segments.map((s, i) => ({
@@ -311,7 +351,7 @@ ${JSON.stringify(segments.map((s, i) => ({
 Return JSON:
 {
   "summaries": [
-    { "index": 0, "summary": "Brief visual description...", "media_type": "image" }
+    { "index": 0, "summary": "Brief visual description with @(EntityName) references...", "media_type": "image" }
   ]
 }`
     );
