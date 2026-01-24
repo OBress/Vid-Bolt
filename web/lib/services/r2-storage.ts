@@ -52,16 +52,16 @@ export const STORAGE_PATHS = {
 // Initialize S3 client for R2
 let s3Client: S3Client | null = null;
 
-function getS3Client(): S3Client {
+export function getS3Client(): S3Client {
   if (s3Client) return s3Client;
 
-  const accountId = process.env.R2_ACCOUNT_ID;
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
 
   if (!accountId || !accessKeyId || !secretAccessKey) {
     throw new Error(
-      "Missing R2 configuration. Required: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY"
+      "Missing R2 configuration. Required: CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY"
     );
   }
 
@@ -83,7 +83,7 @@ function getS3Client(): S3Client {
   return s3Client;
 }
 
-function getBucketName(): string {
+export function getBucketName(): string {
   const bucketName = process.env.R2_BUCKET_NAME;
   if (!bucketName) {
     throw new Error("Missing R2_BUCKET_NAME environment variable");
@@ -301,9 +301,9 @@ export function generateGpuTestKey(
  */
 export function isR2Configured(): boolean {
   return !!(
-    process.env.R2_ACCOUNT_ID &&
-    process.env.R2_ACCESS_KEY_ID &&
-    process.env.R2_SECRET_ACCESS_KEY &&
+    process.env.CLOUDFLARE_ACCOUNT_ID &&
+    process.env.CLOUDFLARE_ACCESS_KEY_ID &&
+    process.env.CLOUDFLARE_SECRET_ACCESS_KEY &&
     process.env.R2_BUCKET_NAME &&
     process.env.R2_PUBLIC_URL
   );
