@@ -3,7 +3,15 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Download, X, Globe, Youtube, ArrowLeft, Search } from "lucide-react";
+import {
+  Download,
+  X,
+  Globe,
+  Youtube,
+  ArrowLeft,
+  Search,
+  Database,
+} from "lucide-react";
 import { useState, useEffect } from "react";
 
 interface StockScraperTesterProps {
@@ -93,6 +101,29 @@ export function StockScraperTester({
         </div>
 
         <div className="flex items-center gap-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              try {
+                const res = await fetch("/api/dev/seed-mock-vector", {
+                  method: "POST",
+                });
+                const data = await res.json();
+                if (data.success) {
+                  alert("Mock data seeded! Try searching for 'dog' or 'park'.");
+                } else {
+                  alert(`Seeding failed: ${data.error}`);
+                }
+              } catch (e) {
+                alert("Seeding request failed completely.");
+              }
+            }}
+            className="text-neutral-400 hover:text-white border-neutral-800"
+          >
+            <Database className="w-4 h-4 mr-2" />
+            Seed Mock Data
+          </Button>
           {!inline && (
             <Button
               variant="ghost"

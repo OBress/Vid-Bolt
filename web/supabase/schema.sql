@@ -59,6 +59,13 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
 
 
 
+CREATE EXTENSION IF NOT EXISTS "vector" WITH SCHEMA "extensions";
+
+
+
+
+
+
 CREATE TYPE "public"."account_status" AS ENUM (
     'pending',
     'active',
@@ -82,6 +89,7 @@ ALTER TYPE "public"."payment_status" OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."admin_delete_user"("target_user_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 DECLARE
     caller_id UUID;
@@ -92,20 +100,16 @@ DECLARE
     statement_record RECORD;
     media_record RECORD;
 BEGIN
-    -- Get the calling user's ID
     caller_id := auth.uid();
     
-    -- Check if requester is admin
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = caller_id AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied: Admin privileges required';
     END IF;
     
-    -- Prevent self-deletion
     IF target_user_id = caller_id THEN
         RAISE EXCEPTION 'Cannot delete your own account';
     END IF;
     
-    -- Verify target user exists and get info
     SELECT username, email INTO target_username, target_email 
     FROM public.users WHERE id = target_user_id;
     
@@ -113,17 +117,14 @@ BEGIN
         RAISE EXCEPTION 'User not found: %', target_user_id;
     END IF;
     
-    -- Collect R2 prefixes from video_projects before deletion
     FOR video_record IN 
         SELECT id FROM public.video_projects WHERE user_id = target_user_id
     LOOP
         r2_prefixes := array_append(r2_prefixes, 'audio/' || target_user_id::TEXT || '/' || video_record.id::TEXT || '/');
     END LOOP;
     
-    -- Add GPU API test prefix
     r2_prefixes := array_append(r2_prefixes, 'gpu-api-test/' || target_user_id::TEXT || '/');
     
-    -- Collect payment proof URLs from monthly_statements
     FOR statement_record IN 
         SELECT payment_proof_url, revenue_proof_url 
         FROM public.monthly_statements 
@@ -138,7 +139,6 @@ BEGIN
         END IF;
     END LOOP;
     
-    -- Collect media project picture URLs
     FOR media_record IN 
         SELECT picture_url FROM public.media_projects 
         WHERE user_id = target_user_id AND picture_url IS NOT NULL
@@ -146,11 +146,8 @@ BEGIN
         r2_prefixes := array_append(r2_prefixes, media_record.picture_url);
     END LOOP;
     
-    -- Delete from public.users (cascades to most tables via FK ON DELETE CASCADE)
-    -- Tables that cascade: user_api_keys, tasks, video_projects, monthly_statements
     DELETE FROM public.users WHERE id = target_user_id;
     
-    -- Return summary with info needed for auth deletion and R2 cleanup
     RETURN jsonb_build_object(
         'success', true,
         'user_id', target_user_id,
@@ -175,6 +172,7 @@ IMPORTANT: Caller must also delete from auth.users via Supabase Admin API.';
 
 CREATE OR REPLACE FUNCTION "public"."admin_get_user_for_deletion"("target_user_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 DECLARE
     caller_id UUID;
@@ -183,20 +181,16 @@ DECLARE
     video_count INT;
     statement_count INT;
 BEGIN
-    -- Get the calling user's ID
     caller_id := auth.uid();
     
-    -- Check if requester is admin
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = caller_id AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied: Admin privileges required';
     END IF;
     
-    -- Count related records
     SELECT COUNT(*) INTO task_count FROM public.tasks WHERE user_id = target_user_id;
     SELECT COUNT(*) INTO video_count FROM public.video_projects WHERE user_id = target_user_id;
     SELECT COUNT(*) INTO statement_count FROM public.monthly_statements WHERE user_id = target_user_id;
     
-    -- Get user info
     SELECT jsonb_build_object(
         'id', u.id,
         'email', u.email,
@@ -230,6 +224,7 @@ COMMENT ON FUNCTION "public"."admin_get_user_for_deletion"("target_user_id" "uui
 
 CREATE OR REPLACE FUNCTION "public"."admin_wipe_user_data"("target_user_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 DECLARE
     caller_id UUID;
@@ -241,23 +236,18 @@ DECLARE
     video_record RECORD;
     statement_record RECORD;
 BEGIN
-    -- Get the calling user's ID
     caller_id := auth.uid();
     
-    -- Check if requester is admin
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = caller_id AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied: Admin privileges required';
     END IF;
     
-    -- Prevent self-deletion
     IF target_user_id = caller_id THEN
         RAISE EXCEPTION 'Cannot wipe your own data';
     END IF;
     
-    -- Verify target user exists and get username
     SELECT username INTO target_username FROM public.users WHERE id = target_user_id;
     IF target_username IS NULL THEN
-        -- Try to get email if username is null
         SELECT email INTO target_username FROM public.users WHERE id = target_user_id;
     END IF;
     
@@ -265,18 +255,14 @@ BEGIN
         RAISE EXCEPTION 'User not found: %', target_user_id;
     END IF;
     
-    -- Collect R2 prefixes from video_projects before deletion
-    -- Audio files are stored at: audio/{userId}/{videoId}/
     FOR video_record IN 
         SELECT id FROM public.video_projects WHERE user_id = target_user_id
     LOOP
         r2_prefixes := array_append(r2_prefixes, 'audio/' || target_user_id::TEXT || '/' || video_record.id::TEXT || '/');
     END LOOP;
     
-    -- Add GPU API test prefix
     r2_prefixes := array_append(r2_prefixes, 'gpu-api-test/' || target_user_id::TEXT || '/');
     
-    -- Collect payment proof URLs from monthly_statements
     FOR statement_record IN 
         SELECT payment_proof_url, revenue_proof_url 
         FROM public.monthly_statements 
@@ -291,19 +277,15 @@ BEGIN
         END IF;
     END LOOP;
     
-    -- Delete video_projects (cascades will handle linked tasks via FK SET NULL)
     DELETE FROM public.video_projects WHERE user_id = target_user_id;
     GET DIAGNOSTICS deleted_videos = ROW_COUNT;
     
-    -- Delete tasks (cascades to task_steps and continuity_state)
     DELETE FROM public.tasks WHERE user_id = target_user_id;
     GET DIAGNOSTICS deleted_tasks = ROW_COUNT;
     
-    -- Delete monthly_statements
     DELETE FROM public.monthly_statements WHERE user_id = target_user_id;
     GET DIAGNOSTICS deleted_statements = ROW_COUNT;
     
-    -- Return summary
     RETURN jsonb_build_object(
         'success', true,
         'user_id', target_user_id,
@@ -329,6 +311,7 @@ Returns R2 prefixes that need cleanup.';
 
 CREATE OR REPLACE FUNCTION "public"."append_task_step"("p_task_id" "uuid", "p_step" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
   UPDATE public.tasks 
@@ -349,6 +332,7 @@ ALTER FUNCTION "public"."append_task_step"("p_task_id" "uuid", "p_step" "jsonb")
 
 CREATE OR REPLACE FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
   UPDATE public.tasks
@@ -373,6 +357,7 @@ ALTER FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "te
 
 CREATE OR REPLACE FUNCTION "public"."get_admin_analytics"() RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 DECLARE
     total_users int;
@@ -381,7 +366,6 @@ DECLARE
     total_projects int;
     result jsonb;
 BEGIN
-    -- Check if requester is admin using alias 'u'
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied';
     END IF;
@@ -408,6 +392,7 @@ ALTER FUNCTION "public"."get_admin_analytics"() OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") RETURNS TABLE("id" "uuid", "name" "text", "status" "text", "current_stage" "text", "current_step" "text", "progress_percent" integer, "updated_at" timestamp with time zone)
     LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
     RETURN QUERY
@@ -434,6 +419,7 @@ ALTER FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") OWNER TO "po
 
 CREATE OR REPLACE FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" STABLE
+    SET "search_path" TO ''
     AS $$
 DECLARE
   result JSONB;
@@ -488,9 +474,9 @@ COMMENT ON COLUMN "public"."monthly_statements"."costs" IS 'JSON: [{id, name, am
 
 CREATE OR REPLACE FUNCTION "public"."get_user_payment_history"("target_user_id" "uuid") RETURNS SETOF "public"."monthly_statements"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
-    -- Check if requester is admin
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied';
     END IF;
@@ -509,11 +495,9 @@ ALTER FUNCTION "public"."get_user_payment_history"("target_user_id" "uuid") OWNE
 
 CREATE OR REPLACE FUNCTION "public"."get_users_paginated"("page" integer DEFAULT 1, "per_page" integer DEFAULT 20, "search_text" "text" DEFAULT ''::"text", "status_filter" "text" DEFAULT 'all'::"text") RETURNS TABLE("id" "uuid", "email" "text", "name" "text", "username" "text", "is_admin" boolean, "status" "public"."account_status", "date_joined" timestamp with time zone, "total_count" bigint, "last_month_status" "text")
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
-DECLARE
-    -- No longer just a single string, we search a range
 BEGIN
-    -- Check for admin
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied';
     END IF;
@@ -541,8 +525,6 @@ BEGIN
         (SELECT count(*) FROM filtered_users)::bigint as total_count,
         COALESCE(
             (
-                -- Fetch the most recent statement status from the last 2 months (Current or Previous)
-                -- If they paid for this month OR last month, we count it.
                 SELECT ms.status::text
                 FROM public.monthly_statements ms 
                 WHERE ms.user_id = u.id 
@@ -565,6 +547,7 @@ ALTER FUNCTION "public"."get_users_paginated"("page" integer, "per_page" integer
 
 CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
   INSERT INTO public.users (id, email)
@@ -579,12 +562,11 @@ ALTER FUNCTION "public"."handle_new_user"() OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."handle_payment_status_change"() RETURNS "trigger"
     LANGUAGE "plpgsql"
+    SET "search_path" TO ''
     AS $$
 BEGIN
-    -- If status is changing to 'paid', set paid_at to now()
     IF NEW.status = 'paid' AND (OLD.status IS DISTINCT FROM 'paid') THEN
         NEW.paid_at = now();
-    -- If status is changing FROM 'paid' to something else (e.g. reset), clear paid_at
     ELSIF OLD.status = 'paid' AND NEW.status != 'paid' THEN
         NEW.paid_at = NULL;
     END IF;
@@ -598,6 +580,7 @@ ALTER FUNCTION "public"."handle_payment_status_change"() OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."handle_updated_at"() RETURNS "trigger"
     LANGUAGE "plpgsql"
+    SET "search_path" TO ''
     AS $$
 BEGIN
     NEW.updated_at = now();
@@ -611,6 +594,7 @@ ALTER FUNCTION "public"."handle_updated_at"() OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
     UPDATE public.video_projects
@@ -632,8 +616,28 @@ $$;
 ALTER FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."match_stock_media"("query_embedding" "extensions"."vector", "match_threshold" double precision, "match_count" integer) RETURNS TABLE("id" "uuid", "r2_key" "text", "metadata" "jsonb", "similarity" double precision)
+    LANGUAGE "sql" STABLE
+    SET "search_path" TO 'extensions'
+    AS $$
+  select
+    stock_media.id,
+    stock_media.r2_key,
+    stock_media.metadata,
+    1 - (stock_media.embedding <=> query_embedding) as similarity
+  from public.stock_media
+  where 1 - (stock_media.embedding <=> query_embedding) > match_threshold
+  order by similarity desc
+  limit match_count;
+$$;
+
+
+ALTER FUNCTION "public"."match_stock_media"("query_embedding" "extensions"."vector", "match_threshold" double precision, "match_count" integer) OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
   UPDATE public.tasks
@@ -654,6 +658,7 @@ ALTER FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jso
 
 CREATE OR REPLACE FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
   UPDATE public.video_projects
@@ -674,23 +679,19 @@ ALTER FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" 
 
 CREATE OR REPLACE FUNCTION "public"."protect_admin_column"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
-  -- Check if is_admin is being changed
   IF NEW.is_admin IS DISTINCT FROM OLD.is_admin THEN
-    -- 1. Allow service_role (used by backend/workers)
     IF (current_setting('request.jwt.claim.role', true) = 'service_role') THEN
       RETURN NEW;
     END IF;
 
-    -- 2. Allow postgres role (used by Supabase Dashboard / SQL Editor)
-    -- This allows the owner to change status from the Web UI
     IF (session_user = 'postgres') THEN
       RETURN NEW;
     END IF;
 
-    -- If neither, block the update
-    RAISE EXCEPTION 'You are not authorized to change the is_admin status. This action is restricted to the Supabase Dashboard or Service Role.';
+    RAISE EXCEPTION 'You are not authorized to change the is_admin status.';
   END IF;
   RETURN NEW;
 END;
@@ -702,9 +703,9 @@ ALTER FUNCTION "public"."protect_admin_column"() OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_month_date" "text") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
-    -- Check if requester is admin (aliased)
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied';
     END IF;
@@ -715,7 +716,7 @@ BEGIN
         payment_proof_url = NULL,
         updated_at = now()
     WHERE user_id = target_user_id 
-      AND month_date = target_month_date::date; -- Explicit cast to date
+      AND month_date = target_month_date::date;
       
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Statement not found for user % and month %', target_user_id, target_month_date;
@@ -729,11 +730,11 @@ ALTER FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_m
 
 CREATE OR REPLACE FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 DECLARE
   updated_steps JSONB;
 BEGIN
-  -- Build updated steps array
   SELECT jsonb_agg(
     CASE 
       WHEN step->>'id' = p_step_id 
@@ -747,7 +748,6 @@ BEGIN
     (SELECT COALESCE(steps, '[]'::jsonb) FROM public.tasks WHERE id = p_task_id)
   ) AS step;
   
-  -- Update the task
   UPDATE public.tasks
   SET 
     steps = COALESCE(updated_steps, '[]'::jsonb),
@@ -766,6 +766,7 @@ ALTER FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text
 
 CREATE OR REPLACE FUNCTION "public"."update_updated_at_column"() RETURNS "trigger"
     LANGUAGE "plpgsql"
+    SET "search_path" TO ''
     AS $$
 BEGIN
     NEW.updated_at = now();
@@ -779,14 +780,13 @@ ALTER FUNCTION "public"."update_updated_at_column"() OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."update_user_status"("target_user_id" "uuid", "new_status" "public"."account_status") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
-    -- Check if requester is admin using alias 'u'
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied';
     END IF;
 
-    -- Prevent modifying own status to non-active (anti-lockout)
     IF target_user_id = auth.uid() AND new_status != 'active' THEN
          RAISE EXCEPTION 'Cannot deactivate your own account';
     END IF;
@@ -803,6 +803,7 @@ ALTER FUNCTION "public"."update_user_status"("target_user_id" "uuid", "new_statu
 
 CREATE OR REPLACE FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
     UPDATE public.video_projects
@@ -811,13 +812,11 @@ BEGIN
         current_step = p_current_step,
         progress_percent = p_progress_percent,
         updated_at = now(),
-        -- Auto-set status to processing if not already completed/failed
         status = CASE 
             WHEN status = 'draft' THEN 'processing'
             WHEN status IN ('completed', 'failed', 'cancelled') THEN status
             ELSE 'processing'
         END,
-        -- Auto-set completed_at when stage is 'completed'
         completed_at = CASE
             WHEN p_current_stage = 'completed' THEN now()
             ELSE completed_at
@@ -834,11 +833,11 @@ $$;
 ALTER FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "date") RETURNS "void"
+CREATE OR REPLACE FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "text", "proof_url" "text") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 BEGIN
-    -- Check for admin
     IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
         RAISE EXCEPTION 'Access denied';
     END IF;
@@ -846,19 +845,19 @@ BEGIN
     UPDATE public.monthly_statements
     SET 
         status = 'paid',
+        payment_proof_url = proof_url,
         updated_at = now()
-        -- paid_at trigger will handle the timestamp
     WHERE user_id = target_user_id 
-      AND month_date = target_month_date;
+      AND month_date = target_month_date::date;
       
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Statement not found';
+        RAISE EXCEPTION 'Statement not found for user % and month %', target_user_id, target_month_date;
     END IF;
 END;
 $$;
 
 
-ALTER FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "date") OWNER TO "postgres";
+ALTER FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "text", "proof_url" "text") OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."continuity_state" (
@@ -903,6 +902,21 @@ CREATE TABLE IF NOT EXISTS "public"."project_settings" (
 
 
 ALTER TABLE "public"."project_settings" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."stock_media" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "source" "text" NOT NULL,
+    "external_id" "text",
+    "r2_key" "text" NOT NULL,
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "embedding" "extensions"."vector"(768),
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "stock_media_source_check" CHECK (("source" = ANY (ARRAY['wikimedia'::"text", 'youtube'::"text", 'other'::"text"])))
+);
+
+
+ALTER TABLE "public"."stock_media" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."task_steps" (
@@ -1166,6 +1180,11 @@ ALTER TABLE ONLY "public"."project_settings"
 
 
 
+ALTER TABLE ONLY "public"."stock_media"
+    ADD CONSTRAINT "stock_media_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."task_steps"
     ADD CONSTRAINT "task_steps_pkey" PRIMARY KEY ("id");
 
@@ -1228,6 +1247,10 @@ ALTER TABLE ONLY "public"."users"
 
 ALTER TABLE ONLY "public"."video_projects"
     ADD CONSTRAINT "video_projects_pkey" PRIMARY KEY ("id");
+
+
+
+CREATE INDEX "idx_media_projects_user_id" ON "public"."media_projects" USING "btree" ("user_id");
 
 
 
@@ -1308,6 +1331,10 @@ CREATE INDEX "idx_video_projects_user_id" ON "public"."video_projects" USING "bt
 
 
 CREATE INDEX "idx_video_projects_user_status" ON "public"."video_projects" USING "btree" ("user_id", "status");
+
+
+
+CREATE INDEX "stock_media_embedding_idx" ON "public"."stock_media" USING "ivfflat" ("embedding" "extensions"."vector_cosine_ops") WITH ("lists"='100');
 
 
 
@@ -1436,99 +1463,115 @@ ALTER TABLE ONLY "public"."video_projects"
 
 
 
-CREATE POLICY "Users can delete their own config" ON "public"."user_gcp_config" FOR DELETE USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Authenticated users can view stock media" ON "public"."stock_media" FOR SELECT TO "authenticated" USING (true);
 
 
 
-CREATE POLICY "Users can insert own keys" ON "public"."user_api_keys" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
+CREATE POLICY "Service role can manage stock media" ON "public"."stock_media" TO "service_role" USING (true) WITH CHECK (true);
 
 
 
-CREATE POLICY "Users can insert own profile" ON "public"."users" FOR INSERT WITH CHECK (("auth"."uid"() = "id"));
+CREATE POLICY "Users can delete their own config" ON "public"."user_gcp_config" FOR DELETE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can insert their own config" ON "public"."user_gcp_config" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can delete their own video projects" ON "public"."video_projects" FOR DELETE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can insert their own statements" ON "public"."monthly_statements" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can insert own keys" ON "public"."user_api_keys" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users can insert own profile" ON "public"."users" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "id"));
+
+
+
+CREATE POLICY "Users can insert their own config" ON "public"."user_gcp_config" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users can insert their own statements" ON "public"."monthly_statements" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users can insert their own video projects" ON "public"."video_projects" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
 CREATE POLICY "Users can manage settings for their owned projects" ON "public"."project_settings" USING ((EXISTS ( SELECT 1
    FROM "public"."media_projects"
-  WHERE (("media_projects"."id" = "project_settings"."project_id") AND ("media_projects"."user_id" = "auth"."uid"()))))) WITH CHECK ((EXISTS ( SELECT 1
+  WHERE (("media_projects"."id" = "project_settings"."project_id") AND ("media_projects"."user_id" = ( SELECT "auth"."uid"() AS "uid")))))) WITH CHECK ((EXISTS ( SELECT 1
    FROM "public"."media_projects"
-  WHERE (("media_projects"."id" = "project_settings"."project_id") AND ("media_projects"."user_id" = "auth"."uid"())))));
+  WHERE (("media_projects"."id" = "project_settings"."project_id") AND ("media_projects"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
 
 CREATE POLICY "Users can manage their own continuity state" ON "public"."continuity_state" USING ((EXISTS ( SELECT 1
    FROM "public"."tasks"
-  WHERE (("tasks"."id" = "continuity_state"."task_id") AND ("tasks"."user_id" = "auth"."uid"()))))) WITH CHECK ((EXISTS ( SELECT 1
+  WHERE (("tasks"."id" = "continuity_state"."task_id") AND ("tasks"."user_id" = ( SELECT "auth"."uid"() AS "uid")))))) WITH CHECK ((EXISTS ( SELECT 1
    FROM "public"."tasks"
-  WHERE (("tasks"."id" = "continuity_state"."task_id") AND ("tasks"."user_id" = "auth"."uid"())))));
+  WHERE (("tasks"."id" = "continuity_state"."task_id") AND ("tasks"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
 
-CREATE POLICY "Users can manage their own general settings" ON "public"."user_settings" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can manage their own general settings" ON "public"."user_settings" USING ((( SELECT "auth"."uid"() AS "uid") = "user_id")) WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can manage their own media projects" ON "public"."media_projects" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can manage their own media projects" ON "public"."media_projects" USING ((( SELECT "auth"."uid"() AS "uid") = "user_id")) WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can manage their own tasks" ON "public"."tasks" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can manage their own tasks" ON "public"."tasks" USING ((( SELECT "auth"."uid"() AS "uid") = "user_id")) WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can manage their own video projects" ON "public"."video_projects" USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can update own keys" ON "public"."user_api_keys" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can update own keys" ON "public"."user_api_keys" FOR UPDATE USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can update own profile" ON "public"."users" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "id"));
 
 
 
-CREATE POLICY "Users can update own profile" ON "public"."users" FOR UPDATE USING (("auth"."uid"() = "id"));
+CREATE POLICY "Users can update their own config" ON "public"."user_gcp_config" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can update their own config" ON "public"."user_gcp_config" FOR UPDATE USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can update their own statements" ON "public"."monthly_statements" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can update their own statements" ON "public"."monthly_statements" FOR UPDATE USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can update their own video projects" ON "public"."video_projects" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can view own keys" ON "public"."user_api_keys" FOR SELECT USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can view own keys" ON "public"."user_api_keys" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can view own profile" ON "public"."users" FOR SELECT USING (("auth"."uid"() = "id"));
+CREATE POLICY "Users can view own profile" ON "public"."users" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "id"));
 
 
 
 CREATE POLICY "Users can view steps for their own tasks" ON "public"."task_steps" USING ((EXISTS ( SELECT 1
    FROM "public"."tasks"
-  WHERE (("tasks"."id" = "task_steps"."task_id") AND ("tasks"."user_id" = "auth"."uid"())))));
+  WHERE (("tasks"."id" = "task_steps"."task_id") AND ("tasks"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
 
-CREATE POLICY "Users can view their own config" ON "public"."user_gcp_config" FOR SELECT USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can view their own config" ON "public"."user_gcp_config" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can view their own statements" ON "public"."monthly_statements" FOR SELECT USING (("auth"."uid"() = "user_id"));
+CREATE POLICY "Users can view their own statements" ON "public"."monthly_statements" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
 
-CREATE POLICY "Users can view videos in owned media projects" ON "public"."video_projects" FOR SELECT USING ((("project_id" IS NULL) OR (EXISTS ( SELECT 1
+CREATE POLICY "Users can view their own video projects" ON "public"."video_projects" FOR SELECT USING (((( SELECT "auth"."uid"() AS "uid") = "user_id") OR (("project_id" IS NOT NULL) AND (EXISTS ( SELECT 1
    FROM "public"."media_projects"
-  WHERE (("media_projects"."id" = "video_projects"."project_id") AND ("media_projects"."user_id" = "auth"."uid"()))))));
+  WHERE (("media_projects"."id" = "video_projects"."project_id") AND ("media_projects"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))))));
 
 
 
@@ -1542,6 +1585,9 @@ ALTER TABLE "public"."monthly_statements" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."project_settings" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."stock_media" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."task_steps" ENABLE ROW LEVEL SECURITY;
@@ -1578,6 +1624,348 @@ GRANT USAGE ON SCHEMA "public" TO "postgres";
 GRANT USAGE ON SCHEMA "public" TO "anon";
 GRANT USAGE ON SCHEMA "public" TO "authenticated";
 GRANT USAGE ON SCHEMA "public" TO "service_role";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1824,6 +2212,9 @@ GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task
 
 
 
+
+
+
 GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "anon";
 GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") TO "service_role";
@@ -1872,9 +2263,21 @@ GRANT ALL ON FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_c
 
 
 
-GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "date") TO "anon";
-GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "date") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "date") TO "service_role";
+GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "text", "proof_url" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "text", "proof_url" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "text", "proof_url" "text") TO "service_role";
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1908,6 +2311,12 @@ GRANT ALL ON TABLE "public"."media_projects" TO "service_role";
 GRANT ALL ON TABLE "public"."project_settings" TO "anon";
 GRANT ALL ON TABLE "public"."project_settings" TO "authenticated";
 GRANT ALL ON TABLE "public"."project_settings" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."stock_media" TO "anon";
+GRANT ALL ON TABLE "public"."stock_media" TO "authenticated";
+GRANT ALL ON TABLE "public"."stock_media" TO "service_role";
 
 
 
