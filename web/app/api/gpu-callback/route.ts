@@ -7,44 +7,14 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { getRedisConnection } from "@/lib/queues/redis";
 import type { WebhookPayload } from "@/lib/services/gpu-api-service";
 import { getKeyFromUrl, getPublicUrl } from "@/lib/services/r2-storage";
+import { verifySignature } from "@/lib/utils/signature-verification";
 
 // Channel name for webhook result pub/sub
 const WEBHOOK_CHANNEL = "gpu-webhook-results";
-
-/**
- * Verify HMAC-SHA256 signature from GPU API
- */
-function verifySignature(
-  payload: string,
-  signature: string | null,
-  secret: string | undefined
-): boolean {
-  // If no secret configured, skip verification (for dev/testing)
-  if (!secret) {
-    console.log("[GPUCallback] No webhook secret configured, skipping signature verification");
-    return true;
-  }
-
-  if (!signature) {
-    console.warn("[GPUCallback] Missing X-Webhook-Signature header");
-    return false;
-  }
-
-  const expectedSignature = `sha256=${crypto
-    .createHmac("sha256", secret)
-    .update(payload)
-    .digest("hex")}`;
-
-  return crypto.timingSafeEqual(
-    Buffer.from(expectedSignature),
-    Buffer.from(signature)
-  );
-}
 
 /**
  * POST /api/gpu-callback
