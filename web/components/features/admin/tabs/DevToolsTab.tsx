@@ -2,12 +2,21 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { FileText, Video, Cpu, ArrowLeft } from "lucide-react";
+import {
+  FileText,
+  Video,
+  Cpu,
+  ArrowLeft,
+  Download,
+  Layers,
+} from "lucide-react";
 import { UniversalScriptTester } from "@/components/features/dev/UniversalScriptTester";
 import { AVScriptTester } from "@/components/features/dev/AVScriptTester";
 import { GPUApiTester } from "@/components/features/dev/GPUApiTester";
+import { StockScraperTester } from "@/components/features/dev/StockScraperTester";
+import { MotionGraphicsTester } from "@/components/features/dev/MotionGraphicsTester";
 
-type ActiveTester = "universal" | "av" | "gpu" | null;
+type ActiveTester = "universal" | "av" | "gpu" | "stock" | "motion" | null;
 
 export function DevToolsTab() {
   const [activeTester, setActiveTester] = useState<ActiveTester>(null);
@@ -36,6 +45,26 @@ export function DevToolsTab() {
   if (activeTester === "gpu") {
     return (
       <GPUApiTester
+        isOpen={true}
+        onClose={() => setActiveTester(null)}
+        inline={true}
+      />
+    );
+  }
+
+  if (activeTester === "stock") {
+    return (
+      <StockScraperTester
+        isOpen={true}
+        onClose={() => setActiveTester(null)}
+        inline={true}
+      />
+    );
+  }
+
+  if (activeTester === "motion") {
+    return (
+      <MotionGraphicsTester
         isOpen={true}
         onClose={() => setActiveTester(null)}
         inline={true}
@@ -105,6 +134,48 @@ export function DevToolsTab() {
         <Button
           onClick={() => setActiveTester("gpu")}
           className="w-full bg-orange-600 hover:bg-orange-700"
+        >
+          Open Tester
+        </Button>
+      </div>
+
+      {/* Stock Scraper Section */}
+      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
+        <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center">
+          <Download className="w-5 h-5 text-blue-500" />
+        </div>
+        <div>
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
+            Stock Scraper
+          </h3>
+          <p className="text-neutral-400 text-xs h-10">
+            Search and download stock assets from various sources.
+          </p>
+        </div>
+        <Button
+          onClick={() => setActiveTester("stock")}
+          className="w-full bg-blue-600 hover:bg-blue-700"
+        >
+          Open Tester
+        </Button>
+      </div>
+
+      {/* Motion Graphics Section */}
+      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
+        <div className="h-10 w-10 rounded-full bg-pink-500/10 flex items-center justify-center">
+          <Layers className="w-5 h-5 text-pink-500" />
+        </div>
+        <div>
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
+            Motion Graphics
+          </h3>
+          <p className="text-neutral-400 text-xs h-10">
+            Create and test motion graphic templates and animations.
+          </p>
+        </div>
+        <Button
+          onClick={() => setActiveTester("motion")}
+          className="w-full bg-pink-600 hover:bg-pink-700"
         >
           Open Tester
         </Button>
