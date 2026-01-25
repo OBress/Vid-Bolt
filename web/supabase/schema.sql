@@ -912,11 +912,15 @@ CREATE TABLE IF NOT EXISTS "public"."stock_media" (
     "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
     "embedding" "extensions"."vector"(768),
     "created_at" timestamp with time zone DEFAULT "now"(),
-    CONSTRAINT "stock_media_source_check" CHECK (("source" = ANY (ARRAY['wikimedia'::"text", 'youtube'::"text", 'other'::"text"])))
+    CONSTRAINT "stock_media_source_check" CHECK (("source" = ANY (ARRAY['wikimedia'::"text", 'youtube'::"text", 'pixabay'::"text", 'pexels'::"text", 'google'::"text", 'other'::"text"])))
 );
 
 
 ALTER TABLE "public"."stock_media" OWNER TO "postgres";
+
+
+COMMENT ON CONSTRAINT "stock_media_source_check" ON "public"."stock_media" IS 'Allowed sources: wikimedia (Commons), youtube (video clips), pixabay (images/videos), pexels (images/videos), google (Custom Search), other';
+
 
 
 CREATE TABLE IF NOT EXISTS "public"."task_steps" (

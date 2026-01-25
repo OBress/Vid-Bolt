@@ -12,6 +12,21 @@ import type { WikimediaImage, WikimediaSearchFilters } from './types';
 const WIKIMEDIA_API_ENDPOINT = 'https://commons.wikimedia.org/w/api.php';
 const USER_AGENT = 'Vid-Bolt/1.0 (https://vidbolt.app; contact@vidbolt.app)';
 
+// OpenRouter/Gemini only supports these image formats for vision classification
+const SUPPORTED_IMAGE_FORMATS = [
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+];
+
+/**
+ * Check if an image format is supported by the classification API
+ */
+function isSupportedImageFormat(mimeType: string): boolean {
+  return SUPPORTED_IMAGE_FORMATS.includes(mimeType.toLowerCase());
+}
+
 /**
  * Calculate aspect ratio category from dimensions
  */
@@ -92,9 +107,10 @@ export async function searchWikimediaImages(
     if (minHeight && height < minHeight) continue;
     if (aspectRatio !== 'any' && getAspectRatioCategory(width, height) !== aspectRatio) continue;
 
-    // Only include images (skip video/audio for now)
+    // Only include supported image formats (PNG, JPEG, WebP, GIF)
+    // Skip unsupported formats like TIFF, SVG, BMP that OpenRouter cannot classify
     const mimeType = info.mime || '';
-    if (!mimeType.startsWith('image/')) continue;
+    if (!isSupportedImageFormat(mimeType)) continue;
 
     results.push({
       pageId: page.pageid,

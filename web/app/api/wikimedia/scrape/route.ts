@@ -102,7 +102,36 @@ export async function POST(req: Request) {
         // 4d. Generate embedding from description
         const embedding = await generateEmbedding(classification.classification.description);
 
-        // 4e. Store in vector DB
+        // 4e. Check for near-duplicates using vector similarity
+        const DUPLICATE_THRESHOLD = 0.95;
+        const { data: duplicates } = await serviceClient.rpc('match_stock_media', {
+          query_embedding: embedding,
+          match_threshold: DUPLICATE_THRESHOLD,
+          match_count: 1
+        });
+
+        if (duplicates && duplicates.length > 0) {
+          const existingAsset = duplicates[0];
+          console.log(`[Wikimedia Scrape] Duplicate detected for ${image.title}: ${existingAsset.id} (similarity: ${existingAsset.similarity.toFixed(3)})`);
+          
+          result.rejected++;
+          result.rejectedDetails?.push({
+            pageId: image.pageId,
+            title: image.title,
+            qualityRating,
+            reason: `Near-duplicate of existing asset (${(existingAsset.similarity * 100).toFixed(1)}% similar)`,
+            isDuplicate: true,
+            existingAsset: {
+              id: existingAsset.id,
+              r2Key: existingAsset.r2_key,
+              metadata: existingAsset.metadata,
+              similarity: existingAsset.similarity
+            }
+          } as any);
+          continue;
+        }
+
+        // 4f. Store in vector DB
         const { error: dbError } = await serviceClient
           .from('stock_media')
           .insert({

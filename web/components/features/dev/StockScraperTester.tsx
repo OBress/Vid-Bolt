@@ -36,7 +36,7 @@ interface StockScraperTesterProps {
 type TabType =
   | "wikimedia"
   | "youtube"
-  | "pixabay"
+  | "pexels"
   | "classify"
   | "search"
   | "debug";
@@ -50,20 +50,20 @@ export function StockScraperTester({
   const [activeTab, setActiveTab] = useState<TabType>("wikimedia");
 
   /* --------------------------------------------------------------------------------
-   * Pixabay State
+   * Pexels State
    * -------------------------------------------------------------------------------- */
-  const [pixabayQuery, setPixabayQuery] = useState("");
-  const [pixabayMediaType, setPixabayMediaType] = useState<"image" | "video">(
-    "image",
+  const [pexelsQuery, setPexelsQuery] = useState("");
+  const [pexelsMediaType, setPexelsMediaType] = useState<"photo" | "video">(
+    "photo",
   );
-  const [pixabayMaxResults, setPixabayMaxResults] = useState(20);
-  const [pixabayResults, setPixabayResults] = useState<any[]>([]);
-  const [isPixabaySearching, setIsPixabaySearching] = useState(false);
-  const [pixabayError, setPixabayError] = useState<string | null>(null);
-  const [pixabayProcessingItems, setPixabayProcessingItems] = useState<
+  const [pexelsMaxResults, setPexelsMaxResults] = useState(20);
+  const [pexelsResults, setPexelsResults] = useState<any[]>([]);
+  const [isPexelsSearching, setIsPexelsSearching] = useState(false);
+  const [pexelsError, setPexelsError] = useState<string | null>(null);
+  const [pexelsProcessingItems, setPexelsProcessingItems] = useState<
     Set<number>
   >(new Set());
-  const [pixabayProcessedItems, setPixabayProcessedItems] = useState<
+  const [pexelsProcessedItems, setPexelsProcessedItems] = useState<
     Map<number, any>
   >(new Map());
 
@@ -98,6 +98,12 @@ export function StockScraperTester({
   // R2 Clear State
   const [isClearingR2, setIsClearingR2] = useState(false);
   const [r2ClearResult, setR2ClearResult] = useState<{
+    deleted: number;
+  } | null>(null);
+
+  // Vector DB Clear State
+  const [isClearingVectorDB, setIsClearingVectorDB] = useState(false);
+  const [vectorDBClearResult, setVectorDBClearResult] = useState<{
     deleted: number;
   } | null>(null);
 
@@ -139,73 +145,70 @@ export function StockScraperTester({
   const [showWikimediaFilters, setShowWikimediaFilters] = useState(false);
 
   /* --------------------------------------------------------------------------------
-   * Pixabay Handlers
+   * Pexels Handlers
    * -------------------------------------------------------------------------------- */
-  const handlePixabaySearch = async () => {
-    if (!pixabayQuery.trim()) return;
+  const handlePexelsSearch = async () => {
+    if (!pexelsQuery.trim()) return;
 
-    setIsPixabaySearching(true);
-    setPixabayError(null);
-    setPixabayResults([]);
+    setIsPexelsSearching(true);
+    setPexelsError(null);
+    setPexelsResults([]);
 
     try {
       const params = new URLSearchParams({
-        q: pixabayQuery,
-        mediaType: pixabayMediaType,
-        maxResults: pixabayMaxResults.toString(),
+        q: pexelsQuery,
+        mediaType: pexelsMediaType,
+        maxResults: pexelsMaxResults.toString(),
       });
 
-      const res = await fetch(`/api/pixabay/search?${params.toString()}`);
+      const res = await fetch(`/api/pexels/search?${params.toString()}`);
       const data = await res.json();
 
       if (!res.ok) throw new Error(data.error || "Search failed");
 
-      setPixabayResults(data.hits || []);
+      setPexelsResults(data.hits || []);
     } catch (error) {
-      console.error("Pixabay search failed:", error);
-      setPixabayError(error instanceof Error ? error.message : "Search failed");
+      console.error("Pexels search failed:", error);
+      setPexelsError(error instanceof Error ? error.message : "Search failed");
     } finally {
-      setIsPixabaySearching(false);
+      setIsPexelsSearching(false);
     }
   };
 
-  const handlePixabayProcess = async (item: any) => {
-    if (pixabayProcessingItems.has(item.id)) return;
+  const handlePexelsProcess = async (item: any) => {
+    if (pexelsProcessingItems.has(item.id)) return;
 
-    setPixabayProcessingItems((prev) => new Set(prev).add(item.id));
+    setPexelsProcessingItems((prev) => new Set(prev).add(item.id));
 
     try {
-      // Determine download URL (handle video structure)
-      let downloadUrl = item.largeImageURL; // Default for images
-      let thumbnailUrl = item.previewURL || item.webformatURL;
+      // Determine download URL (different structure for photos vs videos)
+      let downloadUrl: string;
+      let thumbnailUrl = item.previewURL;
 
-      if (pixabayMediaType === "video" && item.videos) {
-        // Prefer medium sized video for stock
-        downloadUrl =
-          item.videos.medium?.url ||
-          item.videos.large?.url ||
-          item.videos.small?.url;
-
-        if (item.videos.medium?.thumbnail) {
-          thumbnailUrl = item.videos.medium.thumbnail;
-        } else if (item.videos.large?.thumbnail) {
-          thumbnailUrl = item.videos.large.thumbnail;
-        }
+      if (pexelsMediaType === "video" && item.video_files) {
+        // Prefer HD quality, fallback to SD
+        const hdFile = item.video_files.find((f: any) => f.quality === "hd");
+        const sdFile = item.video_files.find((f: any) => f.quality === "sd");
+        downloadUrl = hdFile?.link || sdFile?.link || item.video_files[0]?.link;
+        thumbnailUrl = item.thumbnailURL || item.previewURL;
+      } else {
+        // For photos, use the original or large image
+        downloadUrl = item.largeImageURL || item.webformatURL;
       }
 
-      const res = await fetch("/api/pixabay/process", {
+      const res = await fetch("/api/pexels/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: item.id,
-          mediaType: pixabayMediaType,
-          mediaUrl: item.pageURL,
+          mediaType: pexelsMediaType,
+          mediaUrl: item.url,
           downloadUrl: downloadUrl,
           thumbnailUrl: thumbnailUrl,
-          title: `Pixabay ${pixabayMediaType} ${item.id}`,
-          tags: item.tags,
-          width: item.imageWidth || item.videos?.medium?.width,
-          height: item.imageHeight || item.videos?.medium?.height,
+          photographer: item.photographer || item.user,
+          alt: item.alt,
+          width: item.imageWidth || item.videoWidth,
+          height: item.imageHeight || item.videoHeight,
           duration: item.duration,
         }),
       });
@@ -213,13 +216,23 @@ export function StockScraperTester({
       const result = await res.json();
 
       if (!result.success) {
-        if (result.rejected) {
+        if (result.duplicate) {
+          // Show detailed duplicate info
+          const existingTitle =
+            result.existingAsset?.metadata?.title || "Unknown";
+          const similarity = result.existingAsset?.similarity
+            ? `${(result.existingAsset.similarity * 100).toFixed(1)}%`
+            : "high";
+          alert(
+            `🔁 Duplicate Detected\n\nThis image is ${similarity} similar to an existing asset:\n"${existingTitle}"\n\nSkipping to avoid duplicates.`,
+          );
+        } else if (result.rejected) {
           alert(`Quality Check Failed: ${result.reason}`);
         } else {
           throw new Error(result.error || "Processing failed");
         }
       } else {
-        setPixabayProcessedItems((prev) => {
+        setPexelsProcessedItems((prev) => {
           const newMap = new Map(prev);
           newMap.set(item.id, result);
           return newMap;
@@ -229,7 +242,7 @@ export function StockScraperTester({
       console.error("Processing failed:", error);
       alert(error instanceof Error ? error.message : "Processing failed");
     } finally {
-      setPixabayProcessingItems((prev) => {
+      setPexelsProcessingItems((prev) => {
         const newSet = new Set(prev);
         newSet.delete(item.id);
         return newSet;
@@ -527,6 +540,47 @@ export function StockScraperTester({
           <Button
             variant="outline"
             size="sm"
+            disabled={isClearingVectorDB}
+            onClick={async () => {
+              if (
+                !confirm(
+                  "Clear all stock media records from Vector DB? This cannot be undone.",
+                )
+              )
+                return;
+              setIsClearingVectorDB(true);
+              setVectorDBClearResult(null);
+              try {
+                const res = await fetch("/api/stock-media/clear-vector-db", {
+                  method: "DELETE",
+                });
+                const data = await res.json();
+                if (data.success) {
+                  setVectorDBClearResult({ deleted: data.data.deleted });
+                  setTimeout(() => setVectorDBClearResult(null), 5000);
+                } else {
+                  alert(`Clear failed: ${data.error}`);
+                }
+              } catch (e) {
+                alert("Clear request failed");
+              } finally {
+                setIsClearingVectorDB(false);
+              }
+            }}
+            className="text-orange-400 hover:text-orange-300 border-orange-800/50 hover:border-orange-700"
+          >
+            {isClearingVectorDB ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Database className="w-4 h-4 mr-2" />
+            )}
+            {vectorDBClearResult
+              ? `Cleared ${vectorDBClearResult.deleted} records`
+              : "Clear Vector DB"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={async () => {
               try {
                 const res = await fetch("/api/dev/seed-mock-vector", {
@@ -573,18 +627,19 @@ export function StockScraperTester({
           <Globe className="w-4 h-4 mr-2" />
           Wikimedia
         </Button>
+
         <Button
-          variant={activeTab === "pixabay" ? "default" : "ghost"}
+          variant={activeTab === "pexels" ? "default" : "ghost"}
           size="sm"
-          onClick={() => setActiveTab("pixabay")}
+          onClick={() => setActiveTab("pexels")}
           className={
-            activeTab === "pixabay"
-              ? "bg-[#3DCD58] hover:bg-[#34b04b] text-white"
+            activeTab === "pexels"
+              ? "bg-[#05A081] hover:bg-[#048a6e] text-white"
               : ""
           }
         >
           <ImageIcon className="w-4 h-4 mr-2" />
-          Pixabay
+          Pexels
         </Button>
         <Button
           variant={activeTab === "youtube" ? "default" : "ghost"}
@@ -636,18 +691,18 @@ export function StockScraperTester({
       <div className="flex-1 min-h-0 flex overflow-hidden">
         <div className="flex-1 overflow-y-auto touch-auto relative z-0 pointer-events-auto transition-all">
           <div className="max-w-2xl mx-auto p-6 relative z-10">
-            {/* Wikimedia Tab */}
-            {activeTab === "pixabay" && (
+            {/* Pexels Tab */}
+            {activeTab === "pexels" && (
               <div className="space-y-6">
                 <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 flex flex-col items-center justify-center space-y-4">
-                  <div className="h-16 w-16 rounded-full bg-[#3DCD58]/20 flex items-center justify-center">
-                    <ImageIcon className="w-8 h-8 text-[#3DCD58]" />
+                  <div className="h-16 w-16 rounded-full bg-[#05A081]/20 flex items-center justify-center">
+                    <ImageIcon className="w-8 h-8 text-[#05A081]" />
                   </div>
                   <h3 className="text-lg font-medium text-white">
-                    Pixabay Search
+                    Pexels Search
                   </h3>
                   <p className="text-neutral-400 text-center max-w-sm">
-                    Search for high-quality royalty-free images and videos.
+                    Search for high-quality royalty-free photos and videos.
                   </p>
 
                   <div className="w-full max-w-md space-y-4 pt-4">
@@ -655,26 +710,26 @@ export function StockScraperTester({
                       <Button
                         size="sm"
                         variant={
-                          pixabayMediaType === "image" ? "default" : "outline"
+                          pexelsMediaType === "photo" ? "default" : "outline"
                         }
-                        onClick={() => setPixabayMediaType("image")}
+                        onClick={() => setPexelsMediaType("photo")}
                         className={
-                          pixabayMediaType === "image"
-                            ? "bg-[#3DCD58] hover:bg-[#34b04b]"
+                          pexelsMediaType === "photo"
+                            ? "bg-[#05A081] hover:bg-[#048a6e]"
                             : "border-neutral-700"
                         }
                       >
-                        Images
+                        Photos
                       </Button>
                       <Button
                         size="sm"
                         variant={
-                          pixabayMediaType === "video" ? "default" : "outline"
+                          pexelsMediaType === "video" ? "default" : "outline"
                         }
-                        onClick={() => setPixabayMediaType("video")}
+                        onClick={() => setPexelsMediaType("video")}
                         className={
-                          pixabayMediaType === "video"
-                            ? "bg-[#3DCD58] hover:bg-[#34b04b]"
+                          pexelsMediaType === "video"
+                            ? "bg-[#05A081] hover:bg-[#048a6e]"
                             : "border-neutral-700"
                         }
                       >
@@ -685,10 +740,10 @@ export function StockScraperTester({
                         <Input
                           type="number"
                           min={5}
-                          max={50}
-                          value={pixabayMaxResults}
+                          max={80}
+                          value={pexelsMaxResults}
                           onChange={(e) =>
-                            setPixabayMaxResults(parseInt(e.target.value) || 20)
+                            setPexelsMaxResults(parseInt(e.target.value) || 20)
                           }
                           className="w-16 h-8 bg-neutral-900 border-neutral-700"
                         />
@@ -697,20 +752,20 @@ export function StockScraperTester({
 
                     <div className="flex gap-2">
                       <Input
-                        placeholder={`Search ${pixabayMediaType}s...`}
+                        placeholder={`Search ${pexelsMediaType}s...`}
                         className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                        value={pixabayQuery}
-                        onChange={(e) => setPixabayQuery(e.target.value)}
+                        value={pexelsQuery}
+                        onChange={(e) => setPexelsQuery(e.target.value)}
                         onKeyDown={(e) =>
-                          e.key === "Enter" && handlePixabaySearch()
+                          e.key === "Enter" && handlePexelsSearch()
                         }
                       />
                       <Button
-                        className="bg-[#3DCD58] hover:bg-[#34b04b]"
-                        onClick={handlePixabaySearch}
-                        disabled={isPixabaySearching}
+                        className="bg-[#05A081] hover:bg-[#048a6e]"
+                        onClick={handlePexelsSearch}
+                        disabled={isPexelsSearching}
                       >
-                        {isPixabaySearching ? (
+                        {isPexelsSearching ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
                           <Search className="w-4 h-4" />
@@ -721,28 +776,18 @@ export function StockScraperTester({
                 </div>
 
                 {/* Error */}
-                {pixabayError && (
+                {pexelsError && (
                   <div className="p-4 rounded-lg border border-red-500/50 bg-red-500/10 text-red-400">
-                    {pixabayError}
+                    {pexelsError}
                   </div>
                 )}
 
                 {/* Results Grid */}
-                {pixabayResults.length > 0 && (
+                {pexelsResults.length > 0 && (
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {pixabayResults.map((item) => {
-                      const isProcessing = pixabayProcessingItems.has(item.id);
-                      const processed = pixabayProcessedItems.get(item.id);
-
-                      // Resolve preview URL
-                      let previewUrl = item.webformatURL || item.previewURL;
-                      if (pixabayMediaType === "video" && item.videos) {
-                        // Fallback for videos if needed
-                        previewUrl =
-                          item.videos.medium?.thumbnail ||
-                          item.videos.tiny?.thumbnail ||
-                          `https://i.vimeocdn.com/video/${item.picture_id}_640x360.jpg`;
-                      }
+                    {pexelsResults.map((item) => {
+                      const isProcessing = pexelsProcessingItems.has(item.id);
+                      const processed = pexelsProcessedItems.get(item.id);
 
                       return (
                         <div
@@ -750,15 +795,15 @@ export function StockScraperTester({
                           className="group relative aspect-video bg-neutral-800 rounded-lg overflow-hidden border border-neutral-700"
                         >
                           <img
-                            src={previewUrl}
-                            alt={item.tags}
+                            src={item.previewURL}
+                            alt={item.alt || "Pexels media"}
                             className={`w-full h-full object-cover transition-opacity ${isProcessing ? "opacity-50" : ""}`}
                           />
 
                           {/* Processing Overlay */}
                           {isProcessing && (
                             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                              <Loader2 className="w-8 h-8 text-[#3DCD58] animate-spin" />
+                              <Loader2 className="w-8 h-8 text-[#05A081] animate-spin" />
                             </div>
                           )}
 
@@ -775,8 +820,8 @@ export function StockScraperTester({
                             <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                               <Button
                                 size="sm"
-                                className="bg-[#3DCD58] hover:bg-[#34b04b]"
-                                onClick={() => handlePixabayProcess(item)}
+                                className="bg-[#05A081] hover:bg-[#048a6e]"
+                                onClick={() => handlePexelsProcess(item)}
                               >
                                 <Sparkles className="w-4 h-4 mr-2" />
                                 Process
@@ -786,11 +831,13 @@ export function StockScraperTester({
 
                           <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/90 to-transparent pointer-events-none">
                             <p className="text-sm font-medium text-white truncate">
-                              {item.tags || "Untitled"}
+                              {item.alt || item.photographer || "Untitled"}
                             </p>
                             <div className="flex justify-between items-center text-xs text-neutral-400 mt-1">
-                              <span>{item.views} views</span>
-                              {pixabayMediaType === "video" && (
+                              <span>
+                                by {item.photographer || item.user || "Unknown"}
+                              </span>
+                              {pexelsMediaType === "video" && item.duration && (
                                 <span className="flex items-center gap-1">
                                   <Play className="w-3 h-3" /> {item.duration}s
                                 </span>
@@ -979,11 +1026,31 @@ export function StockScraperTester({
                           <summary className="text-xs text-neutral-400 cursor-pointer">
                             View rejected images
                           </summary>
-                          <ul className="mt-2 text-xs text-neutral-500 space-y-1">
+                          <ul className="mt-2 text-xs space-y-1">
                             {wikimediaScrapeResult.rejectedDetails.map(
-                              (r, i) => (
-                                <li key={i}>
+                              (r: any, i: number) => (
+                                <li
+                                  key={i}
+                                  className={
+                                    (r as any).isDuplicate
+                                      ? "text-blue-400"
+                                      : "text-neutral-500"
+                                  }
+                                >
+                                  {(r as any).isDuplicate && "🔁 "}
                                   {r.title}: {r.reason}
+                                  {(r as any).isDuplicate &&
+                                    (r as any).existingAsset?.metadata
+                                      ?.title && (
+                                      <span className="text-blue-300 ml-1">
+                                        → matches "
+                                        {
+                                          (r as any).existingAsset.metadata
+                                            .title
+                                        }
+                                        "
+                                      </span>
+                                    )}
                                 </li>
                               ),
                             )}
