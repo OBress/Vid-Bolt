@@ -1,0 +1,34 @@
+# =============================================================================
+# Docker Compose for Local Development
+# =============================================================================
+# Runs the app with yt-dlp + FFmpeg to match Railway environment.
+# 
+# Usage:
+#   docker compose up --build
+# =============================================================================
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      # Copy your .env.local values here or use env_file
+    env_file:
+      - .env.local
+    volumes:
+      # Mount source for hot reload (optional, slower but enables live editing)
+      # - .:/app
+      # - /app/node_modules
+      # Mount just the libs if you want faster builds
+      - ./lib:/app/lib
+      - ./app:/app/app
+      - ./components:/app/components
+    command: npm run dev
+    
+  # Optional: Redis for BullMQ (if not using external Redis)
+  # redis:
+  #   image: redis:alpine
+  #   ports:
+  #     - "6379:6379"

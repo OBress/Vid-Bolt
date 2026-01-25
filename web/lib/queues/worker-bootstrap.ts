@@ -40,6 +40,7 @@ import {
   gpuLtx2CreateProcessor,
   gpuLtx2InterpolateProcessor,
   gcpProvisionProcessor,
+  segmentProcessor,
 } from './workers';
 
 // ============================================================================
@@ -132,6 +133,12 @@ const workerConfigs: WorkerConfig[] = [
     processor: gcpProvisionProcessor,
     concurrency: 2,
     description: 'GCP VM Provisioning',
+  },
+  {
+    queue: 'video-segmentation',
+    processor: segmentProcessor,
+    concurrency: 1,
+    description: 'YouTube video download + segmentation',
   },
 ];
 

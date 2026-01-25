@@ -26,6 +26,16 @@ export const STORAGE_PATHS = {
   REVENUE_PROOFS: 'revenue-proofs',
   GPU_TEST: 'gpu-api-test',
   
+  // Stock scraper unified media library
+  STOCK_SCRAPER: {
+    ROOT: 'stock-scraper',
+    SOURCES: 'stock-scraper/sources',      // Original downloads
+    FOOTAGE: 'stock-scraper/footage',       // All video clips
+    IMAGES: 'stock-scraper/images',         // All images
+    AUDIO: 'stock-scraper/audio',           // All audio
+    THUMBNAILS: 'stock-scraper/thumbnails', // All thumbnails
+  },
+  
   // Nested paths under videos/{videoId}/
   AUDIO: {
     TTS: 'audio/tts',
@@ -297,13 +307,61 @@ export function generateGpuTestKey(
 }
 
 /**
+ * Generate storage key for stock scraper source video.
+ * Path format: stock-scraper/sources/{sourceId}/video.mp4
+ */
+export function generateStockScraperSourceKey(sourceId: string): string {
+  return `${STORAGE_PATHS.STOCK_SCRAPER.SOURCES}/${sourceId}/video.mp4`;
+}
+
+/**
+ * Generate storage key for stock scraper source thumbnail.
+ * Path format: stock-scraper/sources/{sourceId}/thumbnail.jpg
+ */
+export function generateStockScraperSourceThumbnailKey(sourceId: string): string {
+  return `${STORAGE_PATHS.STOCK_SCRAPER.SOURCES}/${sourceId}/thumbnail.jpg`;
+}
+
+/**
+ * Generate storage key for stock scraper video clip (unified location).
+ * Path format: stock-scraper/footage/{clipId}.mp4
+ */
+export function generateStockScraperClipKey(clipId: string): string {
+  return `${STORAGE_PATHS.STOCK_SCRAPER.FOOTAGE}/${clipId}.mp4`;
+}
+
+/**
+ * Generate storage key for stock scraper clip thumbnail.
+ * Path format: stock-scraper/thumbnails/{clipId}.jpg
+ */
+export function generateStockScraperClipThumbnailKey(clipId: string): string {
+  return `${STORAGE_PATHS.STOCK_SCRAPER.THUMBNAILS}/${clipId}.jpg`;
+}
+
+/**
+ * Generate storage key for stock scraper image.
+ * Path format: stock-scraper/images/{imageId}.jpg
+ */
+export function generateStockScraperImageKey(imageId: string, ext: string = 'jpg'): string {
+  return `${STORAGE_PATHS.STOCK_SCRAPER.IMAGES}/${imageId}.${ext}`;
+}
+
+/**
+ * Generate storage key for stock scraper audio.
+ * Path format: stock-scraper/audio/{audioId}.mp3
+ */
+export function generateStockScraperAudioKey(audioId: string, ext: string = 'mp3'): string {
+  return `${STORAGE_PATHS.STOCK_SCRAPER.AUDIO}/${audioId}.${ext}`;
+}
+
+/**
  * Check if R2 is configured.
  */
 export function isR2Configured(): boolean {
   return !!(
     process.env.CLOUDFLARE_ACCOUNT_ID &&
-    process.env.CLOUDFLARE_ACCESS_KEY_ID &&
-    process.env.CLOUDFLARE_SECRET_ACCESS_KEY &&
+    process.env.R2_ACCESS_KEY_ID &&
+    process.env.R2_SECRET_ACCESS_KEY &&
     process.env.R2_BUCKET_NAME &&
     process.env.R2_PUBLIC_URL
   );

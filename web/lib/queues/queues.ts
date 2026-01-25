@@ -93,6 +93,9 @@ export const gpuLtx2InterpolateQueue = createQueue('gpu-ltx2-interpolate');
 /** GCP Provisioning Queue */
 export const gcpProvisioningQueue = createQueue('gcp-provisioning-queue');
 
+/** Video segmentation for stock media library */
+export const videoSegmentationQueue = createQueue('video-segmentation');
+
 /**
  * All active queues for graceful shutdown.
  */
@@ -110,6 +113,7 @@ export const allQueues = [
   gpuLtx2CreateQueue,
   gpuLtx2InterpolateQueue,
   gcpProvisioningQueue,
+  videoSegmentationQueue,
 ];
 
 /**

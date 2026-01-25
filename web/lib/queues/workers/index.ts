@@ -19,3 +19,4 @@ export {
   gpuLtx2InterpolateProcessor,
 } from './gpu-api-test';
 export { gcpProvisionProcessor } from './gcp-provision';
+export { segmentProcessor, createSegmentationWorker } from './segment';

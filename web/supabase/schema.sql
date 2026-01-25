@@ -1022,11 +1022,16 @@ CREATE TABLE IF NOT EXISTS "public"."user_api_keys" (
     "replicate_key" "text",
     "google_cloud_credentials" "text",
     "created_at" timestamp with time zone DEFAULT "now"(),
-    "updated_at" timestamp with time zone DEFAULT "now"()
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "groq_key" "text"
 );
 
 
 ALTER TABLE "public"."user_api_keys" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."user_api_keys"."groq_key" IS 'Groq API key for Whisper transcription with word-level timestamps';
+
 
 
 CREATE TABLE IF NOT EXISTS "public"."user_gcp_config" (

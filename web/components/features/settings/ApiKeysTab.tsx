@@ -44,6 +44,7 @@ interface ApiKeys {
   inworld_tts_key: string;
   replicate_key: string;
   google_cloud_credentials: string;
+  groq_key: string;
 }
 
 const INITIAL_LOGS = [
@@ -59,6 +60,7 @@ export function ApiKeysTab() {
     inworld_tts_key: "",
     replicate_key: "",
     google_cloud_credentials: "",
+    groq_key: "",
   });
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
@@ -117,6 +119,7 @@ export function ApiKeysTab() {
           inworld_tts_key: keyData.inworld_tts_key || "",
           replicate_key: keyData.replicate_key || "",
           google_cloud_credentials: keyData.google_cloud_credentials || "",
+          groq_key: keyData.groq_key || "",
         });
       }
 
@@ -800,6 +803,13 @@ export function ApiKeysTab() {
                 onSave={(val) => handleSaveKey("replicate_key", val)}
                 placeholder="r8_..."
                 tooltip="Optional. Used for image and video generation features."
+              />
+              <ApiKeyInput
+                label="GROQ API KEY"
+                value={keys.groq_key}
+                onSave={(val) => handleSaveKey("groq_key", val)}
+                placeholder="gsk_..."
+                tooltip="Optional. Used for Whisper transcription with word-level timestamps in video segmentation."
               />
             </CardContent>
           </Card>

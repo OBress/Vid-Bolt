@@ -30,6 +30,7 @@ export interface UserApiKeys {
   inworld_tts_key?: string | null;
   replicate_key?: string | null;
   google_cloud_credentials?: string | null;
+  groq_key?: string | null;
 }
 
 /**
