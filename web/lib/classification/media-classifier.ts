@@ -317,3 +317,162 @@ export function detectMediaType(url: string, contentType?: string): MediaType | 
 
   return null;
 }
+
+// ==========================================================================
+// Watermark & Quality Functions (for Serper integration)
+// ==========================================================================
+
+export interface WatermarkCheckResult {
+  /** Whether a watermark/logo/copyright overlay was detected */
+  hasWatermark: boolean;
+  /** Confidence score 0-1 */
+  confidence: number;
+  /** Description of what was detected */
+  details?: string;
+}
+
+export interface RelevanceCheckResult {
+  /** Whether the image is relevant to the query */
+  isRelevant: boolean;
+  /** Relevance score 0-10 */
+  score: number;
+  /** Explanation of the relevance assessment */
+  reason?: string;
+}
+
+const WATERMARK_DETECTION_PROMPT = `You are an expert at detecting watermarks, logos, and copyright overlays in images.
+
+Analyze this image and determine if it contains any of the following:
+- Visible watermarks (text overlays like "Shutterstock", "Getty", "iStock", etc.)
+- Stock photo agency logos
+- Copyright symbols or text (© or "Copyright")
+- Semi-transparent overlays with branding
+- Diagonal or repeated pattern watermarks
+- "Sample" or "Preview" text
+
+Return a JSON object with these exact fields:
+{
+  "hasWatermark": true/false,
+  "confidence": 0.0 to 1.0 (how confident you are in your assessment),
+  "details": "Description of any watermarks found, or 'No watermarks detected'"
+}
+
+Be thorough - stock photo watermarks can be subtle. If unsure, err on the side of detecting a watermark (higher confidence for hasWatermark).
+
+Respond with valid JSON only, no markdown.`;
+
+const RELEVANCE_CHECK_PROMPT = `You are an expert at assessing image relevance to search queries.
+
+The user searched for: "{QUERY}"
+
+Analyze this image and determine how well it matches the search intent. Consider:
+- Does the image depict the main subject(s) of the query?
+- Is the image content directly related to the search terms?
+- Would this image be useful for someone searching for "{QUERY}"?
+
+Return a JSON object with these exact fields:
+{
+  "isRelevant": true/false (is this image a good match for the query?),
+  "score": 0-10 (how relevant is this image? 10 = perfect match, 0 = completely unrelated),
+  "reason": "Brief explanation of the relevance assessment"
+}
+
+Scoring guide:
+- 9-10: Perfect or near-perfect match to search intent
+- 7-8: Good match, clearly related to the query
+- 5-6: Somewhat relevant, tangentially related
+- 3-4: Weak relevance, only loosely connected
+- 1-2: Poor match, mostly unrelated
+- 0: Completely unrelated
+
+Respond with valid JSON only, no markdown.`;
+
+/**
+ * Check if an image contains watermarks, logos, or copyright overlays.
+ * Uses Gemini 3 Flash for vision analysis.
+ */
+export async function checkImageForWatermark(
+  imageUrl: string,
+  userId: string
+): Promise<WatermarkCheckResult> {
+  const messages: OpenRouterMessage[] = [
+    { role: 'system', content: WATERMARK_DETECTION_PROMPT },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Check this image for watermarks:' },
+        { type: 'image_url', image_url: { url: imageUrl } },
+      ] as any,
+    },
+  ];
+
+  try {
+    const response = await callOpenRouter(userId, messages, {
+      ...CLASSIFICATION_CONFIG,
+      maxTokens: 1024, // Shorter response needed
+    });
+
+    const result = parseJsonResponse<WatermarkCheckResult>(response.content);
+    
+    return {
+      hasWatermark: result.hasWatermark ?? false,
+      confidence: result.confidence ?? 0,
+      details: result.details,
+    };
+  } catch (error) {
+    console.error('[Watermark Check] Error:', error);
+    // On error, assume no watermark but log for debugging
+    return {
+      hasWatermark: false,
+      confidence: 0,
+      details: 'Check failed - error during analysis',
+    };
+  }
+}
+
+/**
+ * Check if an image is relevant to a search query.
+ * Uses Gemini 3 Flash for vision analysis.
+ */
+export async function checkImageRelevance(
+  imageUrl: string,
+  searchQuery: string,
+  userId: string
+): Promise<RelevanceCheckResult> {
+  const prompt = RELEVANCE_CHECK_PROMPT.replace(/\{QUERY\}/g, searchQuery);
+
+  const messages: OpenRouterMessage[] = [
+    { role: 'system', content: prompt },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: `Is this image relevant to the search query "${searchQuery}"?` },
+        { type: 'image_url', image_url: { url: imageUrl } },
+      ] as any,
+    },
+  ];
+
+  try {
+    const response = await callOpenRouter(userId, messages, {
+      ...CLASSIFICATION_CONFIG,
+      maxTokens: 1024, // Shorter response needed
+    });
+
+    const result = parseJsonResponse<RelevanceCheckResult>(response.content);
+    
+    return {
+      isRelevant: result.isRelevant ?? (result.score >= 5),
+      score: result.score ?? 5,
+      reason: result.reason,
+    };
+  } catch (error) {
+    console.error('[Relevance Check] Error:', error);
+    // On error, assume relevant to avoid false rejections
+    return {
+      isRelevant: true,
+      score: 5,
+      reason: 'Check failed - error during analysis',
+    };
+  }
+}
+

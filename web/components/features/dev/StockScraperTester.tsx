@@ -2,6 +2,17 @@
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Slider } from "@/components/ui/slider";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   Download,
@@ -20,8 +31,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Image as ImageIcon,
+  FileText,
+  List,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { createBrowserClient } from "@supabase/ssr";
 import type {
   WikimediaImage,
   WikimediaScrapeResult,
@@ -37,9 +51,11 @@ type TabType =
   | "wikimedia"
   | "youtube"
   | "pexels"
+  | "serper"
   | "classify"
   | "search"
-  | "debug";
+  | "debug"
+  | "querygen";
 
 export function StockScraperTester({
   isOpen,
@@ -166,6 +182,180 @@ export function StockScraperTester({
     new Set(),
   );
   const [ytGcpRequired, setYtGcpRequired] = useState(false);
+
+  /* --------------------------------------------------------------------------------
+   * Serper State
+   * -------------------------------------------------------------------------------- */
+  const [serperQuery, setSerperQuery] = useState("");
+  const [serperMaxResults, setSerperMaxResults] = useState(20);
+  const [serperColor, setSerperColor] = useState<
+    | "any"
+    | "bw"
+    | "red"
+    | "orange"
+    | "yellow"
+    | "green"
+    | "teal"
+    | "blue"
+    | "purple"
+    | "pink"
+  >("any");
+  const [serperType, setSerperType] = useState<
+    "any" | "face" | "photo" | "clipart" | "lineart" | "animated"
+  >("any");
+  const [serperSize, setSerperSize] = useState<
+    "any" | "large" | "medium" | "icon"
+  >("any");
+  const [serperAspectRatio, setSerperAspectRatio] = useState<
+    "any" | "tall" | "square" | "wide"
+  >("any");
+  const [serperLicense, setSerperLicense] = useState<
+    "any" | "f" | "fc" | "fm" | "fmc"
+  >("any");
+  const [serperSafe, setSerperSafe] = useState(true);
+  const [serperResults, setSerperResults] = useState<any[]>([]);
+  const [serperSelected, setSerperSelected] = useState<Set<string>>(new Set());
+  const [isSearchingSerper, setIsSearchingSerper] = useState(false);
+  const [isScrapingSerper, setIsScrapingSerper] = useState(false);
+  const [serperScrapeResult, setSerperScrapeResult] = useState<any | null>(
+    null,
+  );
+  const [serperError, setSerperError] = useState<string | null>(null);
+  const [showSerperFilters, setShowSerperFilters] = useState(false);
+
+  /* --------------------------------------------------------------------------------
+   * Query Generator State
+   * -------------------------------------------------------------------------------- */
+  // Outline / Results state
+  const [queryGenOutline, setQueryGenOutline] = useState<any | null>(null);
+  const [queryGenResult, setQueryGenResult] = useState<any | null>(null);
+  const [isGeneratingQueries, setIsGeneratingQueries] = useState(false);
+  const [queryGenError, setQueryGenError] = useState<string | null>(null);
+  const [queryGenVideoId, setQueryGenVideoId] = useState(`test-${Date.now()}`);
+
+  // Script Generation Form State
+  const [qgTopic, setQgTopic] = useState(
+    "The collapse of the Bronze Age civilizations",
+  );
+  const [qgGenre, setQgGenre] = useState<
+    | "documentary"
+    | "educational"
+    | "narrative_fiction"
+    | "historical_fiction"
+    | "opinion_essay"
+    | "tutorial"
+    | "news"
+  >("documentary");
+  const [qgResearchToggle, setQgResearchToggle] = useState<
+    "deep" | "full" | "light" | "off"
+  >("light");
+  const [qgDurationRange, setQgDurationRange] = useState([3, 5]); // [min, max] in minutes
+  const [qgAngle, setQgAngle] = useState("");
+
+  // Script Generation Progress State
+  const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+  const [scriptTaskId, setScriptTaskId] = useState<string | null>(null);
+  const [scriptProgress, setScriptProgress] = useState(0);
+  const [scriptCurrentPhase, setScriptCurrentPhase] = useState<string | null>(
+    null,
+  );
+  const [scriptStatus, setScriptStatus] = useState<string>("idle");
+
+  // Supabase client for polling
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  );
+
+  // Poll for script generation task updates
+  const fetchScriptTaskStatus = useCallback(
+    async (id: string) => {
+      const { data: statusData, error: statusError } = await supabase
+        .from("tasks")
+        .select(
+          "status, progress_percent, current_phase, current_step, error_message, output_data",
+        )
+        .eq("id", id)
+        .single();
+
+      if (statusError) {
+        console.error("[QueryGen] Failed to fetch task status:", statusError);
+        return;
+      }
+
+      setScriptStatus(statusData.status);
+      setScriptProgress(statusData.progress_percent || 0);
+      setScriptCurrentPhase(
+        statusData.current_phase || statusData.current_step,
+      );
+
+      if (statusData.status === "completed" && statusData.output_data) {
+        setQueryGenOutline(statusData.output_data);
+        setIsGeneratingScript(false);
+        setScriptTaskId(null);
+      } else if (statusData.status === "failed") {
+        setQueryGenError(
+          statusData.error_message || "Script generation failed",
+        );
+        setIsGeneratingScript(false);
+        setScriptTaskId(null);
+      }
+    },
+    [supabase],
+  );
+
+  // Polling effect for script generation
+  useEffect(() => {
+    if (!isGeneratingScript || !scriptTaskId) return;
+
+    fetchScriptTaskStatus(scriptTaskId);
+    const interval = setInterval(
+      () => fetchScriptTaskStatus(scriptTaskId),
+      2000,
+    );
+    return () => clearInterval(interval);
+  }, [isGeneratingScript, scriptTaskId, fetchScriptTaskStatus]);
+
+  // Start script generation
+  const handleStartScriptGeneration = async () => {
+    if (!qgTopic.trim()) return;
+
+    setIsGeneratingScript(true);
+    setQueryGenError(null);
+    setQueryGenOutline(null);
+    setQueryGenResult(null);
+    setScriptProgress(0);
+    setScriptStatus("starting");
+
+    try {
+      const response = await fetch("/api/universal-script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: qgTopic,
+          genre: qgGenre,
+          researchToggle: qgResearchToggle,
+          durationRange: {
+            minMinutes: qgDurationRange[0],
+            maxMinutes: qgDurationRange[1],
+          },
+          angle: qgAngle || undefined,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to start script generation");
+      }
+
+      setScriptTaskId(data.taskId);
+      setScriptStatus("pending");
+    } catch (err) {
+      setQueryGenError(err instanceof Error ? err.message : "Unknown error");
+      setIsGeneratingScript(false);
+    }
+  };
 
   /* --------------------------------------------------------------------------------
    * Pexels Handlers
@@ -440,6 +630,104 @@ export function StockScraperTester({
       setWikimediaSelected(new Set());
     } else {
       setWikimediaSelected(new Set(wikimediaResults.map((r) => r.pageId)));
+    }
+  };
+
+  /* --------------------------------------------------------------------------------
+   * Serper Handlers
+   * -------------------------------------------------------------------------------- */
+  const handleSerperSearch = async () => {
+    if (!serperQuery.trim()) return;
+
+    setIsSearchingSerper(true);
+    setSerperResults([]);
+    setSerperSelected(new Set());
+    setSerperError(null);
+    setSerperScrapeResult(null);
+
+    try {
+      const params = new URLSearchParams({
+        q: serperQuery,
+        maxResults: String(serperMaxResults),
+        color: serperColor,
+        type: serperType,
+        size: serperSize,
+        aspectRatio: serperAspectRatio,
+        license: serperLicense,
+        safe: String(serperSafe),
+      });
+
+      const res = await fetch(`/api/serper/search?${params}`);
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || "Search failed");
+
+      setSerperResults(data.results || []);
+    } catch (error) {
+      console.error("[Serper] Search failed:", error);
+      setSerperError(error instanceof Error ? error.message : "Search failed");
+    } finally {
+      setIsSearchingSerper(false);
+    }
+  };
+
+  const handleSerperScrape = async () => {
+    if (serperSelected.size === 0 && serperResults.length === 0) return;
+
+    setIsScrapingSerper(true);
+    setSerperError(null);
+    setSerperScrapeResult(null);
+
+    try {
+      const res = await fetch("/api/serper/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: serperQuery,
+          filters: {
+            maxResults: serperMaxResults,
+            color: serperColor,
+            type: serperType,
+            size: serperSize,
+            aspectRatio: serperAspectRatio,
+            license: serperLicense,
+            safe: serperSafe,
+          },
+          selectedImageUrls:
+            serperSelected.size > 0 ? Array.from(serperSelected) : undefined,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || "Scrape failed");
+
+      setSerperScrapeResult(data);
+    } catch (error) {
+      console.error("[Serper] Scrape failed:", error);
+      setSerperError(error instanceof Error ? error.message : "Scrape failed");
+    } finally {
+      setIsScrapingSerper(false);
+    }
+  };
+
+  const toggleSerperSelection = (imageUrl: string) => {
+    setSerperSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(imageUrl)) {
+        next.delete(imageUrl);
+      } else {
+        next.add(imageUrl);
+      }
+      return next;
+    });
+  };
+
+  const toggleAllSerperSelection = () => {
+    if (serperSelected.size === serperResults.length) {
+      setSerperSelected(new Set());
+    } else {
+      setSerperSelected(new Set(serperResults.map((r) => r.imageUrl)));
     }
   };
 
@@ -744,6 +1032,17 @@ export function StockScraperTester({
           Pexels
         </Button>
         <Button
+          variant={activeTab === "serper" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setActiveTab("serper")}
+          className={
+            activeTab === "serper" ? "bg-blue-600 hover:bg-blue-700" : ""
+          }
+        >
+          <Search className="w-4 h-4 mr-2" />
+          Serper
+        </Button>
+        <Button
           variant={activeTab === "youtube" ? "default" : "ghost"}
           size="sm"
           onClick={() => setActiveTab("youtube")}
@@ -786,6 +1085,17 @@ export function StockScraperTester({
         >
           <Database className="w-4 h-4 mr-2" />
           Debug DB
+        </Button>
+        <Button
+          variant={activeTab === "querygen" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setActiveTab("querygen")}
+          className={
+            activeTab === "querygen" ? "bg-amber-600 hover:bg-amber-700" : ""
+          }
+        >
+          <List className="w-4 h-4 mr-2" />
+          Query Generator
         </Button>
       </div>
 
@@ -951,6 +1261,342 @@ export function StockScraperTester({
                     })}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Serper Tab */}
+            {activeTab === "serper" && (
+              <div className="space-y-6">
+                {/* Search Header */}
+                <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="h-12 w-12 rounded-full bg-blue-500/20 flex items-center justify-center">
+                      <Search className="w-6 h-6 text-blue-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-medium text-white">
+                        Google Images (Serper)
+                      </h3>
+                      <p className="text-sm text-neutral-400">
+                        Search Google Images with AI quality & watermark
+                        filtering
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Search Input */}
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Search images (e.g., 'mountain landscape')"
+                      className="bg-neutral-900 border-neutral-700 text-neutral-200"
+                      value={serperQuery}
+                      onChange={(e) => setSerperQuery(e.target.value)}
+                      onKeyDown={(e) =>
+                        e.key === "Enter" && handleSerperSearch()
+                      }
+                    />
+                    <Button
+                      className="bg-blue-600 hover:bg-blue-700"
+                      onClick={handleSerperSearch}
+                      disabled={isSearchingSerper || !serperQuery.trim()}
+                    >
+                      {isSearchingSerper ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Search className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </div>
+
+                  {/* Filter Section */}
+                  <div className="space-y-3">
+                    <button
+                      onClick={() => setShowSerperFilters(!showSerperFilters)}
+                      className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                    >
+                      {showSerperFilters ? "Hide" : "Show"} Filters
+                    </button>
+
+                    {showSerperFilters && (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 bg-neutral-800/50 rounded-lg">
+                        <div>
+                          <label className="text-xs text-neutral-500 block mb-1">
+                            Max Results
+                          </label>
+                          <Input
+                            type="number"
+                            min={5}
+                            max={100}
+                            value={serperMaxResults}
+                            onChange={(e) =>
+                              setSerperMaxResults(
+                                parseInt(e.target.value) || 20,
+                              )
+                            }
+                            className="h-8 bg-neutral-900 border-neutral-700 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-neutral-500 block mb-1">
+                            Color
+                          </label>
+                          <select
+                            value={serperColor}
+                            onChange={(e) =>
+                              setSerperColor(e.target.value as any)
+                            }
+                            className="w-full h-8 bg-neutral-900 border border-neutral-700 rounded-md text-sm text-neutral-200 px-2"
+                          >
+                            <option value="any">Any</option>
+                            <option value="bw">Black & White</option>
+                            <option value="red">Red</option>
+                            <option value="orange">Orange</option>
+                            <option value="yellow">Yellow</option>
+                            <option value="green">Green</option>
+                            <option value="teal">Teal</option>
+                            <option value="blue">Blue</option>
+                            <option value="purple">Purple</option>
+                            <option value="pink">Pink</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-neutral-500 block mb-1">
+                            Type
+                          </label>
+                          <select
+                            value={serperType}
+                            onChange={(e) =>
+                              setSerperType(e.target.value as any)
+                            }
+                            className="w-full h-8 bg-neutral-900 border border-neutral-700 rounded-md text-sm text-neutral-200 px-2"
+                          >
+                            <option value="any">Any</option>
+                            <option value="photo">Photo</option>
+                            <option value="face">Face</option>
+                            <option value="clipart">Clipart</option>
+                            <option value="lineart">Line Art</option>
+                            <option value="animated">Animated</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-neutral-500 block mb-1">
+                            Size
+                          </label>
+                          <select
+                            value={serperSize}
+                            onChange={(e) =>
+                              setSerperSize(e.target.value as any)
+                            }
+                            className="w-full h-8 bg-neutral-900 border border-neutral-700 rounded-md text-sm text-neutral-200 px-2"
+                          >
+                            <option value="any">Any</option>
+                            <option value="large">Large</option>
+                            <option value="medium">Medium</option>
+                            <option value="icon">Icon</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-neutral-500 block mb-1">
+                            Aspect Ratio
+                          </label>
+                          <select
+                            value={serperAspectRatio}
+                            onChange={(e) =>
+                              setSerperAspectRatio(e.target.value as any)
+                            }
+                            className="w-full h-8 bg-neutral-900 border border-neutral-700 rounded-md text-sm text-neutral-200 px-2"
+                          >
+                            <option value="any">Any</option>
+                            <option value="wide">Wide (Landscape)</option>
+                            <option value="tall">Tall (Portrait)</option>
+                            <option value="square">Square</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-neutral-500 block mb-1">
+                            License
+                          </label>
+                          <select
+                            value={serperLicense}
+                            onChange={(e) =>
+                              setSerperLicense(e.target.value as any)
+                            }
+                            className="w-full h-8 bg-neutral-900 border border-neutral-700 rounded-md text-sm text-neutral-200 px-2"
+                          >
+                            <option value="any">Any</option>
+                            <option value="f">Free to use</option>
+                            <option value="fc">Commercial use</option>
+                            <option value="fm">Modify</option>
+                            <option value="fmc">Commercial + Modify</option>
+                          </select>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="serper-safe"
+                            checked={serperSafe}
+                            onChange={(e) => setSerperSafe(e.target.checked)}
+                            className="rounded border-neutral-700"
+                          />
+                          <label
+                            htmlFor="serper-safe"
+                            className="text-xs text-neutral-400"
+                          >
+                            Safe Search
+                          </label>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Error Display */}
+                {serperError && (
+                  <div className="p-4 rounded-lg border border-red-500/50 bg-red-500/10 text-red-400">
+                    {serperError}
+                  </div>
+                )}
+
+                {/* Scrape Result */}
+                {serperScrapeResult && (
+                  <div className="p-4 rounded-lg border border-green-500/50 bg-green-500/10 space-y-2">
+                    <div className="flex items-center gap-2 text-green-400">
+                      <Check className="w-5 h-5" />
+                      <span className="font-medium">Import Complete</span>
+                    </div>
+                    <div className="text-sm text-neutral-300 space-y-1">
+                      <p>
+                        Processed: {serperScrapeResult.processed} | Approved:{" "}
+                        {serperScrapeResult.approved} | Rejected:{" "}
+                        {serperScrapeResult.rejected}
+                      </p>
+                      {serperScrapeResult.rejectedDetails &&
+                        serperScrapeResult.rejectedDetails.length > 0 && (
+                          <div className="mt-2 text-xs text-neutral-400">
+                            <p className="font-medium mb-1">
+                              Rejection reasons:
+                            </p>
+                            {serperScrapeResult.rejectedDetails
+                              .slice(0, 5)
+                              .map((d: any, i: number) => (
+                                <p key={i} className="truncate">
+                                  • {d.rejectionType}: {d.reason.slice(0, 60)}
+                                  ...
+                                </p>
+                              ))}
+                            {serperScrapeResult.rejectedDetails.length > 5 && (
+                              <p>
+                                ...and{" "}
+                                {serperScrapeResult.rejectedDetails.length - 5}{" "}
+                                more
+                              </p>
+                            )}
+                          </div>
+                        )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Results Grid */}
+                {serperResults.length > 0 && (
+                  <div className="space-y-4">
+                    {/* Selection Controls */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <button
+                          onClick={toggleAllSerperSelection}
+                          className="text-sm text-blue-400 hover:text-blue-300"
+                        >
+                          {serperSelected.size === serperResults.length
+                            ? "Deselect All"
+                            : "Select All"}
+                        </button>
+                        <span className="text-sm text-neutral-500">
+                          {serperSelected.size} of {serperResults.length}{" "}
+                          selected
+                        </span>
+                      </div>
+                      <Button
+                        className="bg-blue-600 hover:bg-blue-700"
+                        onClick={handleSerperScrape}
+                        disabled={isScrapingSerper || serperSelected.size === 0}
+                      >
+                        {isScrapingSerper ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Processing...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-4 h-4 mr-2" />
+                            Approve & Import ({serperSelected.size})
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {/* Image Grid */}
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                      {serperResults.map((image) => {
+                        const isSelected = serperSelected.has(image.imageUrl);
+                        return (
+                          <div
+                            key={image.id}
+                            className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${
+                              isSelected
+                                ? "border-blue-500 ring-2 ring-blue-500/50"
+                                : "border-transparent hover:border-neutral-600"
+                            }`}
+                            onClick={() =>
+                              toggleSerperSelection(image.imageUrl)
+                            }
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={image.thumbnailUrl}
+                              alt={image.title}
+                              className="w-full h-full object-cover"
+                            />
+                            {/* Selection Checkbox */}
+                            <div
+                              className={`absolute top-2 left-2 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
+                                isSelected
+                                  ? "bg-blue-500"
+                                  : "bg-black/50 border border-white/50"
+                              }`}
+                            >
+                              {isSelected && (
+                                <Check className="w-4 h-4 text-white" />
+                              )}
+                            </div>
+                            {/* Info Overlay */}
+                            <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/90 to-transparent">
+                              <p className="text-xs text-white truncate">
+                                {image.title}
+                              </p>
+                              <p className="text-xs text-neutral-400 truncate">
+                                {image.source}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Empty State */}
+                {serperResults.length === 0 &&
+                  !isSearchingSerper &&
+                  !serperError && (
+                    <div className="text-center py-12 text-neutral-500">
+                      <Search className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                      <p>Enter a search query to find images</p>
+                      <p className="text-sm mt-2">
+                        Images are filtered for watermarks and quality
+                      </p>
+                    </div>
+                  )}
               </div>
             )}
 
@@ -2459,6 +3105,400 @@ export function StockScraperTester({
                 {!debugData && !isLoadingDebug && !debugError && (
                   <div className="text-center text-neutral-500 py-12">
                     Click "Load DB Entries" to inspect the stock_media table
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Query Generator Tab */}
+            {activeTab === "querygen" && (
+              <div className="space-y-6">
+                <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 flex flex-col items-center justify-center space-y-4">
+                  <div className="h-16 w-16 rounded-full bg-amber-500/20 flex items-center justify-center">
+                    <List className="h-8 w-8 text-amber-400" />
+                  </div>
+                  <div className="text-center">
+                    <h2 className="text-xl font-bold text-white mb-2">
+                      Query Generator
+                    </h2>
+                    <p className="text-neutral-400 text-sm max-w-md">
+                      Generate stock media search queries from video outline.
+                      The AI analyzes each scene and recommends optimal sources.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Script Generation Form - Only show when not already generating or have outline */}
+                {!queryGenOutline && !isGeneratingScript && (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="text-neutral-400">Topic</Label>
+                      <Textarea
+                        value={qgTopic}
+                        onChange={(e) => setQgTopic(e.target.value)}
+                        placeholder="Enter your video topic..."
+                        className="bg-neutral-900 border-neutral-700 min-h-[80px]"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-neutral-400">
+                        Angle/Focus (optional)
+                      </Label>
+                      <Input
+                        value={qgAngle}
+                        onChange={(e) => setQgAngle(e.target.value)}
+                        placeholder="e.g., 'Focus on the economic factors'"
+                        className="bg-neutral-900 border-neutral-700"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-neutral-400">Genre</Label>
+                        <Select
+                          value={qgGenre}
+                          onValueChange={(v) => setQgGenre(v as any)}
+                        >
+                          <SelectTrigger className="bg-neutral-900 border-neutral-700">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="z-[10002]">
+                            <SelectItem value="documentary">
+                              Documentary
+                            </SelectItem>
+                            <SelectItem value="educational">
+                              Educational
+                            </SelectItem>
+                            <SelectItem value="narrative_fiction">
+                              Narrative Fiction
+                            </SelectItem>
+                            <SelectItem value="historical_fiction">
+                              Historical Fiction
+                            </SelectItem>
+                            <SelectItem value="opinion_essay">
+                              Opinion Essay
+                            </SelectItem>
+                            <SelectItem value="tutorial">Tutorial</SelectItem>
+                            <SelectItem value="news">News</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="text-neutral-400">
+                          Research Depth
+                        </Label>
+                        <Select
+                          value={qgResearchToggle}
+                          onValueChange={(v) => setQgResearchToggle(v as any)}
+                        >
+                          <SelectTrigger className="bg-neutral-900 border-neutral-700">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="z-[10002]">
+                            <SelectItem value="deep">
+                              Deep (Current Events)
+                            </SelectItem>
+                            <SelectItem value="full">Full Research</SelectItem>
+                            <SelectItem value="light">
+                              Light (Verification)
+                            </SelectItem>
+                            <SelectItem value="off">No Research</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center text-sm">
+                        <Label className="text-neutral-400">
+                          Duration Range
+                        </Label>
+                        <span className="text-amber-500 font-mono">
+                          {qgDurationRange[0]}m - {qgDurationRange[1]}m
+                        </span>
+                      </div>
+                      <Slider
+                        value={qgDurationRange}
+                        min={1}
+                        max={30}
+                        step={1}
+                        minStepsBetweenThumbs={1}
+                        onValueChange={setQgDurationRange}
+                        className="py-2"
+                      />
+                      <div className="flex justify-between text-[10px] text-neutral-600 px-1 select-none">
+                        <span>1m</span>
+                        <span>10m</span>
+                        <span>20m</span>
+                        <span>30m</span>
+                      </div>
+                    </div>
+
+                    <Button
+                      onClick={handleStartScriptGeneration}
+                      disabled={!qgTopic.trim()}
+                      className="w-full bg-amber-600 hover:bg-amber-700"
+                    >
+                      <Play className="w-4 h-4 mr-2" />
+                      Generate Script & Queries
+                    </Button>
+                  </div>
+                )}
+
+                {/* Script Generation Progress */}
+                {isGeneratingScript && (
+                  <div className="p-4 rounded-lg bg-neutral-900 border border-neutral-700 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
+                        <span className="text-white font-medium">
+                          {scriptCurrentPhase ||
+                            "Starting script generation..."}
+                        </span>
+                      </div>
+                      <span className="text-neutral-500 text-sm">
+                        {scriptProgress}%
+                      </span>
+                    </div>
+                    <Progress value={scriptProgress} className="h-2" />
+                    <p className="text-xs text-neutral-500">
+                      This generates the full script outline, then extracts
+                      media queries
+                    </p>
+                  </div>
+                )}
+
+                {/* Error Display */}
+                {queryGenError && (
+                  <p className="text-sm text-red-400 p-3 rounded-lg bg-red-900/20 border border-red-800">
+                    {queryGenError}
+                  </p>
+                )}
+
+                {queryGenOutline && (
+                  <div className="p-3 rounded-lg bg-neutral-900 border border-neutral-700">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Check className="w-4 h-4 text-green-400" />
+                        <span className="text-sm text-neutral-300">
+                          Outline loaded:{" "}
+                          {queryGenOutline?.spine?.beats?.length || 0} beats
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        disabled={
+                          isGeneratingQueries || !queryGenOutline?.spine?.beats
+                        }
+                        onClick={async () => {
+                          setIsGeneratingQueries(true);
+                          setQueryGenError(null);
+                          setQueryGenResult(null);
+
+                          try {
+                            const res = await fetch(
+                              "/api/query-generator/generate",
+                              {
+                                method: "POST",
+                                headers: {
+                                  "Content-Type": "application/json",
+                                },
+                                body: JSON.stringify({
+                                  videoId: queryGenVideoId,
+                                  spine: queryGenOutline.spine,
+                                  expandedBeats: queryGenOutline.expandedBeats,
+                                  assetRegistry: queryGenOutline.assetRegistry,
+                                  researchEntities:
+                                    queryGenOutline.researchDossier?.entities,
+                                }),
+                              },
+                            );
+
+                            const data = await res.json();
+
+                            if (!res.ok)
+                              throw new Error(
+                                data.error || "Generation failed",
+                              );
+
+                            setQueryGenResult(data.result);
+                          } catch (error) {
+                            console.error("Query generation failed:", error);
+                            setQueryGenError(
+                              error instanceof Error
+                                ? error.message
+                                : "Generation failed",
+                            );
+                          } finally {
+                            setIsGeneratingQueries(false);
+                          }
+                        }}
+                        className="bg-amber-600 hover:bg-amber-700"
+                      >
+                        {isGeneratingQueries ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Generating...
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-4 h-4 mr-2" />
+                            Generate Queries
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Results Section */}
+                {queryGenResult && (
+                  <div className="space-y-4">
+                    {/* Stats Row */}
+                    <div className="grid grid-cols-4 gap-4">
+                      <div className="p-3 rounded-lg bg-neutral-900 border border-neutral-700 text-center">
+                        <div className="text-2xl font-bold text-white">
+                          {queryGenResult.totalQueries}
+                        </div>
+                        <div className="text-xs text-neutral-400">
+                          Total Queries
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-neutral-900 border border-neutral-700 text-center">
+                        <div className="text-2xl font-bold text-blue-400">
+                          {queryGenResult.queryCountByType?.image || 0}
+                        </div>
+                        <div className="text-xs text-neutral-400">Images</div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-neutral-900 border border-neutral-700 text-center">
+                        <div className="text-2xl font-bold text-green-400">
+                          {queryGenResult.queryCountByType?.video || 0}
+                        </div>
+                        <div className="text-xs text-neutral-400">Videos</div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-neutral-900 border border-neutral-700 text-center">
+                        <div className="text-2xl font-bold text-neutral-400">
+                          {(queryGenResult.deduplicationStats
+                            ?.exactDuplicatesSkipped || 0) +
+                            (queryGenResult.deduplicationStats
+                              ?.semanticDuplicatesSkipped || 0)}
+                        </div>
+                        <div className="text-xs text-neutral-400">Deduped</div>
+                      </div>
+                    </div>
+
+                    {/* Queries by Source */}
+                    {Object.entries(queryGenResult.queriesBySource || {}).map(
+                      ([source, queries]: [string, any]) =>
+                        queries.length > 0 && (
+                          <div key={source} className="space-y-2">
+                            <h4
+                              className={`text-sm font-medium flex items-center gap-2 ${
+                                source === "serper"
+                                  ? "text-blue-400"
+                                  : source === "wikimedia"
+                                    ? "text-teal-400"
+                                    : source === "pexels"
+                                      ? "text-green-400"
+                                      : source === "youtube"
+                                        ? "text-red-400"
+                                        : "text-neutral-400"
+                              }`}
+                            >
+                              <span
+                                className={`w-2 h-2 rounded-full ${
+                                  source === "serper"
+                                    ? "bg-blue-400"
+                                    : source === "wikimedia"
+                                      ? "bg-teal-400"
+                                      : source === "pexels"
+                                        ? "bg-green-400"
+                                        : source === "youtube"
+                                          ? "bg-red-400"
+                                          : "bg-neutral-400"
+                                }`}
+                              />
+                              {source.charAt(0).toUpperCase() + source.slice(1)}{" "}
+                              ({queries.length})
+                            </h4>
+                            <div className="space-y-1">
+                              {(queries as any[]).map((q: any) => (
+                                <div
+                                  key={q.id}
+                                  className="p-3 rounded-lg bg-neutral-900 border border-neutral-800 hover:border-neutral-700 transition-colors"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-medium text-white text-sm truncate">
+                                        "{q.query}"
+                                      </div>
+                                      <div className="text-xs text-neutral-500 mt-1 flex items-center gap-3">
+                                        <span>Beat {q.context?.beatIndex}</span>
+                                        <span>•</span>
+                                        <span>
+                                          Specificity: {q.specificityScore}/10
+                                        </span>
+                                        <span>•</span>
+                                        <span
+                                          className={
+                                            q.stockSafe?.isValid
+                                              ? "text-green-400"
+                                              : "text-red-400"
+                                          }
+                                        >
+                                          {q.stockSafe?.isValid
+                                            ? "✓ Stock-safe"
+                                            : "✗ Not stock-safe"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div
+                                      className={`px-2 py-0.5 rounded text-xs ${
+                                        q.mediaType === "image"
+                                          ? "bg-blue-900 text-blue-200"
+                                          : "bg-green-900 text-green-200"
+                                      }`}
+                                    >
+                                      {q.mediaType}
+                                    </div>
+                                  </div>
+                                  {q.sourceReason && (
+                                    <div className="text-xs text-neutral-600 mt-2 italic">
+                                      {q.sourceReason}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ),
+                    )}
+
+                    {/* Metadata */}
+                    <div className="p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-xs text-neutral-500">
+                      <div className="flex gap-6">
+                        <span>
+                          Processing time:{" "}
+                          {queryGenResult.metadata?.totalProcessingTimeMs}ms
+                        </span>
+                        <span>
+                          Scenes processed:{" "}
+                          {queryGenResult.metadata?.scenesProcessed}
+                        </span>
+                        <span>
+                          Batches: {queryGenResult.metadata?.batchCount}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {!queryGenOutline && !queryGenResult && (
+                  <div className="text-center text-neutral-500 py-8">
+                    Paste an outline from the Universal Script Writer to get
+                    started
                   </div>
                 )}
               </div>
