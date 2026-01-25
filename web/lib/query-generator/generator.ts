@@ -22,6 +22,7 @@ import {
   SceneBatchResult,
   GeneratedQuery,
   VideoQueryTracker,
+  MediaDensityLevel,
   DEFAULT_BATCH_SIZE,
 } from './types';
 
@@ -108,6 +109,7 @@ export async function generateQueriesForScene(
     assetNames: [] as string[],
     researchEntities: [] as string[],
     previousQueries: existingQueries || [],
+    mediaDensity: 'images_heavy_video' as MediaDensityLevel,
   };
   
   const result = await processSceneBatch(
@@ -132,6 +134,7 @@ async function processSceneBatch(
     assetNames: string[];
     researchEntities: string[];
     previousQueries: string[];
+    mediaDensity: MediaDensityLevel;
   }
 ): Promise<SceneBatchResult> {
   const startTime = Date.now();
@@ -212,6 +215,7 @@ function buildContext(input: QueryGenerationInput): {
   assetNames: string[];
   researchEntities: string[];
   previousQueries: string[];
+  mediaDensity: MediaDensityLevel;
 } {
   const assetNames: string[] = [];
   
@@ -229,6 +233,7 @@ function buildContext(input: QueryGenerationInput): {
     assetNames,
     researchEntities,
     previousQueries: [],
+    mediaDensity: input.mediaDensity || 'images_heavy_video',
   };
 }
 

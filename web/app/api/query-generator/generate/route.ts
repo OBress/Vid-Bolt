@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { videoId, spine, expandedBeats, assetRegistry, researchEntities } = body;
+    const { videoId, spine, expandedBeats, assetRegistry, researchEntities, mediaDensity } = body;
 
     if (!videoId || !spine?.beats) {
       return NextResponse.json(
@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
       videoId,
       userId: user.id,
       scenes,
+      mediaDensity: mediaDensity || 'images_heavy_video',
       assetRegistry,
       researchEntities,
     };

@@ -251,6 +251,9 @@ export function StockScraperTester({
   >("light");
   const [qgDurationRange, setQgDurationRange] = useState([3, 5]); // [min, max] in minutes
   const [qgAngle, setQgAngle] = useState("");
+  const [qgMediaDensity, setQgMediaDensity] = useState<
+    "none" | "images_only" | "images_minimal_video" | "images_heavy_video"
+  >("images_heavy_video");
 
   // Script Generation Progress State
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
@@ -3210,6 +3213,30 @@ export function StockScraperTester({
                       </div>
                     </div>
 
+                    <div className="space-y-2">
+                      <Label className="text-neutral-400">Media Density</Label>
+                      <Select
+                        value={qgMediaDensity}
+                        onValueChange={(v) => setQgMediaDensity(v as any)}
+                      >
+                        <SelectTrigger className="bg-neutral-900 border-neutral-700">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="z-[10002]">
+                          <SelectItem value="none">No Stock Media</SelectItem>
+                          <SelectItem value="images_only">
+                            Images Only (6/scene)
+                          </SelectItem>
+                          <SelectItem value="images_minimal_video">
+                            Images + Minimal Video (8/scene)
+                          </SelectItem>
+                          <SelectItem value="images_heavy_video">
+                            Images + Lots of Video (12/scene)
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
                     <div className="space-y-3">
                       <div className="flex justify-between items-center text-sm">
                         <Label className="text-neutral-400">
@@ -3312,6 +3339,7 @@ export function StockScraperTester({
                                   assetRegistry: queryGenOutline.assetRegistry,
                                   researchEntities:
                                     queryGenOutline.researchDossier?.entities,
+                                  mediaDensity: qgMediaDensity,
                                 }),
                               },
                             );

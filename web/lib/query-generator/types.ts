@@ -21,6 +21,61 @@ export type MediaSource = ImageSource | VideoSource;
  */
 export type MediaType = 'image' | 'video';
 
+/**
+ * Media density levels for query generation
+ * Controls how many and what type of queries are generated
+ */
+export type MediaDensityLevel = 
+  | 'none'              // No stock media queries
+  | 'images_only'        // Only image queries (serper)
+  | 'images_minimal_video' // Images + few video queries
+  | 'images_heavy_video';  // Images + lots of video queries
+
+/**
+ * Configuration for each media density level
+ */
+export const MEDIA_DENSITY_CONFIG: Record<MediaDensityLevel, {
+  generateQueries: boolean;
+  includeImages: boolean;
+  includeVideos: boolean;
+  imageQueriesPerScene: number;
+  videoQueriesPerScene: number;
+  totalMinQueries: number;
+}> = {
+  none: {
+    generateQueries: false,
+    includeImages: false,
+    includeVideos: false,
+    imageQueriesPerScene: 0,
+    videoQueriesPerScene: 0,
+    totalMinQueries: 0,
+  },
+  images_only: {
+    generateQueries: true,
+    includeImages: true,
+    includeVideos: false,
+    imageQueriesPerScene: 6,
+    videoQueriesPerScene: 0,
+    totalMinQueries: 6,
+  },
+  images_minimal_video: {
+    generateQueries: true,
+    includeImages: true,
+    includeVideos: true,
+    imageQueriesPerScene: 6,
+    videoQueriesPerScene: 2,
+    totalMinQueries: 8,
+  },
+  images_heavy_video: {
+    generateQueries: true,
+    includeImages: true,
+    includeVideos: true,
+    imageQueriesPerScene: 6,
+    videoQueriesPerScene: 6,
+    totalMinQueries: 12,
+  },
+};
+
 // =============================================================================
 // QUERY TYPES
 // =============================================================================
@@ -233,6 +288,9 @@ export interface QueryGenerationInput {
   
   /** Scenes to process (from spine.beats + expandedBeats) */
   scenes: SceneInput[];
+  
+  /** Media density level - controls query volume */
+  mediaDensity?: MediaDensityLevel;
   
   /** Asset registry for context */
   assetRegistry?: {

@@ -12,6 +12,8 @@ import { generateJSON } from '@/lib/ai/openrouter';
 import {
   QueryClassification,
   SceneInput,
+  MediaDensityLevel,
+  MEDIA_DENSITY_CONFIG,
   VIDEO_SPECIFICITY_THRESHOLD,
   STOCK_SAFE_THRESHOLD,
 } from './types';
@@ -33,8 +35,8 @@ Generate MANY search queries (8-15 per scene) to cover EVERYTHING a video editor
 
 ## SOURCE SELECTION - USE ALL SOURCES STRATEGICALLY
 
-### SERPER (Google Images) - PRIMARY for images
-Use Serper HEAVILY for:
+### SERPER (Google Images) - USE FOR ALL IMAGES
+Use Serper for EVERYTHING image-related:
 ✅ Famous people (politicians, historical figures, celebrities)
 ✅ Specific locations and landmarks
 ✅ Current events and news imagery
@@ -42,15 +44,10 @@ Use Serper HEAVILY for:
 ✅ Character portraits and reference images
 ✅ Product and object photos
 ✅ Maps, infographics, diagrams
-🎯 Serper should be your GO-TO for most image queries
-
-### WIKIMEDIA - Secondary for images
-Use Wikimedia for:
-✅ Historical images (pre-1950 especially)
+✅ Historical images and archival photos
 ✅ Public domain artwork and paintings
 ✅ Scientific diagrams and educational illustrations
-✅ Old photographs and archival images
-✅ Maps and geographic imagery
+🎯 Serper is your ONLY source for all image queries
 
 ### YOUTUBE - PRIMARY for documentary/specific video
 Use YouTube LIBERALLY for:
@@ -147,9 +144,18 @@ export async function classifySceneBatch(
     assetNames?: string[];
     researchEntities?: string[];
     previousQueries?: string[];
+    mediaDensity?: MediaDensityLevel;
   }
 ): Promise<QueryClassification[]> {
-  const userPrompt = buildBatchClassificationPrompt(scenes, context);
+  const densityLevel = context?.mediaDensity || 'images_heavy_video';
+  const densityConfig = MEDIA_DENSITY_CONFIG[densityLevel];
+  
+  // Return empty if no queries requested
+  if (!densityConfig.generateQueries) {
+    return [];
+  }
+  
+  const userPrompt = buildBatchClassificationPrompt(scenes, context, densityConfig);
   
   const result = await generateJSON<BatchClassificationResponse>(
     userId,
@@ -186,8 +192,8 @@ export async function classifySceneBatch(
 
 function validateSource(source: string, mediaType: string): 'serper' | 'wikimedia' | 'pexels' | 'youtube' {
   if (mediaType === 'image') {
-    if (source === 'wikimedia') return 'wikimedia';
-    return 'serper'; // Default images to serper
+    // All images go to Serper
+    return 'serper';
   } else {
     if (source === 'pexels') return 'pexels';
     return 'youtube'; // Default videos to youtube for better coverage
@@ -319,8 +325,23 @@ function buildBatchClassificationPrompt(
     assetNames?: string[];
     researchEntities?: string[];
     previousQueries?: string[];
+  },
+  densityConfig?: {
+    includeImages: boolean;
+    includeVideos: boolean;
+    imageQueriesPerScene: number;
+    videoQueriesPerScene: number;
+    totalMinQueries: number;
   }
 ): string {
+  const config = densityConfig || {
+    includeImages: true,
+    includeVideos: true,
+    imageQueriesPerScene: 6,
+    videoQueriesPerScene: 6,
+    totalMinQueries: 12,
+  };
+  
   let prompt = `Analyze these ${scenes.length} video scenes and recommend media search approaches for each:
 
 ## SCENES TO ANALYZE`;
@@ -348,19 +369,27 @@ function buildBatchClassificationPrompt(
     prompt += `\n\n## AVOID DUPLICATING THESE QUERIES\n${context.previousQueries.slice(-20).join('\n')}`;
   }
 
+  // Build media type instructions based on density config
+  const mediaTypes: string[] = [];
+  if (config.includeImages) mediaTypes.push('images (serper)');
+  if (config.includeVideos) mediaTypes.push('videos (youtube/pexels)');
+  
+  const totalQueries = config.totalMinQueries;
+  
   prompt += `
 
-## CRITICAL: GENERATE MANY QUERIES
-You MUST generate AT LEAST 10 queries per scene. Coverage is more important than anything else.
+## QUERY GENERATION REQUIREMENTS
+Generate exactly ${totalQueries} queries per scene using: ${mediaTypes.join(' and ')}.
+${config.includeImages ? `- Generate ${config.imageQueriesPerScene} IMAGE queries (use "serper" as source)` : '- NO image queries'}
+${config.includeVideos ? `- Generate ${config.videoQueriesPerScene} VIDEO queries (use "youtube" for specific, "pexels" for generic)` : '- NO video queries'}
 
-For EACH scene, generate queries across ALL these categories:
-1. **main_topic** (2-3 queries): Core subject matter - BOTH video (youtube) AND images (serper)
-2. **character** (2-3 queries): Any people/figures mentioned - portraits, photos (serper)
-3. **location** (2-3 queries): Settings, places - drone footage (youtube), photos (serper)  
-4. **object** (1-2 queries): Key objects, artifacts, symbols (serper)
-5. **historical** (1-2 queries): Archival footage, old photos (youtube, wikimedia)
-6. **mood** (1-2 queries): Abstract visuals matching tone (pexels for generic, serper for specific)
-7. **supporting** (1-2 queries): B-roll, context footage (youtube or pexels)
+For EACH scene, generate queries across these categories:
+${config.includeImages ? `- **character** (1-2): People/figures mentioned - portraits (serper)
+- **location** (1-2): Settings, places - photos (serper)
+- **object** (1-2): Key objects, artifacts (serper)` : ''}
+${config.includeVideos ? `- **main_topic** (1-2): Core subject - documentary footage (youtube)
+- **historical** (1): Archival footage (youtube)
+- **mood** (1-2): Abstract/B-roll (pexels for generic, youtube for specific)` : ''}
 
 ## OUTPUT FORMAT
 Return a JSON object:
@@ -369,26 +398,16 @@ Return a JSON object:
     {
       "sceneIndex": 0,
       "queries": [
-        {"query": "bronze age collapse documentary footage", "mediaType": "video", "source": "youtube", "specificityScore": 7, "category": "main_topic"},
-        {"query": "bronze age trade routes map ancient", "mediaType": "image", "source": "serper", "specificityScore": 6, "category": "main_topic"},
-        {"query": "Sea Peoples invasion bronze age", "mediaType": "video", "source": "youtube", "specificityScore": 8, "category": "main_topic"},
-        {"query": "Ramesses III pharaoh portrait", "mediaType": "image", "source": "serper", "specificityScore": 7, "category": "character"},
-        {"query": "ancient Hittite king statue", "mediaType": "image", "source": "serper", "specificityScore": 6, "category": "character"},
-        {"query": "ruins of Ugarit Syria drone", "mediaType": "video", "source": "youtube", "specificityScore": 8, "category": "location"},
-        {"query": "ancient Mediterranean aerial view", "mediaType": "image", "source": "serper", "specificityScore": 5, "category": "location"},
-        {"query": "bronze age sword weapons artifacts", "mediaType": "image", "source": "serper", "specificityScore": 5, "category": "object"},
-        {"query": "clay tablets ancient writing", "mediaType": "image", "source": "wikimedia", "specificityScore": 5, "category": "object"},
-        {"query": "ancient city destruction fire ruins", "mediaType": "video", "source": "youtube", "specificityScore": 6, "category": "historical"},
-        {"query": "dramatic sunset ancient ruins", "mediaType": "video", "source": "pexels", "specificityScore": 2, "category": "mood"},
-        {"query": "burning city flames destruction", "mediaType": "video", "source": "pexels", "specificityScore": 3, "category": "mood"}
+${config.includeImages ? `        {"query": "example image query", "mediaType": "image", "source": "serper", "specificityScore": 6, "category": "character"},` : ''}
+${config.includeVideos ? `        {"query": "example video query", "mediaType": "video", "source": "youtube", "specificityScore": 7, "category": "main_topic"},` : ''}
       ],
-      "namedEntities": {"people": ["Ramesses III"], "places": ["Ugarit", "Mediterranean"], "events": ["Bronze Age Collapse"], "dates": ["1200 BCE"]},
-      "isHistorical": true
+      "namedEntities": {"people": [], "places": [], "events": [], "dates": []},
+      "isHistorical": false
     }
   ]
 }
 
-REMEMBER: Minimum 10 queries per scene. Use youtube for videos, serper for images. Cover ALL categories.`;
+CRITICAL: Generate EXACTLY ${totalQueries} queries per scene. ${config.includeImages ? 'Use serper for ALL images.' : ''} ${config.includeVideos ? 'Use youtube for specific videos, pexels only for ultra-generic B-roll.' : ''}`;
 
   return prompt;
 }
