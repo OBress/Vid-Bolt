@@ -1,0 +1,21 @@
+# =============================================================================
+# Local Development - Minimal yt-dlp container
+# =============================================================================
+# Run alongside npm run dev + npm run workers:dev
+# 
+# Usage: docker compose -f docker-compose.dev.yml up
+# =============================================================================
+
+services:
+  # Just Redis for BullMQ
+  redis:
+    image: redis:7-alpine
+    container_name: vidbolt-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+volumes:
+  redis_data:

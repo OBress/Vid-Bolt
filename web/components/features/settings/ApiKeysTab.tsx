@@ -80,6 +80,20 @@ export function ApiKeysTab() {
   const [projectValidating, setProjectValidating] = useState(false);
   const [apiReady, setApiReady] = useState(false);
 
+  // Pre-flight check state (APIs + GPU quota)
+  const [isChecking, setIsChecking] = useState(false);
+  const [checkResults, setCheckResults] = useState<{
+    computeApi: { enabled: boolean; error?: string };
+    youtubeApi: { enabled: boolean; error?: string };
+    gpuQuota: {
+      available: boolean;
+      quota: number;
+      region?: string;
+      error?: string;
+    };
+    allPassing: boolean;
+  } | null>(null);
+
   // State to track desired/transitioning status to prevent polling from reverting optimistic UI
   const [targetStatus, setTargetStatus] = useState<string | null>(null);
 
@@ -324,6 +338,54 @@ export function ApiKeysTab() {
     }
   };
 
+  const handlePreflightCheck = async () => {
+    if (!projectId) {
+      toast.error("Please enter a Project ID first");
+      return;
+    }
+
+    setIsChecking(true);
+    setCheckResults(null);
+    addLog("Running pre-flight checks...");
+
+    try {
+      const res = await axios.post("/api/gcp/check", { projectId });
+      const results = res.data;
+      setCheckResults(results);
+
+      if (results.allPassing) {
+        addLog("✓ All checks passed!");
+
+        // Save project ID to Supabase on successful check
+        if (userId) {
+          await supabase.from("user_gcp_config").upsert(
+            {
+              user_id: userId,
+              project_id: projectId,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "user_id" },
+          );
+        }
+
+        toast.success("All checks passed! Project ID saved.");
+      } else {
+        const failures: string[] = [];
+        if (!results.computeApi.enabled) failures.push("Compute Engine API");
+        if (!results.youtubeApi.enabled) failures.push("YouTube Data API");
+        if (!results.gpuQuota.available) failures.push("GPU Quota");
+        addLog(`✗ Failed: ${failures.join(", ")}`);
+        toast.error(`Failed: ${failures.join(", ")}`);
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message;
+      toast.error("Check failed: " + msg);
+      addLog("Check failed: " + msg);
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
   const handleGCPConnect = async () => {
     setGcpLoading(true);
     try {
@@ -334,7 +396,8 @@ export function ApiKeysTab() {
         provider: "google",
         options: {
           redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/command-center/settings/general?tab=api-keys")}`,
-          scopes: "https://www.googleapis.com/auth/compute",
+          scopes:
+            "https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/cloud-platform.read-only",
           queryParams: { access_type: "offline", prompt: "consent" },
         },
       });
@@ -418,10 +481,10 @@ export function ApiKeysTab() {
                 </div>
                 <div>
                   <CardTitle className="text-sm font-bold text-neutral-200 tracking-widest uppercase font-mono">
-                    GOOGLE CLOUD WORKSTATION
+                    GOOGLE SERVICES
                   </CardTitle>
                   <CardDescription className="text-neutral-600 text-[11px] mt-0.5 font-medium uppercase tracking-tight">
-                    Direct VM Management & Provisioning
+                    VM + YouTube Data API V3
                   </CardDescription>
                 </div>
               </div>
@@ -459,7 +522,7 @@ export function ApiKeysTab() {
             ) : (
               <div className="space-y-4">
                 {/* Project ID */}
-                <div className="space-y-1">
+                <div className="space-y-3">
                   <label className="text-[10px] text-neutral-500 font-mono uppercase">
                     GCP Project ID
                   </label>
@@ -469,51 +532,62 @@ export function ApiKeysTab() {
                       value={projectId}
                       onChange={(e) => {
                         setProjectId(e.target.value);
-                        setProjectValid(null); // Reset validation on change
-                      }}
-                      onBlur={async () => {
-                        // Validate on blur if we have token and projectId
-                        if (gcpToken && projectId && projectId.length > 3) {
-                          setProjectValidating(true);
-                          try {
-                            const res = await axios.post(
-                              "/api/gcp/vm",
-                              { action: "validate", projectId },
-                              { headers: { "x-gcp-token": gcpToken } },
-                            );
-                            const isValid = res.data.data?.valid || false;
-                            setProjectValid(isValid);
-
-                            // Auto-save if valid
-                            if (isValid && userId) {
-                              await supabase.from("user_gcp_config").upsert(
-                                {
-                                  user_id: userId,
-                                  project_id: projectId,
-                                  updated_at: new Date().toISOString(),
-                                },
-                                { onConflict: "user_id" },
-                              );
-                              toast.success("Project ID saved");
-                            }
-                          } catch {
-                            setProjectValid(false);
-                          }
-                          setProjectValidating(false);
-                        }
+                        setCheckResults(null); // Reset check on change
                       }}
                       placeholder="e.g. vidbolt-dev-1"
                       className="flex-1 bg-black/40 border border-neutral-800 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-orange-500 transition-colors font-mono"
                     />
-                    {/* Validation Indicator */}
-                    {projectValidating ? (
-                      <Loader2 className="w-3 h-3 text-neutral-500 animate-spin" />
-                    ) : projectValid === true ? (
-                      <CheckCircle className="w-4 h-4 text-green-500" />
-                    ) : projectValid === false ? (
-                      <XCircle className="w-4 h-4 text-red-500" />
-                    ) : null}
+                    {/* Check Button */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handlePreflightCheck}
+                      disabled={isChecking || !projectId}
+                      className="border-orange-600 text-orange-400 hover:bg-orange-500/20 h-8 text-xs font-mono"
+                    >
+                      {isChecking ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        "Check"
+                      )}
+                    </Button>
                   </div>
+
+                  {/* Check Results */}
+                  {checkResults && (
+                    <div className="grid grid-cols-3 gap-2 p-3 bg-black/30 rounded-lg border border-neutral-800">
+                      <div
+                        className={`flex items-center gap-2 text-xs ${checkResults.computeApi.enabled ? "text-green-400" : "text-red-400"}`}
+                      >
+                        {checkResults.computeApi.enabled ? (
+                          <CheckCircle className="w-3 h-3" />
+                        ) : (
+                          <XCircle className="w-3 h-3" />
+                        )}
+                        <span>Compute API</span>
+                      </div>
+                      <div
+                        className={`flex items-center gap-2 text-xs ${checkResults.youtubeApi.enabled ? "text-green-400" : "text-red-400"}`}
+                      >
+                        {checkResults.youtubeApi.enabled ? (
+                          <CheckCircle className="w-3 h-3" />
+                        ) : (
+                          <XCircle className="w-3 h-3" />
+                        )}
+                        <span>YouTube API</span>
+                      </div>
+                      <div
+                        className={`flex items-center gap-2 text-xs ${checkResults.gpuQuota.available ? "text-green-400" : "text-red-400"}`}
+                      >
+                        {checkResults.gpuQuota.available ? (
+                          <CheckCircle className="w-3 h-3" />
+                        ) : (
+                          <XCircle className="w-3 h-3" />
+                        )}
+                        <span>GPU Quota</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Controls */}
@@ -633,8 +707,13 @@ export function ApiKeysTab() {
                                 : "start",
                             )
                           }
-                          disabled={gcpLoading}
-                          className="w-full bg-green-600 hover:bg-green-700 font-bold h-8 text-xs"
+                          disabled={gcpLoading || !checkResults?.allPassing}
+                          className="w-full bg-green-600 hover:bg-green-700 disabled:bg-neutral-800 disabled:text-neutral-500 font-bold h-8 text-xs"
+                          title={
+                            !checkResults?.allPassing
+                              ? "Run Check first"
+                              : undefined
+                          }
                         >
                           {gcpLoading ? (
                             <Loader2 className="w-3 h-3 animate-spin" />

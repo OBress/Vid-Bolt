@@ -1,6 +1,14 @@
-version: "3.8"
+# =============================================================================
+# Vid-Bolt Docker Compose
+# =============================================================================
+# Full development environment with Redis, yt-dlp, and FFmpeg.
+# 
+# Usage:
+#   docker compose up --build
+# =============================================================================
 
 services:
+  # Redis for BullMQ job queues
   redis:
     image: redis:7-alpine
     container_name: vidbolt-redis
@@ -10,6 +18,29 @@ services:
       - redis_data:/data
     command: redis-server --appendonly yes
     restart: unless-stopped
+
+  # Next.js app with yt-dlp + FFmpeg
+  app:
+    build:
+      context: ./web
+      args:
+        BUILD_ENV: development
+    container_name: vidbolt-app
+    ports:
+      - "3001:3000"  # Use 3001 locally to avoid conflict with npm run dev
+    env_file:
+      - ./web/.env.local
+    volumes:
+      # Mount source for hot reload
+      - ./web/lib:/app/lib
+      - ./web/app:/app/app
+      - ./web/components:/app/components
+      - ./web/features:/app/features
+    command: npm run dev
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
 
 volumes:
   redis_data:

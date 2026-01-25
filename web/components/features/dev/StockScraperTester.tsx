@@ -145,6 +145,29 @@ export function StockScraperTester({
   const [showWikimediaFilters, setShowWikimediaFilters] = useState(false);
 
   /* --------------------------------------------------------------------------------
+   * YouTube Data API State
+   * -------------------------------------------------------------------------------- */
+  const [ytQuery, setYtQuery] = useState("");
+  const [ytResults, setYtResults] = useState<any[]>([]);
+  const [isYtSearching, setIsYtSearching] = useState(false);
+  const [ytError, setYtError] = useState<string | null>(null);
+  const [ytMaxResults, setYtMaxResults] = useState(10);
+  const [ytDuration, setYtDuration] = useState<
+    "any" | "short" | "medium" | "long"
+  >("any");
+  const [ytLicense, setYtLicense] = useState<
+    "any" | "creativeCommon" | "youtube"
+  >("any");
+  const [ytDefinition, setYtDefinition] = useState<"any" | "high" | "standard">(
+    "any",
+  );
+  const [showYtFilters, setShowYtFilters] = useState(false);
+  const [ytProcessingItems, setYtProcessingItems] = useState<Set<string>>(
+    new Set(),
+  );
+  const [ytGcpRequired, setYtGcpRequired] = useState(false);
+
+  /* --------------------------------------------------------------------------------
    * Pexels Handlers
    * -------------------------------------------------------------------------------- */
   const handlePexelsSearch = async () => {
@@ -417,6 +440,85 @@ export function StockScraperTester({
       setWikimediaSelected(new Set());
     } else {
       setWikimediaSelected(new Set(wikimediaResults.map((r) => r.pageId)));
+    }
+  };
+
+  /* --------------------------------------------------------------------------------
+   * YouTube Data API Handlers
+   * -------------------------------------------------------------------------------- */
+  const handleYouTubeSearch = async () => {
+    if (!ytQuery.trim()) return;
+
+    setIsYtSearching(true);
+    setYtError(null);
+    setYtResults([]);
+    setYtGcpRequired(false);
+
+    try {
+      const params = new URLSearchParams({
+        q: ytQuery,
+        maxResults: ytMaxResults.toString(),
+        videoDuration: ytDuration,
+        videoLicense: ytLicense,
+        videoDefinition: ytDefinition,
+      });
+
+      const res = await fetch(`/api/youtube/search?${params.toString()}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (data.gcpRequired) {
+          setYtGcpRequired(true);
+        }
+        throw new Error(data.error || "Search failed");
+      }
+
+      setYtResults(data.hits || []);
+    } catch (error) {
+      console.error("[YouTube] Search failed:", error);
+      setYtError(error instanceof Error ? error.message : "Search failed");
+    } finally {
+      setIsYtSearching(false);
+    }
+  };
+
+  const handleYouTubeProcess = async (video: any) => {
+    if (ytProcessingItems.has(video.id)) return;
+
+    setYtProcessingItems((prev) => new Set(prev).add(video.id));
+
+    try {
+      const res = await fetch("/api/youtube/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videoId: video.id,
+          videoUrl: video.url,
+          title: video.title,
+          channelTitle: video.channelTitle,
+          filterPrompt: filterPrompt || undefined,
+        }),
+      });
+
+      const result = await res.json();
+
+      if (!result.success) {
+        throw new Error(result.error || "Processing failed");
+      }
+
+      // Job queued successfully - show feedback
+      alert(
+        `Video queued for processing!\nJob ID: ${result.jobId}\n\nCheck the Classify tab to monitor progress.`,
+      );
+    } catch (error) {
+      console.error("[YouTube] Process failed:", error);
+      alert(error instanceof Error ? error.message : "Processing failed");
+    } finally {
+      setYtProcessingItems((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(video.id);
+        return newSet;
+      });
     }
   };
 
@@ -1163,71 +1265,240 @@ export function StockScraperTester({
             {/* YouTube Tab */}
             {activeTab === "youtube" && (
               <div className="space-y-6">
-                <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 flex flex-col items-center justify-center space-y-4">
-                  <div className="h-16 w-16 rounded-full bg-neutral-800/80 flex items-center justify-center">
-                    <Youtube className="w-8 h-8 text-neutral-600" />
+                {/* Search Header */}
+                <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="h-12 w-12 rounded-full bg-red-500/20 flex items-center justify-center">
+                      <Youtube className="w-6 h-6 text-red-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-medium text-white">
+                        YouTube Video Search
+                      </h3>
+                      <p className="text-sm text-neutral-400">
+                        Search for videos using YouTube Data API v3 (uses your
+                        GCP quota)
+                      </p>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-medium text-white">
-                    YouTube Video Search
-                  </h3>
-                  <p className="text-neutral-400 text-center max-w-sm">
-                    Search for creative commons videos on YouTube.
-                  </p>
 
-                  <div className="w-full max-w-md flex gap-2 pt-4">
+                  {/* Search Input */}
+                  <div className="flex gap-2">
                     <Input
-                      placeholder="Search query..."
+                      placeholder="Search videos (e.g., 'nature documentary 4k')"
                       className="bg-neutral-900 border-neutral-700 text-neutral-200"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                      value={ytQuery}
+                      onChange={(e) => setYtQuery(e.target.value)}
+                      onKeyDown={(e) =>
+                        e.key === "Enter" && handleYouTubeSearch()
+                      }
                     />
                     <Button
                       className="bg-red-600 hover:bg-red-700"
-                      onClick={handleSearch}
-                      disabled={isSearching}
+                      onClick={handleYouTubeSearch}
+                      disabled={isYtSearching || !ytQuery.trim()}
                     >
-                      {isSearching ? (
-                        <Search className="w-4 h-4 animate-spin" />
+                      {isYtSearching ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
                       ) : (
                         <Search className="w-4 h-4" />
                       )}
                     </Button>
                   </div>
-                </div>
 
-                {/* Results Grid - Share state for now */}
-                {searchResults.length > 0 && (
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {searchResults.map((result) => (
-                      <div
-                        key={result.id}
-                        className="group relative aspect-video bg-neutral-800 rounded-lg overflow-hidden border border-neutral-700"
-                      >
-                        <div className="absolute inset-0 flex items-center justify-center text-neutral-500">
-                          {result.metadata.thumbnailUrl ? (
-                            <img
-                              src={result.metadata.thumbnailUrl}
-                              alt={result.metadata.title}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex flex-col items-center">
-                              <Youtube className="w-8 h-8 mb-2 opacity-50" />
-                              <span className="text-xs">No Preview</span>
-                            </div>
-                          )}
+                  {/* Filter Section */}
+                  <div className="space-y-3">
+                    <button
+                      onClick={() => setShowYtFilters(!showYtFilters)}
+                      className="text-sm text-red-400 hover:text-red-300 flex items-center gap-1"
+                    >
+                      {showYtFilters ? "Hide" : "Show"} Filters
+                    </button>
+
+                    {showYtFilters && (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 bg-neutral-800/50 rounded-lg">
+                        <div>
+                          <label className="text-xs text-neutral-500 block mb-1">
+                            Max Results
+                          </label>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={50}
+                            value={ytMaxResults}
+                            onChange={(e) =>
+                              setYtMaxResults(parseInt(e.target.value) || 10)
+                            }
+                            className="h-8 bg-neutral-900 border-neutral-700 text-sm"
+                          />
                         </div>
-                        <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/90 to-transparent">
-                          <p className="text-sm font-medium text-white truncate">
-                            {result.metadata.title || "Untitled"}
-                          </p>
-                          <p className="text-xs text-neutral-400 truncate">
-                            {Math.round((result.similarity || 0) * 100)}% match
-                          </p>
+                        <div>
+                          <label className="text-xs text-neutral-500 block mb-1">
+                            Duration
+                          </label>
+                          <select
+                            value={ytDuration}
+                            onChange={(e) =>
+                              setYtDuration(e.target.value as any)
+                            }
+                            className="w-full h-8 bg-neutral-900 border border-neutral-700 rounded-md text-sm text-neutral-200 px-2"
+                          >
+                            <option value="any">Any</option>
+                            <option value="short">&lt;4 min</option>
+                            <option value="medium">4-20 min</option>
+                            <option value="long">&gt;20 min</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-neutral-500 block mb-1">
+                            License
+                          </label>
+                          <select
+                            value={ytLicense}
+                            onChange={(e) =>
+                              setYtLicense(e.target.value as any)
+                            }
+                            className="w-full h-8 bg-neutral-900 border border-neutral-700 rounded-md text-sm text-neutral-200 px-2"
+                          >
+                            <option value="any">Any</option>
+                            <option value="creativeCommon">
+                              Creative Commons
+                            </option>
+                            <option value="youtube">Standard YouTube</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-neutral-500 block mb-1">
+                            Quality
+                          </label>
+                          <select
+                            value={ytDefinition}
+                            onChange={(e) =>
+                              setYtDefinition(e.target.value as any)
+                            }
+                            className="w-full h-8 bg-neutral-900 border border-neutral-700 rounded-md text-sm text-neutral-200 px-2"
+                          >
+                            <option value="any">Any</option>
+                            <option value="high">HD</option>
+                            <option value="standard">SD</option>
+                          </select>
                         </div>
                       </div>
-                    ))}
+                    )}
+                  </div>
+
+                  {/* Quota info */}
+                  <p className="text-xs text-neutral-500 text-center">
+                    Each search uses 100 quota units (10,000/day default)
+                  </p>
+                </div>
+
+                {/* GCP Required Error */}
+                {ytGcpRequired && (
+                  <div className="p-4 rounded-lg border border-yellow-500/50 bg-yellow-500/10 space-y-2">
+                    <div className="flex items-center gap-2 text-yellow-400 font-medium">
+                      <XCircle className="w-5 h-5" />
+                      Google Cloud Connection Required
+                    </div>
+                    <p className="text-sm text-neutral-300">
+                      To search YouTube, you need to connect your Google Cloud
+                      account and enable the YouTube Data API in your project.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-yellow-600 text-yellow-400 hover:bg-yellow-500/20"
+                      onClick={() => window.open("/settings#gcp", "_blank")}
+                    >
+                      Open Settings
+                    </Button>
+                  </div>
+                )}
+
+                {/* Error Display */}
+                {ytError && !ytGcpRequired && (
+                  <div className="p-4 rounded-lg border border-red-500/50 bg-red-500/10 text-red-400">
+                    {ytError}
+                  </div>
+                )}
+
+                {/* Results Grid */}
+                {ytResults.length > 0 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-neutral-400">
+                        Found {ytResults.length} videos
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      {ytResults.map((video) => {
+                        const isProcessing = ytProcessingItems.has(video.id);
+
+                        return (
+                          <div
+                            key={video.id}
+                            className="group relative aspect-video bg-neutral-800 rounded-lg overflow-hidden border border-neutral-700"
+                          >
+                            <img
+                              src={video.thumbnailUrl}
+                              alt={video.title}
+                              className={`w-full h-full object-cover transition-opacity ${isProcessing ? "opacity-50" : ""}`}
+                            />
+
+                            {/* Processing Overlay */}
+                            {isProcessing && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                                <Loader2 className="w-8 h-8 text-red-500 animate-spin" />
+                              </div>
+                            )}
+
+                            {/* Action Overlay */}
+                            {!isProcessing && (
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                <Button
+                                  size="sm"
+                                  className="bg-red-600 hover:bg-red-700"
+                                  onClick={() => handleYouTubeProcess(video)}
+                                >
+                                  <Sparkles className="w-4 h-4 mr-2" />
+                                  Process
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-neutral-600"
+                                  onClick={() =>
+                                    window.open(video.url, "_blank")
+                                  }
+                                >
+                                  <Play className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            )}
+
+                            <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/90 to-transparent pointer-events-none">
+                              <p className="text-sm font-medium text-white truncate">
+                                {video.title}
+                              </p>
+                              <p className="text-xs text-neutral-400 truncate">
+                                {video.channelTitle}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Empty State */}
+                {ytResults.length === 0 && !isYtSearching && !ytError && (
+                  <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/30 text-center">
+                    <Youtube className="w-12 h-12 text-neutral-600 mx-auto mb-3" />
+                    <p className="text-neutral-400">
+                      Enter a search query to find videos on YouTube
+                    </p>
                   </div>
                 )}
               </div>
