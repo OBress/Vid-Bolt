@@ -668,14 +668,27 @@ export const Step3Script = memo(
       );
       NarrationHighlight.displayName = "NarrationHighlight";
 
-      // Phase mapping for progress display (phases 5-6)
+      // Phase mapping for progress display - matches backend progress updates
       const phases = [
-        { key: "Script Expansion", label: "Script Expansion" },
-        { key: "Assembly & Validation", label: "Assembly & Validation" },
+        { key: "Expanding beat", label: "Writing Script", pattern: true },
+        {
+          key: "Rating script quality",
+          label: "Quality Check",
+          pattern: false,
+        },
+        { key: "Refining", label: "Refining Script", pattern: true },
+        { key: "Smoothing", label: "Smoothing Transitions", pattern: true },
+        { key: "Validating", label: "Validating Quality", pattern: true },
+        { key: "Formatting", label: "Formatting Output", pattern: true },
+        { key: "Saving", label: "Saving Script", pattern: true },
       ];
 
       const getCurrentPhaseIndex = () => {
-        const idx = phases.findIndex((p) => currentStep?.includes(p.key));
+        if (!currentStep) return 0;
+        // Find matching phase using pattern matching
+        const idx = phases.findIndex((p) =>
+          p.pattern ? currentStep.includes(p.key) : currentStep === p.key,
+        );
         return idx >= 0 ? idx : 0;
       };
 

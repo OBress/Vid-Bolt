@@ -29,6 +29,13 @@ import {
 // TYPES
 // ============================================================================
 
+/** Progress callback for granular UI updates */
+export type ExpansionProgressCallback = (
+  beatIndex: number,
+  totalBeats: number,
+  step: string
+) => Promise<void>;
+
 export interface ExpansionOptions {
   userId: string;
   topic: string;
@@ -37,6 +44,8 @@ export interface ExpansionOptions {
   dossier: ResearchDossier | null;
   assetRegistry: AssetRegistry;
   angle?: string;
+  /** Optional callback for reporting progress after each beat */
+  onProgress?: ExpansionProgressCallback;
 }
 
 export interface ExpansionResult {
@@ -56,7 +65,7 @@ export interface ExpansionResult {
 export async function expandSpineToScript(
   options: ExpansionOptions
 ): Promise<ExpansionResult> {
-  const { userId, topic, genre, spine, dossier, assetRegistry, angle } = options;
+  const { userId, topic, genre, spine, dossier, assetRegistry, angle, onProgress } = options;
 
   console.log(`[Expansion] Starting script expansion for ${spine.beatCount} beats`);
 
@@ -108,6 +117,11 @@ export async function expandSpineToScript(
 
       expandedBeats.push(expandedBeat);
 
+      // Report progress after each beat
+      if (onProgress) {
+        await onProgress(i + 1, spine.beats.length, `Expanding beat ${i + 1}/${spine.beats.length}`);
+      }
+
     } catch (error) {
       console.error(`[Expansion] Error expanding beat ${i}:`, error);
       // Add placeholder beat
@@ -122,6 +136,9 @@ export async function expandSpineToScript(
 
   // Batch rate all beats in a single efficient LLM call
   console.log(`[Expansion] Running batch quality rating...`);
+  if (onProgress) {
+    await onProgress(spine.beats.length, spine.beats.length, 'Rating script quality...');
+  }
   const { batchRateBeats, rewriteLowScorers } = await import('./quality-reviewer');
   const ratingResult = await batchRateBeats(userId, expandedBeats);
   
@@ -134,6 +151,9 @@ export async function expandSpineToScript(
 
   // Rewrite sections that scored below threshold (uses gemini-3-pro)
   console.log(`[Expansion] Checking for sections needing rewrite...`);
+  if (onProgress) {
+    await onProgress(spine.beats.length, spine.beats.length, 'Refining low-quality sections...');
+  }
   const rewriteResults = await rewriteLowScorers(
     userId,
     expandedBeats,

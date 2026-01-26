@@ -28,6 +28,13 @@ import { smoothTransitions as aiSmoothTransitions } from './transition-smoother'
 // TYPES
 // ============================================================================
 
+/** Progress callback for granular UI updates */
+export type AssemblyProgressCallback = (
+  step: string,
+  substepIndex: number,
+  totalSubsteps: number
+) => Promise<void>;
+
 export interface AssemblyOptions {
   userId: string;
   genre: ScriptGenre;
@@ -36,6 +43,8 @@ export interface AssemblyOptions {
   assetRegistry: AssetRegistry;
   dossier: ResearchDossier | null;
   durationDecision: DurationDecision;
+  /** Optional callback for reporting progress during assembly */
+  onProgress?: AssemblyProgressCallback;
 }
 
 export interface AssemblyResult {
@@ -65,23 +74,35 @@ export async function assembleScript(
     assetRegistry, 
     dossier,
     durationDecision,
+    onProgress,
   } = options;
+
+  const TOTAL_SUBSTEPS = 4;
 
   console.log(`[Assembly] Starting assembly of ${expandedBeats.length} beats`);
 
   // Step 1: AI-powered transition smoothing
   console.log('[Assembly] Running AI transition smoother...');
+  if (onProgress) {
+    await onProgress('Smoothing transitions...', 1, TOTAL_SUBSTEPS);
+  }
   const transitionResult = await aiSmoothTransitions(userId, expandedBeats, spine);
   const smoothedBeats = transitionResult.smoothedBeats;
   console.log(`[Assembly] Transitions fixed: ${transitionResult.transitionsFixed}, avg score: ${transitionResult.averageTransitionScore.toFixed(1)}/10`);
 
   // Step 2: Concatenate smoothed beats into script
+  if (onProgress) {
+    await onProgress('Assembling script...', 2, TOTAL_SUBSTEPS);
+  }
   const rawScript = concatenateBeats(smoothedBeats);
   const smoothedScript = cleanupWhitespace(rawScript);
   console.log(`[Assembly] Final script: ${smoothedScript.length} characters`);
 
   // Step 3: Validate quality
   console.log('[Assembly] Running quality validation...');
+  if (onProgress) {
+    await onProgress('Validating quality...', 3, TOTAL_SUBSTEPS);
+  }
   const validationOptions: ValidationOptions = {
     userId,
     genre,
@@ -96,6 +117,9 @@ export async function assembleScript(
   console.log(`[Assembly] Quality validation: ${qualityValidation.passed ? 'PASSED' : 'FAILED'}`);
 
   // Step 4: Format final output
+  if (onProgress) {
+    await onProgress('Formatting output...', 4, TOTAL_SUBSTEPS);
+  }
   const formattingOptions: FormattingOptions = {
     script: smoothedScript,
     expandedBeats,

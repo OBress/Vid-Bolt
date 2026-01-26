@@ -103,11 +103,23 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
   const supabase = getSupabaseServiceClient();
 
   try {
+    // Get beat count for progress calculation
+    const totalBeats = outlineData.spine?.beats?.length || 1;
+    
+    // Progress distribution:
+    // 0-5%   = Initialization
+    // 5-55%  = Beat expansion (50% of total, split evenly across beats)
+    // 55-60% = Quality rating
+    // 60-65% = Low-score rewrites
+    // 65-95% = Assembly (4 sub-steps, 7.5% each)
+    // 95-100% = Finalization
+
     // Update task status to in progress
     await updateTaskStatus(taskId, {
       status: 'running',
       current_phase: 'writing',
-      current_step: 'Script Expansion',
+      current_step: 'Initializing script generation...',
+      progress_percent: 5,
       started_at: new Date().toISOString(),
     });
 
@@ -125,6 +137,28 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
       await updateStepStatus(taskId, stepId, { status: 'running' });
 
       try {
+        // Create progress callback for expansion phase
+        const expansionProgress = async (beatIndex: number, totalBeats: number, step: string) => {
+          // Calculate progress: 5-55% for beats, 55-65% for quality/rewrites
+          let progressPercent: number;
+          
+          if (step.startsWith('Expanding beat')) {
+            // Beat expansion: 5% to 55% (50% total, split evenly)
+            progressPercent = 5 + Math.round((beatIndex / totalBeats) * 50);
+          } else if (step.includes('Rating')) {
+            progressPercent = 57;
+          } else if (step.includes('Refining')) {
+            progressPercent = 62;
+          } else {
+            progressPercent = 55;
+          }
+          
+          await updateTaskStatus(taskId, {
+            current_step: step,
+            progress_percent: progressPercent,
+          });
+        };
+
         const result = await expandSpineToScript({
           userId,
           topic: config.topic,
@@ -133,6 +167,7 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
           dossier: outlineData.researchDossier || null,
           assetRegistry: outlineData.assetRegistry,
           angle: config.angle,
+          onProgress: expansionProgress,
         });
 
         await completeStep(taskId, stepId);
@@ -163,6 +198,17 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
       await updateStepStatus(taskId, stepId, { status: 'running' });
 
       try {
+        // Create progress callback for assembly phase
+        const assemblyProgress = async (step: string, substepIndex: number, totalSubsteps: number) => {
+          // Assembly: 65% to 95% (30% total, split across 4 sub-steps)
+          const progressPercent = 65 + Math.round((substepIndex / totalSubsteps) * 30);
+          
+          await updateTaskStatus(taskId, {
+            current_step: step,
+            progress_percent: progressPercent,
+          });
+        };
+
         const result = await assembleScript({
           userId,
           genre: config.genre,
@@ -171,6 +217,7 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
           assetRegistry: outlineData.assetRegistry,
           dossier: outlineData.researchDossier || null,
           durationDecision: outlineData.durationDecision,
+          onProgress: assemblyProgress,
         });
 
         await completeStep(taskId, stepId);
@@ -185,6 +232,11 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
     // =========================================================================
     // FINALIZE
     // =========================================================================
+    await updateTaskStatus(taskId, {
+      current_step: 'Saving script...',
+      progress_percent: 95,
+    });
+    
     console.log(`[ScriptWriting:Finalize] Preparing output for task ${taskId}`);
     console.log(
       `[ScriptWriting:Finalize] finalScript length: ${finalScript?.length || 0} chars`
