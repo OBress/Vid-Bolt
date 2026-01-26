@@ -47,11 +47,16 @@ export async function POST(request: Request) {
     ].filter(Boolean).join('. ');
 
     // Generate embedding via the embed API
+    const headers: HeadersInit = { 'Content-Type': 'application/json' };
+    if (process.env.INTERNAL_API_SECRET) {
+      headers['X-Worker-Secret'] = process.env.INTERNAL_API_SECRET;
+    }
+
     const embedResponse = await fetch(
       `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/vector/embed`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ text: searchableText }),
       }
     );

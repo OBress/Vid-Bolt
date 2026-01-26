@@ -10,12 +10,27 @@ import type {
 
 export class StockMediaService {
   /**
+   * Helper to add worker secret header if available (for server-side/worker calls)
+   */
+  private getHeaders(): HeadersInit {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    // process.env.INTERNAL_API_SECRET will be available in Node/Worker environment
+    // but undefined in browser environment (which is safe/expected)
+    if (process.env.INTERNAL_API_SECRET) {
+      headers['X-Worker-Secret'] = process.env.INTERNAL_API_SECRET;
+    }
+    return headers;
+  }
+
+  /**
    * Generates a text embedding using Cloudflare Workers AI (client-side via API route)
    */
   async generateEmbedding(text: string): Promise<number[]> {
     const response = await fetch('/api/vector/embed', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders(),
       body: JSON.stringify({ text })
     });
 
@@ -53,7 +68,7 @@ export class StockMediaService {
     
     const response = await fetch(`${baseUrl}/api/stock-media/store-clip`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders(),
       body: JSON.stringify(clip),
     });
 
@@ -78,7 +93,7 @@ export class StockMediaService {
   }> {
     const response = await fetch('/api/classify', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders(),
       body: JSON.stringify({ mediaUrl, mediaType })
     });
 
