@@ -1245,68 +1245,74 @@ export function VideoCreationWizard({
               // Update wizard state so navigation button gets enabled
               updateState({ script, scriptOutput });
             }}
-            onComplete={(script, scriptOutput) => {
-              // OPTIMISTIC: Update state and navigate immediately
+            onComplete={async (script, scriptOutput) => {
+              // Set loading flag and navigate immediately for snappy UX
               updateState({
                 script,
                 scriptOutput,
-                isAudioLoading: true, // Set loading flag immediately
+                isAudioLoading: true,
               });
 
-              // OPTIMISTIC: Advance to Step 4 immediately
+              // Navigate to Step 4 immediately (loading screen will wait for taskId)
               advanceToStep(4);
 
-              // Fire API calls in background (non-blocking)
+              // Now fetch the taskId in the background
               if (state.videoId) {
                 console.log(
-                  "[Wizard] OPTIMISTIC: Navigated to Step 4, firing backend calls in background...",
+                  "[Wizard] Starting audio: saving script and creating task...",
                 );
 
-                // Persist to database and trigger audio generation in background
-                fetch(`/api/videos/${state.videoId}`, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    script_content: script,
-                    current_stage: "audio",
-                    metadata: {
-                      scriptOutput,
-                    },
-                  }),
-                })
-                  .then(() => {
-                    // Trigger audio generation workflow via resume API
-                    return fetch(`/api/videos/${state.videoId}/resume`, {
+                try {
+                  // First, persist script to database
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      script_content: script,
+                      current_stage: "audio",
+                      metadata: {
+                        scriptOutput,
+                      },
+                    }),
+                  });
+
+                  // Trigger audio generation workflow and wait for taskId
+                  const response = await fetch(
+                    `/api/videos/${state.videoId}/resume`,
+                    {
                       method: "POST",
-                    });
-                  })
-                  .then((response) => response.json())
-                  .then((data) => {
-                    if (data.taskId) {
-                      console.log("[Wizard] Audio task created:", data.taskId);
-                      setState((prev) => ({
-                        ...prev,
-                        audioTaskId: data.taskId,
-                      }));
-                    } else {
-                      // Clear loading flag on failure
-                      setState((prev) => ({
-                        ...prev,
-                        isAudioLoading: false,
-                      }));
-                    }
-                  })
-                  .catch((err) => {
-                    console.error(
-                      "[Wizard] Failed to save script or start audio:",
-                      err,
-                    );
-                    // Clear loading flag on error
+                    },
+                  );
+                  const data = await response.json();
+
+                  if (data.taskId) {
+                    console.log("[Wizard] Audio task created:", data.taskId);
+                    // Set taskId - AsyncLoadingStep will pick it up and start polling
+                    setState((prev) => ({
+                      ...prev,
+                      audioTaskId: data.taskId,
+                    }));
+                  } else {
+                    console.error("[Wizard] No taskId in response:", data);
                     setState((prev) => ({
                       ...prev,
                       isAudioLoading: false,
+                      generationError:
+                        data.error || "Failed to start audio generation",
                     }));
-                  });
+                  }
+                } catch (err) {
+                  console.error(
+                    "[Wizard] Failed to save script or start audio:",
+                    err,
+                  );
+                  setState((prev) => ({
+                    ...prev,
+                    isAudioLoading: false,
+                    generationError:
+                      "Failed to start audio generation. Please try again.",
+                  }));
+                }
               }
             }}
             onBack={() => {
