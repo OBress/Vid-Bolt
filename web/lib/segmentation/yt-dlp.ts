@@ -351,3 +351,102 @@ export async function extractThumbnail(
     });
   });
 }
+
+/**
+ * Extract a video chunk for AI analysis using fast stream copy.
+ * This is optimized for speed over precision since we only need
+ * approximate chunks for Gemini scene detection.
+ * 
+ * @param videoPath - Path to source video
+ * @param startTime - Start time in seconds
+ * @param endTime - End time in seconds
+ * @param outputPath - Where to save the chunk
+ * @returns Path to the extracted chunk
+ */
+export async function extractVideoChunk(
+  videoPath: string,
+  startTime: number,
+  endTime: number,
+  outputPath: string
+): Promise<string> {
+  const duration = endTime - startTime;
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn('ffmpeg', [
+      '-ss', startTime.toFixed(3),     // Seek to start time (before -i for fast seeking)
+      '-i', videoPath,
+      '-t', duration.toFixed(3),        // Duration to extract
+      '-c', 'copy',                     // Stream copy (no re-encoding) - FAST
+      '-avoid_negative_ts', 'make_zero', // Fix timestamp issues
+      '-y',
+      outputPath,
+    ]);
+
+    let stderr = '';
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        // Stream copy can fail on some formats - fall back to re-encoding
+        console.warn(`[ffmpeg] Stream copy failed, trying re-encode: ${stderr.substring(0, 200)}`);
+        extractChunkWithReencode(videoPath, startTime, endTime, outputPath)
+          .then(resolve)
+          .catch(reject);
+        return;
+      }
+      console.log(`[ffmpeg] ✓ Extracted chunk: ${outputPath} (${duration.toFixed(1)}s)`);
+      resolve(outputPath);
+    });
+
+    proc.on('error', (err) => {
+      reject(new Error(`Failed to spawn ffmpeg: ${err.message}`));
+    });
+  });
+}
+
+/**
+ * Fallback chunk extraction with re-encoding for problematic formats.
+ */
+async function extractChunkWithReencode(
+  videoPath: string,
+  startTime: number,
+  endTime: number,
+  outputPath: string
+): Promise<string> {
+  const duration = endTime - startTime;
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn('ffmpeg', [
+      '-ss', startTime.toFixed(3),
+      '-i', videoPath,
+      '-t', duration.toFixed(3),
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',           // Fastest encoding (quality doesn't matter for AI)
+      '-crf', '28',                      // Lower quality is fine for analysis
+      '-c:a', 'aac',
+      '-avoid_negative_ts', 'make_zero',
+      '-y',
+      outputPath,
+    ]);
+
+    let stderr = '';
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg chunk re-encode failed: ${stderr}`));
+        return;
+      }
+      console.log(`[ffmpeg] ✓ Extracted chunk (re-encoded): ${outputPath} (${duration.toFixed(1)}s)`);
+      resolve(outputPath);
+    });
+
+    proc.on('error', (err) => {
+      reject(new Error(`Failed to spawn ffmpeg: ${err.message}`));
+    });
+  });
+}

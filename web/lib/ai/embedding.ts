@@ -1,6 +1,4 @@
 
-const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
-const CF_API_TOKEN = process.env.CLOUDFLARE_WORKER_API_TOKEN;
 const EMBEDDING_MODEL_ID = '@cf/baai/bge-base-en-v1.5';
 
 /**
@@ -11,6 +9,10 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   if (!text) {
     throw new Error('Text required for embedding');
   }
+
+  // Read env vars at runtime (not module load) so dotenv has time to load them
+  const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const CF_API_TOKEN = process.env.CLOUDFLARE_WORKER_API_TOKEN;
 
   if (!CF_ACCOUNT_ID || !CF_API_TOKEN) {
     throw new Error('Missing Cloudflare credentials (CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_WORKER_API_TOKEN)');

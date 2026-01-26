@@ -77,6 +77,10 @@ export interface WizardState {
   outlineOutput: any | null;
   outlineConfig: any | null;
   outlineTaskId: string | null;
+  // Stock Media (Step 1→2 transition)
+  isStockMediaLoading: boolean;
+  stockMediaTaskId: string | null;
+  stockMediaResults: any[] | null;
   // Universal script output (Step 3)
   scriptConfig: any; // Store script generation configuration
   universalScriptOutput: UniversalScriptOutput | null;
@@ -189,6 +193,9 @@ export function VideoCreationWizard({
     outlineOutput: null,
     outlineConfig: null,
     outlineTaskId: null,
+    isStockMediaLoading: false,
+    stockMediaTaskId: null,
+    stockMediaResults: null,
     scriptConfig: null,
     universalScriptOutput: null,
     scriptOutput: null,
@@ -311,6 +318,11 @@ export function VideoCreationWizard({
           outlineOutput,
           outlineConfig,
           outlineTaskId: null,
+          isStockMediaLoading:
+            !!(video.metadata as any)?.stockMediaTaskId &&
+            !(video.metadata as any)?.stockMediaResults,
+          stockMediaTaskId: (video.metadata as any)?.stockMediaTaskId || null,
+          stockMediaResults: (video.metadata as any)?.stockMediaResults || null,
           scriptConfig,
           universalScriptOutput,
           scriptOutput,
@@ -527,6 +539,92 @@ export function VideoCreationWizard({
             console.error("Failed to mark video as completed:", err),
           );
         }
+      } else if (
+        currentStep === 1 &&
+        state.outlineOutput &&
+        state.outlineConfig?.stockMediaLevel !== "none"
+      ) {
+        // Step 1 → Step 2: OPTIMISTIC - Navigate immediately, start stock media scraping in background
+        console.log(
+          "[Wizard] OPTIMISTIC: Navigating to Step 2, firing stock media scraping...",
+        );
+
+        setState((prev) => ({
+          ...prev,
+          isStockMediaLoading: true,
+          stockMediaResults: null,
+        }));
+        advanceToStep(2);
+
+        // Fire stock media scraping in background
+        if (state.videoId) {
+          fetch("/api/stock-media/batch-scrape", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              videoId: state.videoId,
+              level: state.outlineConfig?.stockMediaLevel?.includes("extensive")
+                ? "extensive"
+                : "standard",
+              outlineAssets: state.outlineOutput?.assetRegistry,
+              topic: state.outlineConfig?.topic,
+              // Pass spine data for per-scene query generation
+              spine: state.outlineOutput?.spine,
+              expandedBeats: state.outlineOutput?.expandedBeats,
+              // Map stockMediaLevel to mediaDensity
+              // Images-only levels use images_only, video levels use minimal/heavy
+              mediaDensity: (() => {
+                const level = state.outlineConfig?.stockMediaLevel;
+                switch (level) {
+                  case "none":
+                    return "none";
+                  case "standard_images":
+                    return "images_only";
+                  case "extensive_images":
+                    return "images_only";
+                  case "standard_images_video":
+                    return "images_minimal_video";
+                  case "extensive_images_video":
+                    return "images_heavy_video";
+                  default:
+                    return "images_only";
+                }
+              })(),
+            }),
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.taskId) {
+                console.log("[Wizard] Stock media task created:", data.taskId);
+                setState((prev) => ({
+                  ...prev,
+                  stockMediaTaskId: data.taskId,
+                }));
+              } else {
+                console.error(
+                  "[Wizard] Failed to create stock media task:",
+                  data,
+                );
+                setState((prev) => ({
+                  ...prev,
+                  isStockMediaLoading: false,
+                }));
+              }
+            })
+            .catch((err) => {
+              console.error("[Wizard] Stock media scraping failed:", err);
+              setState((prev) => ({
+                ...prev,
+                isStockMediaLoading: false,
+              }));
+            });
+        }
+      } else if (
+        currentStep === 1 &&
+        state.outlineConfig?.stockMediaLevel === "none"
+      ) {
+        // Step 1 → Step 3: Skip Step 2 when stock media is disabled
+        advanceToStep(3);
       } else if (currentStep === 3 && step3Ref.current) {
         // Step 3 → 4: Trigger script completion (which handles its own optimistic navigation)
         step3Ref.current.handleConfirm();
@@ -610,6 +708,7 @@ export function VideoCreationWizard({
               wordTimestamps,
               totalDurationSeconds: totalDuration,
               outlineAssets: state.outlineOutput?.assetRegistry || null,
+              stockMediaLevel: state.outlineConfig?.stockMediaLevel || "none",
             }),
           })
             .then((response) => response.json())
@@ -810,7 +909,8 @@ export function VideoCreationWizard({
     state.videoId,
     state.audioChunks,
     state.script,
-    state.outlineOutput?.assetRegistry,
+    state.outlineOutput,
+    state.outlineConfig,
     updateVideo,
     onComplete,
     updateState,
@@ -912,7 +1012,86 @@ export function VideoCreationWizard({
               if (config?.stockMediaLevel === "none") {
                 advanceToStep(3);
               } else {
+                // OPTIMISTIC: Set loading and navigate immediately
+                console.log(
+                  "[Wizard] OPTIMISTIC: Navigating to Step 2, firing stock media scraping...",
+                );
+                setState((prev) => ({
+                  ...prev,
+                  isStockMediaLoading: true,
+                  stockMediaResults: null,
+                }));
                 advanceToStep(2);
+
+                // Fire stock media scraping in background
+                if (state.videoId) {
+                  fetch("/api/stock-media/batch-scrape", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      videoId: state.videoId,
+                      level: config?.stockMediaLevel?.includes("extensive")
+                        ? "extensive"
+                        : "standard",
+                      outlineAssets: outlineOutput?.assetRegistry,
+                      topic: config?.topic,
+                      // Pass spine data for per-scene query generation
+                      spine: outlineOutput?.spine,
+                      expandedBeats: (outlineOutput as any)?.expandedBeats,
+                      // Map stockMediaLevel to mediaDensity
+                      // Images-only levels use images_only, video levels use minimal/heavy
+                      mediaDensity: (() => {
+                        const level = config?.stockMediaLevel;
+                        switch (level) {
+                          case "none":
+                            return "none";
+                          case "standard_images":
+                            return "images_only";
+                          case "extensive_images":
+                            return "images_only";
+                          case "standard_images_video":
+                            return "images_minimal_video";
+                          case "extensive_images_video":
+                            return "images_heavy_video";
+                          default:
+                            return "images_only";
+                        }
+                      })(),
+                    }),
+                  })
+                    .then((res) => res.json())
+                    .then((data) => {
+                      if (data.taskId) {
+                        console.log(
+                          "[Wizard] Stock media task created:",
+                          data.taskId,
+                        );
+                        setState((prev) => ({
+                          ...prev,
+                          stockMediaTaskId: data.taskId,
+                        }));
+                      } else {
+                        console.error(
+                          "[Wizard] Failed to create stock media task:",
+                          data,
+                        );
+                        setState((prev) => ({
+                          ...prev,
+                          isStockMediaLoading: false,
+                        }));
+                      }
+                    })
+                    .catch((err) => {
+                      console.error(
+                        "[Wizard] Stock media scraping failed:",
+                        err,
+                      );
+                      setState((prev) => ({
+                        ...prev,
+                        isStockMediaLoading: false,
+                      }));
+                    });
+                }
               }
             }}
             onBack={onBack}
@@ -922,6 +1101,20 @@ export function VideoCreationWizard({
       case 2:
         return (
           <Step2StockMedia
+            videoId={state.videoId!}
+            isLoading={state.isStockMediaLoading}
+            taskId={state.stockMediaTaskId}
+            initialMedia={state.stockMediaResults || []}
+            stockMediaLevel={
+              state.outlineConfig?.stockMediaLevel || "standard_images"
+            }
+            onMediaLoaded={(results) => {
+              setState((prev) => ({
+                ...prev,
+                stockMediaResults: results,
+                isStockMediaLoading: false,
+              }));
+            }}
             onNext={() => advanceToStep(3)}
             onBack={() => goToStep(1)}
             {...lock}

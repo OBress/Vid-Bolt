@@ -65,9 +65,18 @@ export interface StockMediaMetadata {
 
 export interface StockMediaRecord {
   id: string;
-  source: 'wikimedia' | 'youtube' | 'pexels' | 'pixabay' | 'upload' | 'other';
+  source: 'wikimedia' | 'youtube' | 'pexels' | 'pixabay' | 'upload' | 'serper' | 'other';
   external_id?: string;
   r2_key: string;
   metadata: StockMediaMetadata;
   similarity?: number;
+  
+  // Flattened properties returned by search() for convenience
+  mediaType?: 'image' | 'video' | 'audio';
+  description?: string;
+  url?: string;
+  thumbnailUrl?: string;
+  subjects?: string[];
+  mood?: string;
+  duration?: number;
 }

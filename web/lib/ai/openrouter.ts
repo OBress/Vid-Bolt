@@ -297,8 +297,23 @@ export async function generateJSON<T = unknown>(
       content = content.slice(0, -3);
     }
 
-    return JSON.parse(content.trim()) as T;
-  } catch {
+    content = content.trim();
+    
+    // Detect truncated JSON before attempting parse
+    const lastChar = content.charAt(content.length - 1);
+    if (lastChar !== '}' && lastChar !== ']') {
+      throw new Error(
+        `Response appears truncated (ends with "${content.substring(content.length - 50)}"...). ` +
+        `Try increasing maxTokens in the config. Usage: prompt=${response.usage.promptTokens}, completion=${response.usage.completionTokens}`
+      );
+    }
+
+    return JSON.parse(content) as T;
+  } catch (parseError) {
+    // Re-throw if it's already our custom error
+    if (parseError instanceof Error && parseError.message.includes('truncated')) {
+      throw parseError;
+    }
     throw new Error(`Failed to parse JSON response: ${response.content.substring(0, 200)}`);
   }
 }

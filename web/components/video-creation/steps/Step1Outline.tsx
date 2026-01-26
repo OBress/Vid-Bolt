@@ -49,7 +49,12 @@ type ScriptGenre =
   | "tutorial"
   | "news";
 type ResearchToggle = "deep" | "full" | "light" | "off";
-type StockMediaLevel = "none" | "standard" | "extensive";
+type StockMediaLevel =
+  | "none"
+  | "standard_images"
+  | "extensive_images"
+  | "standard_images_video"
+  | "extensive_images_video";
 
 interface OutlineOutput {
   researchDossier?: {
@@ -193,7 +198,7 @@ export function Step1Outline({
   );
   const [angle, setAngle] = useState(initialConfig?.angle || "");
   const [stockMediaLevel, setStockMediaLevel] = useState<StockMediaLevel>(
-    initialConfig?.stockMediaLevel ?? "standard",
+    initialConfig?.stockMediaLevel ?? "standard_images",
   );
   const [activeTab, setActiveTab] = useState("spine");
 
@@ -601,8 +606,26 @@ export function Step1Outline({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">None</SelectItem>
-                  <SelectItem value="standard">Standard</SelectItem>
-                  <SelectItem value="extensive">Extensive</SelectItem>
+                  <SelectItem value="standard_images">
+                    Standard Images
+                  </SelectItem>
+                  <SelectItem value="extensive_images">
+                    Extensive Images
+                  </SelectItem>
+                  <SelectItem
+                    value="standard_images_video"
+                    disabled
+                    className="text-neutral-500 cursor-not-allowed"
+                  >
+                    Standard Images + Videos (Coming Soon)
+                  </SelectItem>
+                  <SelectItem
+                    value="extensive_images_video"
+                    disabled
+                    className="text-neutral-500 cursor-not-allowed"
+                  >
+                    Extensive Images + Videos (Coming Soon)
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>

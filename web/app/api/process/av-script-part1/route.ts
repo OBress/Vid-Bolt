@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
       wordTimestamps,
       totalDurationSeconds,
       outlineAssets,
+      stockMediaLevel,
     } = body;
 
     if (!videoId || !script) {
@@ -71,6 +72,7 @@ export async function POST(request: NextRequest) {
           wordTimestamps: wordTimestamps || [],
           totalDurationSeconds: totalDurationSeconds || 0,
           outlineAssets,
+          stockMediaLevel: stockMediaLevel || 'none',
         },
         output_data: {},
       })
@@ -94,6 +96,7 @@ export async function POST(request: NextRequest) {
         totalDurationSeconds: totalDurationSeconds || 0,
         outlineAssets,
         mode: 'part1',  // Explicitly mark as Part 1
+        stockMediaLevel: stockMediaLevel || 'none',  // Pass stock media level
       },
       {
         jobId: task.id,

@@ -19,6 +19,9 @@ import type {
 
 const SERPER_API_ENDPOINT = 'https://google.serper.dev/images';
 
+// Production cap for automated pipeline
+const PRODUCTION_MAX_IMAGES = 10;
+
 // Supported image formats for classification (same as Wikimedia)
 const SUPPORTED_IMAGE_FORMATS = [
   'image/jpeg',
@@ -187,10 +190,18 @@ export async function searchSerperImages(
     throw new Error('SERPER_API_KEY is not configured');
   }
 
-  const maxResults = Math.min(filters.maxResults || 20, 100);
-  console.log(`[Serper] Searching for: "${query}" (limit: ${maxResults})`);
+  // Enforce production cap of 10 images max
+  const maxResults = Math.min(filters.maxResults || PRODUCTION_MAX_IMAGES, PRODUCTION_MAX_IMAGES);
+  
+  // Default to 'any' size to get both medium and large images
+  const enhancedFilters: SerperSearchFilters = {
+    ...filters,
+    size: filters.size || 'any',
+  };
+  
+  console.log(`[Serper] Searching for: "${query}" (limit: ${maxResults}, size: ${enhancedFilters.size})`);
 
-  const requestBody = buildRequestBody(query, filters);
+  const requestBody = buildRequestBody(query, enhancedFilters);
 
   const response = await fetch(SERPER_API_ENDPOINT, {
     method: 'POST',

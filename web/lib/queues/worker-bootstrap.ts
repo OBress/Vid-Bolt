@@ -15,13 +15,20 @@
 import { config } from 'dotenv';
 import { resolve } from 'path';
 
-config({ path: resolve(__dirname, '../../.env.local') });
-config({ path: resolve(__dirname, '../../.env') });
+// Use process.cwd() which is the project root where npm run workers:dev is executed
+const envLocalPath = resolve(process.cwd(), '.env.local');
+const envPath = resolve(process.cwd(), '.env');
+console.log('[WorkerBootstrap] Loading env from:', envLocalPath);
+config({ path: envLocalPath });
+config({ path: envPath });
 
 // Diagnostic logging for environment
 console.log('[WorkerBootstrap] Environment check:');
 console.log('  SUPABASE_URL:', process.env.NEXT_PUBLIC_SUPABASE_URL ? '✓ present' : '✗ MISSING');
 console.log('  SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓ present' : '✗ MISSING');
+console.log('  CLOUDFLARE_ACCOUNT_ID:', process.env.CLOUDFLARE_ACCOUNT_ID ? '✓ present' : '✗ MISSING');
+console.log('  CLOUDFLARE_WORKER_API_TOKEN:', process.env.CLOUDFLARE_WORKER_API_TOKEN ? '✓ present' : '✗ MISSING');
+console.log('  PEXELS_API_KEY:', process.env.PEXELS_API_KEY ? '✓ present' : '✗ MISSING');
 
 import { Worker, Processor } from 'bullmq';
 import { getRedisConnection, closeRedisConnection, isRedisReady } from './redis';
@@ -41,6 +48,7 @@ import {
   gpuLtx2InterpolateProcessor,
   gcpProvisionProcessor,
   segmentProcessor,
+  stockMediaProcessor,
 } from './workers';
 
 // ============================================================================
@@ -139,6 +147,12 @@ const workerConfigs: WorkerConfig[] = [
     processor: segmentProcessor,
     concurrency: 1,
     description: 'YouTube video download + segmentation',
+  },
+  {
+    queue: 'stock-media-scrape',
+    processor: stockMediaProcessor,
+    concurrency: 2,
+    description: 'Stock media scraping with classification',
   },
 ];
 

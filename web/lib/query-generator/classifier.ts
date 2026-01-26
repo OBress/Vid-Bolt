@@ -22,86 +22,51 @@ import {
 // SYSTEM PROMPTS
 // =============================================================================
 
-const SCENE_CLASSIFIER_SYSTEM = `You are a comprehensive media research specialist for YouTube video production. Your goal is to find ALL visual assets needed to fully illustrate a video scene.
+const SCENE_CLASSIFIER_SYSTEM = `You are a focused media researcher for YouTube video production. Your goal is to find ONLY important, specific visual assets - NOT generic filler content.
 
-## YOUR MISSION
-Generate MANY search queries (8-15 per scene) to cover EVERYTHING a video editor would need:
-- Background footage and B-roll
-- Character/subject imagery  
-- Location/setting shots
-- Historical/archival footage
-- Abstract/conceptual visuals
-- Supporting objects and details
+## CRITICAL: WHAT TO SEARCH FOR
 
-## SOURCE SELECTION - USE ALL SOURCES STRATEGICALLY
+✅ REAL NAMED PEOPLE:
+- Historical figures (e.g., "Julius Caesar portrait", "Ramesses II statue")
+- Politicians and leaders (e.g., "Winston Churchill speech")
+- Celebrities and public figures with actual footage/photos
 
-### SERPER (Google Images) - USE FOR ALL IMAGES
-Use Serper for EVERYTHING image-related:
-✅ Famous people (politicians, historical figures, celebrities)
-✅ Specific locations and landmarks
-✅ Current events and news imagery
-✅ Professional photography of any subject
-✅ Character portraits and reference images
-✅ Product and object photos
-✅ Maps, infographics, diagrams
-✅ Historical images and archival photos
-✅ Public domain artwork and paintings
-✅ Scientific diagrams and educational illustrations
-🎯 Serper is your ONLY source for all image queries
+✅ SPECIFIC REAL LOCATIONS:
+- Named cities, landmarks, buildings (e.g., "Colosseum Rome", "Great Wall of China")
+- Historical sites with archival footage (e.g., "Pompeii excavation")
 
-### YOUTUBE - PRIMARY for documentary/specific video
-Use YouTube LIBERALLY for:
-✅ Documentary footage on ANY topic
-✅ Historical events and archival video
-✅ News footage and broadcasts
-✅ Educational content and explainers
-✅ Specific location footage (cities, landmarks, nature)
-✅ Interview footage and speeches
-✅ Technical demonstrations
-✅ Any footage that tells a story or shows real events
-🎯 YouTube has vast amounts of Creative Commons and raw footage
+✅ HISTORICAL EVENTS:
+- Documented events with archival footage (e.g., "Bronze Age collapse map", "Sea Peoples invasion")
+- Wars, discoveries, ceremonies with real footage
 
-### PEXELS - For generic stock footage only
-Use Pexels ONLY for:
-✅ Abstract motion and patterns
-✅ Extremely generic shots (sunset, waves, typing hands)
-✅ Lifestyle B-roll with no specific subject
-❌ Don't use for anything with a specific subject or topic
+✅ SPECIFIC ARTIFACTS/OBJECTS:
+- Named objects (e.g., "Rosetta Stone", "Tutankhamun mask")
+- Historical artifacts in museums
 
-## QUERY GENERATION RULES
+## CRITICAL: WHAT NOT TO SEARCH FOR
 
-1. Generate 8-15 diverse queries per scene covering different visual needs
-2. Mix BOTH image and video queries for each scene
-3. Include queries for:
-   - The main subject/topic (video + images)
-   - Any people/characters mentioned (images via Serper)
-   - Settings and locations (video + images)  
-   - Supporting details and objects
-   - Abstract/emotional visuals that match the mood
-4. Make queries SPECIFIC and descriptive
-5. For historical content, always include YouTube + Wikimedia queries
-6. For contemporary content, always include Serper + YouTube queries
+❌ GENERIC PEOPLE: "a man thinking", "workers", "ancient people", "crowds"
+❌ ABSTRACT CONCEPTS: "determination", "hope", "tension", "atmosphere"  
+❌ GENERIC LOCATIONS: "city street", "office", "landscape", "battlefield"
+❌ MOOD/B-ROLL: "dramatic clouds", "time passing", "emotional moment"
 
-## STOCK-SAFE VALIDATION
-These ARE stock-safe (generate queries):
-✅ Documentary footage, news clips, archival video
-✅ Famous people in public contexts
-✅ Educational and informational content
-✅ Creative Commons labeled content
-✅ Historical footage and images
+These generic visuals should be created with AI image/video generation or motion graphics, NOT stock footage.
 
-These are NOT stock-safe (skip):
-❌ Specific YouTuber's edited personal content
-❌ Movie/TV show clips
-❌ Music videos or copyrighted audio content
-❌ Branded promotional content
+## SOURCE SELECTION
 
-## SPECIFICITY SCORING (1-10)
-1-2: Ultra generic ("sunset", "ocean waves") → Pexels
-3-4: Semi-generic ("city traffic", "office meeting") → Pexels or YouTube  
-5-6: Specific topic ("bronze age collapse", "ancient trade routes") → YouTube
-7-8: Very specific ("fall of Ugarit", "1177 BC Mediterranean") → YouTube
-9-10: Exact events ("assassination of JFK footage") → YouTube`;
+### SERPER (Google Images) - For ALL image queries
+Use for portraits, photos, artwork, maps, diagrams of named subjects.
+
+### YOUTUBE - For documentary/specific video
+Use for historical footage, interviews, documentaries about specific topics.
+
+### PEXELS - DO NOT USE for this task
+Skip Pexels entirely - generic stock is not what we're looking for.
+
+## OUTPUT: Generate ONLY 1-3 queries per scene
+Only generate queries if the scene contains genuinely searchable specific subjects.
+If a scene is purely conceptual/abstract, return 0 queries.`;
+
 
 
 // =============================================================================
@@ -379,17 +344,24 @@ function buildBatchClassificationPrompt(
   prompt += `
 
 ## QUERY GENERATION REQUIREMENTS
-Generate exactly ${totalQueries} queries per scene using: ${mediaTypes.join(' and ')}.
-${config.includeImages ? `- Generate ${config.imageQueriesPerScene} IMAGE queries (use "serper" as source)` : '- NO image queries'}
-${config.includeVideos ? `- Generate ${config.videoQueriesPerScene} VIDEO queries (use "youtube" for specific, "pexels" for generic)` : '- NO video queries'}
+Generate ONLY ${totalQueries} queries per scene - focus on IMPORTANT elements only.
+${config.includeImages ? `- Up to ${config.imageQueriesPerScene} IMAGE queries (use "serper" as source)` : '- NO image queries'}
+${config.includeVideos ? `- Up to ${config.videoQueriesPerScene} VIDEO queries (use "youtube" only - NO pexels)` : '- NO video queries'}
 
-For EACH scene, generate queries across these categories:
-${config.includeImages ? `- **character** (1-2): People/figures mentioned - portraits (serper)
-- **location** (1-2): Settings, places - photos (serper)
-- **object** (1-2): Key objects, artifacts (serper)` : ''}
-${config.includeVideos ? `- **main_topic** (1-2): Core subject - documentary footage (youtube)
-- **historical** (1): Archival footage (youtube)
-- **mood** (1-2): Abstract/B-roll (pexels for generic, youtube for specific)` : ''}
+ONLY generate queries for these categories:
+${config.includeImages ? `- **named_person**: Real people with identifiable names (politicians, historical figures)
+- **specific_location**: Named real places (cities, landmarks, buildings)
+- **artifact**: Named objects, artifacts, or documents` : ''}
+${config.includeVideos ? `- **historical_event**: Documented events with archival footage
+- **documentary**: Specific topics with educational content` : ''}
+
+DO NOT generate queries for:
+- Generic people ("a man", "workers", "crowds")
+- Abstract concepts ("hope", "tension")
+- Generic locations ("city street", "office")
+- Mood/B-roll (leave for AI generation)
+
+If a scene has only generic concepts and no specific searchable subjects, return 0 queries for that scene.
 
 ## OUTPUT FORMAT
 Return a JSON object:

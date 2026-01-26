@@ -85,11 +85,99 @@ async function resetStepData(
 
   try {
     switch (fromStep) {
-      case 2: // Stock Media - No persistent data to reset (selections are just UI state)
-        // Could clear stock media selections from metadata if stored there
+      case 2: // Stock Media - Clear all scraped/stored stock media
+        // Clear metadata fields
         if (metadataUpdates.selectedStockMedia) {
           delete metadataUpdates.selectedStockMedia;
           result.resetFields.push('selectedStockMedia');
+        }
+        if (metadataUpdates.stockMediaResults) {
+          delete metadataUpdates.stockMediaResults;
+          result.resetFields.push('stockMediaResults');
+        }
+
+        // Delete stock_media database entries for this video
+        try {
+          // First, get all stock_media entries for this video
+          const { data: stockEntries, error: fetchError } = await supabase
+            .from('stock_media')
+            .select('id, r2_key')
+            .eq('metadata->>videoId', videoId);
+
+          if (fetchError) {
+            console.error('[Reset Step 2] Error fetching stock_media:', fetchError);
+            result.errors.push(`Failed to fetch stock_media: ${fetchError.message}`);
+          } else if (stockEntries && stockEntries.length > 0) {
+            // Delete R2 files first
+            try {
+              const { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } = await import("@/lib/services/r2-storage");
+              
+              if (isR2Configured()) {
+                // Delete all stock media files for this video
+                const prefix = `${STORAGE_PATHS.STOCK_SCRAPER.ROOT}/${videoId}/`;
+                const r2Result = await deleteFilesWithPrefix(prefix);
+                result.r2FilesDeleted = r2Result.deleted;
+                
+                // Also try to delete individual r2_keys if stored differently
+                for (const entry of stockEntries) {
+                  if (entry.r2_key && !entry.r2_key.startsWith(prefix)) {
+                    try {
+                      const { deleteFile } = await import("@/lib/services/r2-storage");
+                      await deleteFile(entry.r2_key);
+                      result.r2FilesDeleted++;
+                    } catch (e) {
+                      // Ignore individual delete errors
+                    }
+                  }
+                }
+                
+                if (r2Result.errors.length > 0) {
+                  result.errors.push(...r2Result.errors);
+                }
+                console.log(`[Reset Step 2] Deleted ${result.r2FilesDeleted} R2 stock media files`);
+              }
+            } catch (r2Error) {
+              const errorMsg = r2Error instanceof Error ? r2Error.message : String(r2Error);
+              result.errors.push(`R2 cleanup failed: ${errorMsg}`);
+              console.error("[Reset Step 2] R2 cleanup error:", r2Error);
+            }
+
+            // Delete database entries
+            const { error: deleteError } = await supabase
+              .from('stock_media')
+              .delete()
+              .eq('metadata->>videoId', videoId);
+
+            if (deleteError) {
+              result.errors.push(`Failed to delete stock_media entries: ${deleteError.message}`);
+              console.error('[Reset Step 2] Error deleting stock_media:', deleteError);
+            } else {
+              result.resetFields.push(`stock_media (${stockEntries.length} entries)`);
+              console.log(`[Reset Step 2] Deleted ${stockEntries.length} stock_media entries`);
+            }
+          }
+        } catch (dbError) {
+          const errorMsg = dbError instanceof Error ? dbError.message : String(dbError);
+          result.errors.push(`Stock media DB cleanup failed: ${errorMsg}`);
+          console.error("[Reset Step 2] DB cleanup error:", dbError);
+        }
+
+        // Also delete any stock media scraping tasks
+        try {
+          const { error: taskDeleteError } = await supabase
+            .from('tasks')
+            .delete()
+            .eq('type', 'video')
+            .eq('input_data->>videoId', videoId)
+            .like('name', 'Stock Media Scrape%');
+
+          if (taskDeleteError) {
+            console.warn('[Reset Step 2] Failed to delete tasks:', taskDeleteError.message);
+          } else {
+            result.resetFields.push('tasks (stock media scrape)');
+          }
+        } catch (taskError) {
+          console.warn('[Reset Step 2] Task cleanup error:', taskError);
         }
         break;
 

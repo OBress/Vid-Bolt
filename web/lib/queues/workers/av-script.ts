@@ -28,6 +28,8 @@ export interface AVScriptJobData {
     objects?: Array<{ id: string; name: string; type: string }>;
   };
   mode?: 'part1' | 'part2' | 'full';
+  /** Stock media level for intelligent matching - defaults to 'none' */
+  stockMediaLevel?: 'none' | 'standard_images' | 'extensive_images' | 'standard_images_video' | 'extensive_images_video';
 }
 
 // ============================================================================
@@ -40,13 +42,23 @@ export interface ShotPart1 {
   end_seconds: number;
   duration_seconds: number;
   content_type: string;
-  media_type: 'image' | 'video' | 'motiongraphic';
+  media_type: 'image' | 'video' | 'motiongraphic' | 'ai_generated';
   text: string;
-  summary: string;  // Brief summary of what happens visually
+  summary: string;  // Brief summary of what happens visually - may include @(StockMedia:id) references
   // Entity references detected in the text
   character_refs?: string[];  // Character IDs referenced
   location_refs?: string[];   // Location IDs referenced  
   object_refs?: string[];     // Object IDs referenced
+  // Stock media reference (when matched from vector DB)
+  stock_media_ref?: {
+    id: string;
+    url: string;
+    thumbnailUrl: string;
+    description: string;
+    similarity: number;
+  };
+  // Fallback type when no stock media matched
+  fallback_type?: 'motiongraphic' | 'ai_generated';
 }
 
 export interface AVScriptPart1Output {
@@ -64,7 +76,7 @@ export interface AVScriptPart1Output {
 // ============================================================================
 
 export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVScriptJobData>) => {
-  const { taskId, userId, videoId, script, wordTimestamps, mode = 'full', outlineAssets } = job.data;
+  const { taskId, userId, videoId, script, wordTimestamps, mode = 'full', outlineAssets, stockMediaLevel = 'none' } = job.data;
 
   // Route to Part 2 processor if mode is 'part2'
   if (mode === 'part2') {
@@ -125,6 +137,34 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
       console.log(`${logPrefix} Step 3: Generating shot summaries...`);
       finalShots = await generateShotSummaries(userId, segments, outlineAssets);
       console.log(`${logPrefix} Generated ${finalShots.length} shot summaries`);
+
+      // Step 3b: Process with Stock Media Director if enabled
+      if (stockMediaLevel !== 'none') {
+        if (taskId) {
+          await updateTaskStatus(taskId, { 
+            status: 'running', 
+            progress_percent: 60, 
+            current_step: 'Matching stock media' 
+          });
+        }
+
+        console.log(`${logPrefix} Step 3b: Processing with Stock Media Director (level: ${stockMediaLevel})...`);
+        const { processWithStockMedia } = await import('@/lib/av-script/stock-media-director');
+        const shotsWithMedia = await processWithStockMedia(userId, videoId, finalShots, stockMediaLevel);
+        
+        // Update finalShots with stock media matches
+        finalShots = shotsWithMedia.map(shot => ({
+          ...shot,
+          // Ensure proper typing
+          stock_media_ref: shot.stock_media_ref,
+          fallback_type: shot.fallback_type,
+        })) as ShotPart1[];
+
+        const matchedCount = finalShots.filter(s => s.stock_media_ref).length;
+        console.log(`${logPrefix} Stock Media Director: ${matchedCount}/${finalShots.length} shots matched`);
+      } else {
+        console.log(`${logPrefix} Stock media disabled, skipping director`);
+      }
     } else {
       // Full mode: Generate visual prompts
       console.log(`${logPrefix} Step 3: Generating visual prompts...`);
@@ -456,7 +496,7 @@ export interface AVScriptPart2JobData {
 
 export interface GeneratedMediaItem {
   shot_index: number;
-  media_type: 'image' | 'video' | 'motiongraphic';
+  media_type: 'image' | 'video' | 'motiongraphic' | 'ai_generated';
   generation_status: 'pending' | 'generating' | 'completed' | 'failed';
   media_url?: string;
   thumbnail_url?: string;

@@ -165,7 +165,8 @@ Generate a comprehensive profile. Return as JSON:
   const profile = await generateJSON<Omit<CharacterProfile, 'id' | 'beatVariants'>>(
     userId,
     UNIVERSAL_PROMPTS.characterProfile,
-    userPrompt
+    userPrompt,
+    { maxTokens: 4096 } // Explicit token limit to ensure complete JSON response
   );
 
   return {

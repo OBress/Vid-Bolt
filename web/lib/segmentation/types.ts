@@ -124,7 +124,10 @@ export interface SegmentVideoJobData {
   videoTitle?: string;
   /** Video description for additional context */
   videoDescription?: string;
+  /** Local path to downloaded video file (enables physical chunk extraction) */
+  videoPath?: string;
 }
+
 
 /** Result from the segmentation job */
 export interface SegmentVideoJobResult {

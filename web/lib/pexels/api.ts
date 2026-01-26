@@ -6,6 +6,9 @@ import {
 
 const PEXELS_API_BASE = "https://api.pexels.com";
 
+// Production cap for automated pipeline
+const PRODUCTION_MAX_RESULTS = 5;
+
 export class PexelsApi {
   private apiKey: string;
 
@@ -52,7 +55,8 @@ export class PexelsApi {
 
     const url = new URL(`${PEXELS_API_BASE}/v1/search`);
     url.searchParams.append("query", query);
-    url.searchParams.append("per_page", Math.min(Math.max(1, maxResults), 80).toString());
+    // Enforce production cap of 5 results max
+    url.searchParams.append("per_page", Math.min(Math.max(1, maxResults), PRODUCTION_MAX_RESULTS).toString());
     url.searchParams.append("page", page.toString());
 
     if (orientation) url.searchParams.append("orientation", orientation);
@@ -77,7 +81,8 @@ export class PexelsApi {
 
     const url = new URL(`${PEXELS_API_BASE}/videos/search`);
     url.searchParams.append("query", query);
-    url.searchParams.append("per_page", Math.min(Math.max(1, maxResults), 80).toString());
+    // Enforce production cap of 5 results max
+    url.searchParams.append("per_page", Math.min(Math.max(1, maxResults), PRODUCTION_MAX_RESULTS).toString());
     url.searchParams.append("page", page.toString());
 
     if (orientation) url.searchParams.append("orientation", orientation);

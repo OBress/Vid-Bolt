@@ -107,13 +107,15 @@ export async function segmentProcessor(
     
     await job.updateProgress({ stage: 'analyzing', progress: 45, message: 'Analyzing scenes...' });
     
-    // Pass videoDuration and video context to enable better scene descriptions
+    // Pass videoDuration, video context, and video path to enable physical chunk extraction
     const jobDataWithContext = {
       ...job.data,
       videoDuration,
       videoTitle: downloadResult.videoInfo.title,
       videoDescription: downloadResult.videoInfo.description,
+      videoPath: downloadResult.videoPath,  // Enable physical chunk extraction for long videos
     };
+
     
     const { clips, transcription, hadAudioTranscription } = await segmentVideo(
       jobDataWithContext,
@@ -141,6 +143,15 @@ export async function segmentProcessor(
     
     for (let i = 0; i < clips.length; i++) {
       const clip = clips[i];
+      
+      // Validate clip times - skip if invalid
+      if (typeof clip.startTime !== 'number' || typeof clip.endTime !== 'number' ||
+          isNaN(clip.startTime) || isNaN(clip.endTime) || 
+          clip.startTime < 0 || clip.endTime <= clip.startTime) {
+        console.warn(`[SegmentWorker] Skipping clip ${i + 1} with invalid times: start=${clip.startTime}, end=${clip.endTime}`);
+        continue;
+      }
+      
       const progress = 70 + Math.floor((i / clips.length) * 20); // 70-90%
       await job.updateProgress({ 
         stage: 'extracting', 

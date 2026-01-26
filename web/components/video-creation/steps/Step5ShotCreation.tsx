@@ -1,6 +1,10 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { AudioChunk } from "@/types/video";
-import { EntityReference, createEntityLookup } from "../entity-reference";
+import {
+  EntityReference,
+  createEntityLookup,
+  createStockMediaLookup,
+} from "../entity-reference";
 import { ShotPlayerPanel } from "../ShotPlayerPanel";
 import {
   ChevronRight,
@@ -53,12 +57,22 @@ type ShotItem = {
   end_seconds: number;
   duration_seconds: number;
   content_type: string;
-  media_type?: "image" | "video" | "motiongraphic";
+  media_type?: "image" | "video" | "motiongraphic" | "ai_generated";
   text: string;
   summary?: string;
   character_refs?: string[];
   location_refs?: string[];
   object_refs?: string[];
+  // Stock media reference from director matching
+  stock_media_ref?: {
+    id: string;
+    url: string;
+    thumbnailUrl: string;
+    description: string;
+    similarity: number;
+  };
+  // Fallback type when no stock media matched
+  fallback_type?: "motiongraphic" | "ai_generated";
 };
 
 // Content type options for the dropdown
@@ -216,6 +230,12 @@ export function Step5ShotCreation({
     [outlineAssets],
   );
 
+  // Create stock media lookup for rendering @(StockMedia:id) references
+  const stockMediaLookup = useMemo(
+    () => createStockMediaLookup(avScriptShots),
+    [avScriptShots],
+  );
+
   // Delete State
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
@@ -301,7 +321,7 @@ export function Step5ShotCreation({
   const [editedShotSummary, setEditedShotSummary] = useState("");
   const [editedShotContentType, setEditedShotContentType] = useState("");
   const [editedShotMediaType, setEditedShotMediaType] = useState<
-    "image" | "video" | "motiongraphic"
+    "image" | "video" | "motiongraphic" | "ai_generated"
   >("image");
 
   // Track all pending changes (key = segment_index, value = modified shot)
@@ -684,6 +704,7 @@ export function Step5ShotCreation({
                                   (displayShot.text.length > 150 ? "..." : "")
                               }
                               entities={entityLookup}
+                              stockMediaLookup={stockMediaLookup}
                             />
                           </div>
                           <div className="mt-3 flex items-center gap-2 flex-wrap">
@@ -731,12 +752,20 @@ export function Step5ShotCreation({
                           </div>
                         </div>
 
-                        {/* Shot Thumbnail Placeholder */}
-                        <div className="w-24 aspect-video bg-neutral-900 rounded border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center shrink-0">
-                          {displayShot.media_type === "video" ? (
+                        {/* Shot Thumbnail - show stock media if matched */}
+                        <div className="w-24 aspect-video bg-neutral-900 rounded border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center shrink-0 overflow-hidden">
+                          {displayShot.stock_media_ref?.thumbnailUrl ? (
+                            <img
+                              src={displayShot.stock_media_ref.thumbnailUrl}
+                              alt="Stock media"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : displayShot.media_type === "video" ? (
                             <Film className="w-4 h-4 text-neutral-700" />
                           ) : displayShot.media_type === "motiongraphic" ? (
                             <Layers className="w-4 h-4 text-neutral-700" />
+                          ) : displayShot.media_type === "ai_generated" ? (
+                            <Box className="w-4 h-4 text-neutral-700" />
                           ) : (
                             <Image className="w-4 h-4 text-neutral-700" />
                           )}

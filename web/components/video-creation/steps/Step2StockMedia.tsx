@@ -1,24 +1,29 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, {
+  useState,
+  useMemo,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
 import {
-  ArrowLeft,
-  ArrowRight,
   Film,
   Image,
   Music,
   Plus,
-  Play,
   Clock,
   Eye,
   Search,
   X,
   Upload,
   Grid3X3,
-  Tag,
-  FileText,
   Star,
   Check,
+  Loader2,
+  CheckCircle,
+  ImageIcon,
+  Video,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,11 +35,31 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { Progress } from "@/components/ui/progress";
+import { createBrowserClient } from "@supabase/ssr";
+
+// =============================================================================
+// Types
+// =============================================================================
+
+// Stock media level type (from Step 1 selection)
+type StockMediaLevel =
+  | "none"
+  | "standard_images"
+  | "extensive_images"
+  | "standard_images_video"
+  | "extensive_images_video";
 
 interface Step2StockMediaProps {
+  videoId: string;
+  isLoading: boolean;
+  taskId: string | null;
+  initialMedia: MediaItem[];
+  onMediaLoaded: (results: MediaItem[]) => void;
   onNext: () => void;
   onBack: () => void;
   isLocked?: boolean;
+  stockMediaLevel?: StockMediaLevel;
 }
 
 type MediaCategory = "all" | "video" | "image" | "audio" | "uploaded";
@@ -46,199 +71,208 @@ interface MediaItem {
   thumbnail: string | null;
   duration?: string;
   durationSeconds?: number;
-  source: "pexels" | "pixabay" | "uploaded";
+  source: "serper" | "pexels" | "youtube" | "uploaded";
   selected?: boolean;
   description: string;
   tags: string[];
   transcript?: string;
   quality: number;
+  url?: string;
 }
 
-// Enhanced mock data
-const MOCK_MEDIA: MediaItem[] = [
+// =============================================================================
+// Scraping Phases
+// =============================================================================
+
+const SCRAPING_PHASES = [
   {
-    id: "1",
-    type: "video",
-    name: "Aerial City View",
-    thumbnail:
-      "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=400&h=300&fit=crop",
-    duration: "0:15",
-    durationSeconds: 15,
-    source: "pexels",
-    description:
-      "Stunning aerial drone footage of a modern city skyline during golden hour with traffic flowing through streets.",
-    tags: ["aerial", "city", "urban", "skyline", "drone"],
-    transcript: "No speech content - ambient city sounds only",
-    quality: 92,
+    key: "serper",
+    label: "Serper Images",
+    icon: ImageIcon,
+    color: "text-blue-400",
   },
   {
-    id: "2",
-    type: "video",
-    name: "Ocean Waves",
-    thumbnail:
-      "https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=400&h=300&fit=crop",
-    duration: "0:22",
-    durationSeconds: 22,
-    source: "pexels",
-    description:
-      "Peaceful ocean waves crashing on a sandy beach with turquoise water and white foam.",
-    tags: ["ocean", "waves", "beach", "nature", "relaxing"],
-    transcript: "No speech content - ocean ambient sounds",
-    quality: 88,
+    key: "pexels",
+    label: "Pexels Videos",
+    icon: Video,
+    color: "text-green-400",
   },
-  {
-    id: "3",
-    type: "image",
-    name: "Mountain Landscape",
-    thumbnail:
-      "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=300&fit=crop",
-    source: "pixabay",
-    description:
-      "Majestic snow-capped mountain peaks at sunrise with dramatic clouds and alpine meadows.",
-    tags: ["mountain", "landscape", "nature", "sunrise", "scenic"],
-    quality: 95,
-  },
-  {
-    id: "4",
-    type: "image",
-    name: "Abstract Background",
-    thumbnail:
-      "https://images.unsplash.com/photo-1557682250-33bd709cbe85?w=400&h=300&fit=crop",
-    source: "pexels",
-    description:
-      "Vibrant purple and pink gradient abstract background with smooth flowing lines.",
-    tags: ["abstract", "gradient", "background", "colorful", "design"],
-    quality: 85,
-  },
-  {
-    id: "5",
-    type: "audio",
-    name: "Cinematic Ambience",
-    thumbnail: null,
-    duration: "2:34",
-    durationSeconds: 154,
-    source: "pixabay",
-    description:
-      "Atmospheric cinematic soundtrack with deep bass, subtle tension, and growing intensity.",
-    tags: ["cinematic", "ambient", "dramatic", "soundtrack", "film"],
-    transcript: "Instrumental track - no speech content",
-    quality: 90,
-  },
-  {
-    id: "6",
-    type: "video",
-    name: "Nature Timelapse",
-    thumbnail:
-      "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=400&h=300&fit=crop",
-    duration: "0:30",
-    durationSeconds: 30,
-    source: "pexels",
-    description:
-      "Beautiful timelapse of clouds moving over a lush green forest with sunlight beams.",
-    tags: ["timelapse", "nature", "forest", "clouds", "sunlight"],
-    transcript: "No speech content - nature ambience",
-    quality: 91,
-  },
-  {
-    id: "7",
-    type: "image",
-    name: "Technology Pattern",
-    thumbnail:
-      "https://images.unsplash.com/photo-1518770660439-4636190af475?w=400&h=300&fit=crop",
-    source: "pixabay",
-    description:
-      "Close-up of a circuit board with microchips and electronic components in blue tones.",
-    tags: ["technology", "circuit", "electronics", "tech", "hardware"],
-    quality: 87,
-  },
-  {
-    id: "8",
-    type: "audio",
-    name: "Uplifting Music",
-    thumbnail: null,
-    duration: "3:12",
-    durationSeconds: 192,
-    source: "pexels",
-    description:
-      "Inspiring and uplifting orchestral music with piano and strings building to a crescendo.",
-    tags: ["uplifting", "inspiring", "orchestral", "motivational", "positive"],
-    transcript: "Instrumental track - no speech content",
-    quality: 94,
-  },
-  {
-    id: "9",
-    type: "video",
-    name: "Business Meeting",
-    thumbnail:
-      "https://images.unsplash.com/photo-1556761175-b413da4baf72?w=400&h=300&fit=crop",
-    duration: "0:18",
-    durationSeconds: 18,
-    source: "pixabay",
-    description:
-      "Professional team collaborating in a modern office conference room with laptops.",
-    tags: ["business", "meeting", "office", "teamwork", "corporate"],
-    transcript: "Muffled conversation - corporate meeting discussion",
-    quality: 82,
-  },
-  {
-    id: "10",
-    type: "image",
-    name: "Sunset Sky",
-    thumbnail:
-      "https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?w=400&h=300&fit=crop",
-    source: "pexels",
-    description:
-      "Dramatic sunset sky with vibrant orange, pink, and purple clouds over the horizon.",
-    tags: ["sunset", "sky", "clouds", "colorful", "dramatic"],
-    quality: 96,
-  },
-  {
-    id: "11",
-    type: "audio",
-    name: "Dramatic Score",
-    thumbnail: null,
-    duration: "1:45",
-    durationSeconds: 105,
-    source: "pixabay",
-    description:
-      "Intense dramatic score with percussion, strings, and brass building suspense.",
-    tags: ["dramatic", "intense", "suspense", "score", "tension"],
-    transcript: "Instrumental track - no speech content",
-    quality: 89,
-  },
-  {
-    id: "12",
-    type: "video",
-    name: "Space Animation",
-    thumbnail:
-      "https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?w=400&h=300&fit=crop",
-    duration: "0:25",
-    durationSeconds: 25,
-    source: "pexels",
-    description:
-      "CGI animation of Earth from space with stars, satellites, and the Milky Way galaxy.",
-    tags: ["space", "earth", "galaxy", "animation", "cosmos"],
-    quality: 93,
-  },
+  { key: "youtube", label: "YouTube Clips", icon: Film, color: "text-red-400" },
 ];
 
+// =============================================================================
+// Component
+// =============================================================================
+
 export function Step2StockMedia({
+  videoId,
+  isLoading,
+  taskId,
+  initialMedia,
+  onMediaLoaded,
   onNext,
   onBack,
   isLocked = false,
+  stockMediaLevel = "standard_images",
 }: Step2StockMediaProps) {
+  // Determine if we're in images-only mode
+  const isImagesOnly =
+    stockMediaLevel === "standard_images" ||
+    stockMediaLevel === "extensive_images";
+  // Debug logging for props
+  console.log(
+    `[Step2StockMedia] Render - isLoading: ${isLoading}, taskId: ${taskId}, initialMedia: ${initialMedia?.length || 0}`,
+  );
+
   const [activeTab, setActiveTab] = useState<MediaCategory>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [mediaItems, setMediaItems] = useState<MediaItem[]>(MOCK_MEDIA);
+  const [mediaItems, setMediaItems] = useState<MediaItem[]>(initialMedia);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [previewItem, setPreviewItem] = useState<MediaItem | null>(null);
+
+  // Task polling state
+  const [taskStatus, setTaskStatus] = useState<string>("pending");
+  const [progress, setProgress] = useState(0);
+  const [currentPhase, setCurrentPhase] = useState<string | null>(null);
+
+  // Use ref to avoid stale closure issues with onMediaLoaded callback
+  const onMediaLoadedRef = useRef(onMediaLoaded);
+  useEffect(() => {
+    onMediaLoadedRef.current = onMediaLoaded;
+  }, [onMediaLoaded]);
+
+  // Reset taskStatus when taskId changes (new task started)
+  useEffect(() => {
+    if (taskId) {
+      console.log(
+        `[Step2] New taskId detected: ${taskId}, resetting taskStatus`,
+      );
+      setTaskStatus("pending");
+      setProgress(0);
+      setCurrentPhase(null);
+    }
+  }, [taskId]);
+
+  // Supabase client for polling
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  );
+
+  // Map worker output format to frontend MediaItem format
+  const mapWorkerMedia = (workerMedia: any[]): MediaItem[] => {
+    return workerMedia.map((m) => ({
+      id: m.id,
+      type: m.type,
+      name: m.title || m.name || "Untitled", // Worker uses 'title', frontend expects 'name'
+      thumbnail: m.thumbnailUrl || m.thumbnail || null, // Worker uses 'thumbnailUrl', frontend expects 'thumbnail'
+      duration: m.duration ? formatDuration(m.duration) : undefined,
+      durationSeconds: typeof m.duration === "number" ? m.duration : undefined,
+      source: m.source,
+      description: m.description || "",
+      tags: m.classification?.subjects || [],
+      quality: m.qualityRating || m.quality || 70,
+      url: m.url,
+    }));
+  };
+
+  // Helper to format duration
+  const formatDuration = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  // Poll for task updates
+  const fetchTaskStatus = useCallback(
+    async (id: string) => {
+      console.log(`[Step2] Polling task ${id}...`);
+
+      const { data: statusData, error: statusError } = await supabase
+        .from("tasks")
+        .select(
+          "status, progress_percent, current_phase, current_step, output_data",
+        )
+        .eq("id", id)
+        .single();
+
+      if (statusError) {
+        // PGRST116 = no rows found - task might not be created yet
+        if (statusError.code === "PGRST116") {
+          console.log("[Step2] Task not found yet, waiting...");
+          return;
+        }
+        console.error(
+          "[Step2] Failed to fetch task status:",
+          statusError?.message || statusError,
+        );
+        return;
+      }
+
+      console.log(
+        `[Step2] Task status: ${statusData.status}, progress: ${statusData.progress_percent}%`,
+      );
+
+      setTaskStatus(statusData.status);
+      setProgress(statusData.progress_percent || 0);
+      setCurrentPhase(statusData.current_phase || statusData.current_step);
+
+      if (statusData.status === "completed" && statusData.output_data) {
+        // Task completed - extract and map media results
+        const rawMedia = statusData.output_data?.media || [];
+        const results = mapWorkerMedia(rawMedia);
+        console.log(
+          `[Step2] Task completed with ${results.length} media items`,
+        );
+        setMediaItems(results);
+        // Use ref to call callback to avoid stale closure
+        onMediaLoadedRef.current(results);
+      } else if (statusData.status === "failed") {
+        console.error("[Step2] Task failed");
+        onMediaLoadedRef.current([]); // Signal completion with empty results
+      }
+    },
+    [supabase], // Removed onMediaLoaded from deps, using ref instead
+  );
+
+  // Polling effect - continue polling until task completes or fails
+  useEffect(() => {
+    if (!taskId) {
+      console.log("[Step2] No taskId, skipping poll");
+      return;
+    }
+
+    // If task already completed or failed, don't poll
+    if (taskStatus === "completed" || taskStatus === "failed") {
+      console.log(`[Step2] Task already ${taskStatus}, stopping poll`);
+      return;
+    }
+
+    console.log(`[Step2] Starting poll interval for taskId: ${taskId}`);
+
+    // Initial fetch
+    fetchTaskStatus(taskId);
+
+    const interval = setInterval(() => {
+      fetchTaskStatus(taskId);
+    }, 2000);
+
+    return () => {
+      console.log(`[Step2] Clearing poll interval for taskId: ${taskId}`);
+      clearInterval(interval);
+    };
+  }, [taskId, taskStatus, fetchTaskStatus]);
+
+  // Update media when initial data changes
+  useEffect(() => {
+    if (initialMedia.length > 0) {
+      setMediaItems(initialMedia);
+    }
+  }, [initialMedia]);
 
   // Filter media based on active tab and search
   const filteredMedia = useMemo(() => {
     return mediaItems.filter((item) => {
-      // For "uploaded" tab, only show items with source "uploaded"
-      // For type tabs (video, image, audio), show all items of that type regardless of source
-      // For "all" tab, show everything
       const tabFilter =
         activeTab === "all"
           ? true
@@ -318,6 +352,162 @@ export function Step2StockMedia({
     return "bg-red-500";
   };
 
+  // Get current phase index for progress display
+  const getCurrentPhaseIndex = () => {
+    const idx = SCRAPING_PHASES.findIndex((p) =>
+      currentPhase?.toLowerCase().includes(p.key.toLowerCase()),
+    );
+    return idx >= 0 ? idx : 0;
+  };
+
+  // =========================================================================
+  // RENDER: LOADING VIEW
+  // =========================================================================
+  if (isLoading) {
+    // Determine which phases are active based on mode
+    // Pexels is currently disabled, so only serper is active for images-only
+    // For video modes, serper + youtube would be active
+    const activePhaseKeys = isImagesOnly
+      ? ["serper"] // Only Serper for images-only mode
+      : ["serper", "youtube"]; // Pexels is disabled, so just serper + youtube
+
+    // Get current phase index based on active phases only
+    const getActivePhaseIndex = () => {
+      const activePhases = SCRAPING_PHASES.filter((p) =>
+        activePhaseKeys.includes(p.key),
+      );
+      const idx = activePhases.findIndex((p) =>
+        currentPhase?.toLowerCase().includes(p.key.toLowerCase()),
+      );
+      return idx >= 0 ? idx : 0;
+    };
+
+    const phaseIndex = getActivePhaseIndex();
+
+    return (
+      <div className="flex flex-col items-center gap-8 text-center pt-16">
+        {/* Animated icon */}
+        <div className="relative">
+          <div className="absolute -inset-8 bg-orange-500/20 rounded-full blur-3xl animate-pulse" />
+          <div className="relative w-20 h-20 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/30">
+            <Loader2 className="w-10 h-10 text-white animate-spin" />
+          </div>
+        </div>
+
+        {/* Title */}
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold tracking-tight">
+            {isImagesOnly
+              ? "Collecting Stock Images"
+              : "Collecting Stock Media"}
+          </h2>
+          <p className="text-neutral-500 text-sm">
+            {currentPhase || "Initializing..."}
+          </p>
+        </div>
+
+        {/* Progress bar */}
+        <div className="w-full max-w-md">
+          <Progress value={progress} className="h-2" />
+          <div className="flex justify-between mt-2 text-[10px] font-mono text-neutral-500">
+            <span>
+              {taskStatus === "running" ? "Scraping..." : "Initializing..."}
+            </span>
+            <span>{progress}%</span>
+          </div>
+        </div>
+
+        {/* Phase checklist */}
+        <div className="w-full max-w-md bg-neutral-900/50 border border-neutral-800 rounded-lg p-4">
+          <div className="space-y-3">
+            {SCRAPING_PHASES.map((phase, index) => {
+              const PhaseIcon = phase.icon;
+              const isPhaseActive = activePhaseKeys.includes(phase.key);
+              const isSkipped = !isPhaseActive;
+
+              // For active phases, calculate their position in active phases array
+              const activePhases = SCRAPING_PHASES.filter((p) =>
+                activePhaseKeys.includes(p.key),
+              );
+              const activeIndex = activePhases.findIndex(
+                (p) => p.key === phase.key,
+              );
+              const isCompleted = isPhaseActive && activeIndex < phaseIndex;
+              const isCurrent = isPhaseActive && activeIndex === phaseIndex;
+
+              return (
+                <div
+                  key={phase.key}
+                  className={cn(
+                    "flex items-center gap-3 text-sm transition-all duration-300",
+                    isSkipped
+                      ? "text-neutral-500 opacity-50"
+                      : isCompleted
+                        ? "text-green-500"
+                        : isCurrent
+                          ? "text-orange-500"
+                          : "text-neutral-600",
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300",
+                      isSkipped
+                        ? "bg-neutral-800/50 border border-neutral-700/50"
+                        : isCompleted
+                          ? "bg-green-500/20 border border-green-500"
+                          : isCurrent
+                            ? "bg-orange-500/20 border border-orange-500"
+                            : "bg-neutral-800 border border-neutral-700",
+                    )}
+                  >
+                    {isSkipped ? (
+                      <X className="w-3 h-3 text-neutral-600" />
+                    ) : isCompleted ? (
+                      <CheckCircle className="w-3 h-3" />
+                    ) : isCurrent ? (
+                      <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse" />
+                    ) : (
+                      <div className="w-2 h-2 bg-neutral-600 rounded-full" />
+                    )}
+                  </div>
+                  <PhaseIcon
+                    className={cn(
+                      "w-4 h-4",
+                      isSkipped ? "text-neutral-600" : phase.color,
+                    )}
+                  />
+                  <span
+                    className={cn(
+                      isCurrent ? "font-medium" : "",
+                      isSkipped ? "line-through" : "",
+                    )}
+                  >
+                    {phase.label}
+                  </span>
+                  {isSkipped && (
+                    <span className="text-[10px] text-neutral-600 uppercase tracking-wider ml-auto">
+                      Skipped
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <p className="text-xs text-neutral-600 font-mono">
+          {isImagesOnly
+            ? "Collecting images only (videos disabled)..."
+            : "AI-powered quality filtering active..."}
+        </p>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // RENDER: MEDIA LIBRARY VIEW
+  // =========================================================================
   return (
     <div className="flex h-[calc(100vh-160px)] gap-4 w-full px-6 py-6">
       {/* LEFT SIDEBAR */}
@@ -329,12 +519,14 @@ export function Step2StockMedia({
               Stock Media
             </h2>
             <p className="text-neutral-500 text-xs">
-              Browse and select media for your video
+              {mediaItems.length > 0
+                ? `${mediaItems.length} items collected`
+                : "No media collected yet"}
             </p>
           </div>
         </div>
 
-        {/* Statistics - 1x3 vertical layout, flex-1 to fill space */}
+        {/* Statistics */}
         <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl p-4 flex-1 flex flex-col gap-3">
           <div className="text-[10px] text-neutral-500 uppercase tracking-wider font-medium px-1">
             Library Statistics
@@ -380,23 +572,6 @@ export function Step2StockMedia({
                 {stats.audioDuration}
               </div>
             </div>
-
-            {/* Rating */}
-            <div className="flex-1 p-4 bg-neutral-800/50 rounded-lg flex flex-col items-center justify-center">
-              <div className="flex items-center gap-2 mb-2">
-                <Star className="w-5 h-5 text-yellow-400" />
-                <span className="text-sm text-neutral-400">Rating</span>
-              </div>
-              <div className="flex items-center gap-0.5">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <Star
-                    key={star}
-                    className="w-5 h-5 text-yellow-400 fill-yellow-400"
-                  />
-                ))}
-              </div>
-              <div className="text-xs text-neutral-500 mt-1">5.0 / 5.0</div>
-            </div>
           </div>
         </div>
       </div>
@@ -440,7 +615,6 @@ export function Step2StockMedia({
 
             {/* Search + Upload */}
             <div className="flex items-center gap-2 ml-auto">
-              {/* Upload Button */}
               <Button
                 onClick={() => setUploadDialogOpen(true)}
                 className="h-9 px-4 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold uppercase tracking-wider gap-1.5"
@@ -483,7 +657,9 @@ export function Step2StockMedia({
               <p className="text-neutral-500 text-sm max-w-md">
                 {searchQuery
                   ? `No results for "${searchQuery}"`
-                  : "No media available in this category."}
+                  : mediaItems.length === 0
+                    ? "Stock media will appear here after scraping completes."
+                    : "No media available in this category."}
               </p>
             </div>
           ) : (
@@ -524,6 +700,11 @@ export function Step2StockMedia({
                       <span className="uppercase">{item.type}</span>
                     </div>
 
+                    {/* Source Badge */}
+                    <div className="absolute bottom-2 left-2 px-2 py-0.5 bg-black/60 backdrop-blur-sm rounded text-[9px] text-neutral-300 border border-white/10 uppercase">
+                      {item.source}
+                    </div>
+
                     {/* Duration Badge */}
                     {item.duration && (
                       <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 bg-black/60 backdrop-blur-sm rounded-md text-[10px] text-white border border-white/10">
@@ -561,6 +742,23 @@ export function Step2StockMedia({
             </div>
           )}
         </div>
+
+        {/* Footer Actions */}
+        <div className="shrink-0 p-4 border-t border-neutral-800 bg-neutral-900/30 flex justify-between">
+          <Button
+            variant="ghost"
+            onClick={onBack}
+            className="text-neutral-400 hover:text-white"
+          >
+            Back
+          </Button>
+          <Button
+            onClick={onNext}
+            className="bg-orange-500 hover:bg-orange-600 text-white"
+          >
+            Continue to Script
+          </Button>
+        </div>
       </div>
 
       {/* Upload Dialog */}
@@ -574,7 +772,6 @@ export function Step2StockMedia({
           </DialogHeader>
 
           <div className="py-6 space-y-4">
-            {/* File Upload */}
             <div className="border-2 border-dashed border-neutral-700 hover:border-orange-500/50 rounded-xl p-8 text-center transition-colors cursor-pointer group">
               <div className="w-12 h-12 bg-neutral-800 group-hover:bg-orange-500/20 rounded-xl flex items-center justify-center mx-auto mb-3 transition-colors">
                 <Upload className="w-6 h-6 text-neutral-500 group-hover:text-orange-500 transition-colors" />
@@ -584,32 +781,6 @@ export function Step2StockMedia({
               </p>
               <p className="text-neutral-500 text-xs">
                 MP4, MOV, JPG, PNG, MP3, WAV
-              </p>
-            </div>
-
-            {/* Divider */}
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-neutral-700" />
-              <span className="text-xs text-neutral-500 uppercase tracking-wider">
-                or
-              </span>
-              <div className="flex-1 h-px bg-neutral-700" />
-            </div>
-
-            {/* YouTube URL */}
-            <div className="space-y-2">
-              <label className="text-xs text-neutral-400 uppercase tracking-wider font-medium">
-                Import from YouTube
-              </label>
-              <div className="relative">
-                <Film className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-                <Input
-                  placeholder="Paste YouTube URL..."
-                  className="pl-10 bg-neutral-800/50 border-neutral-700 text-sm focus:border-orange-500/50"
-                />
-              </div>
-              <p className="text-[10px] text-neutral-500">
-                Audio and video will be extracted from the YouTube video
               </p>
             </div>
           </div>
@@ -662,47 +833,24 @@ export function Step2StockMedia({
                   alt={previewItem.name}
                   className="w-full h-full object-cover"
                 />
-                {previewItem.type === "video" && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <button className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center hover:bg-white/30 transition-colors">
-                      <Play className="w-8 h-8 text-white ml-1" />
-                    </button>
-                  </div>
-                )}
               </div>
             ) : (
               <div className="aspect-video bg-gradient-to-br from-purple-900/30 to-neutral-900 rounded-lg flex flex-col items-center justify-center gap-4">
                 <Music className="w-16 h-16 text-purple-500/50" />
-                <div className="flex items-center gap-4 text-neutral-400">
-                  <button className="p-3 bg-neutral-800 rounded-full hover:bg-neutral-700 transition-colors">
-                    <Play className="w-6 h-6" />
-                  </button>
-                  <span className="text-lg font-mono">
-                    {previewItem?.duration}
-                  </span>
-                </div>
               </div>
             )}
 
             {/* Description */}
             <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs text-neutral-500 uppercase tracking-wider">
-                <FileText className="w-3.5 h-3.5" />
-                Description
-              </div>
               <p className="text-neutral-300 text-sm leading-relaxed">
                 {previewItem?.description}
               </p>
             </div>
 
             {/* Tags */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs text-neutral-500 uppercase tracking-wider">
-                <Tag className="w-3.5 h-3.5" />
-                Tags
-              </div>
+            {previewItem?.tags && previewItem.tags.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                {previewItem?.tags.map((tag, i) => (
+                {previewItem.tags.map((tag, i) => (
                   <span
                     key={i}
                     className="px-2.5 py-1 bg-neutral-800 rounded-full text-xs text-neutral-300"
@@ -711,63 +859,32 @@ export function Step2StockMedia({
                   </span>
                 ))}
               </div>
-            </div>
-
-            {/* Metadata Row */}
-            <div className="grid grid-cols-2 gap-4">
-              {/* Duration */}
-              {previewItem?.duration && (
-                <div className="p-3 bg-neutral-800/50 rounded-lg">
-                  <div className="flex items-center gap-2 text-xs text-neutral-500 uppercase tracking-wider mb-1">
-                    <Clock className="w-3.5 h-3.5" />
-                    Duration
-                  </div>
-                  <p className="text-white font-mono">{previewItem.duration}</p>
-                </div>
-              )}
-
-              {/* Quality */}
-              <div className="p-3 bg-neutral-800/50 rounded-lg">
-                <div className="flex items-center gap-2 text-xs text-neutral-500 uppercase tracking-wider mb-1">
-                  <Star className="w-3.5 h-3.5" />
-                  Quality Score
-                </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      "text-lg font-mono font-bold",
-                      getQualityColor(previewItem?.quality || 0),
-                    )}
-                  >
-                    {previewItem?.quality}
-                  </span>
-                  <div className="flex-1 h-2 bg-neutral-700 rounded-full overflow-hidden">
-                    <div
-                      className={cn(
-                        "h-full rounded-full transition-all",
-                        getQualityBg(previewItem?.quality || 0),
-                      )}
-                      style={{ width: `${previewItem?.quality || 0}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Transcript */}
-            {previewItem?.transcript && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-xs text-neutral-500 uppercase tracking-wider">
-                  <FileText className="w-3.5 h-3.5" />
-                  Transcript
-                </div>
-                <div className="p-3 bg-neutral-800/50 rounded-lg">
-                  <p className="text-neutral-400 text-sm italic">
-                    {previewItem.transcript}
-                  </p>
-                </div>
-              </div>
             )}
+
+            {/* Quality */}
+            <div className="p-3 bg-neutral-800/50 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Star className="w-4 h-4 text-yellow-400" />
+                <span className="text-sm text-neutral-400">Quality Score:</span>
+                <span
+                  className={cn(
+                    "font-mono font-bold",
+                    getQualityColor(previewItem?.quality || 0),
+                  )}
+                >
+                  {previewItem?.quality}
+                </span>
+                <div className="flex-1 h-2 bg-neutral-700 rounded-full overflow-hidden ml-2">
+                  <div
+                    className={cn(
+                      "h-full rounded-full",
+                      getQualityBg(previewItem?.quality || 0),
+                    )}
+                    style={{ width: `${previewItem?.quality || 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="shrink-0 flex justify-between items-center pt-4 border-t border-neutral-800">

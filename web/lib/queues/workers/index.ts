@@ -20,3 +20,4 @@ export {
 } from './gpu-api-test';
 export { gcpProvisionProcessor } from './gcp-provision';
 export { segmentProcessor, createSegmentationWorker } from './segment';
+export { stockMediaProcessor } from './stock-media';

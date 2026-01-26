@@ -5,8 +5,13 @@
  * and Groq Whisper for transcription (optional).
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { callOpenRouter, type OpenRouterMessage } from '@/lib/ai/openrouter';
 import { hasGroqApiKey, transcribeWithGroq, findSentenceEnds } from './groq-whisper';
+import { extractVideoChunk } from './yt-dlp';
+import { uploadAudioBuffer, getPublicUrl, deleteFile } from '@/lib/services/r2-storage';
 import type {
   DetectedScene,
   SceneAnalysisResult,
@@ -15,6 +20,7 @@ import type {
   TranscriptionResult,
   SegmentVideoJobData,
 } from './types';
+
 
 // ==========================================================================
 // Configuration
@@ -232,11 +238,18 @@ Example:
   
   // Filter and validate scenes - Gemini sometimes returns timestamps outside the chunk range
   const validScenes = result.scenes.filter(scene => {
+    // Check for NaN explicitly (NaN < 0 is false, so it would pass without this)
+    if (typeof scene.startTime !== 'number' || typeof scene.endTime !== 'number') return false;
+    if (isNaN(scene.startTime) || isNaN(scene.endTime)) return false;
+    
     // Scene timestamps should be relative to chunk (0 to chunkDuration)
-    // Filter out scenes with invalid timestamps
     if (scene.startTime < 0 || scene.endTime < 0) return false;
     if (scene.startTime > expectedChunkDuration + 10) return false; // Allow 10s tolerance
     if (scene.endTime > expectedChunkDuration + 10) return false;
+    
+    // Ensure endTime > startTime
+    if (scene.endTime <= scene.startTime) return false;
+    
     return true;
   });
   
@@ -253,9 +266,18 @@ Example:
 
 /**
  * Analyze video scenes using chunked approach for long videos.
- * Processes video in 5-minute chunks and merges results.
+ * Tries physical chunk extraction first, then falls back to direct YouTube URL analysis.
+ * 
+ * @param videoPath - Local path to the downloaded video file
+ * @param videoUrl - Original URL (YouTube URL or R2 URL)
+ * @param userId - User ID for API calls
+ * @param videoDuration - Total video duration in seconds
+ * @param filterPrompt - Optional filter for specific content
+ * @param onChunkProgress - Progress callback
+ * @param videoTitle - Video title for context
  */
 async function analyzeVideoScenesChunked(
+  videoPath: string | null,
   videoUrl: string,
   userId: string,
   videoDuration: number,
@@ -272,30 +294,117 @@ async function analyzeVideoScenesChunked(
   
   console.log(`[Segment] Chunked analysis: ${numChunks} chunks for ${videoDuration}s video`);
   
-  const allScenes: DetectedScene[] = [];
+  // Determine if this is a YouTube URL (which Gemini can analyze directly)
+  const isYouTubeUrl = videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be');
   
-  for (let i = 0; i < numChunks; i++) {
-    const chunkStart = i * effectiveChunkDuration;
-    const chunkEnd = Math.min(chunkStart + CHUNK_DURATION_SECONDS, videoDuration);
-    
-    onChunkProgress?.(i + 1, numChunks);
-    
-    try {
-      const chunkScenes = await analyzeVideoChunk(
-        videoUrl,
-        userId,
-        chunkStart,
-        chunkEnd,
-        filterPrompt,
-        videoTitle
-      );
+  // Use physical chunk extraction if we have a local video path
+  const usePhysicalChunks = videoPath && fs.existsSync(videoPath);
+  if (usePhysicalChunks) {
+    console.log(`[Segment] Using physical chunk extraction from: ${videoPath}`);
+  } else if (isYouTubeUrl) {
+    console.log(`[Segment] Using YouTube URL direct analysis (more reliable for YouTube)`);
+  } else {
+    console.warn(`[Segment] No local video path - falling back to URL-based analysis`);
+  }
+  
+  const allScenes: DetectedScene[] = [];
+  const tempChunkDir = path.join(os.tmpdir(), `segment-chunks-${Date.now()}`);
+  let chunkExtractionFailed = false;
+  
+  // Create temp directory for chunks
+  if (usePhysicalChunks && !fs.existsSync(tempChunkDir)) {
+    fs.mkdirSync(tempChunkDir, { recursive: true });
+  }
+  
+  try {
+    for (let i = 0; i < numChunks; i++) {
+      const chunkStart = i * effectiveChunkDuration;
+      const chunkEnd = Math.min(chunkStart + CHUNK_DURATION_SECONDS, videoDuration);
       
-      console.log(`[Segment] Chunk ${i + 1}/${numChunks}: found ${chunkScenes.length} scenes`);
-      allScenes.push(...chunkScenes);
+      onChunkProgress?.(i + 1, numChunks);
       
-    } catch (error) {
-      console.error(`[Segment] Chunk ${i + 1}/${numChunks} failed:`, error);
-      // Continue with other chunks rather than failing entirely
+      try {
+        let chunkScenes: DetectedScene[];
+        
+        // Try physical chunk extraction first (if available and not previously failed)
+        if (usePhysicalChunks && !chunkExtractionFailed) {
+          try {
+            chunkScenes = await analyzePhysicalChunk(
+              videoPath!,
+              tempChunkDir,
+              userId,
+              i,
+              chunkStart,
+              chunkEnd,
+              filterPrompt,
+              videoTitle
+            );
+          } catch (chunkErr) {
+            console.warn(`[Segment] Physical chunk extraction failed, falling back to URL-based analysis:`, chunkErr);
+            chunkExtractionFailed = true;
+            
+            // Fall back to URL-based analysis for this chunk
+            if (isYouTubeUrl) {
+              chunkScenes = await analyzeYouTubeChunk(
+                videoUrl,
+                userId,
+                chunkStart,
+                chunkEnd,
+                videoDuration,
+                filterPrompt,
+                videoTitle
+              );
+            } else {
+              chunkScenes = await analyzeVideoChunk(
+                videoUrl,
+                userId,
+                chunkStart,
+                chunkEnd,
+                filterPrompt,
+                videoTitle
+              );
+            }
+          }
+        } else if (isYouTubeUrl) {
+          // For YouTube URLs, analyze directly (works reliably like the classify system)
+          chunkScenes = await analyzeYouTubeChunk(
+            videoUrl,
+            userId,
+            chunkStart,
+            chunkEnd,
+            videoDuration,
+            filterPrompt,
+            videoTitle
+          );
+        } else {
+          // Fallback to URL-based analysis (original behavior)
+          chunkScenes = await analyzeVideoChunk(
+            videoUrl,
+            userId,
+            chunkStart,
+            chunkEnd,
+            filterPrompt,
+            videoTitle
+          );
+        }
+        
+        console.log(`[Segment] Chunk ${i + 1}/${numChunks}: found ${chunkScenes.length} scenes`);
+        allScenes.push(...chunkScenes);
+        
+      } catch (error) {
+        console.error(`[Segment] Chunk ${i + 1}/${numChunks} failed:`, error);
+        // Continue with other chunks rather than failing entirely
+      }
+    }
+  } finally {
+    // Clean up temp chunk directory
+    if (usePhysicalChunks && fs.existsSync(tempChunkDir)) {
+      try {
+        fs.rmSync(tempChunkDir, { recursive: true, force: true });
+        console.log(`[Segment] Cleaned up temp chunk directory: ${tempChunkDir}`);
+      } catch (cleanupErr) {
+        console.warn(`[Segment] Failed to cleanup temp chunks:`, cleanupErr);
+      }
     }
   }
   
@@ -311,6 +420,375 @@ async function analyzeVideoScenesChunked(
     processingTimeMs: processingTime,
   };
 }
+
+/**
+ * Analyze a YouTube video chunk by sending the full YouTube URL to Gemini
+ * with instructions to analyze a specific time range.
+ * This works reliably because Gemini can natively process YouTube URLs.
+ */
+async function analyzeYouTubeChunk(
+  youtubeUrl: string,
+  userId: string,
+  chunkStartTime: number,
+  chunkEndTime: number,
+  totalDuration: number,
+  filterPrompt?: string,
+  videoTitle?: string
+): Promise<DetectedScene[]> {
+  console.log(`[Segment] Analyzing YouTube chunk: ${chunkStartTime}s - ${chunkEndTime}s`);
+  
+  // Build video context section for the prompt
+  let videoContext = '';
+  if (videoTitle) {
+    videoContext = `**VIDEO CONTEXT**: This is "${videoTitle}". Use this information to identify specific people, organizations, and topics by name.`;
+  }
+
+  // Request analysis of a specific time range within the full video
+  let systemPrompt = `You are a professional video editor analyzing a portion of a longer video for a stock media library.
+
+${videoContext}
+
+**IMPORTANT TIME RANGE**: Analyze ONLY the section from ${chunkStartTime} seconds to ${chunkEndTime} seconds (total video is ${totalDuration} seconds).
+Return timestamps that are ABSOLUTE (from the video start), not relative to this range.
+For example, if you see a scene at 5 seconds into your analysis window and the window starts at ${chunkStartTime}s, report startTime as ${chunkStartTime + 5}.
+
+**GOAL**: Extract RAW, UNEDITED stock footage clips. We want natural, authentic footage - NOT heavily produced content.
+
+**DESCRIPTION REQUIREMENTS - VERY IMPORTANT**:
+- Use SPECIFIC names for people when identifiable (e.g., "Jamie Dimon speaking at podium" not "businessman speaking")
+- Include specific location/setting names when known (e.g., "JPMorgan Chase headquarters" not "office building")
+- Describe WHAT the person is doing specifically (e.g., "explaining financial strategy" not "talking")
+- Make descriptions detailed enough for accurate semantic search
+
+**EXCLUDE these (mark as sceneType "graphic" to filter out):**
+- Title cards, text overlays, lower thirds, credits
+- Animated graphics, logos, intro/outro sequences  
+- Split screens, picture-in-picture, heavy effects
+- Motion graphics, animated infographics
+- Montages with very fast cuts (< 2 seconds per shot)
+- Slideshows, photo compilations, archival overlays
+
+**INCLUDE these as usable stock footage:**
+- Natural B-roll footage (people, places, objects, events)
+- Interview/talking head segments (raw, not cutaway compilations)
+- Action shots, documentary moments
+- Establishing wide shots of locations
+- Authentic, unedited footage
+
+For each USABLE scene in the ${chunkStartTime}s-${chunkEndTime}s range, provide:
+1. Start and end timestamps (ABSOLUTE from video start, with 0.5s precision)
+2. Scene type: "interview", "b-roll", "action", "establishing", "transition", "montage", "graphic", or "other"
+3. Whether it has meaningful speech/audio
+4. Description for searchability - USE SPECIFIC NAMES AND DETAILS
+5. Main subjects visible - USE ACTUAL NAMES WHEN KNOWN
+6. Mood/tone
+7. isRawFootage: true if natural/unedited, false if heavily produced
+
+Return JSON:
+{
+  "scenes": [
+    {
+      "startTime": ${chunkStartTime + 12.5},
+      "endTime": ${chunkStartTime + 19.0},
+      "sceneType": "interview",
+      "description": "Jamie Dimon discussing risk management strategies",
+      "hasAudio": true,
+      "subjects": ["Jamie Dimon", "boardroom"],
+      "mood": "professional",
+      "isRawFootage": true
+    }
+  ]
+}
+
+Important:
+- ONLY analyze the ${chunkStartTime}s-${chunkEndTime}s section
+- All timestamps must be ABSOLUTE (between ${chunkStartTime} and ${chunkEndTime})
+- SKIP graphics, animations, text overlays
+- USE SPECIFIC NAMES for people, places, and organizations`;
+
+  if (filterPrompt) {
+    systemPrompt += `
+
+**CRITICAL FILTER - READ CAREFULLY**:
+The user ONLY wants clips of: "${filterPrompt}"
+
+STRICT SCENE BOUNDARY RULES:
+1. ONLY include scenes where "${filterPrompt}" is VISUALLY PRESENT on screen
+2. The clip MUST START when "${filterPrompt}" FIRST appears in frame
+3. The clip MUST END IMMEDIATELY when "${filterPrompt}" leaves the frame or the camera cuts away
+4. Do NOT let clips extend beyond when the subject is visible
+
+EXCLUSIONS:
+- Do NOT include scenes of other people talking ABOUT this subject
+- Do NOT include narrators, hosts, or YouTubers as part of the clip
+- If you cannot visually confirm "${filterPrompt}" is in the scene, SKIP IT
+- Return an EMPTY scenes array if no scenes match in this time range`;
+  }
+
+  const messages: OpenRouterMessage[] = [
+    { role: 'system', content: systemPrompt },
+    {
+      role: 'user',
+      content: [
+        { 
+          type: 'text', 
+          text: `Analyze the ${chunkStartTime}s-${chunkEndTime}s section of this video and identify all usable scenes:` 
+        },
+        { type: 'video_url', video_url: { url: youtubeUrl } },
+      ] as any,
+    },
+  ];
+
+  const response = await callOpenRouter(userId, messages, {
+    model: SCENE_DETECTION_MODEL,
+    temperature: 0.2,
+    maxTokens: 16384,
+  });
+
+  const result = parseSceneAnalysisResponse(response.content);
+  
+  // Log first scene for debugging
+  if (result.scenes.length > 0) {
+    console.log(`[Segment] First raw scene from YouTube chunk:`, JSON.stringify(result.scenes[0], null, 2));
+  }
+  
+  // Validate scenes are within expected time range
+  const validScenes = result.scenes.filter(scene => {
+    // Check for NaN explicitly
+    if (typeof scene.startTime !== 'number' || typeof scene.endTime !== 'number') return false;
+    if (isNaN(scene.startTime) || isNaN(scene.endTime)) return false;
+    
+    // Scene timestamps should be within or near the chunk range (allow 10s tolerance)
+    if (scene.startTime < chunkStartTime - 10) return false;
+    if (scene.endTime > chunkEndTime + 10) return false;
+    
+    // Ensure endTime > startTime
+    if (scene.endTime <= scene.startTime) return false;
+    
+    return true;
+  });
+  
+  console.log(`[Segment] YouTube chunk validated: ${result.scenes.length} raw -> ${validScenes.length} valid scenes`);
+  
+  // Scenes already have absolute timestamps, no adjustment needed
+  return validScenes;
+}
+
+
+/**
+ * Extract a physical video chunk and analyze it with Gemini.
+ * This ensures Gemini only sees the exact portion we want analyzed.
+ */
+async function analyzePhysicalChunk(
+  videoPath: string,
+  tempDir: string,
+  userId: string,
+  chunkIndex: number,
+  chunkStartTime: number,
+  chunkEndTime: number,
+  filterPrompt?: string,
+  videoTitle?: string
+): Promise<DetectedScene[]> {
+  const chunkFilename = `chunk-${chunkIndex}.mp4`;
+  const chunkPath = path.join(tempDir, chunkFilename);
+  const r2Key = `temp-chunks/${Date.now()}-${chunkFilename}`;
+  
+  console.log(`[Segment] Extracting chunk ${chunkIndex + 1}: ${chunkStartTime}s - ${chunkEndTime}s`);
+  
+  try {
+    // 1. Extract chunk with FFmpeg
+    await extractVideoChunk(videoPath, chunkStartTime, chunkEndTime, chunkPath);
+    
+    // 2. Upload to R2 for public URL access
+    const chunkBuffer = fs.readFileSync(chunkPath);
+    const uploadResult = await uploadAudioBuffer(chunkBuffer, r2Key, 'video/mp4');
+    const chunkUrl = uploadResult.url;
+    console.log(`[Segment] Uploaded chunk to R2: ${r2Key} (${(chunkBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
+    
+    // 3. Clean up local chunk file immediately (keeping R2 copy for analysis)
+    fs.unlinkSync(chunkPath);
+    
+    // 4. Analyze chunk with Gemini using the R2 URL
+    // Timestamps from Gemini will be relative to the chunk (0 to chunkDuration)
+    const chunkDuration = chunkEndTime - chunkStartTime;
+    const scenes = await analyzeExtractedChunk(
+      chunkUrl,
+      userId,
+      chunkDuration,
+      filterPrompt,
+      videoTitle
+    );
+    
+    // 5. Clean up R2 chunk
+    try {
+      await deleteFile(r2Key);
+      console.log(`[Segment] Cleaned up R2 chunk: ${r2Key}`);
+    } catch (r2Err) {
+      console.warn(`[Segment] Failed to cleanup R2 chunk ${r2Key}:`, r2Err);
+    }
+    
+    // 6. Adjust timestamps from chunk-relative to video-absolute
+    const adjustedScenes = scenes.map(scene => ({
+      ...scene,
+      startTime: Math.min(scene.startTime + chunkStartTime, chunkEndTime),
+      endTime: Math.min(scene.endTime + chunkStartTime, chunkEndTime),
+    }));
+    
+    return adjustedScenes;
+    
+  } catch (error) {
+    // Clean up on failure
+    if (fs.existsSync(chunkPath)) {
+      try { fs.unlinkSync(chunkPath); } catch {}
+    }
+    try { await deleteFile(r2Key); } catch {}
+    throw error;
+  }
+}
+
+/**
+ * Analyze an extracted video chunk with Gemini.
+ * Since this is a physically extracted chunk, timestamps are naturally
+ * relative to the start of the chunk (0-based).
+ */
+async function analyzeExtractedChunk(
+  chunkUrl: string,
+  userId: string,
+  chunkDuration: number,
+  filterPrompt?: string,
+  videoTitle?: string
+): Promise<DetectedScene[]> {
+  // Build video context section for the prompt
+  let videoContext = '';
+  if (videoTitle) {
+    videoContext = `**VIDEO CONTEXT**: This video segment is from "${videoTitle}". Use this information to identify specific people, organizations, and topics by name.`;
+  }
+
+  // Simpler prompt since the video IS the chunk (no need to specify time ranges)
+  let systemPrompt = `You are a professional video editor analyzing a video segment for a stock media library.
+
+${videoContext}
+
+**GOAL**: Extract RAW, UNEDITED stock footage clips. We want natural, authentic footage - NOT heavily produced content.
+
+**DESCRIPTION REQUIREMENTS - VERY IMPORTANT**:
+- Use SPECIFIC names for people when identifiable (e.g., "Jamie Dimon speaking at podium" not "businessman speaking")
+- Include specific location/setting names when known (e.g., "JPMorgan Chase headquarters" not "office building")
+- Describe WHAT the person is doing specifically (e.g., "explaining financial strategy" not "talking")
+- Include relevant context from the video topic in descriptions
+- Make descriptions detailed enough for accurate semantic search
+
+**EXCLUDE these (mark as sceneType "graphic" to filter out):**
+- Title cards, text overlays, lower thirds, credits
+- Animated graphics, logos, intro/outro sequences  
+- Split screens, picture-in-picture, heavy effects
+- Motion graphics, animated infographics
+- Montages with very fast cuts (< 2 seconds per shot)
+- Slideshows, photo compilations, archival overlays
+
+**INCLUDE these as usable stock footage:**
+- Natural B-roll footage (people, places, objects, events)
+- Interview/talking head segments (raw, not cutaway compilations)
+- Action shots, documentary moments
+- Establishing wide shots of locations
+- Authentic, unedited footage
+
+For each USABLE scene, provide:
+1. Start and end timestamps (in seconds from the START of this video, with 0.5s precision)
+2. Scene type: "interview", "b-roll", "action", "establishing", "transition", "montage", "graphic", or "other"
+3. Whether it has meaningful speech/audio
+4. Description for searchability - USE SPECIFIC NAMES AND DETAILS
+5. Main subjects visible - USE ACTUAL NAMES WHEN KNOWN
+6. Mood/tone
+7. isRawFootage: true if natural/unedited, false if heavily produced
+
+Return JSON:
+{
+  "scenes": [
+    {
+      "startTime": 12.5,
+      "endTime": 19.0,
+      "sceneType": "interview",
+      "description": "Jamie Dimon discussing risk management strategies",
+      "hasAudio": true,
+      "subjects": ["Jamie Dimon", "boardroom"],
+      "mood": "professional",
+      "isRawFootage": true
+    }
+  ]
+}
+
+Important:
+- Find ALL usable raw footage clips in this video
+- SKIP graphics, animations, text overlays
+- Short clips (1-5 seconds) are acceptable if they show useful content
+- Cut at natural visual/audio boundaries with 0.5s precision
+- USE SPECIFIC NAMES for people, places, and organizations`;
+
+  if (filterPrompt) {
+    systemPrompt += `
+
+**CRITICAL FILTER - READ CAREFULLY**:
+The user ONLY wants clips of: "${filterPrompt}"
+
+STRICT SCENE BOUNDARY RULES:
+1. ONLY include scenes where "${filterPrompt}" is VISUALLY PRESENT on screen
+2. The clip MUST START when "${filterPrompt}" FIRST appears in frame
+3. The clip MUST END IMMEDIATELY when "${filterPrompt}" leaves the frame or the camera cuts away
+4. Do NOT let clips extend beyond when the subject is visible
+5. If the video cuts from "${filterPrompt}" to a YouTuber/narrator, END the clip at that exact cut
+
+EXCLUSIONS:
+- Do NOT include scenes of other people talking ABOUT this subject
+- Do NOT include narrators, hosts, or YouTubers as part of the clip
+- If you cannot visually confirm "${filterPrompt}" is in the scene, SKIP IT
+- Return an EMPTY scenes array if no scenes match`;
+  }
+
+  const messages: OpenRouterMessage[] = [
+    { role: 'system', content: systemPrompt },
+    {
+      role: 'user',
+      content: [
+        { 
+          type: 'text', 
+          text: `Analyze this video and identify ALL usable scenes:` 
+        },
+        { type: 'video_url', video_url: { url: chunkUrl } },
+      ] as any,
+    },
+  ];
+
+  const response = await callOpenRouter(userId, messages, {
+    model: SCENE_DETECTION_MODEL,
+    temperature: 0.2,
+    maxTokens: 16384,
+  });
+
+  const result = parseSceneAnalysisResponse(response.content);
+  
+  // Validate scenes are within chunk bounds
+  const validScenes = result.scenes.filter(scene => {
+    // Check for NaN explicitly
+    if (typeof scene.startTime !== 'number' || typeof scene.endTime !== 'number') return false;
+    if (isNaN(scene.startTime) || isNaN(scene.endTime)) return false;
+    
+    // Scene timestamps should be within chunk duration
+    if (scene.startTime < 0 || scene.endTime < 0) return false;
+    if (scene.startTime > chunkDuration + 10) return false; // Allow 10s tolerance
+    if (scene.endTime > chunkDuration + 10) return false;
+    
+    // Ensure endTime > startTime
+    if (scene.endTime <= scene.startTime) return false;
+    
+    return true;
+  });
+  
+  console.log(`[Segment] Chunk validated: ${result.scenes.length} raw -> ${validScenes.length} valid scenes`);
+  
+  return validScenes;
+}
+
 
 /**
  * Remove duplicate scenes from overlapping chunk boundaries.
@@ -351,6 +829,14 @@ function deduplicateScenes(scenes: DetectedScene[]): DetectedScene[] {
 /**
  * Analyze video with Gemini to detect scenes.
  * Automatically uses chunked analysis for videos > 5 minutes.
+ * 
+ * @param videoUrl - Public URL of the video (for API access)
+ * @param userId - User ID for API calls
+ * @param filterPrompt - Optional filter for specific content
+ * @param videoDuration - Video duration in seconds (enables chunked analysis if > 5 min)
+ * @param onChunkProgress - Progress callback for chunked analysis
+ * @param videoTitle - Video title for context
+ * @param videoPath - Optional local path to video file (enables physical chunk extraction)
  */
 export async function analyzeVideoScenes(
   videoUrl: string,
@@ -358,12 +844,14 @@ export async function analyzeVideoScenes(
   filterPrompt?: string,
   videoDuration?: number,
   onChunkProgress?: (currentChunk: number, totalChunks: number) => void,
-  videoTitle?: string
+  videoTitle?: string,
+  videoPath?: string
 ): Promise<SceneAnalysisResult> {
   // For long videos, use chunked analysis
   if (videoDuration && videoDuration > MIN_DURATION_FOR_CHUNKING) {
     console.log(`[Segment] Video is ${videoDuration}s - using chunked analysis`);
     return analyzeVideoScenesChunked(
+      videoPath || null,
       videoUrl,
       userId,
       videoDuration,
@@ -372,6 +860,7 @@ export async function analyzeVideoScenes(
       videoTitle
     );
   }
+
 
   // Short videos: use single-call analysis (original logic)
   const startTime = Date.now();
@@ -420,6 +909,7 @@ If no scenes match, return an empty scenes array.`;
 
 /**
  * Parse Gemini's scene analysis response.
+ * Normalizes various response formats to consistent DetectedScene structure.
  */
 function parseSceneAnalysisResponse(content: string): Omit<SceneAnalysisResult, 'processingTimeMs'> {
   let cleaned = content.trim();
@@ -432,12 +922,47 @@ function parseSceneAnalysisResponse(content: string): Omit<SceneAnalysisResult, 
 
   try {
     const data = JSON.parse(cleaned);
+    const rawScenes = data.scenes || [];
+    
+    // Debug: Log first scene structure to understand Gemini's format
+    if (rawScenes.length > 0) {
+      console.log(`[Segment] First raw scene from Gemini:`, JSON.stringify(rawScenes[0], null, 2));
+    }
+    
+    // Normalize scenes to handle different Gemini response formats
+    const normalizedScenes: DetectedScene[] = rawScenes.map((scene: any) => {
+      // Handle various property name formats from Gemini
+      // Sometimes it returns "start"/"end" instead of "startTime"/"endTime"
+      const startTime = parseFloat(scene.startTime ?? scene.start ?? scene.startSeconds ?? 0);
+      const endTime = parseFloat(scene.endTime ?? scene.end ?? scene.endSeconds ?? scene.startTime ?? scene.start ?? 0);
+      
+      // Log if we had to use fallback property names
+      if (scene.start !== undefined && scene.startTime === undefined) {
+        console.log(`[Segment] Normalized scene: start=${scene.start} -> startTime=${startTime}`);
+      }
+      if (scene.end !== undefined && scene.endTime === undefined) {
+        console.log(`[Segment] Normalized scene: end=${scene.end} -> endTime=${endTime}`);
+      }
+      
+      return {
+        startTime: isNaN(startTime) ? 0 : startTime,
+        endTime: isNaN(endTime) ? startTime + 10 : endTime, // Default to 10s clip if no endTime
+        sceneType: scene.sceneType || scene.type || 'other',
+        description: scene.description || '',
+        hasAudio: Boolean(scene.hasAudio ?? scene.audio ?? false),
+        subjects: Array.isArray(scene.subjects) ? scene.subjects : [],
+        mood: scene.mood || 'neutral',
+      } as DetectedScene;
+    });
+    
+    console.log(`[Segment] Parsed ${normalizedScenes.length} scenes from Gemini response`);
+    
     return {
-      scenes: data.scenes || [],
+      scenes: normalizedScenes,
       totalDuration: data.totalDuration || 0,
     };
   } catch (error) {
-    console.error('[Segment] Failed to parse scene analysis:', cleaned.substring(0, 200));
+    console.error('[Segment] Failed to parse scene analysis:', cleaned.substring(0, 500));
     throw new Error('Failed to parse scene analysis response');
   }
 }
@@ -564,33 +1089,86 @@ export function generateClipMetadata(
   parentVideoId: string,
   baseR2Path: string
 ): Omit<VideoClip, 'r2Key' | 'thumbnailR2Key' | 'qualityRating'>[] {
+  // Track rejection reasons for debugging
+  const rejectionReasons: Record<string, number> = {
+    invalidTimes: 0,
+    zeroDuration: 0,
+    tooLong: 0,
+    graphic: 0,
+    montage: 0,
+    shortTransition: 0,
+    notRaw: 0,
+  };
+
   // Filter out non-stock footage: graphics, montages, transitions, and heavily edited content
   const usableScenes = scenes.filter(scene => {
+    // Debug: Log first scene's actual values and types
+    if (rejectionReasons.invalidTimes === 0 && rejectionReasons.zeroDuration === 0) {
+      console.log(`[Segment] Debug - First scene check:`, {
+        startTime: scene.startTime,
+        endTime: scene.endTime,
+        startTimeType: typeof scene.startTime,
+        endTimeType: typeof scene.endTime,
+        isNaNStart: isNaN(scene.startTime as any),
+        isNaNEnd: isNaN(scene.endTime as any),
+      });
+    }
+    
+    // Validate scene times exist and are valid numbers
+    if (typeof scene.startTime !== 'number' || typeof scene.endTime !== 'number' ||
+        isNaN(scene.startTime) || isNaN(scene.endTime)) {
+      rejectionReasons.invalidTimes++;
+      return false;
+    }
+
+    
     // Calculate duration
     const duration = scene.endTime - scene.startTime;
     
     // Exclude clips with zero or negative duration
     if (duration <= 0) {
+      rejectionReasons.zeroDuration++;
       return false;
     }
     
     // Exclude clips longer than 30 seconds (too long for stock)
     if (duration > 30) {
-      console.log(`[Segment] Skipping scene (too long: ${duration.toFixed(1)}s): ${scene.description.substring(0, 50)}`);
+      rejectionReasons.tooLong++;
       return false;
     }
     
     // Exclude graphic overlays, text, animations
-    if (scene.sceneType === 'graphic') return false;
+    if (scene.sceneType === 'graphic') {
+      rejectionReasons.graphic++;
+      return false;
+    }
     // Exclude fast-cut montages (usually heavily edited)
-    if (scene.sceneType === 'montage') return false;
+    if (scene.sceneType === 'montage') {
+      rejectionReasons.montage++;
+      return false;
+    }
     // Exclude very short transitions
-    if (scene.sceneType === 'transition' && duration < 3) return false;
-    // Check isRawFootage if present (from Gemini analysis)
-    if ('isRawFootage' in scene && (scene as any).isRawFootage === false) return false;
+    if (scene.sceneType === 'transition' && duration < 3) {
+      rejectionReasons.shortTransition++;
+      return false;
+    }
+    // Only reject isRawFootage=false for "other" scene types
+    // Keep interview and b-roll scenes even if from produced videos
+    if ('isRawFootage' in scene && (scene as any).isRawFootage === false) {
+      // Still accept interview and b-roll from produced videos
+      if (scene.sceneType !== 'interview' && scene.sceneType !== 'b-roll') {
+        rejectionReasons.notRaw++;
+        return false;
+      }
+    }
     return true;
   });
   
+  // Log rejection reasons for debugging
+  const totalRejected = Object.values(rejectionReasons).reduce((a, b) => a + b, 0);
+  if (totalRejected > 0) {
+    console.log(`[Segment] Rejection breakdown: ${JSON.stringify(rejectionReasons)}`);
+  }
   console.log(`[Segment] Filtered ${scenes.length} scenes to ${usableScenes.length} usable stock clips`);
 
   return usableScenes.map((scene, index) => {
@@ -714,8 +1292,10 @@ export async function segmentVideo(
     jobData.filterPrompt,
     jobData.videoDuration,
     onChunkProgress,
-    jobData.videoTitle
+    jobData.videoTitle,
+    jobData.videoPath  // Enable physical chunk extraction if video path is available
   );
+
 
   // 3. Merge and optimize scene boundaries
   onProgress?.('analyzing', 50);

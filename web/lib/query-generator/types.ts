@@ -54,25 +54,25 @@ export const MEDIA_DENSITY_CONFIG: Record<MediaDensityLevel, {
     generateQueries: true,
     includeImages: true,
     includeVideos: false,
-    imageQueriesPerScene: 6,
+    imageQueriesPerScene: 2,   // Reduced from 6 - stock is supplementary
     videoQueriesPerScene: 0,
-    totalMinQueries: 6,
+    totalMinQueries: 2,
   },
   images_minimal_video: {
     generateQueries: true,
     includeImages: true,
     includeVideos: true,
-    imageQueriesPerScene: 6,
-    videoQueriesPerScene: 2,
-    totalMinQueries: 8,
+    imageQueriesPerScene: 2,   // Reduced from 6
+    videoQueriesPerScene: 1,   // Reduced from 2
+    totalMinQueries: 3,
   },
   images_heavy_video: {
     generateQueries: true,
     includeImages: true,
     includeVideos: true,
-    imageQueriesPerScene: 6,
-    videoQueriesPerScene: 6,
-    totalMinQueries: 12,
+    imageQueriesPerScene: 3,   // Reduced from 6
+    videoQueriesPerScene: 2,   // Reduced from 6
+    totalMinQueries: 5,
   },
 };
 

@@ -36,10 +36,12 @@ export type ResearchToggle = typeof RESEARCH_TOGGLES[number];
 /**
  * Stock media scraping levels
  * - 'none': Do not scrape stock media (skip step)
- * - 'standard': Standard amount of media
- * - 'extensive': Scrape more media
+ * - 'standard_images': Standard amount of images only (via Serper)
+ * - 'extensive_images': Extensive images only (via Serper)
+ * - 'standard_images_video': Standard images + videos (future - not yet implemented)
+ * - 'extensive_images_video': Extensive images + videos (future - not yet implemented)
  */
-export const STOCK_MEDIA_LEVELS = ['none', 'standard', 'extensive'] as const;
+export const STOCK_MEDIA_LEVELS = ['none', 'standard_images', 'extensive_images', 'standard_images_video', 'extensive_images_video'] as const;
 export type StockMediaLevel = typeof STOCK_MEDIA_LEVELS[number];
 
 /**

@@ -96,6 +96,9 @@ export const gcpProvisioningQueue = createQueue('gcp-provisioning-queue');
 /** Video segmentation for stock media library */
 export const videoSegmentationQueue = createQueue('video-segmentation');
 
+/** Stock media scraping with classification */
+export const stockMediaQueue = createQueue('stock-media-scrape');
+
 /**
  * All active queues for graceful shutdown.
  */
@@ -114,6 +117,7 @@ export const allQueues = [
   gpuLtx2InterpolateQueue,
   gcpProvisioningQueue,
   videoSegmentationQueue,
+  stockMediaQueue,
 ];
 
 /**
