@@ -1,15 +1,14 @@
 /**
- * Clear GPU API Test Storage
+ * Clear Temporary Storage
  * ============================================================================
- * API endpoint to delete all files stored in R2 for GPU API testing.
- * This deletes all files under the 'temporary/gpu-api-test/' prefix.
+ * API endpoint to delete all temporary/disposable files stored in R2.
+ * This deletes all files under the 'temporary/' prefix including:
+ * - gpu-api-test/
+ * - stock-scraper/
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } from '@/lib/services/r2-storage';
-
-// GPU API test storage prefix (under temporary/)
-const GPU_TEST_PREFIX = `${STORAGE_PATHS.TEMPORARY}/${STORAGE_PATHS.GPU_TEST}/`;
 
 export async function DELETE(request: NextRequest) {
   try {
@@ -21,13 +20,13 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Delete all files under the GPU test prefix
-    const result = await deleteFilesWithPrefix(GPU_TEST_PREFIX);
+    // Delete ALL files under the temporary prefix
+    const result = await deleteFilesWithPrefix(`${STORAGE_PATHS.TEMPORARY}/`);
 
-    console.log(`[ClearStorage] Deleted ${result.deleted} files from GPU API test storage`);
+    console.log(`[ClearTemporary] Deleted ${result.deleted} files from temporary storage`);
     
     if (result.errors.length > 0) {
-      console.warn(`[ClearStorage] Encountered ${result.errors.length} errors:`, result.errors);
+      console.warn(`[ClearTemporary] Encountered ${result.errors.length} errors:`, result.errors);
     }
 
     return NextResponse.json({
@@ -35,10 +34,11 @@ export async function DELETE(request: NextRequest) {
       data: {
         deleted: result.deleted,
         errors: result.errors,
+        prefix: `${STORAGE_PATHS.TEMPORARY}/`,
       },
     });
   } catch (error) {
-    console.error('[ClearStorage] Failed to clear storage:', error);
+    console.error('[ClearTemporary] Failed to clear storage:', error);
     return NextResponse.json(
       {
         success: false,

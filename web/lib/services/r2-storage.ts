@@ -20,23 +20,25 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 // ============================================================================
 
 export const STORAGE_PATHS = {
+  // Temporary/disposable content (can be wiped anytime via admin tools)
+  TEMPORARY: 'temporary',
+  
   // Root prefix for user data
   USERS: 'users',
   
   // Top-level folders under users/{userId}
   VIDEOS: 'videos',
   PAYMENT_PROOFS: 'payment-proofs',
-  REVENUE_PROOFS: 'revenue-proofs',
   GPU_TEST: 'gpu-api-test',
   
-  // Stock scraper unified media library
+  // Stock scraper unified media library (under temporary/)
   STOCK_SCRAPER: {
-    ROOT: 'stock-scraper',
-    SOURCES: 'stock-scraper/sources',      // Original downloads
-    FOOTAGE: 'stock-scraper/footage',       // All video clips
-    IMAGES: 'stock-scraper/images',         // All images
-    AUDIO: 'stock-scraper/audio',           // All audio
-    THUMBNAILS: 'stock-scraper/thumbnails', // All thumbnails
+    ROOT: 'temporary/stock-scraper',
+    SOURCES: 'temporary/stock-scraper/sources',      // Original downloads
+    FOOTAGE: 'temporary/stock-scraper/footage',       // All video clips
+    IMAGES: 'temporary/stock-scraper/images',         // All images
+    AUDIO: 'temporary/stock-scraper/audio',           // All audio
+    THUMBNAILS: 'temporary/stock-scraper/thumbnails', // All thumbnails
   },
   
   // Nested paths under videos/{videoId}/
@@ -199,16 +201,9 @@ export function generatePaymentProofKey(
 
 /**
  * Generate a storage key for revenue proof uploads.
- * Path format: {userId}/revenue-proofs/{statementId}/{timestamp}.{ext}
+ * @deprecated Use generatePaymentProofKey instead - proofs are consolidated
  */
-export function generateRevenueProofKey(
-  userId: string,
-  statementId: string,
-  extension: string
-): string {
-  const timestamp = Date.now();
-  return `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.REVENUE_PROOFS}/${statementId}/${timestamp}.${extension}`;
-}
+export const generateRevenueProofKey = generatePaymentProofKey;
 
 /**
  * Generate a storage key for TTS audio chunk.
@@ -291,7 +286,7 @@ export async function generatePresignedPutUrl(
 
 /**
  * Generate storage key for GPU API test outputs.
- * Path format: {userId}/gpu-api-test/{type}_{timestamp}_{random}.{ext}
+ * Path format: temporary/gpu-api-test/{userId}/{type}_{timestamp}_{random}.{ext}
  * 
  * @param userId - User ID
  * @param type - Type of asset (image or video)
@@ -306,7 +301,7 @@ export function generateGpuTestKey(
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 9);
   const ext = extension || (type === "video" ? "mp4" : "png");
-  return `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.GPU_TEST}/${type}_${timestamp}_${random}.${ext}`;
+  return `${STORAGE_PATHS.TEMPORARY}/${STORAGE_PATHS.GPU_TEST}/${userId}/${type}_${timestamp}_${random}.${ext}`;
 }
 
 /**

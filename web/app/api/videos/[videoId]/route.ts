@@ -231,11 +231,11 @@ export async function DELETE(
     // Clean up R2 storage files
     let r2CleanupResult = { deleted: 0, errors: [] as string[] };
     try {
-      const { deleteFilesWithPrefix, isR2Configured } = await import("@/lib/services/r2-storage");
+      const { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } = await import("@/lib/services/r2-storage");
       
       if (isR2Configured()) {
-        // Delete all audio files for this video: audio/{userId}/{videoId}/
-        const prefix = `audio/${user.id}/${videoId}/`;
+        // Delete ALL files for this video: users/{userId}/videos/{videoId}/
+        const prefix = `${STORAGE_PATHS.USERS}/${user.id}/${STORAGE_PATHS.VIDEOS}/${videoId}/`;
         r2CleanupResult = await deleteFilesWithPrefix(prefix);
         
         if (r2CleanupResult.errors.length > 0) {

@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { deleteFilesWithPrefix, isR2Configured } from '@/lib/services/r2-storage';
+import { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } from '@/lib/services/r2-storage';
 
 export async function DELETE(request: NextRequest) {
   console.log('[ClearStockMedia] Starting clear request...');
@@ -24,8 +24,8 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Delete ALL files under the stock-scraper prefix
-    console.log('[ClearStockMedia] Deleting files under stock-scraper/ prefix...');
-    const result = await deleteFilesWithPrefix('stock-scraper/');
+    console.log(`[ClearStockMedia] Deleting files under ${STORAGE_PATHS.STOCK_SCRAPER.ROOT}/ prefix...`);
+    const result = await deleteFilesWithPrefix(`${STORAGE_PATHS.STOCK_SCRAPER.ROOT}/`);
 
     console.log(`[ClearStockMedia] Deleted ${result.deleted} files from stock media storage`);
     

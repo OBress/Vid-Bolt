@@ -210,8 +210,8 @@ async function resetStepData(
           const { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } = await import("@/lib/services/r2-storage");
           
           if (isR2Configured()) {
-            // Path: {userId}/videos/{videoId}/audio/tts/
-            const prefix = `${userId}/videos/${videoId}/${STORAGE_PATHS.AUDIO.TTS}/`;
+            // Path: users/{userId}/videos/{videoId}/audio/tts/
+            const prefix = `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.VIDEOS}/${videoId}/${STORAGE_PATHS.AUDIO.TTS}/`;
             const r2Result = await deleteFilesWithPrefix(prefix);
             result.r2FilesDeleted = r2Result.deleted;
             
@@ -258,12 +258,12 @@ async function resetStepData(
           
           if (isR2Configured()) {
             // Delete generated images
-            const imagesPrefix = `${userId}/videos/${videoId}/${STORAGE_PATHS.IMAGES.GENERATED}/`;
+            const imagesPrefix = `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.VIDEOS}/${videoId}/${STORAGE_PATHS.IMAGES.GENERATED}/`;
             const imagesResult = await deleteFilesWithPrefix(imagesPrefix);
             result.r2FilesDeleted += imagesResult.deleted;
             
             // Delete generated footage
-            const footagePrefix = `${userId}/videos/${videoId}/${STORAGE_PATHS.FOOTAGE.GENERATED}/`;
+            const footagePrefix = `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.VIDEOS}/${videoId}/${STORAGE_PATHS.FOOTAGE.GENERATED}/`;
             const footageResult = await deleteFilesWithPrefix(footagePrefix);
             result.r2FilesDeleted += footageResult.deleted;
             
@@ -305,7 +305,7 @@ async function resetStepData(
           const { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } = await import("@/lib/services/r2-storage");
           
           if (isR2Configured()) {
-            const prefix = `${userId}/videos/${videoId}/${STORAGE_PATHS.EXPORTS}/`;
+            const prefix = `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.VIDEOS}/${videoId}/${STORAGE_PATHS.EXPORTS}/`;
             const r2Result = await deleteFilesWithPrefix(prefix);
             result.r2FilesDeleted = r2Result.deleted;
             
