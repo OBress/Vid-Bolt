@@ -85,6 +85,8 @@ export interface WizardState {
   scriptConfig: any; // Store script generation configuration
   universalScriptOutput: UniversalScriptOutput | null;
   scriptOutput: any | null; // Output from script-writing worker
+  isScriptLoading: boolean; // Flag for auto-triggering script gen (Step 2→3)
+  scriptTaskId: string | null; // Task ID for script generation
   // AV Script Part 1 (Step 4→5 transition)
   avScriptTaskId: string | null;
   avScriptPart1Output: any | null;
@@ -199,6 +201,8 @@ export function VideoCreationWizard({
     scriptConfig: null,
     universalScriptOutput: null,
     scriptOutput: null,
+    isScriptLoading: false,
+    scriptTaskId: null,
     avScriptTaskId: null,
     avScriptPart1Output: null,
     isAvScriptLoading: false,
@@ -326,6 +330,8 @@ export function VideoCreationWizard({
           scriptConfig,
           universalScriptOutput,
           scriptOutput,
+          isScriptLoading: false,
+          scriptTaskId: null,
           avScriptTaskId: null,
           avScriptPart1Output: (video.metadata as any)?.av_script_part1 || null,
           isAvScriptLoading: false,
@@ -625,6 +631,49 @@ export function VideoCreationWizard({
       ) {
         // Step 1 → Step 3: Skip Step 2 when stock media is disabled
         advanceToStep(3);
+      } else if (currentStep === 2) {
+        // Step 2 → Step 3: OPTIMISTIC - Navigate immediately, start script generation in background
+        console.log(
+          "[Wizard] OPTIMISTIC: Navigating to Step 3, firing script generation...",
+        );
+
+        setState((prev) => ({
+          ...prev,
+          isScriptLoading: true,
+        }));
+        advanceToStep(3);
+
+        // Trigger script generation in background
+        if (state.videoId) {
+          fetch("/api/process/script-writing", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ videoId: state.videoId }),
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.taskId) {
+                console.log("[Wizard] Script task created:", data.taskId);
+                setState((prev) => ({
+                  ...prev,
+                  scriptTaskId: data.taskId,
+                }));
+              } else {
+                console.error("[Wizard] Failed to create script task:", data);
+                setState((prev) => ({
+                  ...prev,
+                  isScriptLoading: false,
+                }));
+              }
+            })
+            .catch((err) => {
+              console.error("[Wizard] Script generation failed:", err);
+              setState((prev) => ({
+                ...prev,
+                isScriptLoading: false,
+              }));
+            });
+        }
       } else if (currentStep === 3 && step3Ref.current) {
         // Step 3 → 4: Trigger script completion (which handles its own optimistic navigation)
         step3Ref.current.handleConfirm();
@@ -1115,7 +1164,52 @@ export function VideoCreationWizard({
                 isStockMediaLoading: false,
               }));
             }}
-            onNext={() => advanceToStep(3)}
+            onNext={async () => {
+              // OPTIMISTIC: Set loading flag and navigate immediately
+              console.log(
+                "[Wizard] OPTIMISTIC: Navigating to Step 3, firing script generation...",
+              );
+              setState((prev) => ({
+                ...prev,
+                isScriptLoading: true,
+              }));
+              advanceToStep(3);
+
+              // Trigger script generation in background
+              if (state.videoId) {
+                fetch("/api/process/script-writing", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ videoId: state.videoId }),
+                })
+                  .then((res) => res.json())
+                  .then((data) => {
+                    if (data.taskId) {
+                      console.log("[Wizard] Script task created:", data.taskId);
+                      setState((prev) => ({
+                        ...prev,
+                        scriptTaskId: data.taskId,
+                      }));
+                    } else {
+                      console.error(
+                        "[Wizard] Failed to create script task:",
+                        data,
+                      );
+                      setState((prev) => ({
+                        ...prev,
+                        isScriptLoading: false,
+                      }));
+                    }
+                  })
+                  .catch((err) => {
+                    console.error("[Wizard] Script generation failed:", err);
+                    setState((prev) => ({
+                      ...prev,
+                      isScriptLoading: false,
+                    }));
+                  });
+              }
+            }}
             onBack={() => goToStep(1)}
             {...lock}
           />
@@ -1130,6 +1224,8 @@ export function VideoCreationWizard({
             outlineData={state.outlineOutput}
             outlineConfig={state.outlineConfig}
             initialScriptOutput={state.scriptOutput}
+            isLoading={state.isScriptLoading}
+            taskId={state.scriptTaskId}
             onSave={(script) => {
               // Update local state
               updateState({ script });

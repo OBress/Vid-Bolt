@@ -98,6 +98,8 @@ interface Step3ScriptProps {
     angle?: string;
   } | null;
   initialScriptOutput?: ScriptOutput | null;
+  isLoading?: boolean; // Auto-trigger flag from parent
+  taskId?: string | null; // Task ID from parent for auto-generation
   onComplete: (script: string, output: ScriptOutput) => void;
   onSave: (script: string) => void;
   onScriptGenerated?: (script: string, output: ScriptOutput) => void;
@@ -181,6 +183,8 @@ export const Step3Script = memo(
         outlineData,
         outlineConfig,
         initialScriptOutput,
+        isLoading: isLoadingProp,
+        taskId: taskIdProp,
         onComplete,
         onSave,
         onScriptGenerated,
@@ -190,11 +194,14 @@ export const Step3Script = memo(
       },
       ref,
     ) => {
-      const [view, setView] = useState<ViewState>(
-        initialScriptOutput ? "output" : "review",
-      );
+      // Determine initial view: output if we have script, progress if auto-loading, otherwise review
+      const [view, setView] = useState<ViewState>(() => {
+        if (initialScriptOutput) return "output";
+        if (isLoadingProp || taskIdProp) return "progress";
+        return "review"; // Fallback for edge cases
+      });
 
-      const [taskId, setTaskId] = useState<string | null>(null);
+      const [taskId, setTaskId] = useState<string | null>(taskIdProp || null);
       const [taskStatus, setTaskStatus] = useState<string>(
         initialScriptOutput ? "completed" : "idle",
       );
@@ -246,6 +253,16 @@ export const Step3Script = memo(
           setEditingScript(output.finalScript);
         }
       }, [output]);
+
+      // Sync external taskId prop with internal state (for auto-generation from parent)
+      useEffect(() => {
+        if (taskIdProp && !taskId) {
+          console.log("[Step3] Syncing external taskId:", taskIdProp);
+          setTaskId(taskIdProp);
+          setView("progress");
+          setTaskStatus("pending");
+        }
+      }, [taskIdProp, taskId]);
 
       // Click outside to exit edit mode (but not when clicking AI Rewrite or Beat Outline)
       useEffect(() => {
