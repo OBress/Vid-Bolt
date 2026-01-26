@@ -26,6 +26,10 @@ import {
   generateStockScraperSourceThumbnailKey,
   generateStockScraperClipKey,
   generateStockScraperClipThumbnailKey,
+  generateVideoStockClipKey,
+  generateVideoStockClipThumbnailKey,
+  generateVideoSourceKey,
+  generateVideoSourceThumbnailKey,
 } from '@/lib/services/r2-storage';
 
 // ==========================================================================
@@ -77,7 +81,12 @@ export async function segmentProcessor(
     // 3. Upload original video to R2
     await job.updateProgress({ stage: 'uploading', progress: 35, message: 'Uploading original video...' });
     const videoBuffer = fs.readFileSync(downloadResult.videoPath);
-    const videoR2Key = generateStockScraperSourceKey(videoId);
+    
+    // Use project-specific path if this is part of video generation
+    const isVideoGeneration = !!job.data.parentProjectVideoId;
+    const videoR2Key = isVideoGeneration
+      ? generateVideoSourceKey(userId, job.data.parentProjectVideoId!, videoId)
+      : generateStockScraperSourceKey(videoId);
     await uploadAudioBuffer(videoBuffer, videoR2Key, 'video/mp4');
     console.log(`[SegmentWorker] Uploaded original video to R2: ${videoR2Key}`);
 
@@ -85,7 +94,9 @@ export async function segmentProcessor(
     const thumbnailPath = path.join(tempDir, 'thumbnail.jpg');
     await extractThumbnail(downloadResult.videoPath, 2, thumbnailPath);
     const thumbnailBuffer = fs.readFileSync(thumbnailPath);
-    const thumbnailR2Key = generateStockScraperSourceThumbnailKey(videoId);
+    const thumbnailR2Key = isVideoGeneration
+      ? generateVideoSourceThumbnailKey(userId, job.data.parentProjectVideoId!, videoId)
+      : generateStockScraperSourceThumbnailKey(videoId);
     await uploadAudioBuffer(thumbnailBuffer, thumbnailR2Key, 'image/jpeg');
 
     // 5. Extract audio for transcription
@@ -163,9 +174,11 @@ export async function segmentProcessor(
       const clipPath = path.join(tempDir, `${clip.id}.mp4`);
       await extractClip(downloadResult.videoPath, clip.startTime, clip.endTime, clipPath);
       
-      // Upload clip to R2 (unified storage - just uses clip.id)
+      // Upload clip to R2 (use project-specific path for video gen, global for stock scraper)
       const clipBuffer = fs.readFileSync(clipPath);
-      const clipR2Key = generateStockScraperClipKey(clip.id);
+      const clipR2Key = isVideoGeneration
+        ? generateVideoStockClipKey(userId, job.data.parentProjectVideoId!, clip.id)
+        : generateStockScraperClipKey(clip.id);
       await uploadAudioBuffer(clipBuffer, clipR2Key, 'video/mp4');
 
       // Extract and upload thumbnail (non-fatal - continue if fails)
@@ -180,7 +193,9 @@ export async function segmentProcessor(
         );
         
         const clipThumbBuffer = fs.readFileSync(clipThumbPath);
-        clipThumbR2Key = generateStockScraperClipThumbnailKey(clip.id);
+        clipThumbR2Key = isVideoGeneration
+          ? generateVideoStockClipThumbnailKey(userId, job.data.parentProjectVideoId!, clip.id)
+          : generateStockScraperClipThumbnailKey(clip.id);
         await uploadAudioBuffer(clipThumbBuffer, clipThumbR2Key, 'image/jpeg');
         thumbnailUrl = getPublicUrl(clipThumbR2Key);
         

@@ -23,7 +23,7 @@ import type { MediaDensityLevel } from '@/lib/query-generator/types';
 import { 
   uploadAudioBuffer,
   getPublicUrl,
-  generateStockScraperImageKey,
+  generateVideoStockImageKey,
 } from '@/lib/services/r2-storage';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -261,7 +261,7 @@ export async function stockMediaProcessor(
             // Upload to R2
             const extension = getExtensionFromUrl(img.imageUrl);
             const imageId = `serper-${Date.now()}-${uuidv4().slice(0, 8)}`;
-            const r2Key = generateStockScraperImageKey(imageId, extension);
+            const r2Key = generateVideoStockImageKey(userId, videoId, imageId, extension);
             
             try {
               await uploadAudioBuffer(imageBuffer, r2Key, `image/${extension === 'jpg' ? 'jpeg' : extension}`);
@@ -523,6 +523,7 @@ export async function stockMediaProcessor(
             videoId: sourceId,
             sourceUrl: `https://www.youtube.com/watch?v=${video.id}`,
             targetClipDuration: { min: 5, max: 15 }, // 5-15 second clips
+            parentProjectVideoId: videoId, // Link to parent video project for per-video storage
           }, {
             jobId,
           });

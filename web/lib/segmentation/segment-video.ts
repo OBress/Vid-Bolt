@@ -1299,10 +1299,11 @@ export async function segmentVideo(
 
   // 3. Merge and optimize scene boundaries
   onProgress?.('analyzing', 50);
+  const clipDuration = targetClipDuration || { min: 5, max: 15 }; // Default 5-15 second clips
   const optimizedScenes = mergeSceneAndWordBoundaries(
     sceneAnalysis.scenes,
     transcription,
-    targetClipDuration
+    clipDuration
   );
   console.log(`[Segment] Optimized to ${optimizedScenes.length} clips`);
 

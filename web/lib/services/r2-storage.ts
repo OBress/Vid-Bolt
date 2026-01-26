@@ -20,7 +20,10 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 // ============================================================================
 
 export const STORAGE_PATHS = {
-  // Top-level folders under userId
+  // Root prefix for user data
+  USERS: 'users',
+  
+  // Top-level folders under users/{userId}
   VIDEOS: 'videos',
   PAYMENT_PROOFS: 'payment-proofs',
   REVENUE_PROOFS: 'revenue-proofs',
@@ -178,7 +181,7 @@ export function generateMediaKey(
   storagePath: string,
   filename: string
 ): string {
-  return `${userId}/${STORAGE_PATHS.VIDEOS}/${videoId}/${storagePath}/${filename}`;
+  return `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.VIDEOS}/${videoId}/${storagePath}/${filename}`;
 }
 
 /**
@@ -191,7 +194,7 @@ export function generatePaymentProofKey(
   extension: string
 ): string {
   const timestamp = Date.now();
-  return `${userId}/${STORAGE_PATHS.PAYMENT_PROOFS}/${statementId}/${timestamp}.${extension}`;
+  return `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.PAYMENT_PROOFS}/${statementId}/${timestamp}.${extension}`;
 }
 
 /**
@@ -204,7 +207,7 @@ export function generateRevenueProofKey(
   extension: string
 ): string {
   const timestamp = Date.now();
-  return `${userId}/${STORAGE_PATHS.REVENUE_PROOFS}/${statementId}/${timestamp}.${extension}`;
+  return `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.REVENUE_PROOFS}/${statementId}/${timestamp}.${extension}`;
 }
 
 /**
@@ -303,7 +306,7 @@ export function generateGpuTestKey(
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 9);
   const ext = extension || (type === "video" ? "mp4" : "png");
-  return `${userId}/${STORAGE_PATHS.GPU_TEST}/${type}_${timestamp}_${random}.${ext}`;
+  return `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.GPU_TEST}/${type}_${timestamp}_${random}.${ext}`;
 }
 
 /**
@@ -352,6 +355,73 @@ export function generateStockScraperImageKey(imageId: string, ext: string = 'jpg
  */
 export function generateStockScraperAudioKey(audioId: string, ext: string = 'mp3'): string {
   return `${STORAGE_PATHS.STOCK_SCRAPER.AUDIO}/${audioId}.${ext}`;
+}
+
+// ============================================================================
+// Video Project Stock Media Key Generators
+// ============================================================================
+// These are used during video generation to store stock media per-project,
+// as opposed to the global stock-scraper paths used by the admin tool.
+
+/**
+ * Generate storage key for video project stock image.
+ * Path format: users/{userId}/videos/{videoId}/images/stock/{imageId}.{ext}
+ */
+export function generateVideoStockImageKey(
+  userId: string,
+  videoId: string,
+  imageId: string,
+  ext: string = 'jpg'
+): string {
+  return generateMediaKey(userId, videoId, STORAGE_PATHS.IMAGES.STOCK, `${imageId}.${ext}`);
+}
+
+/**
+ * Generate storage key for video project stock footage clip.
+ * Path format: users/{userId}/videos/{videoId}/footage/stock/{clipId}.mp4
+ */
+export function generateVideoStockClipKey(
+  userId: string,
+  videoId: string,
+  clipId: string
+): string {
+  return generateMediaKey(userId, videoId, STORAGE_PATHS.FOOTAGE.STOCK, `${clipId}.mp4`);
+}
+
+/**
+ * Generate storage key for video project stock clip thumbnail.
+ * Path format: users/{userId}/videos/{videoId}/footage/stock/{clipId}-thumb.jpg
+ */
+export function generateVideoStockClipThumbnailKey(
+  userId: string,
+  videoId: string,
+  clipId: string
+): string {
+  return generateMediaKey(userId, videoId, STORAGE_PATHS.FOOTAGE.STOCK, `${clipId}-thumb.jpg`);
+}
+
+/**
+ * Generate storage key for video project source video (e.g., downloaded YouTube video).
+ * Path format: users/{userId}/videos/{videoId}/footage/stock/source-{sourceId}.mp4
+ */
+export function generateVideoSourceKey(
+  userId: string,
+  videoId: string,
+  sourceId: string
+): string {
+  return generateMediaKey(userId, videoId, STORAGE_PATHS.FOOTAGE.STOCK, `source-${sourceId}.mp4`);
+}
+
+/**
+ * Generate storage key for video project source thumbnail.
+ * Path format: users/{userId}/videos/{videoId}/footage/stock/source-{sourceId}-thumb.jpg
+ */
+export function generateVideoSourceThumbnailKey(
+  userId: string,
+  videoId: string,
+  sourceId: string
+): string {
+  return generateMediaKey(userId, videoId, STORAGE_PATHS.FOOTAGE.STOCK, `source-${sourceId}-thumb.jpg`);
 }
 
 /**

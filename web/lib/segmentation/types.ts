@@ -110,9 +110,9 @@ export interface VideoClip {
 export interface SegmentVideoJobData {
   userId: string;
   videoId: string;
-  videoR2Key: string;
+  videoR2Key?: string;
   sourceUrl: string;
-  targetClipDuration: {
+  targetClipDuration?: {
     min: number;  // e.g., 5 seconds
     max: number;  // e.g., 10 seconds
   };
@@ -126,6 +126,8 @@ export interface SegmentVideoJobData {
   videoDescription?: string;
   /** Local path to downloaded video file (enables physical chunk extraction) */
   videoPath?: string;
+  /** If set, this job is part of video generation and clips should be stored per-project */
+  parentProjectVideoId?: string;
 }
 
 
