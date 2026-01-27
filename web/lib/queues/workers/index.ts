@@ -21,3 +21,4 @@ export {
 export { gcpProvisionProcessor } from './gcp-provision';
 export { segmentProcessor, createSegmentationWorker } from './segment';
 export { stockMediaProcessor } from './stock-media';
+export { startShutdownChecker, stopShutdownChecker, checkForInactiveVMs } from './gpu-shutdown-checker';

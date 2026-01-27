@@ -198,6 +198,46 @@ function getGpuApiKey(): string {
 // API CALL HELPER
 // ============================================================================
 
+// Throttle activity updates to avoid excessive DB writes (max once per 30 seconds)
+let lastActivityUpdateTime = 0;
+const ACTIVITY_UPDATE_THROTTLE_MS = 30000; // 30 seconds
+
+/**
+ * Updates the last_gpu_activity_at timestamp in user_gcp_config
+ * Throttled to prevent excessive DB writes
+ */
+async function updateGpuActivity(): Promise<void> {
+  const now = Date.now();
+  if (now - lastActivityUpdateTime < ACTIVITY_UPDATE_THROTTLE_MS) {
+    return; // Skip if we updated recently
+  }
+  
+  lastActivityUpdateTime = now;
+  
+  try {
+    // Use internal API endpoint to update activity
+    // This is called from workers which don't have direct Supabase auth context
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+    
+    // Get the first running GCP config and update its activity
+    const { error } = await supabase
+      .from("user_gcp_config")
+      .update({ last_gpu_activity_at: new Date().toISOString() })
+      .eq("status", "RUNNING");
+    
+    if (error) {
+      console.log(`[GPUApiService] Failed to update activity: ${error.message}`);
+    }
+  } catch (err) {
+    // Don't fail the GPU call if activity tracking fails
+    console.log(`[GPUApiService] Activity tracking error (non-fatal)`);
+  }
+}
+
 async function callGpuApi<T>(
   endpoint: string,
   body: T
@@ -235,6 +275,9 @@ async function callGpuApi<T>(
       `[GPUApiService] Response (${duration}ms):`,
       JSON.stringify(data, null, 2)
     );
+
+    // Track GPU activity for auto-shutdown timer (throttled, non-blocking)
+    updateGpuActivity().catch(() => {});
 
     return {
       response: data as GPUApiResponse,

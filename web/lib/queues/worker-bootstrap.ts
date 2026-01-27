@@ -49,6 +49,8 @@ import {
   gcpProvisionProcessor,
   segmentProcessor,
   stockMediaProcessor,
+  startShutdownChecker,
+  stopShutdownChecker,
 } from './workers';
 
 // ============================================================================
@@ -161,6 +163,7 @@ const workerConfigs: WorkerConfig[] = [
 // ============================================================================
 
 const workers: Worker[] = [];
+let shutdownCheckerId: NodeJS.Timeout | null = null;
 
 async function startWorkers(): Promise<void> {
   console.log('='.repeat(60));
@@ -223,10 +226,19 @@ async function startWorkers(): Promise<void> {
   console.log(`[WorkerBootstrap] ${workers.length} worker(s) started and ready`);
   console.log('[WorkerBootstrap] Press Ctrl+C to stop');
   console.log('='.repeat(60));
+  
+  // Start the GPU shutdown checker (runs every 5 minutes)
+  shutdownCheckerId = startShutdownChecker();
 }
 
 async function stopWorkers(): Promise<void> {
   console.log('\n[WorkerBootstrap] Shutting down workers...');
+  
+  // Stop the GPU shutdown checker
+  if (shutdownCheckerId) {
+    stopShutdownChecker(shutdownCheckerId);
+    shutdownCheckerId = null;
+  }
   
   // Close all workers
   await Promise.all(workers.map(async (w) => {

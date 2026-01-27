@@ -1085,7 +1085,10 @@ CREATE TABLE IF NOT EXISTS "public"."user_gcp_config" (
     "last_seen_at" timestamp with time zone DEFAULT "now"(),
     "gcp_refresh_token" "text",
     "gcp_token_expires_at" timestamp with time zone,
-    "gcp_access_token" "text"
+    "gcp_access_token" "text",
+    "gpu_auto_shutdown_minutes" integer DEFAULT 60,
+    "last_gpu_activity_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "gpu_auto_shutdown_minutes_range" CHECK ((("gpu_auto_shutdown_minutes" >= 10) AND ("gpu_auto_shutdown_minutes" <= 600)))
 );
 
 
@@ -1097,6 +1100,14 @@ COMMENT ON COLUMN "public"."user_gcp_config"."gcp_refresh_token" IS 'Encrypted G
 
 
 COMMENT ON COLUMN "public"."user_gcp_config"."gcp_access_token" IS 'Cached Google OAuth access token (expires after 1 hour)';
+
+
+
+COMMENT ON COLUMN "public"."user_gcp_config"."gpu_auto_shutdown_minutes" IS 'Minutes of GPU API inactivity before auto-shutdown (10-600)';
+
+
+
+COMMENT ON COLUMN "public"."user_gcp_config"."last_gpu_activity_at" IS 'Timestamp of last GPU API call for auto-shutdown tracking';
 
 
 

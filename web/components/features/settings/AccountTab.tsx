@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { User, Globe, LogOut, Trash2, CreditCard } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { User, Globe, LogOut, Trash2, CreditCard, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +29,9 @@ export function AccountTab() {
   const router = useRouter();
 
   const [name, setName] = useState("");
+  const [gpuShutdownMinutes, setGpuShutdownMinutes] = useState<number>(60);
+  const [gpuSettingsSaving, setGpuSettingsSaving] = useState(false);
+  const gpuSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Sync name from profile
   useEffect(() => {
@@ -46,6 +49,65 @@ export function AccountTab() {
     await supabase.auth.signOut();
     router.push("/auth");
   };
+
+  // Load GPU auto-shutdown setting from user_gcp_config
+  useEffect(() => {
+    async function loadGpuSettings() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data } = await supabase
+        .from("user_gcp_config")
+        .select("gpu_auto_shutdown_minutes")
+        .eq("user_id", user.id)
+        .single();
+
+      if (data?.gpu_auto_shutdown_minutes) {
+        setGpuShutdownMinutes(data.gpu_auto_shutdown_minutes);
+      }
+    }
+    loadGpuSettings();
+  }, [supabase]);
+
+  // Debounced save for GPU shutdown timer
+  const handleGpuShutdownChange = useCallback(
+    (value: number) => {
+      // Clamp value to valid range
+      const clamped = Math.min(600, Math.max(10, value));
+      setGpuShutdownMinutes(clamped);
+
+      // Clear existing timeout
+      if (gpuSaveTimeoutRef.current) {
+        clearTimeout(gpuSaveTimeoutRef.current);
+      }
+
+      // Debounce save
+      gpuSaveTimeoutRef.current = setTimeout(async () => {
+        setGpuSettingsSaving(true);
+        try {
+          const {
+            data: { user },
+          } = await supabase.auth.getUser();
+          if (!user) return;
+
+          await supabase.from("user_gcp_config").upsert(
+            {
+              user_id: user.id,
+              gpu_auto_shutdown_minutes: clamped,
+            },
+            { onConflict: "user_id" },
+          );
+        } catch (err) {
+          console.error("Failed to save GPU shutdown setting:", err);
+        } finally {
+          setGpuSettingsSaving(false);
+        }
+      }, 1000);
+    },
+    [supabase],
+  );
 
   const loading = settingsLoading || profileLoading;
 
@@ -192,6 +254,36 @@ export function AccountTab() {
             >
               Change
             </Button>
+          </div>
+
+          <div className="flex items-center justify-between py-2 border-b border-neutral-800">
+            <div>
+              <p className="text-sm font-medium text-white flex items-center gap-2">
+                <Timer className="w-4 h-4 text-orange-500" />
+                GPU Auto-Shutdown Timer
+              </p>
+              <p className="text-xs text-neutral-400">
+                Automatically stop your GPU VM after inactivity (10-600 min)
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={10}
+                max={600}
+                value={gpuShutdownMinutes}
+                onChange={(e) =>
+                  handleGpuShutdownChange(parseInt(e.target.value) || 60)
+                }
+                className="w-20 bg-black/40 border-neutral-700 text-white focus:border-orange-500 text-sm"
+              />
+              <span className="text-xs text-neutral-400">min</span>
+              {gpuSettingsSaving && (
+                <span className="text-xs text-orange-500 animate-pulse">
+                  Saving...
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center justify-between py-2 border-b border-neutral-800">
