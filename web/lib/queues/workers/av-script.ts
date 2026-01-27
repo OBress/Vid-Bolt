@@ -42,17 +42,21 @@ export interface ShotPart1 {
   end_seconds: number;
   duration_seconds: number;
   content_type: string;
-  media_type: 'image' | 'video' | 'motiongraphic' | 'ai_generated';
+  media_type: 'video' | 'motiongraphic';
   text: string;
   summary: string;  // Brief summary of what happens visually - may include @(StockMedia:id) references
   visual_prompt?: string;  // Prompt for AI image generation
-  // Visual source for clear UI labeling
-  visual_source?: 'stock_image' | 'stock_video' | 'ai_image' | 'ai_video' | 'motiongraphic';
+  // Visual source for clear UI labeling (binary taxonomy)
+  visual_source?: 'ai_video' | 'motiongraphic';
+  // Stock-worthy flag: true if this shot depicts famous people/landmarks suitable for stock media
+  stock_worthy?: boolean;
+  // Number of images the AI wants for this shot (default: 1, for multi-image layouts)
+  image_count?: number;
   // Entity references detected in the text
   character_refs?: string[];  // Character IDs referenced
   location_refs?: string[];   // Location IDs referenced  
   object_refs?: string[];     // Object IDs referenced
-  // Stock media reference (when matched from vector DB)
+  // Stock media reference (single image - for backwards compatibility)
   stock_media_ref?: {
     id: string;
     url: string;
@@ -60,8 +64,16 @@ export interface ShotPart1 {
     description: string;
     similarity: number;
   };
-  // Fallback type when no stock media matched
-  fallback_type?: 'motiongraphic' | 'ai_generated';
+  // Stock media references (multiple images when image_count > 1)
+  stock_media_refs?: Array<{
+    id: string;
+    url: string;
+    thumbnailUrl: string;
+    description: string;
+    similarity: number;
+  }>;
+  // Fallback type when no stock media matched (video = AI video generation)
+  fallback_type?: 'motiongraphic' | 'video';
 }
 
 export interface AVScriptPart1Output {
@@ -79,20 +91,21 @@ export interface AVScriptPart1Output {
 // ============================================================================
 
 /**
- * Compute the visual_source label for a shot based on stock_media_ref and fallback_type.
- * This provides clear labeling for the UI.
+ * Compute the visual_source label for a shot.
+ * Binary taxonomy: ai_video or motiongraphic.
+ * Stock imagery is ALWAYS wrapped in motiongraphic.
  */
-function computeVisualSource(shot: ShotPart1): 'stock_image' | 'stock_video' | 'ai_image' | 'ai_video' | 'motiongraphic' {
-  // If we have a stock media match
-  if (shot.stock_media_ref) {
-    return shot.media_type === 'video' ? 'stock_video' : 'stock_image';
-  }
-  // If fallback is motiongraphic
-  if (shot.fallback_type === 'motiongraphic') {
+function computeVisualSource(shot: ShotPart1): 'ai_video' | 'motiongraphic' {
+  // Stock media is always wrapped in motiongraphic
+  if (shot.stock_media_ref || shot.stock_media_refs?.length) {
     return 'motiongraphic';
   }
-  // Default to AI-generated based on media type
-  return shot.media_type === 'video' ? 'ai_video' : 'ai_image';
+  // Respect the AI's media_type decision
+  if (shot.media_type === 'motiongraphic' || shot.fallback_type === 'motiongraphic') {
+    return 'motiongraphic';
+  }
+  // Default to AI video for video content
+  return 'ai_video';
 }
 
 // ============================================================================
@@ -375,7 +388,7 @@ async function generateShotSummaries(
     duration_seconds: number;
     content_type: string;
     text: string;
-    media_type?: 'image' | 'video' | 'motiongraphic';
+    media_type?: 'video' | 'motiongraphic';
   }>,
   outlineAssets?: AVScriptJobData['outlineAssets']
 ): Promise<ShotPart1[]> {
@@ -395,27 +408,42 @@ async function generateShotSummaries(
       summaries: Array<{ 
         index: number; 
         summary: string; 
-        media_type: 'image' | 'video' | 'motiongraphic';
+        media_type: 'video' | 'motiongraphic';
+        stock_worthy?: boolean;
+        image_count?: number;
       }> 
     }>(
       userId,
-      `You are a visual director creating brief shot descriptions for a video.
-For each segment, provide:
-1. A 1-sentence summary of what should be shown visually
-2. Whether it should be a static image, video clip, or motion graphic
+      `You are a visual director for a documentary-style video.
+Choose the best visual treatment for each segment.
 
-Guidelines:
-- Keep summaries concise (under 25 words)
-- Focus on the key visual element
-- Use "video" for action sequences, transitions, emotional moments
-- Use "image" for static concepts, portraits, objects
-- Use "motiongraphic" for:
-  - Abstract concepts or metaphors
-  - Data visualization (charts, graphs)
-  - Text-heavy segments or lists
-  - Kinetic typography
-  - "Transition" content types where a graphical element bridges scenes
-- Match the visual style to the content type
+YOUR TOOLS:
+
+**"video"** - AI-generated cinematic video
+Creates cinematic 3D-style video scenes. Use for narrative moments,
+imagined events, emotional beats, and scenes requiring fluid motion.
+This is your primary tool for creative, abstract, or fictional content.
+
+**"motiongraphic"** - Animated React compositions (Remotion)
+The container for all non-AI-video content. Capabilities include:
+- One or more stock images/videos with effects (Ken Burns, overlays, etc.)
+- AI-generated images with animation
+- Text animations, maps, timelines, data displays
+- Any combination—montages, comparisons, annotated layouts, etc.
+
+ALWAYS use "motiongraphic" when stock_worthy is true.
+
+For motiongraphics, you can request multiple images by setting image_count.
+Use this whenever having more images would improve the visual quality
+of the shot. If unset, defaults to 1.
+
+For each segment, provide:
+1. A 1-sentence visual summary (under 25 words) describing what should be shown
+2. Your choice of media_type: "video" or "motiongraphic"
+3. stock_worthy: true for famous people, landmarks, historical events, or real-world imagery
+4. image_count: (optional) number of images if more than 1 would improve the shot
+
+You are the creative director. Decide which tool best serves each moment.
 ${entityPromptSection}`,
       `Generate visual summaries for these ${segments.length} video segments:
 
@@ -429,7 +457,7 @@ ${JSON.stringify(segments.map((s, i) => ({
 Return JSON:
 {
   "summaries": [
-    { "index": 0, "summary": "Brief visual description with @(EntityName) references...", "media_type": "image" }
+    { "index": 0, "summary": "Brief visual description...", "media_type": "motiongraphic", "stock_worthy": true, "image_count": 3 }
   ]
 }`
     );
@@ -450,9 +478,11 @@ Return JSON:
         end_seconds: segment.end_seconds,
         duration_seconds: segment.duration_seconds,
         content_type: segment.content_type,
-        media_type: aiSummary?.media_type || segment.media_type || 'image',
+        media_type: aiSummary?.media_type || (segment.media_type as 'video' | 'motiongraphic') || 'video',
         text: segment.text,
         summary: aiSummary?.summary || generateFallbackSummary(segment),
+        stock_worthy: aiSummary?.stock_worthy ?? false,
+        image_count: aiSummary?.image_count,
         character_refs: characterRefs.length > 0 ? characterRefs : undefined,
         location_refs: locationRefs.length > 0 ? locationRefs : undefined,
         object_refs: objectRefs.length > 0 ? objectRefs : undefined,
@@ -476,7 +506,7 @@ Return JSON:
         end_seconds: segment.end_seconds,
         duration_seconds: segment.duration_seconds,
         content_type: segment.content_type,
-        media_type: segment.media_type || 'image',
+        media_type: (segment.media_type as 'video' | 'motiongraphic') || 'video',
         text: segment.text,
         summary: generateFallbackSummary(segment),
         character_refs: characterRefs.length > 0 ? characterRefs : undefined,

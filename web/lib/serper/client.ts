@@ -267,14 +267,39 @@ export async function downloadSerperImage(url: string): Promise<Buffer> {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
     },
+    redirect: 'follow',
   });
 
   if (!response.ok) {
     throw new Error(`Failed to download image: ${response.status}`);
   }
 
+  // Check content-type is actually an image
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.startsWith('image/')) {
+    throw new Error(`Invalid content-type: ${contentType} (expected image/*)`);
+  }
+  
+  // Reject GIF and SVG - not supported by Google/Gemini AI models
+  if (contentType.includes('gif') || contentType.includes('svg')) {
+    throw new Error(`Unsupported image format: ${contentType} (GIF/SVG not supported)`);
+  }
+
   const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  const buffer = Buffer.from(arrayBuffer);
+  
+  // Validate minimum size - real images should be at least 5KB
+  if (buffer.length < 5000) {
+    throw new Error(`Image too small (${buffer.length} bytes) - likely a blocked/placeholder response`);
+  }
+  
+  // Check if buffer starts with HTML (common for blocked downloads returning error pages)
+  const firstBytes = buffer.subarray(0, 100).toString('utf8').toLowerCase();
+  if (firstBytes.includes('<!doctype') || firstBytes.includes('<html') || firstBytes.includes('<?xml')) {
+    throw new Error('Response is HTML/XML, not an image - likely blocked or requires auth');
+  }
+  
+  return buffer;
 }
 
 /**

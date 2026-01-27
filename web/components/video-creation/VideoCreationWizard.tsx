@@ -307,6 +307,23 @@ export function VideoCreationWizard({
         const outlineConfig = (video.metadata as any)?.outlineConfig || null;
         const scriptOutput = (video.metadata as any)?.scriptOutput || null;
 
+        // Fetch stock media from database for this video
+        let stockMediaResults: any[] | null = null;
+        try {
+          const stockRes = await fetch(
+            `/api/stock-media/by-video?videoId=${video.id}`,
+          );
+          if (stockRes.ok) {
+            const stockData = await stockRes.json();
+            stockMediaResults = stockData.stockMedia || null;
+            console.log(
+              `[Wizard] Loaded ${stockMediaResults?.length || 0} stock media items`,
+            );
+          }
+        } catch (err) {
+          console.error("[Wizard] Failed to fetch stock media:", err);
+        }
+
         setState({
           prompt: video.idea || "",
           expandedIdea: expandedIdea,
@@ -322,11 +339,9 @@ export function VideoCreationWizard({
           outlineOutput,
           outlineConfig,
           outlineTaskId: null,
-          isStockMediaLoading:
-            !!(video.metadata as any)?.stockMediaTaskId &&
-            !(video.metadata as any)?.stockMediaResults,
+          isStockMediaLoading: false,
           stockMediaTaskId: (video.metadata as any)?.stockMediaTaskId || null,
-          stockMediaResults: (video.metadata as any)?.stockMediaResults || null,
+          stockMediaResults, // Use fetched stock media from database
           scriptConfig,
           universalScriptOutput,
           scriptOutput,
@@ -1565,6 +1580,7 @@ export function VideoCreationWizard({
             avScriptShots={state.avScriptPart1Output?.shots}
             audioChunks={state.audioChunks}
             script={state.script}
+            stockMediaResults={state.stockMediaResults}
             onUpdateShots={async (updatedShots) => {
               console.log("[Wizard] Updating shots:", updatedShots.length);
 

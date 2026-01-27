@@ -76,8 +76,8 @@ export interface ShotEvent {
   /** Content type classification */
   content_type: ContentType;
   
-  /** Media type classification */
-  media_type?: 'image' | 'video' | 'motiongraphic';
+  /** Media type classification (video or motiongraphic only) */
+  media_type?: 'video' | 'motiongraphic';
   
   /** Transcript text for this segment */
   text: string;

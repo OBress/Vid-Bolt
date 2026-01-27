@@ -13,9 +13,10 @@
  */
 
 import { ShotPart1 } from '@/lib/queues/workers/av-script';
-import { evaluateShotMatch, decideFallbackType } from './shot-evaluator';
 import { generateEmbedding } from '@/lib/ai/embedding';
 import { getSupabaseServiceClient } from '@/lib/queues/shared';
+import { validateStockImage } from '@/lib/classification/media-classifier';
+import { searchAndStoreImages, deleteStockMediaAsset } from '@/lib/av-script/stock-media-utils';
 
 // ============================================================================
 // TYPES
@@ -37,7 +38,8 @@ export interface StockMediaRef {
 
 export interface ShotWithStockMedia extends ShotPart1 {
   stock_media_ref?: StockMediaRef;
-  fallback_type?: 'motiongraphic' | 'ai_generated';
+  stock_media_refs?: StockMediaRef[];
+  fallback_type?: 'motiongraphic' | 'video';
 }
 
 export interface StockMediaCandidate {
@@ -75,8 +77,11 @@ const CONTEXT_WINDOW_SIZE = 2;
 /** Maximum candidates to evaluate per shot */
 const MAX_CANDIDATES_PER_SHOT = 3;
 
-/** Timeout for individual shot evaluation (ms) - increased for slow LLM responses */
-const SHOT_TIMEOUT_MS = 15000;
+/** Timeout for individual shot evaluation (ms) - 90s to account for rate limiting delays and retries */
+const SHOT_TIMEOUT_MS = 90000;
+
+/** Maximum concurrent validation calls - issue was image format not rate limits */
+const MAX_CONCURRENT_VALIDATIONS = 5;
 
 // ============================================================================
 // MAIN DIRECTOR CLASS
@@ -85,6 +90,7 @@ const SHOT_TIMEOUT_MS = 15000;
 export class StockMediaDirector {
   private config: StockMediaDirectorConfig;
   private logPrefix = '[StockMediaDirector]';
+  private usedStockIds: Set<string> = new Set(); // Track already-used stock media
 
   constructor(config: StockMediaDirectorConfig) {
     this.config = config;
@@ -93,6 +99,8 @@ export class StockMediaDirector {
   /**
    * Process all shots in parallel to match stock media or assign fallback types.
    * This is the main entry point for the Stock Media Director.
+   * 
+   * OPTIMIZATION: Only processes shots marked as stock_worthy (famous people/landmarks).
    */
   async processShots(shots: ShotPart1[]): Promise<ShotWithStockMedia[]> {
     console.log(`${this.logPrefix} Starting parallel processing for ${shots.length} shots`);
@@ -104,42 +112,143 @@ export class StockMediaDirector {
       return this.processShotsWithoutStockMedia(shots);
     }
 
-    // Step 1: Build context windows for all shots
-    const contexts = this.buildContextWindows(shots);
+    // OPTIMIZATION: Filter to only stock-worthy shots for vector search
+    const stockWorthyIndices: number[] = [];
+    shots.forEach((shot, idx) => {
+      if (shot.stock_worthy === true) {
+        stockWorthyIndices.push(idx);
+      }
+    });
 
-    // Step 2: Batch query vector DB for all shots (parallel)
-    const allCandidates = await this.batchSearchVectorDB(shots);
+    console.log(`${this.logPrefix} ${stockWorthyIndices.length}/${shots.length} shots marked as stock-worthy`);
+
+    // If no stock-worthy shots, skip vector search entirely
+    if (stockWorthyIndices.length === 0) {
+      console.log(`${this.logPrefix} No stock-worthy shots, assigning fallback types only`);
+      return this.processShotsWithoutStockMedia(shots);
+    }
+
+    // Step 1: Build context windows only for stock-worthy shots
+    const stockWorthyShots = stockWorthyIndices.map(idx => shots[idx]);
+    const contexts = this.buildContextWindows(shots); // Full context for reference
+
+    // Step 2: Batch query vector DB only for stock-worthy shots (parallel)
+    const stockWorthyCandidates = await this.batchSearchVectorDB(stockWorthyShots);
+    
+    // Map candidates back to original indices
+    const allCandidates: Record<number, StockMediaCandidate[]> = {};
+    stockWorthyIndices.forEach((originalIdx, swIdx) => {
+      allCandidates[originalIdx] = stockWorthyCandidates[swIdx] || [];
+    });
+    
     console.log(`${this.logPrefix} Vector DB returned candidates for ${Object.keys(allCandidates).filter(k => allCandidates[parseInt(k)]?.length > 0).length} shots`);
 
-    // Step 3: Parallel evaluation with timeout protection
-    const evaluationPromises = contexts.map((ctx, idx) =>
-      this.evaluateShotWithTimeout(ctx, allCandidates[idx] || [])
-    );
-
-    const results = await Promise.all(evaluationPromises);
+    // Step 3: Throttled evaluation with timeout protection (only stock-worthy shots)
+    // Use semaphore pattern to limit concurrent OpenRouter API calls
+    const results: ShotWithStockMedia[] = new Array(contexts.length);
+    let activeTasks = 0;
+    let nextIdx = 0;
+    
+    const processNext = async (): Promise<void> => {
+      while (nextIdx < contexts.length) {
+        if (activeTasks >= MAX_CONCURRENT_VALIDATIONS) {
+          // Wait for a slot to free up
+          await new Promise(resolve => setTimeout(resolve, 100));
+          continue;
+        }
+        
+        const idx = nextIdx++;
+        const ctx = contexts[idx];
+        
+        // Non-stock-worthy shots don't need throttling (no API calls)
+        if (!stockWorthyIndices.includes(idx)) {
+          results[idx] = await this.assignFallbackForShot(ctx.shot);
+          continue;
+        }
+        
+        // Stock-worthy shots need throttling
+        activeTasks++;
+        this.evaluateShotWithTimeout(ctx, allCandidates[idx] || [])
+          .then(result => {
+            results[idx] = result;
+            activeTasks--;
+          })
+          .catch(err => {
+            console.error(`${this.logPrefix} Shot ${idx} evaluation error:`, err);
+            results[idx] = this.assignFallbackForShot(ctx.shot) as unknown as ShotWithStockMedia;
+            activeTasks--;
+          });
+      }
+      
+      // Wait for all remaining active tasks to complete
+      while (activeTasks > 0) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    };
+    
+    await processNext();
 
     // Step 4: Log summary
-    const matched = results.filter(r => r.stock_media_ref).length;
-    const fallbacks = results.filter(r => r.fallback_type).length;
+    const matched = results.filter((r: ShotWithStockMedia) => r.stock_media_ref).length;
+    const fallbacks = results.filter((r: ShotWithStockMedia) => r.fallback_type).length;
     console.log(`${this.logPrefix} Complete: ${matched} shots matched, ${fallbacks} fallbacks assigned`);
 
     return results;
   }
 
   /**
-   * Process shots when stock media is disabled - only assign fallback types.
+   * Fast fallback assignment for non-stock-worthy shots.
+   * RESPECTS the AI's media_type decision from generateShotSummaries.
+   * Only falls back to content-type heuristics if AI didn't specify.
    */
-  private async processShotsWithoutStockMedia(shots: ShotPart1[]): Promise<ShotWithStockMedia[]> {
-    const fallbackPromises = shots.map(async (shot) => {
-      const fallbackType = await decideFallbackType(this.config.userId, shot);
-      return {
-        ...shot,
-        media_type: fallbackType as 'image' | 'video' | 'motiongraphic',
-        fallback_type: fallbackType,
-      } as ShotWithStockMedia;
-    });
+  private assignFallbackForShot(shot: ShotPart1): ShotWithStockMedia {
+    // CRITICAL: Respect the AI's media_type decision (video or motiongraphic)
+    // Only use content-type heuristic if AI didn't provide a media_type
+    const mediaType = shot.media_type || this.getFallbackFromContentType(shot.content_type);
+    
+    return {
+      ...shot,
+      media_type: mediaType,
+      fallback_type: mediaType,
+    };
+  }
 
-    return Promise.all(fallbackPromises);
+  /**
+   * Determine fallback type based on content type (instant, no API call).
+   * 
+   * Fern-style logic:
+   * - AI Video: Narrative scenes, people doing things, reimagining events
+   * - Motion Graphics: ONLY explicit comparisons (side-by-side analysis)
+   * 
+   * Note: list-item uses AI Video because documentary lists are almost always
+   * narrative scenes (people, places, events), not data visualizations.
+   */
+  private getFallbackFromContentType(contentType: string): 'motiongraphic' | 'video' {
+    switch (contentType) {
+      // ═══════════════════════════════════════════════════════════
+      // MOTION GRAPHICS: Only explicit analytical comparisons
+      // ═══════════════════════════════════════════════════════════
+      case 'comparison':     // Side-by-side analysis → split screens/charts
+        return 'motiongraphic';
+      
+      // ═══════════════════════════════════════════════════════════
+      // AI VIDEO (3D-style): All narrative content including lists
+      // ═══════════════════════════════════════════════════════════
+      case 'list-item':      // Narrative lists → imagined scenes (NOT data viz)
+      case 'concept':        // Narrative explanations → imagined scenes
+      case 'transition':     // Topic changes → new environments/settings
+      case 'emotional-beat': // Dramatic moments → expressive visuals
+      default:               // Unknown → assume narrative (Fern's default)
+        return 'video';
+    }
+  }
+
+  /**
+   * Process shots when stock media is disabled - only assign fallback types.
+   * Uses fast heuristics instead of Gemini API calls.
+   */
+  private processShotsWithoutStockMedia(shots: ShotPart1[]): ShotWithStockMedia[] {
+    return shots.map((shot) => this.assignFallbackForShot(shot));
   }
 
   /**
@@ -222,10 +331,23 @@ export class StockMediaDirector {
 
 
   /**
-   * Build a search query from shot data for vector similarity.
+   * Build search query for vector similarity matching.
+   * Includes entity names (characters, locations) for better semantic matching.
    */
   private buildSearchQuery(shot: ShotPart1): string {
     const parts: string[] = [];
+
+    // CRITICAL: Include character names for proper matching
+    // This is essential because stock media is indexed by subject (e.g., "Martin Luther King")
+    // but shot summaries may be abstract (e.g., "a man speaking at a podium")
+    if (shot.character_refs && shot.character_refs.length > 0) {
+      parts.push(`People: ${shot.character_refs.join(', ')}`);
+    }
+
+    // Include location names
+    if (shot.location_refs && shot.location_refs.length > 0) {
+      parts.push(`Places: ${shot.location_refs.join(', ')}`);
+    }
 
     // Primary: shot summary
     if (shot.summary) {
@@ -233,9 +355,9 @@ export class StockMediaDirector {
       parts.push(shot.summary.replace(/@\([^)]+\)/g, '').trim());
     }
 
-    // Secondary: shot text (first 100 chars)
+    // Secondary: shot text (first 150 chars for more context)
     if (shot.text) {
-      parts.push(shot.text.substring(0, 100));
+      parts.push(shot.text.substring(0, 150));
     }
 
     // Tertiary: content type context
@@ -245,93 +367,481 @@ export class StockMediaDirector {
   }
 
   /**
+   * Build search query specifically for Serper image search.
+   * Creates CONCRETE, SUBJECT-FOCUSED queries that will find real documentary/archival content.
+   * 
+   * Unlike buildSearchQuery (for vector similarity), this:
+   * 1. Prioritizes ENTITY NAMES over abstract descriptions
+   * 2. Adds "photo" or "historical photo" to find real images
+   * 3. Avoids narrative/abstract text that leads to random results
+   */
+  private buildSerperQuery(shot: ShotPart1): string {
+    const parts: string[] = [];
+    
+    // PRIORITY 1: Entity names (people, locations) - these are what we're actually searching for
+    const hasEntities = (shot.character_refs?.length || 0) > 0 || (shot.location_refs?.length || 0) > 0;
+    
+    if (shot.character_refs && shot.character_refs.length > 0) {
+      // Clean up character names - remove parenthetical notes
+      const cleanNames = shot.character_refs.map(name => 
+        name.replace(/\s*\([^)]*\)/g, '').trim()
+      ).filter(Boolean);
+      if (cleanNames.length > 0) {
+        parts.push(cleanNames.join(' '));
+      }
+    }
+    
+    if (shot.location_refs && shot.location_refs.length > 0) {
+      // Clean up location names - remove parenthetical notes
+      const cleanLocations = shot.location_refs.map(loc => 
+        loc.replace(/\s*\([^)]*\)/g, '').trim()
+      ).filter(Boolean);
+      if (cleanLocations.length > 0) {
+        parts.push(cleanLocations.join(' '));
+      }
+    }
+    
+    // PRIORITY 2: If we have entities, add context from summary (cleaned up)
+    if (hasEntities && shot.summary) {
+      // Extract just the subject matter, not the shot direction
+      // Remove @() references, "A shot of", "Image of", etc.
+      let cleanSummary = shot.summary
+        .replace(/@\([^)]+\)/g, '')  // Remove @() refs
+        .replace(/^(A |An |The )?(shot|image|photo|picture|view|montage|close-up|wide shot) of /i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      // Only add if it adds meaningful context (not just repeating entity names)
+      if (cleanSummary.length > 10 && !cleanSummary.toLowerCase().includes('concept')) {
+        parts.push(cleanSummary.substring(0, 50));
+      }
+    }
+    
+    // PRIORITY 3: If NO entities, fall back to summary but be very selective
+    if (!hasEntities && shot.summary) {
+      // This shot has no specific entities - try to extract concrete nouns
+      let cleanSummary = shot.summary
+        .replace(/@\([^)]+\)/g, '')
+        .replace(/^(A |An |The )?(shot|image|photo|picture|view|montage|close-up|wide shot) of /i, '')
+        .trim();
+      
+      // Take first 60 chars of cleaned summary
+      parts.push(cleanSummary.substring(0, 60));
+    }
+    
+    // SUFFIX: Add "photo" or "historical photo" to get real images, not graphics
+    if (parts.length > 0) {
+      const suffix = this.isHistoricalContent(shot) ? 'historical photo' : 'photo';
+      parts.push(suffix);
+    }
+    
+    return parts.join(' ').replace(/\s+/g, ' ').trim();
+  }
+  
+  /**
+   * Determine if content is historical (pre-2000s topics).
+   */
+  private isHistoricalContent(shot: ShotPart1): boolean {
+    const text = `${shot.summary || ''} ${shot.text || ''}`.toLowerCase();
+    // Look for historical indicators
+    const historicalKeywords = [
+      '1800s', '1900s', '1910s', '1920s', '1930s', '1940s', '1950s', '1960s', '1970s', '1980s',
+      'archival', 'historic', 'historical', 'vintage', 'civil rights', 'world war',
+      'great depression', 'segregation', 'victorian', 'colonial'
+    ];
+    return historicalKeywords.some(kw => text.includes(kw));
+  }
+
+  /**
    * Evaluate a shot with timeout protection.
+   * Uses a completion flag to prevent orphaned timeout logs.
    */
   private async evaluateShotWithTimeout(
     context: ShotContext,
     candidates: StockMediaCandidate[]
   ): Promise<ShotWithStockMedia> {
+    let completed = false;
+    
     const timeoutPromise = new Promise<ShotWithStockMedia>((resolve) => {
       setTimeout(() => {
-        console.warn(`${this.logPrefix} Shot ${context.index} evaluation timed out, using fallback`);
-        resolve({
-          ...context.shot,
-          media_type: 'motiongraphic',
-          fallback_type: 'motiongraphic',
-        });
+        if (!completed) {
+          console.warn(`${this.logPrefix} Shot ${context.index} evaluation timed out, using fallback`);
+          resolve({
+            ...context.shot,
+            media_type: 'motiongraphic',
+            fallback_type: 'motiongraphic',
+          });
+        }
       }, SHOT_TIMEOUT_MS);
     });
 
-    const evaluationPromise = this.evaluateShot(context, candidates);
+    const evaluationPromise = this.evaluateShot(context, candidates).then(result => {
+      completed = true;
+      return result;
+    });
 
     return Promise.race([evaluationPromise, timeoutPromise]);
   }
 
   /**
    * Evaluate a single shot against candidates and decide on stock media or fallback.
+   * 
+   * OPTIMIZATION: Uses pure similarity threshold matching (no Gemini calls for matching).
+   * VALIDATION: Uses Gemini 3 Flash to validate image quality (watermarks/NSFW) before returning.
+   * FALLBACK: If no candidates, searches Serper for new images and retries.
+   * MULTI-IMAGE: Supports image_count > 1 by matching multiple valid images.
    */
   private async evaluateShot(
     context: ShotContext,
-    candidates: StockMediaCandidate[]
+    candidates: StockMediaCandidate[],
+    isRetry: boolean = false
   ): Promise<ShotWithStockMedia> {
     const { shot, index } = context;
+    const HIGH_CONFIDENCE_THRESHOLD = 0.70;
+    const imageCount = shot.image_count || 1;
 
-    // No candidates - go directly to fallback
+    // =========================================================================
+    // NO CANDIDATES: Try on-demand Serper search (only on first attempt)
+    // =========================================================================
+    if (candidates.length === 0 && !isRetry) {
+      console.log(`${this.logPrefix} Shot ${index}: No candidates, triggering on-demand Serper search`);
+      
+      // Build focused search query for Serper (concrete subjects + "photo" suffix)
+      const searchQuery = this.buildSerperQuery(shot);
+      
+      // Search and store new images (fetch more if multi-image shot)
+      const maxImages = Math.max(5, imageCount * 2); // Extra buffer for validation failures
+      const result = await searchAndStoreImages(
+        searchQuery,
+        this.config.userId,
+        this.config.videoId,
+        maxImages
+      );
+
+      if (result.stored.length > 0) {
+        console.log(`${this.logPrefix} Shot ${index}: Stored ${result.stored.length} new images, retrying vector search`);
+        
+        // Re-query vector DB for this shot (more candidates for multi-image)
+        const newCandidates = await this.searchVectorDBForShot(shot, index, imageCount * 3);
+        
+        // Retry evaluation with new candidates (mark as retry to prevent infinite loop)
+        return this.evaluateShot(context, newCandidates, true);
+      }
+      
+      // No images found via Serper, fall through to fallback
+      console.log(`${this.logPrefix} Shot ${index}: Serper search returned no valid images`);
+    }
+
+    // =========================================================================
+    // STILL NO CANDIDATES: Use fallback
+    // =========================================================================
     if (candidates.length === 0) {
-      const fallbackType = await decideFallbackType(this.config.userId, shot);
+      const mediaType = shot.media_type || this.getFallbackFromContentType(shot.content_type);
       return {
         ...shot,
-        media_type: fallbackType as 'image' | 'video' | 'motiongraphic',
-        fallback_type: fallbackType,
-        summary: shot.summary, // No stock media reference
+        media_type: mediaType,
+        fallback_type: mediaType,
+        summary: shot.summary,
       };
     }
 
-    // Evaluate candidates with Gemini
-    for (const candidate of candidates) {
+    // =========================================================================
+    // EVALUATE CANDIDATES WITH VALIDATION
+    // =========================================================================
+    // Sort candidates by similarity (highest first)
+    const sortedCandidates = [...candidates].sort((a, b) => b.similarity - a.similarity);
+
+    // For multi-image shots, collect multiple valid images
+    const validRefs: StockMediaRef[] = [];
+    
+    for (const candidate of sortedCandidates) {
+      // Skip if already used (unless multi-image which may need duplicates across shots)
+      if (this.usedStockIds.has(candidate.id) && imageCount === 1) {
+        continue;
+      }
+
+      // Skip if below threshold
+      if (candidate.similarity < HIGH_CONFIDENCE_THRESHOLD) {
+        console.log(`${this.logPrefix} Shot ${index}: Candidate ${candidate.id} below threshold (${candidate.similarity.toFixed(2)})`);
+        break; // Sorted by similarity, so remaining candidates will also be below threshold
+      }
+
+      console.log(`${this.logPrefix} Shot ${index}: Validating candidate ${candidate.id} (similarity=${candidate.similarity.toFixed(2)})`);
+
+      // Validate the image before returning
       try {
-        const evaluation = await evaluateShotMatch(
+        const validation = await validateStockImage(
+          candidate.url, 
           this.config.userId,
-          context,
-          candidate
+          shot.summary || shot.text, // Pass shot description for relevance checking
+          candidate.r2_key // Pass r2_key for direct R2 fetching (bypasses CDN delays)
         );
 
-        if (evaluation.isGoodMatch) {
-          console.log(`${this.logPrefix} Shot ${index}: Matched with ${candidate.id} (narrative=${evaluation.narrativeFit}, technical=${evaluation.technicalFit})`);
+        if (!validation.isValid) {
+          console.log(`${this.logPrefix} Shot ${index}: Candidate ${candidate.id} invalid (${validation.failureReason}): ${validation.details}`);
           
-          // Build the @(StockMedia:id) reference
-          const stockMediaRef: StockMediaRef = {
-            id: candidate.id,
-            url: candidate.url,
-            thumbnailUrl: candidate.thumbnailUrl || candidate.url,
-            description: candidate.description,
-            similarity: candidate.similarity,
-          };
-
-          // Append stock media reference to summary
-          const updatedSummary = this.appendStockMediaReference(shot.summary || '', candidate.id);
-
-          return {
-            ...shot,
-            media_type: candidate.mediaType as 'image' | 'video' | 'motiongraphic',
-            summary: updatedSummary,
-            stock_media_ref: stockMediaRef,
-          };
+          // Delete if it's a confirmed content issue (watermark/nsfw/irrelevant)
+          // OR if it's a corrupted file (blocked download that stored garbage)
+          // Don't delete on transient API errors (like 429 rate limits)
+          const isCorruptedFile = validation.details?.includes('Corrupted image');
+          if (validation.failureReason !== 'error' || isCorruptedFile) {
+            await deleteStockMediaAsset(candidate.id, candidate.r2_key);
+          }
+          
+          // Continue to next candidate
+          continue;
         }
-      } catch (error) {
-        console.warn(`${this.logPrefix} Shot ${index} evaluation failed for candidate ${candidate.id}:`, error);
-        // Continue to next candidate
+
+        // Valid image!
+        const ref: StockMediaRef = {
+          id: candidate.id,
+          url: candidate.url,
+          thumbnailUrl: candidate.thumbnailUrl || candidate.url,
+          description: candidate.description,
+          similarity: candidate.similarity,
+        };
+        
+        validRefs.push(ref);
+        this.usedStockIds.add(candidate.id);
+        console.log(`${this.logPrefix} Shot ${index}: Validated match ${validRefs.length}/${imageCount} with ${candidate.id}`);
+        
+        // Stop if we have enough images
+        if (validRefs.length >= imageCount) {
+          break;
+        }
+      } catch (validationError) {
+        console.error(`${this.logPrefix} Shot ${index}: Validation failed for ${candidate.id}:`, validationError);
+        // On validation error, skip this candidate and try next
+        continue;
       }
     }
 
-    // No good match found - use fallback
-    console.log(`${this.logPrefix} Shot ${index}: No match found, deciding fallback type`);
-    const fallbackType = await decideFallbackType(this.config.userId, shot);
+    // =========================================================================
+    // RETURN MATCHED SHOT OR FALLBACK
+    // =========================================================================
+    if (validRefs.length > 0) {
+      // Check for partial match on multi-image shot
+      if (imageCount > 1 && validRefs.length < imageCount) {
+        // PARTIAL MATCH: Ask AI to reconsider the shot strategy
+        console.log(`${this.logPrefix} Shot ${index}: Partial match (${validRefs.length}/${imageCount}), asking AI to reconsider`);
+        return this.reconsiderShotStrategy(shot, validRefs, imageCount);
+      }
+      
+      // Full match
+      if (imageCount > 1) {
+        // Multi-image shot with all images found
+        console.log(`${this.logPrefix} Shot ${index}: Matched ${validRefs.length} images for multi-image shot`);
+        return this.buildMultiImageShot(shot, validRefs);
+      } else {
+        // Single image shot
+        return this.buildMatchedShot(shot, sortedCandidates.find(c => c.id === validRefs[0].id)!);
+      }
+    }
+
+    // No valid candidates found
+    console.log(`${this.logPrefix} Shot ${index}: No valid candidates after validation, using fallback`);
+    const mediaType = shot.media_type || this.getFallbackFromContentType(shot.content_type);
     
     return {
       ...shot,
-      media_type: fallbackType as 'image' | 'video' | 'motiongraphic',
-      fallback_type: fallbackType,
+      media_type: mediaType,
+      fallback_type: mediaType,
+    };
+  }
+
+  /**
+   * AI reconsideration when partial stock media match.
+   * Called when a multi-image shot doesn't find enough stock images.
+   * AI decides: use found images + AI-gen, or switch entirely to AI video.
+   */
+  private async reconsiderShotStrategy(
+    shot: ShotPart1,
+    foundRefs: StockMediaRef[],
+    requestedCount: number
+  ): Promise<ShotWithStockMedia> {
+    const { generateJSON } = await import('@/lib/ai/openrouter');
+    
+    try {
+      const response = await generateJSON<{
+        decision: 'use_partial' | 'all_ai_images' | 'ai_video';
+        reasoning: string;
+        updated_summary?: string;
+      }>(
+        this.config.userId,
+        `You are a visual director making a strategic decision about a video shot.
+
+The shot was originally planned to use ${requestedCount} stock images, but only ${foundRefs.length} could be found.
+
+Your options:
+1. "use_partial" - Use the ${foundRefs.length} found stock images and fill the rest with AI-generated images
+   - Choose this if the found images are central to the shot and AI can fill supporting roles
+   - Example: 2/3 historical photos found, AI can generate a complementary scene
+
+2. "all_ai_images" - Discard stock images and use all AI-generated images in a motiongraphic
+   - Choose this if mixing stock + AI would look inconsistent
+   - Example: Found 1/4 images, better to have unified AI aesthetic
+
+3. "ai_video" - Switch to AI-generated video entirely
+   - Choose this if the shot needs fluid motion or the concept works better as video
+   - Example: Abstract concepts, emotional beats, action sequences
+
+Consider: visual consistency, the shot's purpose, and what would look best on screen.`,
+        `Shot details:
+- Summary: "${shot.summary}"
+- Original plan: ${requestedCount} images (motiongraphic)
+- Found: ${foundRefs.length} stock images
+- Stock descriptions: ${foundRefs.map(r => r.description).join(', ')}
+- Content type: ${shot.content_type}
+
+What's your decision? Return JSON:
+{
+  "decision": "use_partial" | "all_ai_images" | "ai_video",
+  "reasoning": "Brief explanation",
+  "updated_summary": "Optional: new summary if changing approach"
+}`
+      );
+
+      console.log(`${this.logPrefix} AI reconsideration: ${response.decision} - ${response.reasoning}`);
+
+      switch (response.decision) {
+        case 'use_partial':
+          // Use found refs + mark remaining as AI-gen
+          return {
+            ...shot,
+            media_type: 'motiongraphic',
+            summary: response.updated_summary || shot.summary,
+            stock_media_ref: foundRefs[0],
+            stock_media_refs: foundRefs,
+            // image_count stays the same - renderer knows to fill with AI
+          };
+          
+        case 'all_ai_images':
+          // Motiongraphic with all AI images
+          return {
+            ...shot,
+            media_type: 'motiongraphic',
+            fallback_type: 'motiongraphic',
+            summary: response.updated_summary || shot.summary,
+            // Clear stock refs - all AI
+            stock_media_ref: undefined,
+            stock_media_refs: undefined,
+          };
+          
+        case 'ai_video':
+        default:
+          // Full AI video
+          return {
+            ...shot,
+            media_type: 'video',
+            fallback_type: 'video',
+            summary: response.updated_summary || shot.summary,
+            image_count: undefined, // No longer multi-image
+            stock_media_ref: undefined,
+            stock_media_refs: undefined,
+          };
+      }
+    } catch (error) {
+      console.error(`${this.logPrefix} AI reconsideration failed, defaulting to AI video:`, error);
+      // Safe fallback: AI video
+      return {
+        ...shot,
+        media_type: 'video',
+        fallback_type: 'video',
+      };
+    }
+  }
+
+  /**
+   * Build a matched shot result with multiple stock media references.
+   */
+  private buildMultiImageShot(shot: ShotPart1, refs: StockMediaRef[]): ShotWithStockMedia {
+    // Append @(StockMedia:id) references for all images
+    let updatedSummary = shot.summary || '';
+    refs.forEach(ref => {
+      if (!updatedSummary.includes(`@(StockMedia:${ref.id})`)) {
+        updatedSummary = `${updatedSummary.trim()} @(StockMedia:${ref.id})`;
+      }
+    });
+
+    return {
+      ...shot,
+      media_type: 'motiongraphic', // Multi-image is always motiongraphic
+      summary: updatedSummary,
+      stock_media_ref: refs[0], // Keep first for backwards compatibility
+      stock_media_refs: refs,
+    };
+  }
+
+  /**
+   * Search vector DB for a single shot.
+   * Used for on-demand retry after Serper search stores new images.
+   * @param shot - The shot to search for
+   * @param index - Shot index for logging
+   * @param matchCount - Optional number of candidates to return (default: MAX_CANDIDATES_PER_SHOT)
+   */
+  private async searchVectorDBForShot(shot: ShotPart1, index: number, matchCount?: number): Promise<StockMediaCandidate[]> {
+    const supabase = getSupabaseServiceClient();
+    
+    try {
+      const searchQuery = this.buildSearchQuery(shot);
+      const embedding = await generateEmbedding(searchQuery);
+      
+      const { data, error } = await supabase.rpc('match_stock_media_for_video', {
+        query_embedding: embedding,
+        match_threshold: SIMILARITY_THRESHOLD,
+        match_count: matchCount || MAX_CANDIDATES_PER_SHOT,
+        p_user_id: this.config.userId,
+        p_video_id: this.config.videoId,
+      });
+
+      if (error) {
+        console.warn(`${this.logPrefix} Vector search retry failed for shot ${index}:`, error);
+        return [];
+      }
+
+      return (data || []).map((row: any) => {
+        const m = row.metadata || {};
+        return {
+          id: row.id,
+          r2_key: row.r2_key,
+          source: row.source || m.source || 'other',
+          similarity: row.similarity || 0,
+          mediaType: m.mediaType || 'image',
+          description: m.description || m.title || '',
+          url: m.url || '',
+          thumbnailUrl: m.thumbnailUrl || '',
+          subjects: m.subjects,
+          mood: m.mood,
+          metadata: m,
+        };
+      });
+    } catch (error) {
+      console.warn(`${this.logPrefix} Vector search retry failed for shot ${index}:`, error);
+      return [];
+    }
+  }
+
+
+  /**
+   * Build a matched shot result with stock media reference.
+   */
+  private buildMatchedShot(shot: ShotPart1, candidate: StockMediaCandidate): ShotWithStockMedia {
+    const stockMediaRef: StockMediaRef = {
+      id: candidate.id,
+      url: candidate.url,
+      thumbnailUrl: candidate.thumbnailUrl || candidate.url,
+      description: candidate.description,
+      similarity: candidate.similarity,
+    };
+
+    const updatedSummary = this.appendStockMediaReference(shot.summary || '', candidate.id);
+
+    return {
+      ...shot,
+      // For stock matches, use video (since stock can be image or video)
+      media_type: (candidate.mediaType === 'video' ? 'video' : shot.media_type) || 'video' as 'video' | 'motiongraphic',
+      summary: updatedSummary,
+      stock_media_ref: stockMediaRef,
     };
   }
 

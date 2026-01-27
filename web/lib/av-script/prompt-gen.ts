@@ -95,7 +95,7 @@ export async function generateVisualPrompts(
       next_type: i < segments.length - 1 ? segments[i + 1].content_type : null,
     }));
 
-    const response = await generateJSON<{ prompts: { index: number; visual_description: string; media_type: 'image' | 'video' }[] }>(
+    const response = await generateJSON<{ prompts: { index: number; visual_description: string; media_type: 'video' | 'motiongraphic' }[] }>(
       userId,
       VISUAL_PROMPT_SYSTEM,
       `Generate visual prompts and media types for these ${segments.length} video segments:
@@ -107,12 +107,12 @@ IMPORTANT:
 - Match the style and detail level to the content type
 - Keep prompts concise (1-2 sentences)
 - No text overlays, just imagery
-- Determine "media_type": "image" or "video"
+- Determine "media_type": "video" or "motiongraphic"
 
 Return JSON:
 {
   "prompts": [
-    { "index": 0, "visual_description": "A detailed description...", "media_type": "image" }
+    { "index": 0, "visual_description": "A detailed description...", "media_type": "video" }
   ]
 }`
     );
@@ -122,7 +122,7 @@ Return JSON:
       response.prompts.forEach(p => {
         if (segments[p.index]) {
           segments[p.index].visual_prompt = p.visual_description;
-          segments[p.index].media_type = p.media_type || 'image';
+          segments[p.index].media_type = p.media_type || 'video';
         }
       });
     }
@@ -182,22 +182,12 @@ function generateFallbackPrompt(segment: ShotEvent): string {
 
 /**
  * Generate a fallback media type based on content type.
+ * Only video is returned since 'image' is no longer a valid standalone option.
  */
-function generateFallbackMediaType(segment: ShotEvent): 'image' | 'video' {
-  switch (segment.content_type) {
-    case 'transition':
-      return 'video'; // Transitions are inherently moving
-    case 'emotional-beat':
-      return 'video'; // Emotional beats often need subtle motion
-    case 'comparison':
-       return 'video'; // Comparisons often benefit from motion/change
-    case 'list-item':
-      return 'image'; // List items are usually static/distinct
-    case 'concept':
-      return 'image'; // Concepts can be complex static scenes
-    default:
-      return 'image';
-  }
+function generateFallbackMediaType(_segment: ShotEvent): 'video' {
+  // All content defaults to video - the AI in generateShotSummaries 
+  // decides between 'video' and 'motiongraphic' based on content
+  return 'video';
 }
 
 /**

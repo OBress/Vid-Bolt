@@ -12,7 +12,7 @@
  *   {userId}/gpu-api-test/
  */
 
-import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // ============================================================================
@@ -249,6 +249,55 @@ export async function deleteFile(key: string): Promise<void> {
   });
 
   await client.send(command);
+}
+
+/**
+ * Get a file from R2 storage as a base64 data URL.
+ * Uses the S3 API directly, bypassing CDN caching/propagation.
+ * 
+ * @param key - The storage key (path) of the file
+ * @returns Base64 data URL (e.g., "data:image/jpeg;base64,...")
+ */
+export async function getFileAsBase64(key: string): Promise<string> {
+  const client = getS3Client();
+  const bucketName = getBucketName();
+
+  const command = new GetObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+  });
+
+  const response = await client.send(command);
+  
+  if (!response.Body) {
+    throw new Error(`No body returned for key: ${key}`);
+  }
+
+  // Convert stream to buffer
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+  }
+  const buffer = Buffer.concat(chunks);
+  
+  // Determine MIME type from content-type or key extension
+  let mimeType = response.ContentType || 'application/octet-stream';
+  if (mimeType === 'application/octet-stream') {
+    // Fallback to guessing from extension
+    const ext = key.split('.').pop()?.toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+    };
+    mimeType = mimeTypes[ext || ''] || mimeType;
+  }
+
+  // Convert to base64 data URL
+  const base64 = buffer.toString('base64');
+  return `data:${mimeType};base64,${base64}`;
 }
 
 /**

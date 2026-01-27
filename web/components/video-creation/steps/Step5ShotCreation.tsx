@@ -63,17 +63,14 @@ type ShotItem = {
   text: string;
   summary?: string;
   visual_prompt?: string;
-  // Visual source for clear UI labeling
-  visual_source?:
-    | "stock_image"
-    | "stock_video"
-    | "ai_image"
-    | "ai_video"
-    | "motiongraphic";
+  // Visual source for clear UI labeling (binary taxonomy)
+  visual_source?: "ai_video" | "motiongraphic";
+  // Number of images AI requested for this shot (for multi-image motiongraphics)
+  image_count?: number;
   character_refs?: string[];
   location_refs?: string[];
   object_refs?: string[];
-  // Stock media reference from director matching
+  // Stock media reference from director matching (single image)
   stock_media_ref?: {
     id: string;
     url: string;
@@ -81,8 +78,16 @@ type ShotItem = {
     description: string;
     similarity: number;
   };
+  // Stock media references (multiple images when image_count > 1)
+  stock_media_refs?: Array<{
+    id: string;
+    url: string;
+    thumbnailUrl: string;
+    description: string;
+    similarity: number;
+  }>;
   // Fallback type when no stock media matched
-  fallback_type?: "motiongraphic" | "ai_generated";
+  fallback_type?: "motiongraphic" | "ai_generated" | "video";
 };
 
 // Content type options for the dropdown
@@ -151,6 +156,13 @@ interface Step5ShotCreationProps {
   onUpdateShots?: (shots: ShotItem[]) => Promise<void>;
   audioChunks?: AudioChunk[];
   script?: string;
+  stockMediaResults?: Array<{
+    id: string;
+    title?: string;
+    url?: string;
+    thumbnailUrl?: string;
+    source?: string;
+  }> | null;
 }
 
 type ElementType = "all" | "character" | "object" | "location" | "stock";
@@ -173,6 +185,7 @@ export function Step5ShotCreation({
   onUpdateShots,
   audioChunks,
   script,
+  stockMediaResults,
 }: Step5ShotCreationProps) {
   // Debug logging for shot data
   useEffect(() => {
@@ -194,10 +207,10 @@ export function Step5ShotCreation({
 
   // Convert outline assets to element format, or use mock data as fallback
   const [elements, setElements] = useState<ElementItem[]>(() => {
-    if (outlineAssets) {
-      const converted: ElementItem[] = [];
-      let idCounter = 1;
+    const converted: ElementItem[] = [];
+    let idCounter = 1;
 
+    if (outlineAssets) {
       // Add characters
       (outlineAssets.characters || []).forEach((char) => {
         converted.push({
@@ -233,12 +246,26 @@ export function Step5ShotCreation({
           originalId: obj.id,
         });
       });
-
-      return converted;
     }
-    // No outline assets available - return empty array instead of misleading mock data
-    // User needs to go back to Step 1 to regenerate outline
-    return [];
+
+    // Add stock media from Step 2 results
+    if (stockMediaResults && stockMediaResults.length > 0) {
+      console.log(
+        "[Step5] Adding stock media to elements:",
+        stockMediaResults.length,
+      );
+      stockMediaResults.forEach((media) => {
+        converted.push({
+          id: `stock-${media.id}`,
+          type: "stock",
+          name: media.title || `Stock ${media.source || "Image"}`,
+          image: media.thumbnailUrl || media.url || null,
+          originalId: media.id,
+        });
+      });
+    }
+
+    return converted;
   });
 
   // Check if we have missing elements (outline was lost)
@@ -751,25 +778,7 @@ export function Step5ShotCreation({
                             <span className="text-[10px] text-neutral-600">
                               {shot.duration_seconds.toFixed(1)}s
                             </span>
-                            {/* Visual source badges based on visual_source field */}
-                            {displayShot.visual_source === "stock_image" && (
-                              <span className="text-[10px] font-medium bg-green-900/50 text-green-300 px-2 py-1 rounded">
-                                <Package className="w-3 h-3 inline mr-1" />
-                                Stock
-                              </span>
-                            )}
-                            {displayShot.visual_source === "stock_video" && (
-                              <span className="text-[10px] font-medium bg-emerald-900/50 text-emerald-300 px-2 py-1 rounded">
-                                <Package className="w-3 h-3 inline mr-1" />
-                                Stock Video
-                              </span>
-                            )}
-                            {displayShot.visual_source === "ai_image" && (
-                              <span className="text-[10px] font-medium bg-purple-900/50 text-purple-300 px-2 py-1 rounded">
-                                <Sparkles className="w-3 h-3 inline mr-1" />
-                                AI Image
-                              </span>
-                            )}
+                            {/* Visual source badges (binary taxonomy) */}
                             {displayShot.visual_source === "ai_video" && (
                               <span className="text-[10px] font-medium bg-violet-900/50 text-violet-300 px-2 py-1 rounded">
                                 <Sparkles className="w-3 h-3 inline mr-1" />
@@ -779,9 +788,18 @@ export function Step5ShotCreation({
                             {displayShot.visual_source === "motiongraphic" && (
                               <span className="text-[10px] font-medium bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded">
                                 <Layers className="w-3 h-3 inline mr-1" />
-                                Motion
+                                Motion Graphic
                               </span>
                             )}
+                            {/* Show image count for multi-image shots */}
+                            {displayShot.image_count &&
+                              displayShot.image_count > 1 && (
+                                <span className="text-[10px] font-medium bg-sky-900/50 text-sky-300 px-2 py-1 rounded">
+                                  <Image className="w-3 h-3 inline mr-1" />
+                                  {displayShot.stock_media_refs?.length || 0}/
+                                  {displayShot.image_count} images
+                                </span>
+                              )}
                             {/* Fallback for missing visual_source - show based on media_type */}
                             {!displayShot.visual_source &&
                               displayShot.media_type === "video" && (
@@ -791,10 +809,10 @@ export function Step5ShotCreation({
                                 </span>
                               )}
                             {!displayShot.visual_source &&
-                              displayShot.media_type === "image" && (
-                                <span className="text-[10px] font-medium bg-sky-900/50 text-sky-300 px-2 py-1 rounded">
-                                  <Image className="w-3 h-3 inline mr-1" />
-                                  Image
+                              displayShot.media_type === "motiongraphic" && (
+                                <span className="text-[10px] font-medium bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded">
+                                  <Layers className="w-3 h-3 inline mr-1" />
+                                  Motion Graphic
                                 </span>
                               )}
                           </div>
@@ -1039,6 +1057,105 @@ export function Step5ShotCreation({
                 </div>
               </div>
             </div>
+
+            {/* Visual Assets Section - Show all images that will be used */}
+            {(editingShot?.visual_source === "motiongraphic" ||
+              editingShot?.stock_media_ref ||
+              editingShot?.stock_media_refs?.length) && (
+              <div className="space-y-2">
+                <Label className="text-neutral-300 flex items-center gap-2">
+                  <Layers className="w-4 h-4" />
+                  Visual Assets
+                  {editingShot.image_count && editingShot.image_count > 1 && (
+                    <span className="text-[10px] bg-sky-900/50 text-sky-300 px-2 py-0.5 rounded">
+                      {editingShot.image_count} images planned
+                    </span>
+                  )}
+                </Label>
+
+                <div className="grid grid-cols-4 gap-2">
+                  {/* Render stock images first */}
+                  {(
+                    editingShot?.stock_media_refs ||
+                    (editingShot?.stock_media_ref
+                      ? [editingShot.stock_media_ref]
+                      : [])
+                  ).map((ref, i) => (
+                    <div
+                      key={ref.id}
+                      className="aspect-video bg-neutral-800 rounded-lg overflow-hidden border border-neutral-700 relative group"
+                    >
+                      <img
+                        src={ref.thumbnailUrl || ref.url}
+                        alt={ref.description || `Stock image ${i + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute bottom-0 left-0 right-0 p-1.5 bg-gradient-to-t from-black/80 to-transparent">
+                        <span className="text-[9px] text-green-400 font-medium flex items-center gap-1">
+                          <Package className="w-2.5 h-2.5" />
+                          Stock
+                        </span>
+                      </div>
+                      {/* Similarity score on hover */}
+                      <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-[9px] bg-black/70 text-neutral-300 px-1.5 py-0.5 rounded">
+                          {(ref.similarity * 100).toFixed(0)}% match
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* AI-generated placeholders for remaining slots */}
+                  {(() => {
+                    const stockCount =
+                      editingShot?.stock_media_refs?.length ||
+                      (editingShot?.stock_media_ref ? 1 : 0);
+                    const totalNeeded = editingShot?.image_count || 1;
+                    const aiSlots = Math.max(0, totalNeeded - stockCount);
+
+                    return Array.from({ length: aiSlots }).map((_, i) => (
+                      <div
+                        key={`ai-placeholder-${i}`}
+                        className="aspect-video bg-gradient-to-br from-violet-950/50 to-purple-900/30 rounded-lg border border-dashed border-violet-700/50 flex flex-col items-center justify-center gap-1"
+                      >
+                        <Sparkles className="w-5 h-5 text-violet-400/70" />
+                        <span className="text-[9px] text-violet-400/70 font-medium">
+                          AI Gen
+                        </span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+
+                {/* Info message */}
+                {editingShot?.image_count && editingShot.image_count > 1 && (
+                  <p className="text-[10px] text-neutral-500 italic">
+                    {editingShot.stock_media_refs?.length ||
+                      (editingShot.stock_media_ref ? 1 : 0)}{" "}
+                    stock image(s) matched, remaining will be AI-generated
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Show placeholder for AI Video shots */}
+            {editingShot?.visual_source === "ai_video" && (
+              <div className="space-y-2">
+                <Label className="text-neutral-300 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" />
+                  Visual Preview
+                </Label>
+                <div className="aspect-video max-w-xs bg-gradient-to-br from-violet-950/50 to-purple-900/30 rounded-lg border border-violet-700/50 flex flex-col items-center justify-center gap-2">
+                  <Video className="w-8 h-8 text-violet-400/70" />
+                  <span className="text-xs text-violet-400/70 font-medium">
+                    AI-Generated Video
+                  </span>
+                  <span className="text-[10px] text-neutral-500">
+                    Will be generated during render
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Summary/Description */}
             <div className="space-y-2">

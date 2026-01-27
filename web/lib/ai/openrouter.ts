@@ -179,11 +179,37 @@ export async function callOpenRouter(
 
       if (!response.ok) {
         const errorMessage = data.error?.message || `HTTP ${response.status}`;
+        const errorMetadata = data.error?.metadata || {};
+        const providerName = errorMetadata.provider_name || 'unknown';
+        const rawError = errorMetadata.raw || '';
         
-        // Retry on 5xx errors, rate limits
-        if (response.status >= 500 || response.status === 429) {
+        // Log detailed error info for debugging
+        console.log(`[OpenRouter] Error details: status=${response.status}, provider=${providerName}, message="${errorMessage}"`);
+        if (data.error?.metadata) {
+          console.log(`[OpenRouter] Error metadata:`, JSON.stringify(data.error.metadata).substring(0, 500));
+        }
+        
+        // Check if this is a non-retryable image error (400 = bad request, image format issue)
+        // These errors won't succeed on retry - the image itself is the problem
+        const isImageError = response.status === 400 && (
+          rawError.includes('image is not valid') ||
+          rawError.includes('Unable to process input image') ||
+          rawError.includes('INVALID_ARGUMENT')
+        );
+        
+        // Only retry on 5xx errors, rate limits, and transient overload - NOT 400 errors
+        const isRetryable = !isImageError && (
+          response.status >= 500 || 
+          response.status === 429 || 
+          errorMessage.includes('rate limit') ||
+          errorMessage.includes('overloaded')
+        );
+          
+        if (isRetryable && attempt < maxRetries - 1) {
           lastError = new Error(`OpenRouter API error: ${errorMessage}`);
-          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          const backoffMs = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+          console.log(`[OpenRouter] Retrying in ${backoffMs}ms (attempt ${attempt + 1}/${maxRetries}): ${errorMessage}`);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
           continue;
         }
         

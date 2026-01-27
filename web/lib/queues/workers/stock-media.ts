@@ -12,6 +12,7 @@ import {
   classifyMedia,
   checkImageForWatermark,
   checkImageRelevance,
+  classifyAndValidateImage,
 } from '@/lib/classification/media-classifier';
 import type { ClassificationResult, ImageClassification, VideoClassification } from '@/lib/classification/types';
 import { generateEmbedding } from '@/lib/ai/embedding';
@@ -238,9 +239,11 @@ export async function stockMediaProcessor(
         });
         
         let imagesFromThisQuery = 0;  // Track images collected from this query
-        // SPEED: Skip AI classification - just take first 5 valid images
+        let imagesChecked = 0;  // Track total images checked (for limiting API calls)
+        
         for (const img of images) {
-          if (imagesFromThisQuery >= 5) break; // Hard limit: 5 per query
+          if (imagesFromThisQuery >= 5) break; // Hard limit: 5 accepted per query
+          if (imagesChecked >= 10) break; // Hard limit: 10 checked per query to control API costs
           
           try {
             // Skip known problematic URLs
@@ -250,7 +253,21 @@ export async function stockMediaProcessor(
               continue;
             }
             
-            // Download image
+            imagesChecked++;
+            
+            // Get file extension and check for supported formats
+            const extension = getExtensionFromUrl(img.imageUrl);
+            
+            // WHITELIST: Only allow formats supported by Google Gemini Flash
+            // Supported: PNG, JPEG/JPG, WebP
+            // NOT supported for AI analysis: GIF, SVG, BMP, TIFF
+            const SUPPORTED_IMAGE_FORMATS = ['jpg', 'jpeg', 'png', 'webp'];
+            if (!SUPPORTED_IMAGE_FORMATS.includes(extension.toLowerCase())) {
+              console.log(`[StockMediaWorker] Skipping unsupported format: ${extension}`);
+              continue;
+            }
+            
+            // Download image first
             let imageBuffer: Buffer;
             try {
               imageBuffer = await downloadSerperImage(img.imageUrl);
@@ -258,23 +275,62 @@ export async function stockMediaProcessor(
               continue; // Skip failed downloads silently
             }
             
-            // Upload to R2
-            const extension = getExtensionFromUrl(img.imageUrl);
+            // INTEGRITY CHECK: Validate buffer size before API call
+            // Corrupted downloads are typically < 5KB, oversized files > 10MB
+            if (imageBuffer.length < 5000) {
+              console.log(`[StockMediaWorker] Skipping corrupted image (${Math.round(imageBuffer.length / 1024)}KB < 5KB)`);
+              continue;
+            }
+            if (imageBuffer.length > 10 * 1024 * 1024) {
+              console.log(`[StockMediaWorker] Skipping oversized image (${Math.round(imageBuffer.length / 1024 / 1024)}MB > 10MB)`);
+              continue;
+            }
+            
+            // Convert buffer to base64 data URL for classification
+            // This ensures Google API can determine the MIME type correctly
+            const mimeType = extension === 'jpg' ? 'image/jpeg' : `image/${extension}`;
+            const base64DataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+            
+            // AI CLASSIFICATION: Validate before uploading to R2
+            let classification;
+            try {
+              classification = await classifyAndValidateImage(
+                base64DataUrl,
+                userId,
+                img.width,
+                img.height
+              );
+              
+              // If rejected, skip - no R2 upload needed
+              if (!classification.isValid) {
+                console.log(`[StockMediaWorker] Rejected: ${classification.rejectionReason} - ${classification.rejectionDetails}`);
+                stats.rejected++;
+                continue;
+              }
+            } catch (classError) {
+              console.error(`[StockMediaWorker] Classification error:`, classError);
+              // On classification error, still store with basic metadata
+              classification = null;
+            }
+            
+            // UPLOAD TO R2: Only for valid images
             const imageId = `serper-${Date.now()}-${uuidv4().slice(0, 8)}`;
             const r2Key = generateVideoStockImageKey(userId, videoId, imageId, extension);
             
             try {
-              await uploadAudioBuffer(imageBuffer, r2Key, `image/${extension === 'jpg' ? 'jpeg' : extension}`);
+              await uploadAudioBuffer(imageBuffer, r2Key, mimeType);
             } catch (e) {
-              continue; // Skip failed uploads
+              console.error(`[StockMediaWorker] R2 upload failed:`, e);
+              continue;
             }
             
             const publicUrl = getPublicUrl(r2Key);
             
-            // Generate embedding from title (simple, no AI classification)
-            const embedding = await safeGenerateEmbedding(`${img.title}. ${query}`);
+            // Generate embedding from AI classification (much better for search)
+            const embeddingText = classification?.embeddingText || `${img.title}. ${query}`;
+            const embedding = await safeGenerateEmbedding(embeddingText);
             
-            // Store in DB with basic metadata (no AI classification)
+            // Store in DB with AI-enriched metadata
             const { error: insertError } = await supabase.from('stock_media').insert({
               user_id: userId,
               video_id: videoId,
@@ -284,13 +340,21 @@ export async function stockMediaProcessor(
               metadata: {
                 mediaType: 'image',
                 title: img.title,
-                description: img.title, // Use title as description
+                description: classification?.description || img.title,
                 url: publicUrl,
                 thumbnailUrl: img.thumbnailUrl || publicUrl,
                 source: img.source,
                 query,
                 width: img.width,
                 height: img.height,
+                // AI classification data
+                ...(classification && {
+                  aiDescription: classification.description,
+                  aiSubjects: classification.subjects,
+                  namedEntities: classification.namedEntities,
+                  qualityScore: classification.qualityScore,
+                  resolutionScore: classification.resolutionScore,
+                }),
               },
               ...(embedding && { embedding }),
             });
@@ -306,12 +370,13 @@ export async function stockMediaProcessor(
               source: 'serper',
               url: publicUrl,
               thumbnailUrl: img.thumbnailUrl || publicUrl,
-              title: img.title,
+              title: classification?.description || img.title,
               r2Key,
             });
             
             stats.serperImages++;
             stats.stored++;
+            stats.classified++;
             imagesFromThisQuery++;
           } catch (err) {
             // Continue to next image on any error

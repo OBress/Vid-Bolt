@@ -6,6 +6,7 @@
  */
 
 import { callOpenRouter, type OpenRouterMessage } from '@/lib/ai/openrouter';
+import { getFileAsBase64 } from '@/lib/services/r2-storage';
 import {
   type ImageClassification,
   type VideoClassification,
@@ -472,6 +473,828 @@ export async function checkImageRelevance(
       isRelevant: true,
       score: 5,
       reason: 'Check failed - error during analysis',
+    };
+  }
+}
+
+// ==========================================================================
+// NSFW Detection (for Stock Media Director validation)
+// ==========================================================================
+
+export interface NSFWCheckResult {
+  /** Whether the image contains NSFW content */
+  isNSFW: boolean;
+  /** Confidence score 0-1 */
+  confidence: number;
+  /** Category of NSFW content if detected */
+  category?: 'adult' | 'violence' | 'drugs' | 'other';
+  /** Description of what was detected */
+  details?: string;
+}
+
+export interface StockImageValidation {
+  /** Whether the image is valid for use (no watermarks, no NSFW, relevant to shot) */
+  isValid: boolean;
+  /** Whether a watermark was detected */
+  hasWatermark: boolean;
+  /** Whether NSFW content was detected */
+  isNSFW: boolean;
+  /** Whether the image is relevant to the shot description */
+  isRelevant: boolean;
+  /** Relevance score 0-10 */
+  relevanceScore?: number;
+  /** Reason for invalidity if applicable */
+  failureReason?: 'watermark' | 'nsfw' | 'irrelevant' | 'error';
+  /** Details about the failure */
+  details?: string;
+}
+
+// Prompt for comprehensive stock image validation
+const COMPREHENSIVE_VALIDATION_PROMPT = `You are a visual quality expert validating stock images for video production.
+
+Analyze this image for THREE criteria:
+
+1. **WATERMARKS**: Check for any watermarks, logos, or stock photo agency stamps (like Shutterstock, Getty, iStock, Adobe Stock, etc.)
+
+2. **NSFW CONTENT**: Check for inappropriate content:
+   - Adult/sexual content (nudity, explicit imagery)
+   - Graphic violence (gore, injuries, violent acts)
+   - Drug-related content
+   - Other harmful content (hate symbols, disturbing imagery)
+
+3. **RELEVANCE**: Does this image ACCURATELY match what we're looking for?
+   We need: "{SHOT_DESCRIPTION}"
+   
+   Consider:
+   - Does the image show what is described?
+   - Is the subject/person/scene correct?
+   - Would this image make sense in a video about this topic?
+   - Be STRICT - a 70% match is NOT good enough for professional video
+
+Return a JSON object with these exact fields:
+{
+  "hasWatermark": true/false,
+  "watermarkConfidence": 0.0 to 1.0,
+  "watermarkDetails": "Description of watermark if found",
+  
+  "isNSFW": true/false,
+  "nsfwCategory": "adult" | "violence" | "drugs" | "other" | null,
+  "nsfwDetails": "Description of NSFW content if found",
+  
+  "isRelevant": true/false,
+  "relevanceScore": 0 to 10 (10 = perfect match, 0 = completely wrong),
+  "whatImageShows": "Brief description of what the image actually shows",
+  "relevanceReason": "Why it matches or doesn't match"
+}
+
+BE VERY STRICT about relevance. If we ask for "archival photos of Martin Luther King Jr." and the image shows a random woman in a costume, that is 0/10 relevance.
+
+Respond with valid JSON only, no markdown.`;
+
+const NSFW_DETECTION_PROMPT = `You are a content safety expert. Analyze this image for inappropriate content.
+
+Determine if the image contains any of the following:
+- Adult/sexual content (nudity, explicit imagery, suggestive content)
+- Graphic violence (gore, injuries, violent acts)
+- Drug-related content (drug use, paraphernalia)
+- Other harmful content (hate symbols, self-harm, disturbing imagery)
+
+Return a JSON object with these exact fields:
+{
+  "isNSFW": true/false,
+  "confidence": 0.0 to 1.0 (how confident you are),
+  "category": "adult" | "violence" | "drugs" | "other" | null,
+  "details": "Brief description of what was found, or 'Image is safe'"
+}
+
+Be thorough but reasonable - professional stock photography in business/educational contexts is acceptable.
+Err on the side of caution for clearly inappropriate content.
+
+Respond with valid JSON only, no markdown.`;
+
+/**
+ * Check if an image contains NSFW content.
+ * Uses Gemini 3 Flash for vision analysis.
+ */
+export async function checkImageForNSFW(
+  imageUrl: string,
+  userId: string
+): Promise<NSFWCheckResult> {
+  const messages: OpenRouterMessage[] = [
+    { role: 'system', content: NSFW_DETECTION_PROMPT },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Check this image for inappropriate content:' },
+        { type: 'image_url', image_url: { url: imageUrl } },
+      ] as any,
+    },
+  ];
+
+  try {
+    const response = await callOpenRouter(userId, messages, {
+      ...CLASSIFICATION_CONFIG,
+      maxTokens: 1024,
+    });
+
+    const result = parseJsonResponse<NSFWCheckResult>(response.content);
+    
+    return {
+      isNSFW: result.isNSFW ?? false,
+      confidence: result.confidence ?? 0,
+      category: result.category,
+      details: result.details,
+    };
+  } catch (error) {
+    console.error('[NSFW Check] Error:', error);
+    // On error, assume safe to avoid false rejections
+    return {
+      isNSFW: false,
+      confidence: 0,
+      details: 'Check failed - error during analysis',
+    };
+  }
+}
+
+// ==========================================================================
+// Pre-Storage Classification (Combined Classification + Validation)
+// ==========================================================================
+
+/**
+ * Configuration for pre-storage classification.
+ * Set ENABLE_STOCK_CLASSIFICATION=false in env to disable AI classification.
+ */
+export const STOCK_CLASSIFICATION_CONFIG = {
+  /** Whether classification is enabled (default: true) */
+  enabled: process.env.ENABLE_STOCK_CLASSIFICATION !== 'false',
+  
+  /** Minimum quality score to accept an image (1-10) */
+  minQualityScore: 5,
+  
+  /** Minimum resolution quality score (1-10) based on dimensions */
+  minResolutionScore: 4,
+  
+  /** Reject generic stock photos (posed actors, obviously staged) */
+  rejectGenericStockPhotos: true,
+};
+
+/**
+ * Result of pre-storage classification.
+ * Contains validation, classification, and embedding data in one response.
+ */
+export interface PreStorageClassification {
+  // ===== Validation =====
+  /** Whether the image passed all validation checks */
+  isValid: boolean;
+  /** Reason for rejection if not valid */
+  rejectionReason?: 'watermark' | 'nsfw' | 'low_quality' | 'generic_stock' | 'error';
+  /** Human-readable rejection details */
+  rejectionDetails?: string;
+  
+  // ===== Content Flags =====
+  /** Whether watermark was detected */
+  hasWatermark: boolean;
+  watermarkDetails?: string;
+  
+  /** Whether NSFW content was detected */
+  isNSFW: boolean;
+  nsfwDetails?: string;
+  
+  /** Whether this is a generic posed stock photo */
+  isGenericStockPhoto: boolean;
+  
+  // ===== Quality Scores =====
+  /** Overall content quality (composition, lighting, focus) - 1-10 */
+  qualityScore: number;
+  /** Resolution quality based on image dimensions - 1-10 */
+  resolutionScore: number;
+  
+  // ===== Classification Data =====
+  /** Detailed visual description for search */
+  description: string;
+  /** General subject categories */
+  subjects: string[];
+  /** Specific named entities (people, places, events) */
+  namedEntities: string[];
+  
+  // ===== Embedding =====
+  /** Pre-built text for embedding generation (entities + description) */
+  embeddingText: string;
+}
+
+const PRE_STORAGE_CLASSIFICATION_PROMPT = `You are an expert stock media analyst. Analyze this image for documentary/video production.
+
+Your job is to:
+1. VALIDATE the image (check for problems)
+2. CLASSIFY the image (describe what's in it)
+3. EXTRACT named entities (specific people, places, events)
+
+Return a JSON object with these exact fields:
+{
+  "description": "Detailed visual description (2-3 sentences). BE SPECIFIC about who/what/where is shown.",
+  
+  "namedEntities": ["List specific people by name, specific places, buildings, events, organizations. Example: ['Martin Luther King Jr.', 'Lincoln Memorial', 'March on Washington']"],
+  
+  "subjects": ["General categories like 'civil rights speech', 'historical photograph', 'business meeting'"],
+  
+  "hasWatermark": true/false,
+  "watermarkDetails": "Description of watermark if found (Getty, Shutterstock, iStock, etc.), or null",
+  
+  "isNSFW": true/false,
+  "nsfwDetails": "Description of NSFW content if found, or null",
+  
+  "qualityScore": 1-10 (based on sharpness, composition, lighting, professional quality),
+  
+  "isGenericStockPhoto": true/false
+}
+
+CRITICAL - Named Entities:
+- If you recognize a specific person (politician, celebrity, historical figure), name them
+- If you see a specific landmark or building, name it
+- If this is a specific historical event, name it
+- These are CRUCIAL for search matching
+
+Quality Score Guide:
+- 9-10: Professional quality, excellent composition
+- 7-8: High quality, minor imperfections
+- 5-6: Decent quality, usable
+- 3-4: Low quality, blurry or poor composition  
+- 1-2: Very poor quality, not usable
+
+isGenericStockPhoto = TRUE if:
+- Obviously posed business people in a studio
+- Stock photo actors with fake smiles
+- Staged scenes with models
+- NOT real people, events, or documentary content
+
+isGenericStockPhoto = FALSE if:
+- Real archival/historical photographs
+- Documentary footage screenshots
+- News photography
+- Real people at real events
+
+Respond with valid JSON only, no markdown.`;
+
+/**
+ * Classify and validate an image BEFORE storing it.
+ * Combines watermark/NSFW detection with semantic classification in ONE API call.
+ * 
+ * This should be called before storing any Serper image to:
+ * 1. Reject watermarked/NSFW/low-quality images
+ * 2. Generate rich classification data for embedding
+ * 
+ * @param imageUrl - URL or base64 data URL of the image
+ * @param userId - User ID for API calls
+ * @param width - Optional image width for resolution scoring
+ * @param height - Optional image height for resolution scoring
+ * @returns Classification result with validation status
+ */
+export async function classifyAndValidateImage(
+  imageUrl: string,
+  userId: string,
+  width?: number,
+  height?: number
+): Promise<PreStorageClassification> {
+  // Check if classification is disabled
+  if (!STOCK_CLASSIFICATION_CONFIG.enabled) {
+    console.log('[Classification] Skipped - classification disabled');
+    return {
+      isValid: true,
+      hasWatermark: false,
+      isNSFW: false,
+      isGenericStockPhoto: false,
+      qualityScore: 7,
+      resolutionScore: 7,
+      description: 'Classification disabled',
+      subjects: [],
+      namedEntities: [],
+      embeddingText: '',
+    };
+  }
+
+  // Calculate resolution score based on dimensions
+  let resolutionScore = 7; // Default if dimensions not provided
+  if (width && height) {
+    const pixels = width * height;
+    if (pixels >= 4000000) resolutionScore = 10;      // 4MP+
+    else if (pixels >= 2000000) resolutionScore = 9;  // 2MP+
+    else if (pixels >= 1000000) resolutionScore = 8;  // 1MP+
+    else if (pixels >= 500000) resolutionScore = 6;   // 0.5MP+
+    else if (pixels >= 250000) resolutionScore = 5;   // 0.25MP+
+    else resolutionScore = 3;                          // Low res
+  }
+
+  // Reject immediately if resolution is too low
+  if (resolutionScore < STOCK_CLASSIFICATION_CONFIG.minResolutionScore) {
+    console.log(`[Classification] Rejected - low resolution (score: ${resolutionScore})`);
+    return {
+      isValid: false,
+      rejectionReason: 'low_quality',
+      rejectionDetails: `Image resolution too low (${width}x${height})`,
+      hasWatermark: false,
+      isNSFW: false,
+      isGenericStockPhoto: false,
+      qualityScore: 0,
+      resolutionScore,
+      description: '',
+      subjects: [],
+      namedEntities: [],
+      embeddingText: '',
+    };
+  }
+
+  try {
+    const messages: OpenRouterMessage[] = [
+      { role: 'system', content: PRE_STORAGE_CLASSIFICATION_PROMPT },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Analyze this image:' },
+          { type: 'image_url', image_url: { url: imageUrl } },
+        ] as any,
+      },
+    ];
+
+    const response = await callOpenRouter(userId, messages, {
+      ...CLASSIFICATION_CONFIG,
+      maxTokens: 2048,
+    });
+
+    const result = parseJsonResponse<{
+      description: string;
+      namedEntities: string[];
+      subjects: string[];
+      hasWatermark: boolean;
+      watermarkDetails?: string;
+      isNSFW: boolean;
+      nsfwDetails?: string;
+      qualityScore: number;
+      isGenericStockPhoto: boolean;
+    }>(response.content);
+
+    const qualityScore = result.qualityScore || 5;
+
+    // Build embedding text: entities first, then description
+    const embeddingParts: string[] = [];
+    if (result.namedEntities && result.namedEntities.length > 0) {
+      embeddingParts.push(result.namedEntities.join(', '));
+    }
+    if (result.subjects && result.subjects.length > 0) {
+      embeddingParts.push(result.subjects.join(', '));
+    }
+    if (result.description) {
+      embeddingParts.push(result.description);
+    }
+    const embeddingText = embeddingParts.join('. ');
+
+    // Check for rejection reasons
+    if (result.hasWatermark) {
+      console.log(`[Classification] Rejected - watermark detected: ${result.watermarkDetails}`);
+      return {
+        isValid: false,
+        rejectionReason: 'watermark',
+        rejectionDetails: result.watermarkDetails || 'Watermark detected',
+        hasWatermark: true,
+        watermarkDetails: result.watermarkDetails,
+        isNSFW: result.isNSFW,
+        nsfwDetails: result.nsfwDetails,
+        isGenericStockPhoto: result.isGenericStockPhoto,
+        qualityScore,
+        resolutionScore,
+        description: result.description || '',
+        subjects: result.subjects || [],
+        namedEntities: result.namedEntities || [],
+        embeddingText,
+      };
+    }
+
+    if (result.isNSFW) {
+      console.log(`[Classification] Rejected - NSFW content: ${result.nsfwDetails}`);
+      return {
+        isValid: false,
+        rejectionReason: 'nsfw',
+        rejectionDetails: result.nsfwDetails || 'NSFW content detected',
+        hasWatermark: result.hasWatermark,
+        watermarkDetails: result.watermarkDetails,
+        isNSFW: true,
+        nsfwDetails: result.nsfwDetails,
+        isGenericStockPhoto: result.isGenericStockPhoto,
+        qualityScore,
+        resolutionScore,
+        description: result.description || '',
+        subjects: result.subjects || [],
+        namedEntities: result.namedEntities || [],
+        embeddingText,
+      };
+    }
+
+    if (qualityScore < STOCK_CLASSIFICATION_CONFIG.minQualityScore) {
+      console.log(`[Classification] Rejected - low quality (score: ${qualityScore})`);
+      return {
+        isValid: false,
+        rejectionReason: 'low_quality',
+        rejectionDetails: `Quality score ${qualityScore}/10 below threshold`,
+        hasWatermark: result.hasWatermark,
+        watermarkDetails: result.watermarkDetails,
+        isNSFW: result.isNSFW,
+        nsfwDetails: result.nsfwDetails,
+        isGenericStockPhoto: result.isGenericStockPhoto,
+        qualityScore,
+        resolutionScore,
+        description: result.description || '',
+        subjects: result.subjects || [],
+        namedEntities: result.namedEntities || [],
+        embeddingText,
+      };
+    }
+
+    if (STOCK_CLASSIFICATION_CONFIG.rejectGenericStockPhotos && result.isGenericStockPhoto) {
+      console.log(`[Classification] Rejected - generic stock photo`);
+      return {
+        isValid: false,
+        rejectionReason: 'generic_stock',
+        rejectionDetails: 'Generic posed stock photo, not documentary content',
+        hasWatermark: result.hasWatermark,
+        watermarkDetails: result.watermarkDetails,
+        isNSFW: result.isNSFW,
+        nsfwDetails: result.nsfwDetails,
+        isGenericStockPhoto: true,
+        qualityScore,
+        resolutionScore,
+        description: result.description || '',
+        subjects: result.subjects || [],
+        namedEntities: result.namedEntities || [],
+        embeddingText,
+      };
+    }
+
+    // All checks passed
+    console.log(`[Classification] Accepted - ${result.namedEntities?.length || 0} entities, quality: ${qualityScore}/10`);
+    return {
+      isValid: true,
+      hasWatermark: false,
+      watermarkDetails: undefined,
+      isNSFW: false,
+      nsfwDetails: undefined,
+      isGenericStockPhoto: result.isGenericStockPhoto,
+      qualityScore,
+      resolutionScore,
+      description: result.description || '',
+      subjects: result.subjects || [],
+      namedEntities: result.namedEntities || [],
+      embeddingText,
+    };
+
+  } catch (error) {
+    console.error('[Classification] Error:', error);
+    // On error, reject to be safe
+    return {
+      isValid: false,
+      rejectionReason: 'error',
+      rejectionDetails: error instanceof Error ? error.message : 'Classification failed',
+      hasWatermark: false,
+      isNSFW: false,
+      isGenericStockPhoto: false,
+      qualityScore: 0,
+      resolutionScore,
+      description: '',
+      subjects: [],
+      namedEntities: [],
+      embeddingText: '',
+    };
+  }
+}
+
+/**
+ * Validate a stock image for use in video production.
+ * Checks for watermarks, NSFW content, AND relevance to the shot.
+ * Used by StockMediaDirector for lazy validation before returning matches.
+ * 
+ * @param imageUrl - URL of the image to validate (fallback if r2Key not provided)
+ * @param userId - User ID for API calls  
+ * @param shotDescription - Description of what the shot needs (for relevance check)
+ * @param r2Key - Optional R2 storage key - if provided, fetches directly from R2 (bypasses CDN delays)
+ * @returns Validation result with details
+ */
+export async function validateStockImage(
+  imageUrl: string,
+  userId: string,
+  shotDescription?: string,
+  r2Key?: string
+): Promise<StockImageValidation> {
+  // Determine the image URL to use for validation
+  // If r2Key is provided, fetch directly from R2 as base64 to bypass CDN propagation delays
+  let validationImageUrl = imageUrl;
+  
+  if (r2Key) {
+    try {
+      validationImageUrl = await getFileAsBase64(r2Key);
+      // Log diagnostic info for debugging image validation issues
+      const base64SizeKB = Math.round(validationImageUrl.length / 1024);
+      const mimeMatch = validationImageUrl.match(/^data:([^;]+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'unknown';
+      console.log(`[Stock Validation] Image loaded: ${r2Key} (${mimeType}, ${base64SizeKB}KB base64)`);
+      
+      // Reject corrupted/blocked images that are too small
+      // Real images should be at least 5KB base64 (about 3.75KB actual data)
+      if (base64SizeKB < 5) {
+        console.log(`[Stock Validation] Rejecting corrupted image ${r2Key} - only ${base64SizeKB}KB (blocked download)`);
+        return {
+          isValid: false,
+          hasWatermark: false,
+          isNSFW: false,
+          isRelevant: false,
+          failureReason: 'error',
+          details: `Corrupted image (${base64SizeKB}KB) - likely a blocked download`,
+        };
+      }
+      
+      // Warn about very large images
+      if (base64SizeKB > 4000) {
+        console.log(`[Stock Validation] Warning: Very large image ${base64SizeKB}KB - may cause issues`);
+      }
+    } catch (fetchError) {
+      console.error('[Stock Validation] Failed to fetch from R2, falling back to CDN URL:', fetchError);
+      // Fall back to CDN URL - but first validate it's not a corrupted file
+      try {
+        const cdnResponse = await fetch(imageUrl, { method: 'HEAD' });
+        if (cdnResponse.ok) {
+          const contentLength = parseInt(cdnResponse.headers.get('content-length') || '0', 10);
+          const contentType = cdnResponse.headers.get('content-type') || '';
+          
+          // Reject if too small (likely corrupted stub) or wrong content type
+          if (contentLength < 5000) {
+            console.log(`[Stock Validation] CDN image too small (${contentLength} bytes) - likely corrupted`);
+            return {
+              isValid: false,
+              hasWatermark: false,
+              isNSFW: false,
+              isRelevant: false,
+              failureReason: 'error',
+              details: `Corrupted image (${Math.round(contentLength / 1024)}KB) - likely a blocked download`,
+            };
+          }
+          
+          if (!contentType.startsWith('image/')) {
+            console.log(`[Stock Validation] CDN response is not an image: ${contentType}`);
+            return {
+              isValid: false,
+              hasWatermark: false,
+              isNSFW: false,
+              isRelevant: false,
+              failureReason: 'error',
+              details: `Invalid content type: ${contentType}`,
+            };
+          }
+          
+          console.log(`[Stock Validation] CDN fallback validated: ${contentLength} bytes, ${contentType}`);
+        }
+      } catch (cdnCheckError) {
+        console.error('[Stock Validation] CDN pre-check failed:', cdnCheckError);
+        // Continue anyway - OpenRouter will handle the error
+      }
+    }
+  }
+
+  // If no shot description provided, fall back to basic validation
+  if (!shotDescription) {
+    // Run basic checks in parallel
+    const [watermarkResult, nsfwResult] = await Promise.all([
+      checkImageForWatermark(validationImageUrl, userId),
+      checkImageForNSFW(validationImageUrl, userId),
+    ]);
+
+    const hasWatermark = watermarkResult.hasWatermark && watermarkResult.confidence > 0.7;
+    const isNSFW = nsfwResult.isNSFW;
+
+    if (hasWatermark) {
+      return {
+        isValid: false,
+        hasWatermark: true,
+        isNSFW,
+        isRelevant: true, // Assume relevant if no description
+        failureReason: 'watermark',
+        details: watermarkResult.details,
+      };
+    }
+
+    if (isNSFW) {
+      return {
+        isValid: false,
+        hasWatermark,
+        isNSFW: true,
+        isRelevant: true,
+        failureReason: 'nsfw',
+        details: nsfwResult.details,
+      };
+    }
+
+    return {
+      isValid: true,
+      hasWatermark: false,
+      isNSFW: false,
+      isRelevant: true,
+    };
+  }
+
+  // COMPREHENSIVE VALIDATION with relevance check
+  const prompt = COMPREHENSIVE_VALIDATION_PROMPT.replace('{SHOT_DESCRIPTION}', shotDescription);
+
+  const messages: OpenRouterMessage[] = [
+    { role: 'system', content: prompt },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: `Validate this image for use in the shot: "${shotDescription}"` },
+        { type: 'image_url', image_url: { url: validationImageUrl } },
+      ] as any,
+    },
+  ];
+
+  try {
+    const response = await callOpenRouter(userId, messages, {
+      ...CLASSIFICATION_CONFIG,
+      maxTokens: 1024,
+    });
+
+    const result = parseJsonResponse<{
+      hasWatermark: boolean;
+      watermarkConfidence: number;
+      watermarkDetails?: string;
+      isNSFW: boolean;
+      nsfwCategory?: string;
+      nsfwDetails?: string;
+      isRelevant: boolean;
+      relevanceScore: number;
+      whatImageShows?: string;
+      relevanceReason?: string;
+    }>(response.content);
+
+    // Check watermark (reject if confidence > 0.7)
+    const hasWatermark = result.hasWatermark && result.watermarkConfidence > 0.7;
+    const isNSFW = result.isNSFW;
+    const isRelevant = result.isRelevant && result.relevanceScore >= 7; // Require 7+ relevance
+
+    console.log(`[Stock Validation] Image analysis: watermark=${hasWatermark}, nsfw=${isNSFW}, relevant=${isRelevant} (${result.relevanceScore}/10)`);
+    console.log(`[Stock Validation] What image shows: ${result.whatImageShows}`);
+    console.log(`[Stock Validation] Relevance reason: ${result.relevanceReason}`);
+
+    // Priority: watermark > nsfw > relevance
+    if (hasWatermark) {
+      return {
+        isValid: false,
+        hasWatermark: true,
+        isNSFW,
+        isRelevant,
+        relevanceScore: result.relevanceScore,
+        failureReason: 'watermark',
+        details: result.watermarkDetails || 'Watermark detected',
+      };
+    }
+
+    if (isNSFW) {
+      return {
+        isValid: false,
+        hasWatermark,
+        isNSFW: true,
+        isRelevant,
+        relevanceScore: result.relevanceScore,
+        failureReason: 'nsfw',
+        details: result.nsfwDetails || 'NSFW content detected',
+      };
+    }
+
+    if (!isRelevant) {
+      return {
+        isValid: false,
+        hasWatermark,
+        isNSFW,
+        isRelevant: false,
+        relevanceScore: result.relevanceScore,
+        failureReason: 'irrelevant',
+        details: `Image shows "${result.whatImageShows}" but shot needs "${shotDescription}". ${result.relevanceReason}`,
+      };
+    }
+
+    return {
+      isValid: true,
+      hasWatermark: false,
+      isNSFW: false,
+      isRelevant: true,
+      relevanceScore: result.relevanceScore,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('[Stock Validation] Error:', errorMessage);
+    
+    // Check if this is an "invalid image" error from Google - try CDN URL fallback
+    const isInvalidImageError = errorMessage.includes('image is not valid') || 
+      errorMessage.includes('Unable to process input image') ||
+      errorMessage.includes('INVALID_ARGUMENT');
+    
+    // If we used base64 and got invalid image error, try CDN URL as fallback
+    if (isInvalidImageError && r2Key && validationImageUrl !== imageUrl) {
+      console.log(`[Stock Validation] Base64 failed, retrying with CDN URL: ${imageUrl}`);
+      try {
+        // Retry with CDN URL
+        const cdnMessages: OpenRouterMessage[] = [
+          { role: 'system', content: prompt },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: `Validate this image for use in the shot: "${shotDescription}"` },
+              { type: 'image_url', image_url: { url: imageUrl } },
+            ] as any,
+          },
+        ];
+        
+        const cdnResponse = await callOpenRouter(userId, cdnMessages, {
+          ...CLASSIFICATION_CONFIG,
+          maxTokens: 1024,
+        });
+        
+        const cdnResult = parseJsonResponse<{
+          hasWatermark: boolean;
+          watermarkConfidence: number;
+          watermarkDetails?: string;
+          isNSFW: boolean;
+          nsfwCategory?: string;
+          nsfwDetails?: string;
+          isRelevant: boolean;
+          relevanceScore: number;
+          whatImageShows?: string;
+          relevanceReason?: string;
+        }>(cdnResponse.content);
+        
+        if (!cdnResult) {
+          throw new Error('Failed to parse CDN validation response');
+        }
+        
+        // Log the CDN result
+        console.log(`[Stock Validation] CDN fallback success: watermark=${cdnResult.hasWatermark}, nsfw=${cdnResult.isNSFW}, relevant=${cdnResult.isRelevant} (${cdnResult.relevanceScore}/10)`);
+        
+        const hasWatermark = cdnResult.hasWatermark && cdnResult.watermarkConfidence > 0.7;
+        const isNSFW = cdnResult.isNSFW;
+        const isRelevant = cdnResult.isRelevant && cdnResult.relevanceScore >= 7;
+
+        if (hasWatermark) {
+          return {
+            isValid: false,
+            hasWatermark: true,
+            isNSFW,
+            isRelevant,
+            relevanceScore: cdnResult.relevanceScore,
+            failureReason: 'watermark',
+            details: cdnResult.watermarkDetails || 'Watermark detected',
+          };
+        }
+
+        if (isNSFW) {
+          return {
+            isValid: false,
+            hasWatermark,
+            isNSFW: true,
+            isRelevant,
+            relevanceScore: cdnResult.relevanceScore,
+            failureReason: 'nsfw',
+            details: cdnResult.nsfwDetails || 'NSFW content detected',
+          };
+        }
+
+        if (!isRelevant) {
+          return {
+            isValid: false,
+            hasWatermark,
+            isNSFW,
+            isRelevant: false,
+            relevanceScore: cdnResult.relevanceScore,
+            failureReason: 'irrelevant',
+            details: `Image shows "${cdnResult.whatImageShows}" but shot needs "${shotDescription}". ${cdnResult.relevanceReason}`,
+          };
+        }
+
+        return {
+          isValid: true,
+          hasWatermark: false,
+          isNSFW: false,
+          isRelevant: true,
+          relevanceScore: cdnResult.relevanceScore,
+        };
+      } catch (cdnError) {
+        console.error('[Stock Validation] CDN fallback also failed:', cdnError);
+        // Fall through to error return below
+      }
+    }
+    
+    // On error, mark as error (not irrelevant) so the image is NOT deleted
+    // This prevents race conditions where parallel validations delete images
+    return {
+      isValid: false,
+      hasWatermark: false,
+      isNSFW: false,
+      isRelevant: false,
+      failureReason: 'error',
+      details: 'Validation failed - error during analysis',
     };
   }
 }

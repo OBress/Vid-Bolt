@@ -206,7 +206,7 @@ export function createEntityLookup(outlineAssets?: {
 }
 
 /**
- * Creates a stock media lookup from shot stock_media_ref data.
+ * Creates a stock media lookup from shot stock_media_ref/stock_media_refs data.
  */
 export function createStockMediaLookup(
   shots?: Array<{
@@ -216,11 +216,18 @@ export function createStockMediaLookup(
       thumbnailUrl: string;
       description: string;
     };
+    stock_media_refs?: Array<{
+      id: string;
+      url: string;
+      thumbnailUrl: string;
+      description: string;
+    }>;
   }>,
 ): Map<string, StockMediaInfo> {
   const lookup = new Map<string, StockMediaInfo>();
 
   shots?.forEach((shot) => {
+    // Handle single ref (backwards compatibility)
     if (shot.stock_media_ref) {
       lookup.set(shot.stock_media_ref.id, {
         id: shot.stock_media_ref.id,
@@ -229,6 +236,15 @@ export function createStockMediaLookup(
         description: shot.stock_media_ref.description,
       });
     }
+    // Handle multiple refs (multi-image shots)
+    shot.stock_media_refs?.forEach((ref) => {
+      lookup.set(ref.id, {
+        id: ref.id,
+        url: ref.url,
+        thumbnailUrl: ref.thumbnailUrl,
+        description: ref.description,
+      });
+    });
   });
 
   return lookup;
