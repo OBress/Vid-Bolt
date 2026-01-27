@@ -620,19 +620,48 @@ CREATE OR REPLACE FUNCTION "public"."match_stock_media"("query_embedding" "exten
     LANGUAGE "sql" STABLE
     SET "search_path" TO 'extensions'
     AS $$
-  select
+  SELECT
     stock_media.id,
     stock_media.r2_key,
     stock_media.metadata,
     1 - (stock_media.embedding <=> query_embedding) as similarity
-  from public.stock_media
-  where 1 - (stock_media.embedding <=> query_embedding) > match_threshold
-  order by similarity desc
-  limit match_count;
+  FROM public.stock_media
+  WHERE 
+    stock_media.embedding IS NOT NULL
+    AND 1 - (stock_media.embedding <=> query_embedding) > match_threshold
+  ORDER BY similarity DESC
+  LIMIT match_count;
 $$;
 
 
 ALTER FUNCTION "public"."match_stock_media"("query_embedding" "extensions"."vector", "match_threshold" double precision, "match_count" integer) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."match_stock_media_for_video"("query_embedding" "extensions"."vector", "match_threshold" double precision, "match_count" integer, "p_user_id" "uuid", "p_video_id" "uuid") RETURNS TABLE("id" "uuid", "r2_key" "text", "metadata" "jsonb", "similarity" double precision)
+    LANGUAGE "sql" STABLE
+    SET "search_path" TO 'extensions'
+    AS $$
+  SELECT
+    stock_media.id,
+    stock_media.r2_key,
+    stock_media.metadata,
+    1 - (stock_media.embedding <=> query_embedding) as similarity
+  FROM public.stock_media
+  WHERE 
+    stock_media.embedding IS NOT NULL
+    AND stock_media.user_id = p_user_id
+    AND stock_media.video_id = p_video_id
+    AND 1 - (stock_media.embedding <=> query_embedding) > match_threshold
+  ORDER BY similarity DESC
+  LIMIT match_count;
+$$;
+
+
+ALTER FUNCTION "public"."match_stock_media_for_video"("query_embedding" "extensions"."vector", "match_threshold" double precision, "match_count" integer, "p_user_id" "uuid", "p_video_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."match_stock_media_for_video"("query_embedding" "extensions"."vector", "match_threshold" double precision, "match_count" integer, "p_user_id" "uuid", "p_video_id" "uuid") IS 'Vector similarity search for stock media, filtered by user_id and video_id';
+
 
 
 CREATE OR REPLACE FUNCTION "public"."merge_task_output"("p_task_id" "uuid", "p_updates" "jsonb") RETURNS "void"
@@ -912,14 +941,16 @@ CREATE TABLE IF NOT EXISTS "public"."stock_media" (
     "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
     "embedding" "extensions"."vector"(768),
     "created_at" timestamp with time zone DEFAULT "now"(),
-    CONSTRAINT "stock_media_source_check" CHECK (("source" = ANY (ARRAY['wikimedia'::"text", 'youtube'::"text", 'pixabay'::"text", 'pexels'::"text", 'google'::"text", 'other'::"text"])))
+    "user_id" "uuid",
+    "video_id" "uuid",
+    CONSTRAINT "stock_media_source_check" CHECK (("source" = ANY (ARRAY['wikimedia'::"text", 'youtube'::"text", 'pixabay'::"text", 'pexels'::"text", 'google'::"text", 'serper'::"text", 'other'::"text"])))
 );
 
 
 ALTER TABLE "public"."stock_media" OWNER TO "postgres";
 
 
-COMMENT ON CONSTRAINT "stock_media_source_check" ON "public"."stock_media" IS 'Allowed sources: wikimedia (Commons), youtube (video clips), pixabay (images/videos), pexels (images/videos), google (Custom Search), other';
+COMMENT ON CONSTRAINT "stock_media_source_check" ON "public"."stock_media" IS 'Allowed sources: wikimedia, youtube, pixabay, pexels, google, serper (Google Images via Serper API), other';
 
 
 
@@ -1264,6 +1295,18 @@ CREATE INDEX "idx_media_projects_user_id" ON "public"."media_projects" USING "bt
 
 
 CREATE INDEX "idx_monthly_statements_user_date" ON "public"."monthly_statements" USING "btree" ("user_id", "month_date");
+
+
+
+CREATE INDEX "idx_stock_media_user_id" ON "public"."stock_media" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_stock_media_user_video" ON "public"."stock_media" USING "btree" ("user_id", "video_id");
+
+
+
+CREATE INDEX "idx_stock_media_video_id" ON "public"."stock_media" USING "btree" ("video_id");
 
 
 
@@ -2218,6 +2261,9 @@ GRANT ALL ON FUNCTION "public"."handle_updated_at"() TO "service_role";
 GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") TO "anon";
 GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") TO "service_role";
+
+
+
 
 
 

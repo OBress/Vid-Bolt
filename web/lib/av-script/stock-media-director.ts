@@ -14,6 +14,8 @@
 
 import { ShotPart1 } from '@/lib/queues/workers/av-script';
 import { evaluateShotMatch, decideFallbackType } from './shot-evaluator';
+import { generateEmbedding } from '@/lib/ai/embedding';
+import { getSupabaseServiceClient } from '@/lib/queues/shared';
 
 // ============================================================================
 // TYPES
@@ -64,8 +66,8 @@ export interface ShotContext {
 // CONSTANTS
 // ============================================================================
 
-/** Fixed similarity threshold - not configurable per user request */
-const SIMILARITY_THRESHOLD = 0.9;
+/** Fixed similarity threshold - lowered from 0.9 to 0.7 for better matching */
+const SIMILARITY_THRESHOLD = 0.7;
 
 /** Number of previous/next shots to include for context */
 const CONTEXT_WINDOW_SIZE = 2;
@@ -73,8 +75,8 @@ const CONTEXT_WINDOW_SIZE = 2;
 /** Maximum candidates to evaluate per shot */
 const MAX_CANDIDATES_PER_SHOT = 3;
 
-/** Timeout for individual shot evaluation (ms) */
-const SHOT_TIMEOUT_MS = 8000;
+/** Timeout for individual shot evaluation (ms) - increased for slow LLM responses */
+const SHOT_TIMEOUT_MS = 15000;
 
 // ============================================================================
 // MAIN DIRECTOR CLASS
@@ -156,37 +158,58 @@ export class StockMediaDirector {
   /**
    * Batch query vector DB for all shots.
    * Returns a map of shot index -> candidate array.
+   * 
+   * Uses direct Cloudflare API for embeddings (not HTTP route) to work in worker context.
    */
   private async batchSearchVectorDB(shots: ShotPart1[]): Promise<Record<number, StockMediaCandidate[]>> {
     const results: Record<number, StockMediaCandidate[]> = {};
-
-    // Import StockMediaService dynamically to avoid circular deps
-    const { StockMediaService } = await import('@/lib/stock-media/service');
-    const service = new StockMediaService();
+    const supabase = getSupabaseServiceClient();
 
     // Parallel search for all shots
     const searchPromises = shots.map(async (shot, index) => {
       try {
         // Build search query from shot summary + character/location refs
         const searchQuery = this.buildSearchQuery(shot);
+        console.log(`${this.logPrefix} Shot ${index} search query: "${searchQuery.substring(0, 100)}..."`);
         
-        // Search with our fixed threshold
-        const candidates = await service.search(searchQuery, MAX_CANDIDATES_PER_SHOT, SIMILARITY_THRESHOLD);
+        // Generate embedding directly via Cloudflare API (not HTTP route)
+        const embedding = await generateEmbedding(searchQuery);
+        console.log(`${this.logPrefix} Shot ${index} embedding generated: ${embedding.length} dimensions`);
         
+        // Query Supabase vector DB directly using the new filtered function
+        const { data, error } = await supabase.rpc('match_stock_media_for_video', {
+          query_embedding: embedding,
+          match_threshold: SIMILARITY_THRESHOLD,
+          match_count: MAX_CANDIDATES_PER_SHOT,
+          p_user_id: this.config.userId,
+          p_video_id: this.config.videoId,
+        });
+        
+        console.log(`${this.logPrefix} Shot ${index} RPC result: ${data?.length || 0} candidates, error: ${error?.message || 'none'}`);
+
+        if (error) {
+          console.warn(`${this.logPrefix} Vector search RPC failed for shot ${index}:`, error);
+          results[index] = [];
+          return;
+        }
+
         // Map to our format
-        results[index] = candidates.map(c => ({
-          id: c.id,
-          r2_key: c.r2_key,
-          source: c.source,
-          similarity: c.similarity || 0,
-          mediaType: c.mediaType || 'image',
-          description: c.description || '',
-          url: c.url || '',
-          thumbnailUrl: c.thumbnailUrl || '',
-          subjects: c.subjects,
-          mood: c.mood,
-          metadata: c.metadata,
-        }));
+        results[index] = (data || []).map((row: any) => {
+          const m = row.metadata || {};
+          return {
+            id: row.id,
+            r2_key: row.r2_key,
+            source: row.source || m.source || 'other',
+            similarity: row.similarity || 0,
+            mediaType: m.mediaType || 'image',
+            description: m.description || m.title || '',
+            url: m.url || '',
+            thumbnailUrl: m.thumbnailUrl || '',
+            subjects: m.subjects,
+            mood: m.mood,
+            metadata: m,
+          };
+        });
       } catch (error) {
         console.warn(`${this.logPrefix} Vector search failed for shot ${index}:`, error);
         results[index] = [];
@@ -196,6 +219,7 @@ export class StockMediaDirector {
     await Promise.all(searchPromises);
     return results;
   }
+
 
   /**
    * Build a search query from shot data for vector similarity.

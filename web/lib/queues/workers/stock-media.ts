@@ -275,12 +275,13 @@ export async function stockMediaProcessor(
             const embedding = await safeGenerateEmbedding(`${img.title}. ${query}`);
             
             // Store in DB with basic metadata (no AI classification)
-            await supabase.from('stock_media').insert({
+            const { error: insertError } = await supabase.from('stock_media').insert({
+              user_id: userId,
+              video_id: videoId,
               source: 'serper',
               external_id: img.id || img.imageUrl,
               r2_key: r2Key,
               metadata: {
-                videoId,
                 mediaType: 'image',
                 title: img.title,
                 description: img.title, // Use title as description
@@ -293,6 +294,11 @@ export async function stockMediaProcessor(
               },
               ...(embedding && { embedding }),
             });
+            
+            if (insertError) {
+              console.error(`[StockMediaWorker] DB insert failed for image:`, insertError.message);
+              continue;
+            }
             
             allMedia.push({
               id: uuidv4(),
@@ -376,11 +382,12 @@ export async function stockMediaProcessor(
                 
                 // Generate embedding and store
                 const embedding = await safeGenerateEmbedding(classData.description);
-                await supabase.from('stock_media').insert({
+                const { error: pexelsInsertError } = await supabase.from('stock_media').insert({
+                  user_id: userId,
+                  video_id: videoId,
                   source: 'pexels',
                   external_id: String(video.id),
                   metadata: {
-                    videoId,
                     mediaType: 'video',
                     title: `Pexels Video ${video.id}`,
                     description: classData.description,
@@ -394,6 +401,11 @@ export async function stockMediaProcessor(
                   },
                   ...(embedding && { embedding }),
                 });
+                
+                if (pexelsInsertError) {
+                  console.error(`[StockMediaWorker] DB insert failed for pexels video:`, pexelsInsertError.message);
+                  continue;
+                }
                 
                 allMedia.push({
                   id: uuidv4(),
@@ -536,11 +548,12 @@ export async function stockMediaProcessor(
             `${video.title}. ${video.description?.slice(0, 200) || ''}`
           );
           
-          await supabase.from('stock_media').insert({
+          const { error: ytInsertError } = await supabase.from('stock_media').insert({
+            user_id: userId,
+            video_id: videoId,
             source: 'youtube',
             external_id: video.id,
             metadata: {
-              videoId,
               mediaType: 'video',
               title: video.title,
               description: video.description?.slice(0, 500),
@@ -554,6 +567,10 @@ export async function stockMediaProcessor(
             },
             ...(embedding && { embedding }),
           });
+          
+          if (ytInsertError) {
+            console.error(`[StockMediaWorker] DB insert failed for youtube video:`, ytInsertError.message);
+          }
           
           allMedia.push({
             id: uuidv4(),

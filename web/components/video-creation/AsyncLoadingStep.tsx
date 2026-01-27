@@ -56,7 +56,7 @@ export function AsyncLoadingStep({
         onComplete(output);
       }, 500);
     },
-    [onComplete, steps]
+    [onComplete, steps],
   );
 
   // Handle task error
@@ -65,7 +65,7 @@ export function AsyncLoadingStep({
       setErrorMessage(error);
       onError?.(error);
     },
-    [onError]
+    [onError],
   );
 
   // Use task progress hook
@@ -91,7 +91,7 @@ export function AsyncLoadingStep({
       // Update step index based on progress
       const stepIndex = Math.min(
         Math.floor((progress / 100) * steps.length),
-        steps.length - 1
+        steps.length - 1,
       );
       setCurrentStepIndex(stepIndex);
 
@@ -111,49 +111,9 @@ export function AsyncLoadingStep({
     }
   }, [pollError]);
 
-  // Fallback timer mode (when no taskId)
-  useEffect(() => {
-    if (taskId) return; // Skip if polling a real task
-
-    const stepDuration = fallbackDuration / steps.length;
-    const progressInterval = 50;
-    const progressIncrement = (100 / fallbackDuration) * progressInterval;
-
-    const progressTimer = setInterval(() => {
-      setDisplayProgress((prev) => {
-        const next = prev + progressIncrement;
-        if (next >= 100) {
-          clearInterval(progressTimer);
-          return 100;
-        }
-        return next;
-      });
-    }, progressInterval);
-
-    const stepTimer = setInterval(() => {
-      setCurrentStepIndex((prev) => {
-        if (prev < steps.length - 1) {
-          setCompletedSteps((completed) => [...completed, prev]);
-          return prev + 1;
-        }
-        return prev;
-      });
-    }, stepDuration);
-
-    const completeTimer = setTimeout(() => {
-      setCompletedSteps((completed) => [...completed, steps.length - 1]);
-      setHasCompleted(true);
-      setTimeout(() => {
-        onComplete({});
-      }, 500);
-    }, fallbackDuration);
-
-    return () => {
-      clearInterval(progressTimer);
-      clearInterval(stepTimer);
-      clearTimeout(completeTimer);
-    };
-  }, [taskId, fallbackDuration, steps.length, onComplete]);
+  // Note: Fallback timer mode is disabled - we always wait for a real taskId
+  // to avoid showing fake progress that jumps back when real polling starts.
+  // The component will show 0% with "Waiting for task..." until taskId is set.
 
   // Error state UI
   if (errorMessage) {
@@ -252,8 +212,8 @@ export function AsyncLoadingStep({
                     isCompleted
                       ? "text-green-500"
                       : isCurrent
-                      ? "text-orange-500"
-                      : "text-neutral-600"
+                        ? "text-orange-500"
+                        : "text-neutral-600"
                   }
                 `}
               >
@@ -265,8 +225,8 @@ export function AsyncLoadingStep({
                       isCompleted
                         ? "bg-green-500/20 border border-green-500"
                         : isCurrent
-                        ? "bg-orange-500/20 border border-orange-500"
-                        : "bg-neutral-800 border border-neutral-700"
+                          ? "bg-orange-500/20 border border-orange-500"
+                          : "bg-neutral-800 border border-neutral-700"
                     }
                   `}
                 >

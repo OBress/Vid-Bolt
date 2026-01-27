@@ -1504,7 +1504,18 @@ export function VideoCreationWizard({
               ]}
               taskId={state.avScriptTaskId}
               onComplete={async (output) => {
-                console.log("[Wizard] AV Script Part 1 complete:", output);
+                console.log(
+                  "[Wizard] AV Script Part 1 complete - raw output:",
+                  JSON.stringify(output).slice(0, 500),
+                );
+                console.log(
+                  "[Wizard] AV Script Part 1 - shots array exists?",
+                  !!(output as any)?.shots,
+                );
+                console.log(
+                  "[Wizard] AV Script Part 1 - shots count:",
+                  (output as any)?.shots?.length || 0,
+                );
                 const avOutput = output as any;
 
                 // Update state with AV script output and clear loading flag

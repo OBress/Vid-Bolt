@@ -28,6 +28,8 @@ import {
   Layers,
   Check,
   Play,
+  Sparkles,
+  Package,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +62,14 @@ type ShotItem = {
   media_type?: "image" | "video" | "motiongraphic" | "ai_generated";
   text: string;
   summary?: string;
+  visual_prompt?: string;
+  // Visual source for clear UI labeling
+  visual_source?:
+    | "stock_image"
+    | "stock_video"
+    | "ai_image"
+    | "ai_video"
+    | "motiongraphic";
   character_refs?: string[];
   location_refs?: string[];
   object_refs?: string[];
@@ -164,6 +174,16 @@ export function Step5ShotCreation({
   audioChunks,
   script,
 }: Step5ShotCreationProps) {
+  // Debug logging for shot data
+  useEffect(() => {
+    console.log("[Step5] avScriptShots received:", avScriptShots?.length || 0);
+    if (avScriptShots && avScriptShots.length > 0) {
+      console.log(
+        "[Step5] First shot:",
+        JSON.stringify(avScriptShots[0]).slice(0, 200),
+      );
+    }
+  }, [avScriptShots]);
   const [activeTab, setActiveTab] = useState<ElementType>("all");
   const [sidebarMode, setSidebarMode] = useState<"elements" | "player">(
     "elements",
@@ -731,24 +751,52 @@ export function Step5ShotCreation({
                             <span className="text-[10px] text-neutral-600">
                               {shot.duration_seconds.toFixed(1)}s
                             </span>
-                            {displayShot.media_type === "video" && (
+                            {/* Visual source badges based on visual_source field */}
+                            {displayShot.visual_source === "stock_image" && (
+                              <span className="text-[10px] font-medium bg-green-900/50 text-green-300 px-2 py-1 rounded">
+                                <Package className="w-3 h-3 inline mr-1" />
+                                Stock
+                              </span>
+                            )}
+                            {displayShot.visual_source === "stock_video" && (
                               <span className="text-[10px] font-medium bg-emerald-900/50 text-emerald-300 px-2 py-1 rounded">
-                                <Film className="w-3 h-3 inline mr-1" />
-                                Video
+                                <Package className="w-3 h-3 inline mr-1" />
+                                Stock Video
                               </span>
                             )}
-                            {displayShot.media_type === "image" && (
-                              <span className="text-[10px] font-medium bg-sky-900/50 text-sky-300 px-2 py-1 rounded">
-                                <Image className="w-3 h-3 inline mr-1" />
-                                Image
+                            {displayShot.visual_source === "ai_image" && (
+                              <span className="text-[10px] font-medium bg-purple-900/50 text-purple-300 px-2 py-1 rounded">
+                                <Sparkles className="w-3 h-3 inline mr-1" />
+                                AI Image
                               </span>
                             )}
-                            {displayShot.media_type === "motiongraphic" && (
+                            {displayShot.visual_source === "ai_video" && (
+                              <span className="text-[10px] font-medium bg-violet-900/50 text-violet-300 px-2 py-1 rounded">
+                                <Sparkles className="w-3 h-3 inline mr-1" />
+                                AI Video
+                              </span>
+                            )}
+                            {displayShot.visual_source === "motiongraphic" && (
                               <span className="text-[10px] font-medium bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded">
                                 <Layers className="w-3 h-3 inline mr-1" />
                                 Motion
                               </span>
                             )}
+                            {/* Fallback for missing visual_source - show based on media_type */}
+                            {!displayShot.visual_source &&
+                              displayShot.media_type === "video" && (
+                                <span className="text-[10px] font-medium bg-emerald-900/50 text-emerald-300 px-2 py-1 rounded">
+                                  <Film className="w-3 h-3 inline mr-1" />
+                                  Video
+                                </span>
+                              )}
+                            {!displayShot.visual_source &&
+                              displayShot.media_type === "image" && (
+                                <span className="text-[10px] font-medium bg-sky-900/50 text-sky-300 px-2 py-1 rounded">
+                                  <Image className="w-3 h-3 inline mr-1" />
+                                  Image
+                                </span>
+                              )}
                           </div>
                         </div>
 

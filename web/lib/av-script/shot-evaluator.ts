@@ -39,6 +39,19 @@ Your role is to determine if a stock media asset is suitable for a specific shot
 1. Narrative fit: Does it support the story being told?
 2. Technical fit: Is it high quality and properly formatted?
 
+STOCK MEDIA IS BEST FOR (be generous with these):
+- Famous people (celebrities, politicians, CEOs, historical figures)
+- Iconic landmarks (Eiffel Tower, Times Square, Statue of Liberty)
+- Common universal concepts (handshake, teamwork, celebration, nature)
+- Historical footage or documentary-style shots
+- Simple, recognizable subjects
+
+AVOID STOCK MEDIA FOR (reject these):
+- Complex multi-subject scenes requiring specific composition
+- Fictional scenarios or abstract concepts
+- Scenes with very specific requirements not met by the candidate
+- Low similarity or poor metadata match
+
 SCORING CRITERIA:
 - NARRATIVE FIT (1-10):
   - 10: Perfect match for subjects, mood, and context
@@ -54,6 +67,7 @@ SCORING CRITERIA:
 
 DECISION RULE:
 - Accept if BOTH narrative >= 7 AND technical >= 7
+- For famous people/landmarks, be more lenient (narrative >= 6 is OK)
 - Reject otherwise
 
 Return JSON only. No markdown, no explanation outside JSON.`;

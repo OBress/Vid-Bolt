@@ -45,6 +45,9 @@ export interface ShotPart1 {
   media_type: 'image' | 'video' | 'motiongraphic' | 'ai_generated';
   text: string;
   summary: string;  // Brief summary of what happens visually - may include @(StockMedia:id) references
+  visual_prompt?: string;  // Prompt for AI image generation
+  // Visual source for clear UI labeling
+  visual_source?: 'stock_image' | 'stock_video' | 'ai_image' | 'ai_video' | 'motiongraphic';
   // Entity references detected in the text
   character_refs?: string[];  // Character IDs referenced
   location_refs?: string[];   // Location IDs referenced  
@@ -69,6 +72,27 @@ export interface AVScriptPart1Output {
     average_segment_duration: number;
     content_type_breakdown: Record<string, number>;
   };
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+/**
+ * Compute the visual_source label for a shot based on stock_media_ref and fallback_type.
+ * This provides clear labeling for the UI.
+ */
+function computeVisualSource(shot: ShotPart1): 'stock_image' | 'stock_video' | 'ai_image' | 'ai_video' | 'motiongraphic' {
+  // If we have a stock media match
+  if (shot.stock_media_ref) {
+    return shot.media_type === 'video' ? 'stock_video' : 'stock_image';
+  }
+  // If fallback is motiongraphic
+  if (shot.fallback_type === 'motiongraphic') {
+    return 'motiongraphic';
+  }
+  // Default to AI-generated based on media type
+  return shot.media_type === 'video' ? 'ai_video' : 'ai_image';
 }
 
 // ============================================================================
@@ -152,17 +176,24 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
         const { processWithStockMedia } = await import('@/lib/av-script/stock-media-director');
         const shotsWithMedia = await processWithStockMedia(userId, videoId, finalShots, stockMediaLevel);
         
-        // Update finalShots with stock media matches
+        // Update finalShots with stock media matches and compute visual_source
         finalShots = shotsWithMedia.map(shot => ({
           ...shot,
           // Ensure proper typing
           stock_media_ref: shot.stock_media_ref,
           fallback_type: shot.fallback_type,
+          // Compute visual_source for clear UI labeling
+          visual_source: computeVisualSource(shot),
         })) as ShotPart1[];
 
         const matchedCount = finalShots.filter(s => s.stock_media_ref).length;
         console.log(`${logPrefix} Stock Media Director: ${matchedCount}/${finalShots.length} shots matched`);
       } else {
+        // Stock media disabled - set visual_source based on media_type
+        finalShots = finalShots.map(shot => ({
+          ...shot,
+          visual_source: shot.media_type === 'video' ? 'ai_video' : 'ai_image',
+        })) as ShotPart1[];
         console.log(`${logPrefix} Stock media disabled, skipping director`);
       }
     } else {
@@ -258,6 +289,7 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
         progress_percent: 100, 
         current_step: 'Shot breakdown complete' 
       });
+      console.log(`${logPrefix} Saving to task output_data: shots count=${avScriptPart1Output.shots.length}`);
       await updateTaskOutput(taskId, avScriptPart1Output as any);
     }
     
