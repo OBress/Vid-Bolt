@@ -13,9 +13,14 @@ export class StockMediaService {
    * Generates a text embedding using Cloudflare Workers AI (client-side via API route)
    */
   async generateEmbedding(text: string): Promise<number[]> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (process.env.INTERNAL_API_SECRET) {
+      headers['X-Worker-Secret'] = process.env.INTERNAL_API_SECRET;
+    }
+
     const response = await fetch('/api/vector/embed', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ text })
     });
 
@@ -51,9 +56,14 @@ export class StockMediaService {
   }): Promise<void> {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (process.env.INTERNAL_API_SECRET) {
+      headers['X-Worker-Secret'] = process.env.INTERNAL_API_SECRET;
+    }
+
     const response = await fetch(`${baseUrl}/api/stock-media/store-clip`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(clip),
     });
 

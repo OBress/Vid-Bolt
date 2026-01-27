@@ -13,6 +13,13 @@ const getServiceClient = () => createServiceClient(
  */
 export async function POST(request: Request) {
   try {
+    // Authenticate Worker
+    const workerSecret = request.headers.get('X-Worker-Secret');
+    if (!workerSecret || workerSecret !== process.env.INTERNAL_API_SECRET) {
+      console.warn('[store-clip] Unauthorized access attempt');
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const clip = await request.json();
     
     // Validate required fields
@@ -47,11 +54,16 @@ export async function POST(request: Request) {
     ].filter(Boolean).join('. ');
 
     // Generate embedding via the embed API
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (process.env.INTERNAL_API_SECRET) {
+      headers['X-Worker-Secret'] = process.env.INTERNAL_API_SECRET;
+    }
+
     const embedResponse = await fetch(
       `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/vector/embed`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ text: searchableText }),
       }
     );
