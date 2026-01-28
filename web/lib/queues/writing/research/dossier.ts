@@ -7,10 +7,14 @@
 import { generateJSON } from '@/lib/ai/openrouter';
 import type { 
   ResearchDossier, 
+  ResearchDossierV2,
   ResearchToggle,
   VerifiedFact,
   Theory,
   ResearchGap,
+  NarrativeContext,
+  KeyDevelopment,
+  KeyEntityV2,
 } from '../types';
 import { UNIVERSAL_PROMPTS } from '../prompts';
 import { calculateOverallConfidence } from '../utils';
@@ -60,8 +64,8 @@ export async function assembleDossier(
     recommendation: generateGapRecommendation(gap),
   }));
 
-  // Build the dossier
-  const dossier: ResearchDossier = {
+  // Build the dossier with v2 fields
+  const dossier: ResearchDossierV2 = {
     metadata: {
       topic,
       researchDepth: researchToggle,
@@ -80,9 +84,21 @@ export async function assembleDossier(
     theories,
     gaps: formattedGaps,
     worksCited: extractedFacts.allCitations,
+    // V2 fields for breaking news
+    narrative: extractedFacts.narrative,
+    keyDevelopments: extractedFacts.keyDevelopments || [],
+    entitiesV2: extractedFacts.entitiesV2 || [],
+    verificationGaps: extractedFacts.gaps,
+    version: 'v2',
   };
 
-  console.log(`[Dossier] Assembled dossier with ${sortedFacts.length} facts, ${conflicts.length} conflicts`);
+  console.log(`[Dossier] Assembled v2 dossier with ${sortedFacts.length} facts, ${conflicts.length} conflicts`);
+  if (extractedFacts.narrative) {
+    console.log(`[Dossier] V2 narrative hook: ${extractedFacts.narrative.hook.substring(0, 50)}...`);
+  }
+  if (extractedFacts.keyDevelopments?.length) {
+    console.log(`[Dossier] V2 keyDevelopments: ${extractedFacts.keyDevelopments.length}`);
+  }
   
   return dossier;
 }

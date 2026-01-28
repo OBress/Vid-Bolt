@@ -10,9 +10,12 @@ import type {
   AttributableQuote, 
   TimelineEvent,
   KeyEntity,
+  KeyEntityV2,
   SourceCitation,
   ConfidenceLevel,
   ReliabilityTier,
+  NarrativeContext,
+  KeyDevelopment,
 } from '../types';
 import { UNIVERSAL_PROMPTS } from '../prompts';
 import { 
@@ -42,6 +45,14 @@ export interface ExtractedFacts {
   gaps: string[];
   /** Raw source content for deep research (when LLM has no prior knowledge) */
   rawSourceContent?: string[];
+  
+  // V2 fields for breaking news (optional for backward compat)
+  /** Narrative context for script writing */
+  narrative?: NarrativeContext;
+  /** Chronological story developments */
+  keyDevelopments?: KeyDevelopment[];
+  /** Enhanced entities with bios and actions */
+  entitiesV2?: KeyEntityV2[];
 }
 
 export interface ExtractionOptions {

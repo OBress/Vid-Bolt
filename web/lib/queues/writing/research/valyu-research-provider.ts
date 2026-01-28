@@ -23,8 +23,11 @@ import type {
   AttributableQuote, 
   TimelineEvent,
   KeyEntity,
+  KeyEntityV2,
   SourceCitation,
   ReliabilityTier,
+  NarrativeContext,
+  KeyDevelopment,
 } from '../types';
 import { 
   generateFactId, 
@@ -435,6 +438,10 @@ async function transformSearchResultsToFacts(
     allCitations,
     gaps: extractedData.gaps,
     rawSourceContent,
+    // V2 fields
+    narrative: extractedData.narrative,
+    keyDevelopments: extractedData.keyDevelopments,
+    entitiesV2: extractedData.entitiesV2,
   };
 }
 
@@ -451,6 +458,9 @@ async function extractFactsFromValyuSources(
   quotes: AttributableQuote[];
   timelineEvents: TimelineEvent[];
   entities: KeyEntity[];
+  entitiesV2: KeyEntityV2[];
+  narrative?: NarrativeContext;
+  keyDevelopments: KeyDevelopment[];
   gaps: string[];
 }> {
   // Limit source content to avoid token limits (use first ~50KB of content)
@@ -471,16 +481,17 @@ async function extractFactsFromValyuSources(
     totalChars += content.length;
   }
 
-  const systemPrompt = `You are a research assistant extracting verified facts from web sources for documentary video production.
+  const systemPrompt = `You are extracting research for a video script about a breaking news event.
+The script writer has ZERO prior knowledge of this event - extract EVERYTHING needed.
 
 Your task is to read through the provided source material and extract:
-1. Verified facts with their source IDs
-2. Notable quotes with attribution
-3. Timeline events with dates
-4. Key entities (people, places, organizations)
+1. NARRATIVE CONTEXT: Hook, summary, background, prior events, key terms
+2. KEY DEVELOPMENTS: Chronological story beats with who/what/significance
+3. FACTS: Verified statements with source IDs
+4. QUOTES: Notable quotes with speaker and context
+5. ENTITIES: People, places, organizations with their role, bio, quotes, and actions
 
-Be thorough but accurate. Only include facts that are clearly stated in the sources.
-For each fact, reference the source ID (e.g., SRC-001) in your response.`;
+Be COMPREHENSIVE. The AI writing the script knows NOTHING about this event and relies entirely on your extraction.`;
 
   const userPrompt = `Topic: ${topic}
 
@@ -488,9 +499,25 @@ For each fact, reference the source ID (e.g., SRC-001) in your response.`;
 ${limitedContent.join('\n\n')}
 
 === INSTRUCTIONS ===
-Extract all relevant information from these sources. Return as JSON:
+Extract ALL relevant information from these sources. Return as JSON:
 
 {
+  "narrative": {
+    "hook": "1-2 sentence attention grabber",
+    "summary": "3-5 sentence complete overview",
+    "background": "Background context needed to understand the event",
+    "priorEvents": ["What led to this event"],
+    "keyTerms": {"term": "definition"}
+  },
+  "keyDevelopments": [
+    {
+      "timestamp": "When it happened",
+      "what": "What happened",
+      "who": ["People/orgs involved"],
+      "significance": "Why it matters",
+      "sourceIds": ["SRC-001"]
+    }
+  ],
   "facts": [
     {
       "statement": "The factual claim",
@@ -517,7 +544,9 @@ Extract all relevant information from these sources. Return as JSON:
     {
       "type": "person" | "location" | "organization",
       "name": "Entity name",
-      "role": "Their role in the topic"
+      "role": "Their role in the topic",
+      "bio": "1-2 sentence background",
+      "actions": ["What they did in this story"]
     }
   ],
   "gaps": ["Questions that couldn't be answered from these sources"]
@@ -528,6 +557,20 @@ Extract all relevant information from these sources. Return as JSON:
     const { generateJSON } = await import('@/lib/ai/openrouter');
     
     const result = await generateJSON<{
+      narrative?: {
+        hook: string;
+        summary: string;
+        background: string;
+        priorEvents?: string[];
+        keyTerms?: Record<string, string>;
+      };
+      keyDevelopments?: Array<{
+        timestamp?: string;
+        what: string;
+        who?: string[];
+        significance: string;
+        sourceIds?: string[];
+      }>;
       facts: Array<{
         statement: string;
         sourceIds: string[];
@@ -548,13 +591,15 @@ Extract all relevant information from these sources. Return as JSON:
         type: 'person' | 'location' | 'organization';
         name: string;
         role: string;
+        bio?: string;
+        actions?: string[];
       }>;
       gaps: string[];
     }>(
       userId,
       systemPrompt,
       userPrompt,
-      { model: 'openai/gpt-4o-mini' } // Use cheaper model for extraction
+      { model: 'google/gemini-3-flash-preview' } // Use cheaper model for extraction
     );
 
     // Build citation lookup
@@ -610,7 +655,37 @@ Extract all relevant information from these sources. Return as JSON:
       name: e.name,
       type: e.type,
       role: e.role,
-      details: '',
+      details: e.bio || '',
+    }));
+
+    // Build enhanced v2 entities
+    const entitiesV2: KeyEntityV2[] = (result.entities || []).map(e => ({
+      name: e.name,
+      type: e.type,
+      role: e.role,
+      details: e.bio || '',
+      bio: e.bio || '',
+      quoteIds: [], // Will be linked in dossier assembly
+      actions: e.actions || [],
+    }));
+
+    // Build narrative context if available
+    const narrative: NarrativeContext | undefined = result.narrative ? {
+      hook: result.narrative.hook,
+      summary: result.narrative.summary,
+      background: result.narrative.background,
+      priorEvents: result.narrative.priorEvents || [],
+      keyTerms: result.narrative.keyTerms || {},
+    } : undefined;
+
+    // Build key developments with IDs
+    const keyDevelopments: KeyDevelopment[] = (result.keyDevelopments || []).map((d, i) => ({
+      id: `DEV-${String(i + 1).padStart(3, '0')}`,
+      timestamp: d.timestamp || 'Unknown',
+      what: d.what,
+      who: d.who || [],
+      significance: d.significance,
+      sourceIds: d.sourceIds || [],
     }));
 
     return {
@@ -618,6 +693,9 @@ Extract all relevant information from these sources. Return as JSON:
       quotes,
       timelineEvents,
       entities,
+      entitiesV2,
+      narrative,
+      keyDevelopments,
       gaps: result.gaps || [],
     };
 
@@ -629,6 +707,8 @@ Extract all relevant information from these sources. Return as JSON:
       quotes: [],
       timelineEvents: [],
       entities: [],
+      entitiesV2: [],
+      keyDevelopments: [],
       gaps: ['LLM extraction failed'],
     };
   }

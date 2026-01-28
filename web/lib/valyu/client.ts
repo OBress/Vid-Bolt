@@ -337,16 +337,60 @@ export async function performDeepResearch(
     onProgress?: (status: string, elapsedMs: number) => void;
   } = {}
 ): Promise<ValyuDeepResearchResult> {
-  // Create the task with JSON Schema for structured facts extraction
+  // Create the task with JSON Schema for structured v2 research output
   // NOTE: Per Valyu docs, cannot mix JSON Schema with markdown/pdf - use one or the other
   const createResponse = await createDeepResearch({
     query,
     mode,
-    // Use JSON Schema ONLY for structured research output (cannot mix with markdown/pdf)
+    // V2 JSON Schema for breaking news script writing
     output_formats: [
       {
         type: 'object',
         properties: {
+          // NEW: Narrative context for script writing
+          narrative: {
+            type: 'object',
+            properties: {
+              hook: { type: 'string', description: '1-2 sentence attention grabber' },
+              summary: { type: 'string', description: '3-5 sentence complete overview' },
+              background: { type: 'string', description: 'Background context needed to understand the event' },
+              priorEvents: { type: 'array', items: { type: 'string' }, description: 'What led to this event' },
+              keyTerms: { type: 'object', description: 'Important term definitions' }
+            },
+            required: ['hook', 'summary', 'background']
+          },
+          // NEW: Chronological story beats
+          keyDevelopments: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                timestamp: { type: 'string' },
+                what: { type: 'string', description: 'What happened' },
+                who: { type: 'array', items: { type: 'string' }, description: 'People/orgs involved' },
+                significance: { type: 'string', description: 'Why this matters to the story' },
+                sources: { type: 'array', items: { type: 'string' } }
+              },
+              required: ['what', 'significance']
+            }
+          },
+          // Enhanced entities with actions and quotes
+          entities: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                type: { type: 'string', enum: ['person', 'organization', 'location', 'concept'] },
+                role: { type: 'string', description: 'Role in this story' },
+                bio: { type: 'string', description: '1-2 sentence background' },
+                quotes: { type: 'array', items: { type: 'string' } },
+                actions: { type: 'array', items: { type: 'string' } }
+              },
+              required: ['name', 'type', 'role']
+            }
+          },
+          // Keep original fields for compatibility
           facts: {
             type: 'array',
             items: {
@@ -384,27 +428,17 @@ export async function performDeepResearch(
               required: ['date', 'event']
             }
           },
-          entities: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                name: { type: 'string' },
-                type: { type: 'string' },
-                description: { type: 'string' }
-              },
-              required: ['name', 'type']
-            }
-          },
-          summary: { type: 'string' }
+          summary: { type: 'string' },
+          verificationGaps: { type: 'array', items: { type: 'string' }, description: 'What could not be verified' }
         },
-        required: ['facts', 'summary']
+        required: ['narrative', 'keyDevelopments', 'facts', 'summary']
       }
     ],
     search_type: 'web',
     strategy: options.strategy || 
-      'Provide comprehensive, fact-based research suitable for documentary video production. ' +
-      'Focus on verified facts, expert quotes, chronological events, and key entities. ' +
+      'Provide comprehensive research for a video script about a breaking news event. ' +
+      'The script writer has ZERO prior knowledge - extract EVERYTHING needed including context, ' +
+      'chronological developments, key figures with their backgrounds, verified facts, and direct quotes. ' +
       'Cite all sources with URLs.',
   });
 

@@ -331,6 +331,79 @@ export interface ResearchDossier {
 }
 
 // ============================================================================
+// RESEARCH DOSSIER V2 TYPES (Optimized for Breaking News)
+// ============================================================================
+
+/**
+ * Narrative context for AI script writing
+ * Contains everything the AI needs to understand an event it has zero training data on
+ */
+export interface NarrativeContext {
+  /** 1-2 sentence attention grabber for the video */
+  hook: string;
+  /** 3-5 sentence complete overview of the event */
+  summary: string;
+  /** Background context the AI lacks from training data */
+  background: string;
+  /** What events led to this (chronological) */
+  priorEvents: string[];
+  /** Jargon/term definitions */
+  keyTerms: Record<string, string>;
+}
+
+/**
+ * Chronological story beat with full attribution
+ * Represents a single development in the story timeline
+ */
+export interface KeyDevelopment {
+  /** Unique identifier (e.g., DEV-001) */
+  id: string;
+  /** When this happened (ISO timestamp or descriptive) */
+  timestamp: string;
+  /** What happened */
+  what: string;
+  /** Entity names involved in this development */
+  who: string[];
+  /** Why this development matters to the story */
+  significance: string;
+  /** Source IDs that verify this development */
+  sourceIds: string[];
+}
+
+/**
+ * Enhanced entity with rich profile for script writing
+ * Extends KeyEntity with quotes and actions for deeper character development
+ */
+export interface KeyEntityV2 extends KeyEntity {
+  /** 1-2 sentence background/bio */
+  bio: string;
+  /** Quote IDs associated with this entity */
+  quoteIds: string[];
+  /** What this entity did in this story */
+  actions: string[];
+}
+
+/**
+ * Research Dossier v2 - Optimized for Breaking News Script Writing
+ * 
+ * Extends the base dossier with narrative context and story structure
+ * that enables AI to write 100% factual scripts about events it has
+ * zero prior knowledge of.
+ */
+export interface ResearchDossierV2 extends ResearchDossier {
+  /** Narrative context for script writing */
+  narrative?: NarrativeContext;
+  /** Chronological story developments (beats) */
+  keyDevelopments?: KeyDevelopment[];
+  /** Enhanced entities with full profiles */
+  entitiesV2?: KeyEntityV2[];
+  /** What we couldn't verify (for transparency) */
+  verificationGaps?: string[];
+  /** Dossier version for compatibility */
+  version?: 'v1' | 'v2';
+}
+
+// ============================================================================
 // SCOPING TYPES
 // ============================================================================
 
