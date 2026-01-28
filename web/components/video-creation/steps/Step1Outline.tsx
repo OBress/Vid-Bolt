@@ -34,6 +34,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { createBrowserClient } from "@supabase/ssr";
 import { useProjectSettings } from "@/hooks/use-project-settings";
+import { ResearchDocsPanel } from "./ResearchDocsPanel";
 
 // ============================================================================
 // TYPES
@@ -48,7 +49,7 @@ type ScriptGenre =
   | "opinion_essay"
   | "tutorial"
   | "news";
-type ResearchToggle = "deep" | "full" | "light" | "off";
+type ResearchToggle = "full" | "off";
 type StockMediaLevel =
   | "none"
   | "standard_images"
@@ -69,14 +70,54 @@ interface OutlineOutput {
       statement: string;
       confidence: string;
       sources?: Array<{ title: string; url?: string }>;
+      primarySourceId?: string;
     }>;
-    quotes: Array<{ id: string; quote: string; speaker: string }>;
+    quotes: Array<{ id: string; quote: string; speaker: string; speakerTitle?: string }>;
     entities: Array<{ type: string; name: string; role: string }>;
     worksCited?: Array<{
+      id?: string;
       title: string;
       url?: string;
       author?: string;
       reliabilityTier: number;
+      excerpt?: string;
+    }>;
+    // V2 fields
+    narrative?: {
+      hook: string;
+      summary: string;
+      background: string;
+      priorEvents: string[];
+      keyTerms: Record<string, string>;
+    };
+    keyDevelopments?: Array<{
+      id: string;
+      timestamp: string;
+      what: string;
+      who: string[];
+      significance: string;
+      sourceIds: string[];
+    }>;
+    entitiesV2?: Array<{
+      type: "person" | "location" | "organization";
+      name: string;
+      role: string;
+      bio: string;
+      quoteIds?: string[];
+      actions?: string[];
+    }>;
+    timeline?: Array<{
+      id?: string;
+      date: string;
+      description: string;
+    }>;
+    sourceDocuments?: Array<{
+      id: string;
+      url: string;
+      title: string;
+      content: string;
+      reliabilityTier: number;
+      author?: string;
     }>;
   };
   durationDecision?: {
@@ -182,15 +223,21 @@ export function Step1Outline({
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
 
+  // Helper to normalize research toggle (handle legacy values)
+  const normalizeResearchToggle = (value: string | undefined): ResearchToggle => {
+    if (value === "off") return "off";
+    return "full"; // Map 'full', 'deep', 'light', or any other value to 'full' (Standard)
+  };
+
   // Form state
   const [topic, setTopic] = useState(initialConfig?.topic || initialTopic);
   const [genre, setGenre] = useState<ScriptGenre>(
     initialConfig?.genre || projectSettings?.script?.genre || "documentary",
   );
   const [researchToggle, setResearchToggle] = useState<ResearchToggle>(
-    initialConfig?.researchToggle ||
-      projectSettings?.script?.researchDepth ||
-      "full",
+    normalizeResearchToggle(
+      initialConfig?.researchToggle || projectSettings?.script?.researchDepth
+    ),
   );
   const [durationRange, setDurationRange] = useState(
     initialConfig?.durationRange ||
@@ -221,7 +268,7 @@ export function Step1Outline({
       if (initialConfig.topic) setTopic(initialConfig.topic);
       if (initialConfig.genre) setGenre(initialConfig.genre);
       if (initialConfig.researchToggle)
-        setResearchToggle(initialConfig.researchToggle);
+        setResearchToggle(normalizeResearchToggle(initialConfig.researchToggle));
       if (initialConfig.durationRange)
         setDurationRange(initialConfig.durationRange);
       if (initialConfig.angle) setAngle(initialConfig.angle);
@@ -234,7 +281,7 @@ export function Step1Outline({
     if (!settingsLoading && projectSettings && !initialConfig) {
       if (projectSettings.script?.genre) setGenre(projectSettings.script.genre);
       if (projectSettings.script?.researchDepth)
-        setResearchToggle(projectSettings.script.researchDepth);
+        setResearchToggle(normalizeResearchToggle(projectSettings.script.researchDepth));
       if (projectSettings.basic_info?.videoDurationRange)
         setDurationRange(projectSettings.basic_info.videoDurationRange);
     }
@@ -581,10 +628,8 @@ export function Step1Outline({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="deep">Deep Research</SelectItem>
-                  <SelectItem value="full">Full Research</SelectItem>
-                  <SelectItem value="light">Light</SelectItem>
-                  <SelectItem value="off">No Research</SelectItem>
+                  <SelectItem value="full">Standard</SelectItem>
+                  <SelectItem value="off">None</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -840,7 +885,16 @@ export function Step1Outline({
                   Facts
                 </div>
                 <div className="text-2xl font-mono text-white leading-none font-bold">
-                  {output.researchDossier?.metadata?.factCount || 0}
+                  {output.researchDossier?.facts?.length || 0}
+                </div>
+              </div>
+              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+                <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
+                  Sources
+                </div>
+                <div className="text-2xl font-mono text-white leading-none font-bold">
+                  {(output.researchDossier?.worksCited?.length || 0) +
+                    (output.researchDossier?.sourceDocuments?.length || 0)}
                 </div>
               </div>
               <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
@@ -857,16 +911,10 @@ export function Step1Outline({
               </div>
               <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
                 <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
-                  Chars
+                  Quotes
                 </div>
                 <div className="text-xl font-mono text-white leading-none font-bold">
-                  {(
-                    (editingSpine?.beats || output.spine?.beats || []).reduce(
-                      (acc, beat) => acc + (beat.contentSummary?.length || 0),
-                      0,
-                    ) / 1000
-                  ).toFixed(1)}
-                  k
+                  {output.researchDossier?.quotes?.length || 0}
                 </div>
               </div>
               <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
@@ -879,6 +927,14 @@ export function Step1Outline({
                       acc + (beat.contentSummary?.split(/\s+/).length || 0),
                     0,
                   )}
+                </div>
+              </div>
+              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+                <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
+                  Confidence
+                </div>
+                <div className="text-xl font-mono text-white leading-none font-bold">
+                  {output.researchDossier?.metadata?.overallConfidence || 0}%
                 </div>
               </div>
             </div>
@@ -1045,59 +1101,7 @@ export function Step1Outline({
             )}
 
             {activeTab === "research" && output?.researchDossier && (
-              <div className="space-y-6">
-                {/* Facts */}
-                <div>
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                    <CheckCircle className="w-5 h-5 text-green-500" />
-                    Verified Facts ({output.researchDossier.facts?.length || 0})
-                  </h3>
-                  <div className="space-y-3">
-                    {output.researchDossier.facts?.map((fact) => (
-                      <div
-                        key={fact.id}
-                        className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
-                      >
-                        <div className="text-white text-sm">
-                          {fact.statement}
-                        </div>
-                        <div className="flex items-center gap-2 mt-2">
-                          <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-400">
-                            {fact.confidence}
-                          </span>
-                          {fact.sources?.map((source, i) => (
-                            <span key={i} className="text-xs text-neutral-500">
-                              {source.title}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Quotes */}
-                {output.researchDossier.quotes?.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-bold mb-4">Quotes</h3>
-                    <div className="space-y-3">
-                      {output.researchDossier.quotes?.map((quote) => (
-                        <div
-                          key={quote.id}
-                          className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
-                        >
-                          <div className="text-white text-sm italic">
-                            "{quote.quote}"
-                          </div>
-                          <div className="text-xs text-neutral-500 mt-2">
-                            — {quote.speaker}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <ResearchDocsPanel dossier={output.researchDossier} />
             )}
           </div>
         </div>
