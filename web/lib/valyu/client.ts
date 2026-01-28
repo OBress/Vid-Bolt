@@ -213,11 +213,50 @@ export async function getDeepResearchStatus(
 
     const data = await response.json();
 
+    // Valyu returns JSON schema output in the `output` field when using JSON output_formats
+    // The `output_type` field indicates whether it's 'markdown', 'json', or 'toon'
+    // We need to detect this and populate structured_output accordingly
+    let outputString: string | undefined;
+    let structuredOutput = data.structured_output;
+
+    if (data.output) {
+      // Check if output is structured JSON (object) or markdown (string)
+      if (typeof data.output === 'object' && data.output !== null) {
+        // Output is already a JSON object - this is our structured data!
+        console.log(`[Valyu:DeepResearch] Detected JSON schema output with ${Object.keys(data.output).length} top-level keys`);
+        structuredOutput = data.output;
+        // Convert to string for markdown fallback consumers
+        outputString = JSON.stringify(data.output, null, 2);
+      } else if (typeof data.output === 'string') {
+        // Output is markdown string
+        outputString = data.output;
+        
+        // Also check if output_type indicates JSON (belt and suspenders)
+        if (data.output_type === 'json') {
+          try {
+            structuredOutput = JSON.parse(data.output);
+            console.log(`[Valyu:DeepResearch] Parsed JSON from string output`);
+          } catch {
+            console.warn(`[Valyu:DeepResearch] output_type is 'json' but output is not valid JSON`);
+          }
+        }
+      }
+    }
+
+    // Log what we found for debugging
+    if (data.status === 'completed') {
+      console.log(`[Valyu:DeepResearch] Response summary:`);
+      console.log(`  - output_type: ${data.output_type || 'not set'}`);
+      console.log(`  - output: ${typeof data.output} (${data.output ? (typeof data.output === 'string' ? `${data.output.length} chars` : `${Object.keys(data.output).length} keys`) : 'null'})`);
+      console.log(`  - structured_output extracted: ${structuredOutput ? Object.keys(structuredOutput).join(', ') : 'none'}`);
+      console.log(`  - sources: ${data.sources?.length || 0}`);
+    }
+
     return {
       deepresearch_id: deepresearchId,
       status: data.status,
-      output: data.output,
-      structured_output: data.structured_output,
+      output: outputString,
+      structured_output: structuredOutput,
       sources: data.sources || [],
       cost: data.cost || 0,
       pdf_url: data.pdf_url,

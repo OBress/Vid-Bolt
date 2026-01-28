@@ -102,6 +102,9 @@ export const stockMediaQueue = createQueue('stock-media-scrape');
 /** AI reference image generation for video assets */
 export const assetReferenceImagesQueue = createQueue('asset-reference-images');
 
+/** Research comparison/testing for dev tools */
+export const researchCompareQueue = createQueue('research-compare');
+
 /**
  * All active queues for graceful shutdown.
  */
@@ -122,6 +125,7 @@ export const allQueues = [
   videoSegmentationQueue,
   stockMediaQueue,
   assetReferenceImagesQueue,
+  researchCompareQueue,
 ];
 
 /**

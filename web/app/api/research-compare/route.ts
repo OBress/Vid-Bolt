@@ -1,18 +1,19 @@
 /**
  * Research Comparison API Route
  * ============================================================================
- * Runs both legacy (OpenRouter) and Valyu research providers in parallel
- * for side-by-side comparison in the Universal Script Tester.
+ * Enqueues research jobs to BullMQ worker and provides status polling.
+ * Used by the Universal Script Tester dev tool.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { executeResearchPhase } from '@/lib/queues/writing/research';
-import { decomposeTopicIntoQuestions } from '@/lib/queues/writing/research/topic-decomposition';
-import type { ScriptGenre, ResearchToggle } from '@/lib/queues/writing/types';
+import { researchCompareQueue } from '@/lib/queues/queues';
+import type { ResearchCompareInput, ResearchCompareOutput } from '@/lib/queues/workers/research-compare';
 
-export const maxDuration = 300; // 5 minutes max for this endpoint
+// ============================================================================
+// POST: Enqueue research job
+// ============================================================================
 
 export async function POST(request: NextRequest) {
   try {
@@ -45,6 +46,8 @@ export async function POST(request: NextRequest) {
       researchToggle = 'full',
       angle,
       sourcePreferences,
+      researchProvider = 'valyu',
+      durationRange,
     } = body;
 
     if (!topic) {
@@ -54,123 +57,144 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('[ResearchCompare] Starting comparison research');
+    console.log('[ResearchCompare] Enqueuing research job');
     console.log(`[ResearchCompare] Topic: "${topic.substring(0, 50)}..."`);
-    console.log(`[ResearchCompare] Toggle: ${researchToggle}`);
+    console.log(`[ResearchCompare] Provider: ${researchProvider}, Toggle: ${researchToggle}`);
 
-    // Generate questions once (shared by both providers)
-    const isDeepResearch = researchToggle === 'deep';
-    const questions = await decomposeTopicIntoQuestions(
-      user.id, 
-      topic, 
-      angle, 
-      isDeepResearch
-    );
-    console.log(`[ResearchCompare] Generated ${questions.length} questions`);
-
-    // Run both providers in parallel
-    const startTime = Date.now();
-
-    const [legacyResult, valyuResult] = await Promise.allSettled([
-      // Legacy - OpenRouter
-      (async () => {
-        const legacyStart = Date.now();
-        console.log('[ResearchCompare] Starting Legacy (OpenRouter)...');
-        const result = await executeResearchPhase({
-          userId: user.id,
-          topic,
-          genre: genre as ScriptGenre,
-          researchToggle: researchToggle as ResearchToggle,
-          angle,
-          sourcePreferences,
-          useValyu: false, // Legacy path
-        });
-        const legacyDuration = Date.now() - legacyStart;
-        console.log(`[ResearchCompare] Legacy completed in ${legacyDuration}ms`);
-        return { ...result, durationMs: legacyDuration };
-      })(),
-
-      // Valyu - New provider
-      (async () => {
-        const valyuStart = Date.now();
-        console.log('[ResearchCompare] Starting Valyu...');
-        const result = await executeResearchPhase({
-          userId: user.id,
-          topic,
-          genre: genre as ScriptGenre,
-          researchToggle: researchToggle as ResearchToggle,
-          angle,
-          sourcePreferences,
-          useValyu: true, // Valyu path
-        });
-        const valyuDuration = Date.now() - valyuStart;
-        console.log(`[ResearchCompare] Valyu completed in ${valyuDuration}ms`);
-        return { ...result, durationMs: valyuDuration };
-      })(),
-    ]);
-
-    const totalDuration = Date.now() - startTime;
-    console.log(`[ResearchCompare] Total comparison time: ${totalDuration}ms`);
-
-    // Build comparison response
-    const comparison = {
+    // Enqueue job to BullMQ worker
+    const jobData: ResearchCompareInput = {
+      userId: user.id,
       topic,
+      genre,
       researchToggle,
-      questionsCount: questions.length,
-      totalDurationMs: totalDuration,
-
-      legacy: legacyResult.status === 'fulfilled' 
-        ? {
-            success: true,
-            performed: legacyResult.value.performed,
-            durationMs: legacyResult.value.durationMs,
-            dossier: legacyResult.value.dossier,
-            metrics: legacyResult.value.dossier ? {
-              factCount: legacyResult.value.dossier.facts?.length || 0,
-              quoteCount: legacyResult.value.dossier.quotes?.length || 0,
-              entityCount: legacyResult.value.dossier.entities?.length || 0,
-              sourceCount: legacyResult.value.dossier.worksCited?.length || 0,
-              confidence: legacyResult.value.dossier.metadata?.overallConfidence || 0,
-            } : null,
-          }
-        : {
-            success: false,
-            error: legacyResult.reason?.message || 'Legacy research failed',
-            durationMs: 0,
-            dossier: null,
-            metrics: null,
-          },
-
-      valyu: valyuResult.status === 'fulfilled'
-        ? {
-            success: true,
-            performed: valyuResult.value.performed,
-            durationMs: valyuResult.value.durationMs,
-            dossier: valyuResult.value.dossier,
-            metrics: valyuResult.value.dossier ? {
-              factCount: valyuResult.value.dossier.facts?.length || 0,
-              quoteCount: valyuResult.value.dossier.quotes?.length || 0,
-              entityCount: valyuResult.value.dossier.entities?.length || 0,
-              sourceCount: valyuResult.value.dossier.worksCited?.length || 0,
-              sourceDocumentCount: valyuResult.value.dossier.sourceDocuments?.length || 0,
-              confidence: valyuResult.value.dossier.metadata?.overallConfidence || 0,
-            } : null,
-          }
-        : {
-            success: false,
-            error: valyuResult.reason?.message || 'Valyu research failed',
-            durationMs: 0,
-            dossier: null,
-            metrics: null,
-          },
+      angle,
+      sourcePreferences,
+      researchProvider,
+      durationRange,
     };
 
-    return NextResponse.json(comparison);
+    const job = await researchCompareQueue.add('research', jobData, {
+      removeOnComplete: { age: 3600, count: 50 }, // Keep for 1 hour
+      removeOnFail: { age: 86400, count: 100 }, // Keep failures for 24 hours
+    });
+
+    console.log(`[ResearchCompare] Job enqueued: ${job.id}`);
+
+    return NextResponse.json({
+      jobId: job.id,
+      status: 'queued',
+    });
 
   } catch (error) {
-    console.error('[ResearchCompare] Error:', error);
+    console.error('[ResearchCompare] Error enqueuing job:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Comparison failed' },
+      { error: error instanceof Error ? error.message : 'Failed to enqueue research job' },
+      { status: 500 }
+    );
+  }
+}
+
+// ============================================================================
+// GET: Poll job status
+// ============================================================================
+
+export async function GET(request: NextRequest) {
+  try {
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+        },
+      }
+    );
+    
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    const jobId = request.nextUrl.searchParams.get('jobId');
+
+    if (!jobId) {
+      return NextResponse.json(
+        { error: 'jobId is required' },
+        { status: 400 }
+      );
+    }
+
+    const job = await researchCompareQueue.getJob(jobId);
+
+    if (!job) {
+      return NextResponse.json(
+        { error: 'Job not found' },
+        { status: 404 }
+      );
+    }
+
+    // Get job state
+    const state = await job.getState();
+    const progress = job.progress;
+
+    // If completed, return the result
+    if (state === 'completed') {
+      const result = job.returnvalue as ResearchCompareOutput | null;
+      
+      // Handle case where returnvalue might be null
+      if (!result) {
+        console.warn('[ResearchCompare] Job completed but returnvalue is null');
+        return NextResponse.json({
+          status: 'completed',
+          result: {
+            success: false,
+            dossier: null,
+            durationMs: 0,
+            metrics: null,
+            error: 'Job completed but no result returned',
+          },
+        });
+      }
+      
+      return NextResponse.json({
+        status: 'completed',
+        result: {
+          success: result.success ?? false,
+          dossier: result.dossier ?? null,
+          durationMs: result.durationMs ?? 0,
+          metrics: result.metrics ?? null,
+          error: result.error,
+          outline: result.outline ?? null,
+        },
+      });
+    }
+
+    // If failed, return the error
+    if (state === 'failed') {
+      const failedReason = job.failedReason;
+      return NextResponse.json({
+        status: 'failed',
+        error: failedReason || 'Research job failed',
+      });
+    }
+
+    // Still processing
+    return NextResponse.json({
+      status: state, // 'waiting', 'active', 'delayed', etc.
+      progress,
+    });
+
+  } catch (error) {
+    console.error('[ResearchCompare] Error getting job status:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to get job status' },
       { status: 500 }
     );
   }

@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
       mustAvoid,
       sourcePreferences,
       stockMediaLevel,
+      researchProvider, // valyu or openrouter
       // Project settings
       pov,
       protagonistGender,
@@ -91,6 +92,7 @@ export async function POST(request: NextRequest) {
           mustAvoid,
           sourcePreferences,
           stockMediaLevel: stockMediaLevel || 'standard_images',
+          researchProvider: researchProvider || 'valyu', // Default to valyu for v2
           // Project settings
           pov: pov || '1st',
           protagonistGender: protagonistGender || 'any',
@@ -125,6 +127,7 @@ export async function POST(request: NextRequest) {
           mustAvoid,
           sourcePreferences,
           stockMediaLevel: stockMediaLevel || 'standard_images',
+          researchProvider: researchProvider || 'valyu', // Default to valyu for v2
           // Project settings for AI generation
           pov: pov || '1st',
           protagonistGender: protagonistGender || 'any',

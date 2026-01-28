@@ -50,6 +50,7 @@ import {
   segmentProcessor,
   stockMediaProcessor,
   assetReferenceImageProcessor,
+  researchCompareProcessor,
   startShutdownChecker,
   stopShutdownChecker,
 } from './workers';
@@ -162,6 +163,12 @@ const workerConfigs: WorkerConfig[] = [
     processor: assetReferenceImageProcessor,
     concurrency: 2,
     description: 'AI reference image generation for video assets',
+  },
+  {
+    queue: 'research-compare',
+    processor: researchCompareProcessor,
+    concurrency: 2,
+    description: 'Research comparison for dev tools',
   },
 ];
 

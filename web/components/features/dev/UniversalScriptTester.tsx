@@ -246,6 +246,13 @@ export function UniversalScriptTester({
     | "extensive_images_video"
   >("standard_images");
 
+  // Research provider toggle (valyu = v2 with narrative, openrouter = legacy)
+  const [researchProvider, setResearchProvider] = useState<
+    "valyu" | "openrouter"
+  >("valyu");
+  // Research only mode - just displays research results, doesn't write full script
+  const [researchOnly, setResearchOnly] = useState(true);
+
   // Comparison mode state (Legacy vs Valyu side-by-side)
   const [compareMode, setCompareMode] = useState(false);
   const [isComparing, setIsComparing] = useState(false);
@@ -282,6 +289,12 @@ export function UniversalScriptTester({
         confidence: number;
       } | null;
       error?: string;
+      // Full outline output from extended pipeline
+      outline?: {
+        durationDecision: any;
+        spine: any;
+        assetRegistry: any;
+      } | null;
     };
   } | null>(null);
 
@@ -434,6 +447,8 @@ export function UniversalScriptTester({
             maxMinutes: durationRange[1],
           },
           angle: angle || undefined,
+          // Research provider selection
+          researchProvider,
           // Advanced settings (matching Step 1)
           pov,
           protagonistGender,
@@ -484,7 +499,8 @@ export function UniversalScriptTester({
     setComparisonResult(null);
 
     try {
-      const response = await fetch("/api/research-compare", {
+      // Step 1: Enqueue job
+      const enqueueResponse = await fetch("/api/research-compare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -492,18 +508,82 @@ export function UniversalScriptTester({
           genre,
           researchToggle,
           angle: angle || undefined,
+          researchProvider,
+          durationRange: {
+            minMinutes: durationRange[0],
+            maxMinutes: durationRange[1],
+          },
         }),
       });
 
-      const data = await response.json();
+      const enqueueData = await enqueueResponse.json();
 
-      if (!response.ok) {
-        throw new Error(data.error || "Comparison failed");
+      if (!enqueueResponse.ok) {
+        throw new Error(enqueueData.error || "Failed to enqueue research job");
       }
 
-      setComparisonResult(data);
+      const jobId = enqueueData.jobId;
+      console.log(`[UniversalScriptTester] Research job enqueued: ${jobId}`);
+
+      // Step 2: Poll for completion
+      let attempts = 0;
+      const maxAttempts = 300; // 300 * 2s = 10 minutes max
+      const pollInterval = 2000; // 2 seconds
+
+      while (attempts < maxAttempts) {
+        attempts++;
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+
+        const statusResponse = await fetch(
+          `/api/research-compare?jobId=${jobId}`,
+        );
+        const statusData = await statusResponse.json();
+
+        if (!statusResponse.ok) {
+          throw new Error(statusData.error || "Failed to check job status");
+        }
+
+        console.log(
+          `[UniversalScriptTester] Job ${jobId} status: ${statusData.status}`,
+        );
+
+        if (statusData.status === "completed") {
+          // Build comparison result in expected format
+          const result = statusData.result || {};
+          setComparisonResult({
+            topic,
+            researchToggle,
+            questionsCount: 0, // DeepResearch doesn't use decomposed questions
+            totalDurationMs: result.durationMs || 0,
+            legacy: {
+              success: false,
+              performed: false,
+              durationMs: 0,
+              dossier: null,
+              metrics: null,
+            },
+            valyu: {
+              success: result.success ?? false,
+              performed: true,
+              durationMs: result.durationMs || 0,
+              dossier: result.dossier || null,
+              metrics: result.metrics || null,
+              outline: result.outline || null,
+            },
+          });
+          return;
+        }
+
+        if (statusData.status === "failed") {
+          throw new Error(statusData.error || "Research job failed");
+        }
+
+        // Still processing - continue polling
+      }
+
+      throw new Error("Research job timed out after 10 minutes");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Comparison failed");
+      setError(err instanceof Error ? err.message : "Research failed");
     } finally {
       setIsComparing(false);
     }
@@ -723,33 +803,80 @@ export function UniversalScriptTester({
                   </Select>
                 </div>
 
-                {/* Compare Mode Toggle */}
+                {/* Research Provider Toggle */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label className="text-neutral-400 flex items-center gap-2">
-                      <GitCompareArrows className="w-4 h-4" />
-                      Compare Mode
+                      <Search className="w-4 h-4" />
+                      Research Provider
                     </Label>
                     <button
                       type="button"
-                      onClick={() => setCompareMode(!compareMode)}
+                      onClick={() =>
+                        setResearchProvider(
+                          researchProvider === "valyu" ? "openrouter" : "valyu",
+                        )
+                      }
                       className={`relative w-10 h-5 rounded-full transition-colors ${
-                        compareMode ? "bg-purple-600" : "bg-neutral-700"
+                        researchProvider === "valyu"
+                          ? "bg-purple-600"
+                          : "bg-neutral-700"
                       }`}
                     >
                       <span
                         className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
-                          compareMode ? "translate-x-5" : "translate-x-0"
+                          researchProvider === "valyu"
+                            ? "translate-x-5"
+                            : "translate-x-0"
                         }`}
                       />
                     </button>
                   </div>
-                  {compareMode && (
-                    <p className="text-[11px] text-purple-400 bg-purple-500/10 px-2 py-1.5 rounded">
-                      Compare Mode runs both Legacy (OpenRouter) and Valyu
-                      research side-by-side with the same inputs for comparison.
-                    </p>
-                  )}
+                  <p
+                    className={`text-[11px] px-2 py-1.5 rounded ${
+                      researchProvider === "valyu"
+                        ? "text-purple-400 bg-purple-500/10"
+                        : "text-blue-400 bg-blue-500/10"
+                    }`}
+                  >
+                    {researchProvider === "valyu"
+                      ? "Valyu v2: Narrative context, key developments, enhanced entities"
+                      : "OpenRouter: Legacy web search with standard fact extraction"}
+                  </p>
+                </div>
+
+                {/* Research Only Toggle */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-neutral-400 flex items-center gap-2">
+                      <Search className="w-4 h-4" />
+                      Research Only
+                    </Label>
+                    <button
+                      type="button"
+                      onClick={() => setResearchOnly(!researchOnly)}
+                      className={`relative w-10 h-5 rounded-full transition-colors ${
+                        researchOnly ? "bg-green-600" : "bg-neutral-700"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
+                          researchOnly ? "translate-x-5" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <p
+                    className={`text-[11px] px-2 py-1.5 rounded ${
+                      researchOnly
+                        ? "text-green-400 bg-green-500/10"
+                        : "text-neutral-400 bg-neutral-800"
+                    }`}
+                  >
+                    {researchOnly
+                      ? "Test research and display v2 dossier - no script generation"
+                      : "Full pipeline: research → script → assets → everything"}
+                  </p>
                 </div>
 
                 <div className="space-y-4 pt-2">
@@ -939,23 +1066,23 @@ export function UniversalScriptTester({
                 </div>
 
                 <Button
-                  onClick={compareMode ? startComparison : startGeneration}
+                  onClick={researchOnly ? startComparison : startGeneration}
                   disabled={isGenerating || isComparing || !topic}
                   className={`w-full ${
-                    compareMode
-                      ? "bg-purple-600 hover:bg-purple-700"
+                    researchOnly
+                      ? "bg-green-600 hover:bg-green-700"
                       : "bg-orange-500 hover:bg-orange-600"
                   }`}
                 >
                   {isComparing ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Running Comparison...
+                      Running Research...
                     </>
-                  ) : compareMode ? (
+                  ) : researchOnly ? (
                     <>
-                      <GitCompareArrows className="w-4 h-4 mr-2" />
-                      Compare Research Providers
+                      <Search className="w-4 h-4 mr-2" />
+                      Run Research Only
                     </>
                   ) : (
                     <>
@@ -1099,13 +1226,13 @@ export function UniversalScriptTester({
 
         {/* Right Panel - Output Preview */}
         <div className="flex-1 p-6 overflow-hidden">
-          {/* Comparison Results View */}
+          {/* Research Results View - Full Width Valyu Display */}
           {comparisonResult ? (
             <div className="h-full flex flex-col">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  <GitCompareArrows className="w-5 h-5 text-purple-400" />
-                  Research Provider Comparison
+                  <Search className="w-5 h-5 text-purple-400" />
+                  Valyu AI Research Results
                 </h2>
                 <Button
                   variant="outline"
@@ -1117,340 +1244,580 @@ export function UniversalScriptTester({
                 </Button>
               </div>
 
-              {/* Overview Stats */}
-              <div className="grid grid-cols-3 gap-4 mb-6">
+              {/* Overview Stats - Full Width */}
+              <div className="grid grid-cols-4 gap-4 mb-6">
                 <div className="bg-neutral-900 rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-white">
-                    {comparisonResult.questionsCount}
+                  <div className="text-2xl font-bold text-blue-400">
+                    {comparisonResult.valyu.metrics?.factCount || 0}
                   </div>
-                  <div className="text-xs text-neutral-500">
-                    Research Questions
-                  </div>
+                  <div className="text-xs text-neutral-500">Facts</div>
                 </div>
                 <div className="bg-neutral-900 rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-white">
-                    {Math.round(comparisonResult.totalDurationMs / 1000)}s
+                  <div className="text-2xl font-bold text-green-400">
+                    {comparisonResult.valyu.metrics?.quoteCount || 0}
                   </div>
-                  <div className="text-xs text-neutral-500">Total Time</div>
+                  <div className="text-xs text-neutral-500">Quotes</div>
+                </div>
+                <div className="bg-neutral-900 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-yellow-400">
+                    {comparisonResult.valyu.metrics?.entityCount || 0}
+                  </div>
+                  <div className="text-xs text-neutral-500">Entities</div>
                 </div>
                 <div className="bg-neutral-900 rounded-lg p-4 text-center">
                   <div className="text-2xl font-bold text-purple-400">
-                    {comparisonResult.researchToggle}
+                    {comparisonResult.valyu.metrics?.sourceCount || 0}
+                    {comparisonResult.valyu.metrics?.sourceDocumentCount !==
+                      undefined && (
+                      <span className="text-xs text-neutral-500 ml-1">
+                        (+{comparisonResult.valyu.metrics.sourceDocumentCount}{" "}
+                        docs)
+                      </span>
+                    )}
                   </div>
-                  <div className="text-xs text-neutral-500">Research Mode</div>
+                  <div className="text-xs text-neutral-500">Sources</div>
                 </div>
               </div>
 
-              {/* Side-by-Side Comparison */}
-              <div className="flex-1 grid grid-cols-2 gap-4 overflow-hidden">
-                {/* Legacy (OpenRouter) Column */}
-                <div
-                  className="bg-neutral-900 rounded-lg p-4 flex flex-col overflow-hidden cursor-pointer hover:bg-neutral-800/50 transition-colors"
-                  onClick={() =>
-                    comparisonResult.legacy.success &&
-                    setComparisonDetailView("legacy")
-                  }
-                >
-                  <div className="flex items-center gap-2 mb-4">
-                    <div
-                      className={`w-3 h-3 rounded-full ${
-                        comparisonResult.legacy.success
-                          ? "bg-green-500"
-                          : "bg-red-500"
-                      }`}
-                    />
-                    <h3 className="text-sm font-bold text-white">
-                      Legacy (OpenRouter)
-                    </h3>
-                    <span className="ml-auto text-xs text-neutral-500 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {Math.round(comparisonResult.legacy.durationMs / 1000)}s
-                    </span>
-                  </div>
-
-                  {comparisonResult.legacy.success &&
-                  comparisonResult.legacy.metrics ? (
-                    <div className="space-y-4 flex-1 overflow-y-auto">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="bg-neutral-800 rounded p-2 text-center">
-                          <div className="text-lg font-bold text-blue-400">
-                            {comparisonResult.legacy.metrics.factCount}
-                          </div>
-                          <div className="text-[10px] text-neutral-500">
-                            Facts
-                          </div>
-                        </div>
-                        <div className="bg-neutral-800 rounded p-2 text-center">
-                          <div className="text-lg font-bold text-green-400">
-                            {comparisonResult.legacy.metrics.quoteCount}
-                          </div>
-                          <div className="text-[10px] text-neutral-500">
-                            Quotes
-                          </div>
-                        </div>
-                        <div className="bg-neutral-800 rounded p-2 text-center">
-                          <div className="text-lg font-bold text-yellow-400">
-                            {comparisonResult.legacy.metrics.entityCount}
-                          </div>
-                          <div className="text-[10px] text-neutral-500">
-                            Entities
-                          </div>
-                        </div>
-                        <div className="bg-neutral-800 rounded p-2 text-center">
-                          <div className="text-lg font-bold text-purple-400">
-                            {comparisonResult.legacy.metrics.sourceCount}
-                          </div>
-                          <div className="text-[10px] text-neutral-500">
-                            Sources
-                          </div>
-                        </div>
-                      </div>
-                      <div className="bg-neutral-800 rounded p-3">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs text-neutral-400">
-                            Confidence
-                          </span>
-                          <span className="text-xs font-mono text-white">
-                            {comparisonResult.legacy.metrics.confidence}%
-                          </span>
-                        </div>
-                        <div className="w-full bg-neutral-700 rounded-full h-2">
-                          <div
-                            className="bg-blue-500 h-2 rounded-full"
-                            style={{
-                              width: `${comparisonResult.legacy.metrics.confidence}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                      {/* Sample Facts Preview */}
-                      {comparisonResult.legacy.dossier?.facts
-                        ?.slice(0, 3)
-                        .map((fact: any) => (
-                          <div
-                            key={fact.id}
-                            className="bg-neutral-800 rounded p-2 text-xs"
-                          >
-                            <span className="text-neutral-500">
-                              [{fact.id}]
-                            </span>{" "}
-                            <span className="text-neutral-300">
-                              {fact.statement?.substring(0, 100)}...
-                            </span>
-                          </div>
-                        ))}
-                    </div>
-                  ) : (
-                    <div className="flex-1 flex items-center justify-center text-red-400 text-sm">
-                      {comparisonResult.legacy.error || "Research failed"}
-                    </div>
-                  )}
+              {/* Duration & Confidence Row */}
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-neutral-900 rounded-lg p-4 flex items-center justify-between">
+                  <span className="text-sm text-neutral-400 flex items-center gap-2">
+                    <Clock className="w-4 h-4" />
+                    Research Time
+                  </span>
+                  <span className="text-lg font-bold text-white">
+                    {Math.round(
+                      (comparisonResult.valyu.durationMs || 0) / 1000,
+                    )}
+                    s
+                  </span>
                 </div>
-
-                {/* Valyu Column */}
-                <div
-                  className="bg-neutral-900 rounded-lg p-4 flex flex-col overflow-hidden border border-purple-500/30 cursor-pointer hover:bg-neutral-800/50 transition-colors"
-                  onClick={() =>
-                    comparisonResult.valyu.success &&
-                    setComparisonDetailView("valyu")
-                  }
-                >
-                  <div className="flex items-center gap-2 mb-4">
-                    <div
-                      className={`w-3 h-3 rounded-full ${
-                        comparisonResult.valyu.success
-                          ? "bg-green-500"
-                          : "bg-red-500"
-                      }`}
-                    />
-                    <h3 className="text-sm font-bold text-purple-400">
-                      Valyu AI
-                    </h3>
-                    <span className="ml-auto text-xs text-neutral-500 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {Math.round(comparisonResult.valyu.durationMs / 1000)}s
+                <div className="bg-neutral-900 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-neutral-400">Confidence</span>
+                    <span className="text-sm font-mono text-white">
+                      {comparisonResult.valyu.metrics?.confidence || 0}%
                     </span>
                   </div>
-
-                  {comparisonResult.valyu.success &&
-                  comparisonResult.valyu.metrics ? (
-                    <div className="space-y-4 flex-1 overflow-y-auto">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="bg-neutral-800 rounded p-2 text-center">
-                          <div className="text-lg font-bold text-blue-400">
-                            {comparisonResult.valyu.metrics.factCount}
-                          </div>
-                          <div className="text-[10px] text-neutral-500">
-                            Facts
-                          </div>
-                        </div>
-                        <div className="bg-neutral-800 rounded p-2 text-center">
-                          <div className="text-lg font-bold text-green-400">
-                            {comparisonResult.valyu.metrics.quoteCount}
-                          </div>
-                          <div className="text-[10px] text-neutral-500">
-                            Quotes
-                          </div>
-                        </div>
-                        <div className="bg-neutral-800 rounded p-2 text-center">
-                          <div className="text-lg font-bold text-yellow-400">
-                            {comparisonResult.valyu.metrics.entityCount}
-                          </div>
-                          <div className="text-[10px] text-neutral-500">
-                            Entities
-                          </div>
-                        </div>
-                        <div className="bg-neutral-800 rounded p-2 text-center">
-                          <div className="text-lg font-bold text-purple-400">
-                            {comparisonResult.valyu.metrics.sourceCount}
-                            {comparisonResult.valyu.metrics
-                              .sourceDocumentCount !== undefined && (
-                              <span className="text-xs text-neutral-500 ml-1">
-                                (+
-                                {
-                                  comparisonResult.valyu.metrics
-                                    .sourceDocumentCount
-                                }{" "}
-                                docs)
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-neutral-500">
-                            Sources
-                          </div>
-                        </div>
-                      </div>
-                      <div className="bg-neutral-800 rounded p-3">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs text-neutral-400">
-                            Confidence
-                          </span>
-                          <span className="text-xs font-mono text-white">
-                            {comparisonResult.valyu.metrics.confidence}%
-                          </span>
-                        </div>
-                        <div className="w-full bg-neutral-700 rounded-full h-2">
-                          <div
-                            className="bg-purple-500 h-2 rounded-full"
-                            style={{
-                              width: `${comparisonResult.valyu.metrics.confidence}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                      {/* Sample Facts Preview */}
-                      {comparisonResult.valyu.dossier?.facts
-                        ?.slice(0, 3)
-                        .map((fact: any) => (
-                          <div
-                            key={fact.id}
-                            className="bg-neutral-800 rounded p-2 text-xs"
-                          >
-                            <span className="text-neutral-500">
-                              [{fact.id}]
-                            </span>{" "}
-                            <span className="text-neutral-300">
-                              {fact.statement?.substring(0, 100)}...
-                            </span>
-                            {fact.primarySourceId && (
-                              <span className="text-purple-400 ml-1">
-                                [{fact.primarySourceId}]
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                    </div>
-                  ) : (
-                    <div className="flex-1 flex items-center justify-center text-red-400 text-sm">
-                      {comparisonResult.valyu.error || "Research failed"}
-                    </div>
-                  )}
+                  <div className="w-full bg-neutral-700 rounded-full h-2">
+                    <div
+                      className="bg-purple-500 h-2 rounded-full transition-all"
+                      style={{
+                        width: `${comparisonResult.valyu.metrics?.confidence || 0}%`,
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* Detail View Modal */}
-              <Dialog
-                open={comparisonDetailView !== null}
-                onOpenChange={() => setComparisonDetailView(null)}
-              >
-                <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col bg-neutral-950 border-neutral-800">
-                  <DialogHeader className="flex-shrink-0">
-                    <DialogTitle
-                      className={`flex items-center gap-2 ${comparisonDetailView === "valyu" ? "text-purple-400" : "text-blue-400"}`}
+              {/* Error State */}
+              {!comparisonResult.valyu.success && (
+                <div className="flex-1 flex items-center justify-center text-red-400 text-lg">
+                  {comparisonResult.valyu.error || "Research failed"}
+                </div>
+              )}
+
+              {/* Success State - Tabbed Content */}
+              {comparisonResult.valyu.success &&
+                comparisonResult.valyu.dossier && (
+                  <div className="flex-1 overflow-hidden">
+                    <Tabs
+                      defaultValue="narrative"
+                      className="h-full flex flex-col"
                     >
-                      <Search className="w-5 h-5" />
-                      {comparisonDetailView === "valyu"
-                        ? "Valyu AI"
-                        : "Legacy (OpenRouter)"}{" "}
-                      - Full Research Details
-                    </DialogTitle>
-                    <DialogDescription className="text-neutral-400">
-                      {comparisonDetailView && comparisonResult && (
-                        <span>
-                          {comparisonResult[comparisonDetailView].metrics
-                            ?.factCount || 0}{" "}
-                          facts,{" "}
-                          {comparisonResult[comparisonDetailView].metrics
-                            ?.quoteCount || 0}{" "}
-                          quotes,{" "}
-                          {comparisonResult[comparisonDetailView].metrics
-                            ?.entityCount || 0}{" "}
-                          entities
-                        </span>
-                      )}
-                    </DialogDescription>
-                  </DialogHeader>
+                      <TabsList className="bg-neutral-900 mb-4 w-full justify-start flex-wrap">
+                        <TabsTrigger value="narrative">Narrative</TabsTrigger>
+                        <TabsTrigger value="developments">
+                          Key Developments
+                        </TabsTrigger>
+                        <TabsTrigger value="outline">
+                          🎬 Video Outline
+                        </TabsTrigger>
+                        <TabsTrigger value="assets">🎨 Assets</TabsTrigger>
+                        <TabsTrigger value="facts">Facts</TabsTrigger>
+                        <TabsTrigger value="quotes">Quotes</TabsTrigger>
+                        <TabsTrigger value="entities">Entities</TabsTrigger>
+                        <TabsTrigger value="timeline">Timeline</TabsTrigger>
+                        <TabsTrigger value="sources">Sources</TabsTrigger>
+                      </TabsList>
 
-                  <ScrollArea className="flex-1 pr-4">
-                    {comparisonDetailView && comparisonResult && (
-                      <Tabs defaultValue="facts" className="w-full">
-                        <TabsList className="bg-neutral-900 mb-4 w-full justify-start">
-                          <TabsTrigger value="facts">Facts</TabsTrigger>
-                          <TabsTrigger value="quotes">Quotes</TabsTrigger>
-                          <TabsTrigger value="entities">Entities</TabsTrigger>
-                          <TabsTrigger value="timeline">Timeline</TabsTrigger>
-                          <TabsTrigger value="sources">Sources</TabsTrigger>
-                        </TabsList>
-
-                        {/* Facts Tab */}
-                        <TabsContent value="facts" className="space-y-2">
-                          {comparisonResult[comparisonDetailView].dossier?.facts
-                            ?.length > 0 ? (
-                            comparisonResult[
-                              comparisonDetailView
-                            ].dossier.facts.map((fact: any, idx: number) => (
-                              <div
-                                key={fact.id || idx}
-                                className="bg-neutral-900 rounded-lg p-3 border border-neutral-800"
-                              >
-                                <div className="flex items-start gap-2">
-                                  <span className="text-xs text-neutral-500 font-mono bg-neutral-800 px-1.5 py-0.5 rounded">
-                                    {fact.id || `FACT-${idx + 1}`}
-                                  </span>
-                                  {fact.primarySourceId && (
-                                    <span
-                                      className={`text-xs font-mono px-1.5 py-0.5 rounded ${comparisonDetailView === "valyu" ? "bg-purple-500/20 text-purple-400" : "bg-blue-500/20 text-blue-400"}`}
-                                    >
-                                      {fact.primarySourceId}
-                                    </span>
-                                  )}
-                                  <span
-                                    className={`text-xs px-1.5 py-0.5 rounded ml-auto ${
-                                      fact.confidence === "high"
-                                        ? "bg-green-500/20 text-green-400"
-                                        : fact.confidence === "medium"
-                                          ? "bg-yellow-500/20 text-yellow-400"
-                                          : "bg-neutral-700 text-neutral-400"
-                                    }`}
-                                  >
-                                    {fact.confidence || "unknown"}
+                      <div className="flex-1 overflow-y-auto">
+                        {/* Narrative Tab */}
+                        <TabsContent
+                          value="narrative"
+                          className="space-y-4 mt-0"
+                        >
+                          {comparisonResult.valyu.dossier?.narrative ? (
+                            <div className="space-y-4">
+                              {/* Hook */}
+                              <div className="bg-neutral-900 rounded-lg p-4 border border-purple-500/30">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <span className="text-xs font-bold text-purple-400 uppercase">
+                                    🎯 Hook
                                   </span>
                                 </div>
-                                <p className="text-sm text-neutral-200 mt-2">
-                                  {fact.statement}
+                                <p className="text-neutral-200">
+                                  {
+                                    comparisonResult.valyu.dossier.narrative
+                                      .hook
+                                  }
                                 </p>
                               </div>
-                            ))
+                              {/* Summary */}
+                              {comparisonResult.valyu.dossier.narrative
+                                .summary && (
+                                <div className="bg-neutral-900 rounded-lg p-4">
+                                  <span className="text-xs font-bold text-blue-400 uppercase mb-2 block">
+                                    📋 Summary
+                                  </span>
+                                  <p className="text-neutral-300 whitespace-pre-line">
+                                    {
+                                      comparisonResult.valyu.dossier.narrative
+                                        .summary
+                                    }
+                                  </p>
+                                </div>
+                              )}
+                              {/* Background */}
+                              {comparisonResult.valyu.dossier.narrative
+                                .background && (
+                                <div className="bg-neutral-900 rounded-lg p-4">
+                                  <span className="text-xs font-bold text-green-400 uppercase mb-2 block">
+                                    📚 Background
+                                  </span>
+                                  <p className="text-neutral-300 whitespace-pre-line">
+                                    {
+                                      comparisonResult.valyu.dossier.narrative
+                                        .background
+                                    }
+                                  </p>
+                                </div>
+                              )}
+                              {/* Prior Events */}
+                              {comparisonResult.valyu.dossier.narrative
+                                .priorEvents &&
+                                comparisonResult.valyu.dossier.narrative
+                                  .priorEvents.length > 0 && (
+                                  <div className="bg-neutral-900 rounded-lg p-4">
+                                    <span className="text-xs font-bold text-yellow-400 uppercase mb-2 block">
+                                      ⏮️ Prior Events
+                                    </span>
+                                    <ol className="list-decimal list-inside space-y-1 text-neutral-300">
+                                      {comparisonResult.valyu.dossier.narrative.priorEvents.map(
+                                        (event: string, idx: number) => (
+                                          <li key={idx}>{event}</li>
+                                        ),
+                                      )}
+                                    </ol>
+                                  </div>
+                                )}
+                              {/* Key Terms */}
+                              {comparisonResult.valyu.dossier.narrative
+                                .keyTerms &&
+                                Object.keys(
+                                  comparisonResult.valyu.dossier.narrative
+                                    .keyTerms,
+                                ).length > 0 && (
+                                  <div className="bg-neutral-900 rounded-lg p-4 border border-orange-500/30">
+                                    <span className="text-xs font-bold text-orange-400 uppercase mb-2 block">
+                                      📖 Key Terms
+                                    </span>
+                                    <dl className="space-y-2">
+                                      {Object.entries(
+                                        comparisonResult.valyu.dossier.narrative
+                                          .keyTerms as Record<string, string>,
+                                      ).map(([term, definition]) => (
+                                        <div key={term}>
+                                          <dt className="text-white font-medium">
+                                            {term}
+                                          </dt>
+                                          <dd className="text-neutral-400 text-sm ml-4">
+                                            {definition}
+                                          </dd>
+                                        </div>
+                                      ))}
+                                    </dl>
+                                  </div>
+                                )}
+                            </div>
+                          ) : (
+                            <div className="text-center text-neutral-500 py-8">
+                              No narrative available (v1 schema)
+                            </div>
+                          )}
+                        </TabsContent>
+
+                        {/* Key Developments Tab */}
+                        <TabsContent
+                          value="developments"
+                          className="space-y-3 mt-0"
+                        >
+                          {comparisonResult.valyu.dossier?.keyDevelopments
+                            ?.length > 0 ? (
+                            comparisonResult.valyu.dossier.keyDevelopments.map(
+                              (dev: any, idx: number) => (
+                                <div
+                                  key={dev.id || idx}
+                                  className="bg-neutral-900 rounded-lg p-4 border border-neutral-800"
+                                >
+                                  <div className="flex items-start gap-3">
+                                    <div className="flex-shrink-0 w-8 h-8 bg-purple-500/20 rounded-full flex items-center justify-center">
+                                      <span className="text-sm font-bold text-purple-400">
+                                        {idx + 1}
+                                      </span>
+                                    </div>
+                                    <div className="flex-1">
+                                      {/* Timestamp and Who */}
+                                      <div className="flex items-center gap-2 mb-1">
+                                        {dev.timestamp && (
+                                          <span className="text-xs font-mono bg-neutral-800 px-1.5 py-0.5 rounded text-yellow-400">
+                                            {dev.timestamp}
+                                          </span>
+                                        )}
+                                        {dev.who?.length > 0 && (
+                                          <span className="text-xs text-blue-400">
+                                            {dev.who.join(", ")}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {/* What happened */}
+                                      <p className="text-sm text-white font-medium mb-1">
+                                        {dev.what}
+                                      </p>
+                                      {/* Significance */}
+                                      {dev.significance && (
+                                        <p className="text-xs text-neutral-400">
+                                          <span className="text-green-400 font-medium">
+                                            Significance:
+                                          </span>{" "}
+                                          {dev.significance}
+                                        </p>
+                                      )}
+                                      {/* Source IDs */}
+                                      {dev.sourceIds?.length > 0 && (
+                                        <div className="flex gap-1 mt-2">
+                                          {dev.sourceIds.map((sid: string) => (
+                                            <span
+                                              key={sid}
+                                              className="text-xs font-mono bg-neutral-800 px-1 py-0.5 rounded text-purple-400"
+                                            >
+                                              {sid}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ),
+                            )
+                          ) : (
+                            <div className="text-center text-neutral-500 py-8">
+                              No key developments found
+                            </div>
+                          )}
+                        </TabsContent>
+
+                        {/* Video Outline Tab */}
+                        <TabsContent value="outline" className="space-y-3 mt-0">
+                          {comparisonResult.valyu.outline?.spine?.beats
+                            ?.length > 0 ? (
+                            <div className="space-y-3">
+                              <div className="text-sm text-neutral-400 mb-4">
+                                <span className="font-medium text-white">
+                                  {comparisonResult.valyu.outline?.spine
+                                    ?.beatCount ?? 0}{" "}
+                                  beats
+                                </span>
+                                {" • "}
+                                <span>
+                                  ~
+                                  {Math.round(
+                                    (comparisonResult.valyu.outline
+                                      ?.durationDecision
+                                      ?.recommendedDurationSeconds ?? 0) / 60,
+                                  )}{" "}
+                                  min recommended
+                                </span>
+                              </div>
+                              {comparisonResult.valyu.outline?.spine?.beats?.map(
+                                (beat: any, idx: number) => (
+                                  <div
+                                    key={beat.id || idx}
+                                    className="bg-neutral-900 rounded-lg p-4 border border-neutral-800"
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <div className="flex-shrink-0 w-8 h-8 bg-blue-500/20 rounded-full flex items-center justify-center">
+                                        <span className="text-sm font-bold text-blue-400">
+                                          {beat.index + 1}
+                                        </span>
+                                      </div>
+                                      <div className="flex-1">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <span
+                                            className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${
+                                              beat.classification?.type ===
+                                              "HOOK"
+                                                ? "bg-purple-500/20 text-purple-400"
+                                                : beat.classification?.type ===
+                                                    "ESCALATION"
+                                                  ? "bg-yellow-500/20 text-yellow-400"
+                                                  : beat.classification
+                                                        ?.type === "CLIMAX"
+                                                    ? "bg-red-500/20 text-red-400"
+                                                    : beat.classification
+                                                          ?.type ===
+                                                        "RESOLUTION"
+                                                      ? "bg-green-500/20 text-green-400"
+                                                      : "bg-neutral-500/20 text-neutral-400"
+                                            }`}
+                                          >
+                                            {beat.classification?.type ||
+                                              "BEAT"}
+                                          </span>
+                                          <span className="text-xs text-neutral-500">
+                                            ~{beat.targetDurationSeconds}s
+                                          </span>
+                                        </div>
+                                        <p className="text-neutral-200">
+                                          {beat.contentSummary}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ),
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-center text-neutral-500 py-8">
+                              No video outline available. Provide a duration
+                              range to generate spine.
+                            </div>
+                          )}
+                        </TabsContent>
+
+                        {/* Assets Tab */}
+                        <TabsContent value="assets" className="space-y-6 mt-0">
+                          {comparisonResult.valyu.outline?.assetRegistry ? (
+                            <div className="space-y-6">
+                              {/* Characters */}
+                              {comparisonResult.valyu.outline.assetRegistry
+                                .characters?.length > 0 && (
+                                <div>
+                                  <h3 className="text-sm font-bold text-purple-400 uppercase mb-3">
+                                    👤 Characters (
+                                    {
+                                      comparisonResult.valyu.outline
+                                        .assetRegistry.characters.length
+                                    }
+                                    )
+                                  </h3>
+                                  <div className="grid gap-3">
+                                    {comparisonResult.valyu.outline.assetRegistry.characters.map(
+                                      (char: any, idx: number) => (
+                                        <div
+                                          key={char.id || idx}
+                                          className="bg-neutral-900 rounded-lg p-4 border border-purple-500/30"
+                                        >
+                                          <div className="flex items-center gap-2 mb-2">
+                                            <span className="font-bold text-white">
+                                              {char.name}
+                                            </span>
+                                            <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">
+                                              {char.role}
+                                            </span>
+                                          </div>
+                                          {char.physicalCharacteristics && (
+                                            <div className="text-sm text-neutral-400 space-y-1">
+                                              <p>
+                                                <span className="text-neutral-500">
+                                                  Demographics:
+                                                </span>{" "}
+                                                {
+                                                  char.physicalCharacteristics
+                                                    .demographics?.age
+                                                }
+                                                ,{" "}
+                                                {
+                                                  char.physicalCharacteristics
+                                                    .demographics?.gender
+                                                }
+                                                {char.physicalCharacteristics
+                                                  .demographics?.ethnicity &&
+                                                  `, ${char.physicalCharacteristics.demographics.ethnicity}`}
+                                              </p>
+                                              <p>
+                                                <span className="text-neutral-500">
+                                                  Build:
+                                                </span>{" "}
+                                                {
+                                                  char.physicalCharacteristics
+                                                    .bodyStructure?.height
+                                                }
+                                                ,{" "}
+                                                {
+                                                  char.physicalCharacteristics
+                                                    .bodyStructure?.build
+                                                }
+                                              </p>
+                                              {char.physicalCharacteristics
+                                                .hair && (
+                                                <p>
+                                                  <span className="text-neutral-500">
+                                                    Hair:
+                                                  </span>{" "}
+                                                  {
+                                                    char.physicalCharacteristics
+                                                      .hair.color
+                                                  }{" "}
+                                                  {
+                                                    char.physicalCharacteristics
+                                                      .hair.style
+                                                  }
+                                                </p>
+                                              )}
+                                            </div>
+                                          )}
+                                          {char.wardrobe?.defaultOutfit && (
+                                            <p className="text-sm text-neutral-500 mt-2">
+                                              <span className="text-neutral-600">
+                                                Wardrobe:
+                                              </span>{" "}
+                                              {char.wardrobe.defaultOutfit}
+                                            </p>
+                                          )}
+                                        </div>
+                                      ),
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Locations */}
+                              {comparisonResult.valyu.outline.assetRegistry
+                                .locations?.length > 0 && (
+                                <div>
+                                  <h3 className="text-sm font-bold text-blue-400 uppercase mb-3">
+                                    📍 Locations (
+                                    {
+                                      comparisonResult.valyu.outline
+                                        .assetRegistry.locations.length
+                                    }
+                                    )
+                                  </h3>
+                                  <div className="grid gap-3">
+                                    {comparisonResult.valyu.outline.assetRegistry.locations.map(
+                                      (loc: any, idx: number) => (
+                                        <div
+                                          key={loc.id || idx}
+                                          className="bg-neutral-900 rounded-lg p-4 border border-blue-500/30"
+                                        >
+                                          <div className="flex items-center gap-2 mb-2">
+                                            <span className="font-bold text-white">
+                                              {loc.name}
+                                            </span>
+                                            <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">
+                                              {loc.type}
+                                            </span>
+                                          </div>
+                                          {loc.structuralDetails && (
+                                            <p className="text-sm text-neutral-400">
+                                              {loc.structuralDetails
+                                                .architecture ||
+                                                loc.structuralDetails.setting}
+                                            </p>
+                                          )}
+                                        </div>
+                                      ),
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Objects */}
+                              {comparisonResult.valyu.outline.assetRegistry
+                                .objects?.length > 0 && (
+                                <div>
+                                  <h3 className="text-sm font-bold text-yellow-400 uppercase mb-3">
+                                    📦 Objects (
+                                    {
+                                      comparisonResult.valyu.outline
+                                        .assetRegistry.objects.length
+                                    }
+                                    )
+                                  </h3>
+                                  <div className="grid gap-3">
+                                    {comparisonResult.valyu.outline.assetRegistry.objects.map(
+                                      (obj: any, idx: number) => (
+                                        <div
+                                          key={obj.id || idx}
+                                          className="bg-neutral-900 rounded-lg p-4 border border-yellow-500/30"
+                                        >
+                                          <div className="flex items-center gap-2 mb-2">
+                                            <span className="font-bold text-white">
+                                              {obj.name}
+                                            </span>
+                                            <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">
+                                              {obj.type}
+                                            </span>
+                                          </div>
+                                          {obj.physicalDescription && (
+                                            <p className="text-sm text-neutral-400">
+                                              {obj.physicalDescription}
+                                            </p>
+                                          )}
+                                        </div>
+                                      ),
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-center text-neutral-500 py-8">
+                              No asset profiles available. Provide a duration
+                              range to generate assets.
+                            </div>
+                          )}
+                        </TabsContent>
+
+                        {/* Facts Tab */}
+                        <TabsContent value="facts" className="space-y-2 mt-0">
+                          {comparisonResult.valyu.dossier?.facts?.length > 0 ? (
+                            comparisonResult.valyu.dossier.facts.map(
+                              (fact: any, idx: number) => (
+                                <div
+                                  key={fact.id || idx}
+                                  className="bg-neutral-900 rounded-lg p-3 border border-neutral-800"
+                                >
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <span className="text-xs text-neutral-500">
+                                      [{fact.id || `FACT-${idx + 1}`}]
+                                    </span>
+                                    {fact.primarySourceId && (
+                                      <span className="text-xs text-purple-400">
+                                        [{fact.primarySourceId}]
+                                      </span>
+                                    )}
+                                    <span
+                                      className={`text-xs px-1.5 py-0.5 rounded ${
+                                        fact.confidence === "high"
+                                          ? "bg-green-500/20 text-green-400"
+                                          : fact.confidence === "medium"
+                                            ? "bg-yellow-500/20 text-yellow-400"
+                                            : "bg-neutral-700 text-neutral-400"
+                                      }`}
+                                    >
+                                      {fact.confidence || "unknown"}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-neutral-200">
+                                    {fact.statement}
+                                  </p>
+                                </div>
+                              ),
+                            )
                           ) : (
                             <div className="text-center text-neutral-500 py-8">
                               No facts found
@@ -1459,31 +1826,31 @@ export function UniversalScriptTester({
                         </TabsContent>
 
                         {/* Quotes Tab */}
-                        <TabsContent value="quotes" className="space-y-2">
-                          {comparisonResult[comparisonDetailView].dossier
-                            ?.quotes?.length > 0 ? (
-                            comparisonResult[
-                              comparisonDetailView
-                            ].dossier.quotes.map((quote: any, idx: number) => (
-                              <div
-                                key={quote.id || idx}
-                                className="bg-neutral-900 rounded-lg p-3 border border-neutral-800"
-                              >
-                                <blockquote className="text-sm text-neutral-200 italic border-l-2 border-green-500 pl-3">
-                                  "{quote.quote || quote.text}"
-                                </blockquote>
-                                <div className="flex items-center gap-2 mt-2 text-xs text-neutral-400">
-                                  <span className="font-medium text-green-400">
-                                    {quote.speaker || quote.attribution}
-                                  </span>
-                                  {quote.sourceId && (
-                                    <span className="text-neutral-500">
-                                      [{quote.sourceId}]
+                        <TabsContent value="quotes" className="space-y-2 mt-0">
+                          {comparisonResult.valyu.dossier?.quotes?.length >
+                          0 ? (
+                            comparisonResult.valyu.dossier.quotes.map(
+                              (quote: any, idx: number) => (
+                                <div
+                                  key={quote.id || idx}
+                                  className="bg-neutral-900 rounded-lg p-3 border border-neutral-800"
+                                >
+                                  <blockquote className="text-sm text-neutral-200 italic border-l-2 border-green-500 pl-3">
+                                    "{quote.quote || quote.text}"
+                                  </blockquote>
+                                  <div className="flex items-center gap-2 mt-2 text-xs text-neutral-400">
+                                    <span className="font-medium text-green-400">
+                                      {quote.speaker || quote.attribution}
                                     </span>
-                                  )}
+                                    {quote.sourceId && (
+                                      <span className="text-neutral-500">
+                                        [{quote.sourceId}]
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
-                            ))
+                              ),
+                            )
                           ) : (
                             <div className="text-center text-neutral-500 py-8">
                               No quotes found
@@ -1492,67 +1859,83 @@ export function UniversalScriptTester({
                         </TabsContent>
 
                         {/* Entities Tab */}
-                        <TabsContent value="entities" className="space-y-2">
-                          {comparisonResult[comparisonDetailView].dossier
-                            ?.entities?.length > 0 ? (
-                            <div className="grid grid-cols-2 gap-2">
-                              {comparisonResult[
-                                comparisonDetailView
-                              ].dossier.entities.map(
-                                (entity: any, idx: number) => (
-                                  <div
-                                    key={entity.name || idx}
-                                    className="bg-neutral-900 rounded-lg p-3 border border-neutral-800"
-                                  >
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400 uppercase">
-                                        {entity.type}
-                                      </span>
-                                    </div>
-                                    <p className="text-sm font-medium text-neutral-200">
-                                      {entity.name}
-                                    </p>
-                                    {entity.role && (
-                                      <p className="text-xs text-neutral-400 mt-1">
+                        <TabsContent
+                          value="entities"
+                          className="space-y-3 mt-0"
+                        >
+                          {(() => {
+                            const entities =
+                              comparisonResult.valyu.dossier?.entitiesV2 ||
+                              comparisonResult.valyu.dossier?.entities ||
+                              [];
+                            if (entities.length > 0) {
+                              return (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {entities.map((entity: any, idx: number) => (
+                                    <div
+                                      key={entity.name || idx}
+                                      className="bg-neutral-900 rounded-lg p-4 border border-neutral-800"
+                                    >
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <span
+                                          className={`text-xs px-1.5 py-0.5 rounded uppercase ${
+                                            entity.type === "person"
+                                              ? "bg-blue-500/20 text-blue-400"
+                                              : entity.type === "organization"
+                                                ? "bg-purple-500/20 text-purple-400"
+                                                : entity.type === "location"
+                                                  ? "bg-green-500/20 text-green-400"
+                                                  : "bg-yellow-500/20 text-yellow-400"
+                                          }`}
+                                        >
+                                          {entity.type}
+                                        </span>
+                                      </div>
+                                      <p className="text-base font-medium text-white">
+                                        {entity.name}
+                                      </p>
+                                      <p className="text-sm text-neutral-400 mt-1">
                                         {entity.role}
                                       </p>
-                                    )}
-                                  </div>
-                                ),
-                              )}
-                            </div>
-                          ) : (
-                            <div className="text-center text-neutral-500 py-8">
-                              No entities found
-                            </div>
-                          )}
+                                      {entity.bio && (
+                                        <p className="text-sm text-neutral-300 mt-2 italic border-l-2 border-neutral-700 pl-3">
+                                          {entity.bio}
+                                        </p>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className="text-center text-neutral-500 py-8">
+                                No entities found
+                              </div>
+                            );
+                          })()}
                         </TabsContent>
 
                         {/* Timeline Tab */}
-                        <TabsContent value="timeline" className="space-y-2">
-                          {comparisonResult[comparisonDetailView].dossier
-                            ?.timeline?.length > 0 ? (
+                        <TabsContent
+                          value="timeline"
+                          className="space-y-2 mt-0"
+                        >
+                          {comparisonResult.valyu.dossier?.timeline?.length >
+                          0 ? (
                             <div className="space-y-2">
-                              {comparisonResult[
-                                comparisonDetailView
-                              ].dossier.timeline.map(
+                              {comparisonResult.valyu.dossier.timeline.map(
                                 (event: any, idx: number) => (
                                   <div
                                     key={idx}
                                     className="bg-neutral-900 rounded-lg p-3 border border-neutral-800 flex gap-4"
                                   >
-                                    <div className="flex-shrink-0 text-sm font-mono text-orange-400 w-24">
-                                      {event.date || event.year || "Unknown"}
+                                    <div className="flex-shrink-0 w-24 text-sm font-mono text-orange-400">
+                                      {event.date || event.period}
                                     </div>
-                                    <div>
+                                    <div className="flex-1">
                                       <p className="text-sm text-neutral-200">
-                                        {event.description || event.event}
+                                        {event.event || event.description}
                                       </p>
-                                      {event.significance && (
-                                        <p className="text-xs text-neutral-400 mt-1">
-                                          {event.significance}
-                                        </p>
-                                      )}
                                     </div>
                                   </div>
                                 ),
@@ -1566,28 +1949,20 @@ export function UniversalScriptTester({
                         </TabsContent>
 
                         {/* Sources Tab */}
-                        <TabsContent value="sources" className="space-y-2">
-                          {comparisonResult[comparisonDetailView].dossier
-                            ?.worksCited?.length > 0 ||
-                          comparisonResult[comparisonDetailView].dossier
-                            ?.sourceDocuments?.length > 0 ? (
-                            <div className="space-y-2">
-                              {(
-                                comparisonResult[comparisonDetailView].dossier
-                                  .sourceDocuments ||
-                                comparisonResult[comparisonDetailView].dossier
-                                  .worksCited ||
-                                []
-                              ).map((source: any, idx: number) => (
-                                <div
-                                  key={source.id || idx}
-                                  className="bg-neutral-900 rounded-lg p-3 border border-neutral-800"
-                                >
-                                  <div className="flex items-start justify-between gap-2">
+                        <TabsContent value="sources" className="space-y-2 mt-0">
+                          {comparisonResult.valyu.dossier?.worksCited?.length >
+                          0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {comparisonResult.valyu.dossier.worksCited.map(
+                                (source: any, idx: number) => (
+                                  <div
+                                    key={source.id || idx}
+                                    className="bg-neutral-900 rounded-lg p-3 border border-neutral-800 flex gap-3"
+                                  >
                                     <div className="flex-1">
                                       <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-xs font-mono bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-400">
-                                          {source.id || `SRC-${idx + 1}`}
+                                        <span className="text-xs text-neutral-500">
+                                          [{source.id || `SRC-${idx + 1}`}]
                                         </span>
                                         {source.reliabilityTier && (
                                           <span
@@ -1622,15 +1997,15 @@ export function UniversalScriptTester({
                                         href={source.url}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="text-neutral-400 hover:text-white transition-colors"
+                                        className="text-neutral-400 hover:text-white transition-colors flex-shrink-0"
                                         onClick={(e) => e.stopPropagation()}
                                       >
                                         <ExternalLink className="w-4 h-4" />
                                       </a>
                                     )}
                                   </div>
-                                </div>
-                              ))}
+                                ),
+                              )}
                             </div>
                           ) : (
                             <div className="text-center text-neutral-500 py-8">
@@ -1638,11 +2013,10 @@ export function UniversalScriptTester({
                             </div>
                           )}
                         </TabsContent>
-                      </Tabs>
-                    )}
-                  </ScrollArea>
-                </DialogContent>
-              </Dialog>
+                      </div>
+                    </Tabs>
+                  </div>
+                )}
             </div>
           ) : !output ? (
             <div className="h-full flex items-center justify-center text-neutral-600">

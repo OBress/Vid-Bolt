@@ -154,31 +154,8 @@ export interface ValyuDeepResearchResult {
   status: ValyuDeepResearchStatus;
   /** Markdown research output (if completed) */
   output?: string;
-  /** Structured JSON output (if requested and completed) */
-  structured_output?: {
-    facts?: Array<{
-      statement: string;
-      sources: string[];
-      confidence?: number;
-    }>;
-    quotes?: Array<{
-      quote: string;
-      speaker: string;
-      context?: string;
-      source?: string;
-    }>;
-    timeline?: Array<{
-      date: string;
-      event: string;
-      significance?: string;
-    }>;
-    entities?: Array<{
-      name: string;
-      type: string;
-      description?: string;
-    }>;
-    summary?: string;
-  };
+  /** Structured JSON output (if requested and completed) - shape depends on JSON schema provided */
+  structured_output?: Record<string, unknown>;
   /** Array of sources used in the research */
   sources: ValyuDeepResearchSource[];
   /** Cost of the research task */

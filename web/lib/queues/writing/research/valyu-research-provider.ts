@@ -26,6 +26,7 @@ import type {
   KeyEntityV2,
   SourceCitation,
   ReliabilityTier,
+  ConfidenceLevel,
   NarrativeContext,
   KeyDevelopment,
 } from '../types';
@@ -46,7 +47,7 @@ import type { ExtractedFacts } from './fact-extraction';
 export interface ValyuResearchOptions {
   userId: string;
   topic: string;
-  questions: ResearchQuestion[];
+  questions?: ResearchQuestion[]; // Optional - not used for DeepResearch (it handles decomposition internally)
   researchToggle: 'deep' | 'full' | 'light';
   sourcePreferences?: string;
   onProgress?: (status: string, elapsedMs: number) => void;
@@ -68,15 +69,17 @@ export async function performValyuResearch(
   const { userId, topic, questions, researchToggle, sourcePreferences, onProgress } = options;
 
   console.log(`[ValyuResearch] Starting ${researchToggle} research for: "${topic.substring(0, 50)}..."`);
-  console.log(`[ValyuResearch] Questions to answer: ${questions.length}`);
+  console.log(`[ValyuResearch] Questions to answer: ${questions?.length ?? 0} (DeepResearch handles decomposition internally)`);
 
   switch (researchToggle) {
     case 'deep':
-      return performDeepModeResearch(userId, topic, questions, sourcePreferences, onProgress);
+      // DeepResearch doesn't need questions - it handles decomposition internally
+      return performDeepModeResearch(userId, topic, sourcePreferences, onProgress);
     case 'full':
-      return performFullModeResearch(userId, topic, questions, sourcePreferences);
+      // Full and light modes require questions (empty array okay)
+      return performFullModeResearch(userId, topic, questions ?? [], sourcePreferences);
     case 'light':
-      return performLightModeResearch(userId, topic, questions);
+      return performLightModeResearch(userId, topic, questions ?? []);
   }
 }
 
@@ -93,14 +96,13 @@ export async function performValyuResearch(
 async function performDeepModeResearch(
   userId: string,
   topic: string,
-  questions: ResearchQuestion[],
   sourcePreferences?: string,
   onProgress?: (status: string, elapsedMs: number) => void
 ): Promise<ExtractedFacts> {
-  console.log('[ValyuResearch] Starting DeepResearch (fast mode)...');
+  console.log('[ValyuResearch] Starting DeepResearch (single-query mode)...');
 
-  // Build comprehensive research query
-  const researchQuery = buildDeepResearchQuery(topic, questions, sourcePreferences);
+  // Build clean query - DeepResearch handles decomposition internally
+  const researchQuery = buildDeepResearchQuery(topic, sourcePreferences);
 
   // Perform deep research - using 'fast' mode for quicker results (~5-10 min)
   const result = await performDeepResearch(researchQuery, 'fast', {
@@ -109,8 +111,8 @@ async function performDeepModeResearch(
     onProgress,
   });
 
-  // Transform to ExtractedFacts
-  return transformDeepResearchToFacts(result, topic);
+  // Transform to ExtractedFacts (pass userId for LLM fallback extraction)
+  return transformDeepResearchToFacts(result, topic, userId);
 }
 
 /**
@@ -207,30 +209,53 @@ async function performLightModeResearch(
 // ============================================================================
 
 /**
- * Build a comprehensive query for DeepResearch
+ * Build a comprehensive query for DeepResearch (single query mode)
+ * DeepResearch handles its own chain-of-thought decomposition internally
  */
 function buildDeepResearchQuery(
   topic: string,
-  questions: ResearchQuestion[],
   sourcePreferences?: string
 ): string {
-  const questionsList = questions
-    .slice(0, 10) // Limit to top 10 questions
-    .map(q => `- ${q.question}`)
-    .join('\n');
-
   let query = `
-Comprehensive research on: ${topic}
+Research topic: ${topic}
 
-Key questions to investigate:
-${questionsList}
+Provide comprehensive research in the following structure:
 
-Research requirements:
-1. Find verified facts with credible sources
-2. Identify notable quotes from experts or key figures
-3. Establish a timeline of key events
-4. Identify important people, places, and organizations
-5. Note any conflicting information or debates
+1. NARRATIVE CONTEXT
+   - Hook: 1-2 sentence attention grabber
+   - Summary: 3-5 sentence complete overview
+   - Background: Context needed to understand the event
+   - Prior Events: What led to this
+   - Key Terms: Important terminology with definitions
+
+2. KEY DEVELOPMENTS (chronological story beats)
+   - Timestamp (if known)
+   - What happened
+   - Who was involved
+   - Why it matters to the story
+   - Source attribution
+
+3. VERIFIED FACTS
+   - Factual statements with source attribution
+   - Confidence level (confirmed/likely/disputed)
+   - Date/time if applicable
+
+4. NOTABLE QUOTES
+   - Direct quotes from key figures
+   - Speaker name, role, and context
+   - Source attribution
+
+5. KEY ENTITIES
+   - People: name, role, bio, actions in this story
+   - Organizations: name, type, relevance
+   - Locations: name, significance
+
+6. TIMELINE
+   - Chronological list of key events with dates
+
+7. INFORMATION GAPS
+   - What's missing or unverified
+   - Conflicting reports
 `.trim();
 
   if (sourcePreferences) {
@@ -271,11 +296,13 @@ Prioritize academic sources, major news outlets, and official sources.
 
 /**
  * Transform Valyu DeepResearch results to ExtractedFacts
+ * Falls back to LLM extraction if structured_output is empty
  */
-function transformDeepResearchToFacts(
+async function transformDeepResearchToFacts(
   result: ValyuDeepResearchResult,
-  topic: string
-): ExtractedFacts {
+  topic: string,
+  userId?: string
+): Promise<ExtractedFacts> {
   const facts: VerifiedFact[] = [];
   const quotes: AttributableQuote[] = [];
   const timelineEvents: TimelineEvent[] = [];
@@ -309,31 +336,160 @@ function transformDeepResearchToFacts(
     );
   }
 
-  // Process structured output if available
-  if (result.structured_output) {
-    // Process facts
-    if (result.structured_output.facts) {
-      for (const f of result.structured_output.facts) {
-        const factSources = f.sources
+  // Check if we have meaningful structured output from Valyu (v1 or v2 schema)
+  const so = result.structured_output as Record<string, unknown> | undefined;
+  const hasStructuredFacts = Array.isArray(so?.facts) && (so.facts as unknown[]).length > 0;
+  const hasStructuredQuotes = Array.isArray(so?.quotes) && (so.quotes as unknown[]).length > 0;
+  const hasStructuredTimeline = Array.isArray(so?.timeline) && (so.timeline as unknown[]).length > 0;
+  const hasStructuredEntities = Array.isArray(so?.entities) && (so.entities as unknown[]).length > 0;
+  // V2 schema fields
+  const hasNarrative = so?.narrative && typeof so.narrative === 'object';
+  const hasKeyDevelopments = Array.isArray(so?.keyDevelopments) && (so.keyDevelopments as unknown[]).length > 0;
+  
+  const hasAnyStructuredOutput = hasStructuredFacts || hasStructuredQuotes || hasStructuredTimeline || hasStructuredEntities || hasNarrative || hasKeyDevelopments;
+
+  // Log detailed info about what we received
+  console.log(`[ValyuResearch:Transform] Structured output check:`);
+  console.log(`  - facts: ${hasStructuredFacts ? (so?.facts as unknown[])?.length : 'none'}`);
+  console.log(`  - quotes: ${hasStructuredQuotes ? (so?.quotes as unknown[])?.length : 'none'}`);
+  console.log(`  - timeline: ${hasStructuredTimeline ? (so?.timeline as unknown[])?.length : 'none'}`);
+  console.log(`  - entities: ${hasStructuredEntities ? (so?.entities as unknown[])?.length : 'none'}`);
+  console.log(`  - narrative: ${hasNarrative ? 'yes' : 'none'}`);
+  console.log(`  - keyDevelopments: ${hasKeyDevelopments ? (so?.keyDevelopments as unknown[])?.length : 'none'}`);
+
+  // If Valyu didn't return structured output but we have sources or markdown output,
+  // fall back to LLM extraction (same as Search mode)
+  if (!hasAnyStructuredOutput && (result.sources.length > 0 || result.output)) {
+    console.log(`[ValyuResearch:Transform] No structured output from Valyu, falling back to LLM extraction from ${result.sources.length} sources`);
+    
+    // If we have markdown output, add it to the raw content
+    if (result.output) {
+      rawSourceContent.unshift(
+        `=== VALYU DEEP RESEARCH OUTPUT ===\n${result.output}\n`
+      );
+    }
+    
+    // Use LLM extraction (same pattern as Search mode)
+    if (userId) {
+      const extractedData = await extractFactsFromValyuSources(
+        userId,
+        topic,
+        rawSourceContent,
+        allCitations
+      );
+      
+      console.log(`[ValyuResearch:Transform] LLM fallback extracted ${extractedData.facts.length} facts, ${extractedData.quotes.length} quotes`);
+      
+      return {
+        facts: extractedData.facts,
+        quotes: extractedData.quotes,
+        timelineEvents: extractedData.timelineEvents,
+        entities: extractedData.entities,
+        allCitations,
+        gaps: extractedData.gaps,
+        rawSourceContent,
+        // V2 fields
+        narrative: extractedData.narrative,
+        keyDevelopments: extractedData.keyDevelopments,
+        entitiesV2: extractedData.entitiesV2,
+      };
+    } else {
+      console.warn('[ValyuResearch:Transform] No userId provided, cannot use LLM fallback');
+    }
+  }
+
+  // Process structured output if available (handle both v1 and v2 schemas)
+  let narrative: NarrativeContext | undefined;
+  const keyDevelopments: KeyDevelopment[] = [];
+  const entitiesV2: KeyEntityV2[] = [];
+  const gaps: string[] = [];
+
+  if (so) {
+    // Process V2 narrative (if present)
+    if (hasNarrative) {
+      const n = so.narrative as { hook?: string; summary?: string; background?: string; priorEvents?: string[]; keyTerms?: Record<string, string> };
+      narrative = {
+        hook: n.hook || '',
+        summary: n.summary || '',
+        background: n.background || '',
+        priorEvents: n.priorEvents || [],
+        keyTerms: n.keyTerms || {},
+      };
+      console.log(`[ValyuResearch:Transform] Extracted narrative with hook: "${narrative.hook?.substring(0, 50)}..."`);
+    }
+
+    // Process V2 keyDevelopments (if present)
+    if (hasKeyDevelopments) {
+      const kds = so.keyDevelopments as Array<{ timestamp?: string; what: string; who?: string[]; significance: string; sources?: string[] }>;
+      for (let i = 0; i < kds.length; i++) {
+        const d = kds[i];
+        keyDevelopments.push({
+          id: `DEV-${String(i + 1).padStart(3, '0')}`,
+          timestamp: d.timestamp || 'Unknown',
+          what: d.what,
+          who: d.who || [],
+          significance: d.significance,
+          sourceIds: d.sources || [],
+        });
+      }
+      console.log(`[ValyuResearch:Transform] Extracted ${keyDevelopments.length} key developments`);
+    }
+
+    // Process facts (v1/v2 schema)
+    if (hasStructuredFacts) {
+      const factArray = so.facts as Array<{ 
+        statement: string; 
+        sources?: string[]; 
+        confidence?: string | number;  // Can be string like "high" or number like 0.85
+        primarySourceId?: string;
+      }>;
+      for (const f of factArray) {
+        const factSources = (f.sources || [])
           .map(url => sourceMap.get(url))
           .filter((s): s is SourceCitation => s !== undefined);
+
+        // Map Valyu-provided confidence to our ConfidenceLevel
+        let factConfidence: ConfidenceLevel;
+        if (typeof f.confidence === 'string') {
+          // Valyu returns "high", "medium", "low"
+          const confStr = f.confidence.toLowerCase();
+          if (confStr === 'high' || confStr === 'verified') {
+            factConfidence = 'high';
+          } else if (confStr === 'medium') {
+            factConfidence = 'medium';
+          } else if (confStr === 'low') {
+            factConfidence = 'low';
+          } else {
+            // Default to 'high' for DeepResearch facts - they are AI-verified
+            factConfidence = 'high';
+          }
+        } else if (typeof f.confidence === 'number') {
+          // Numeric confidence (0-1 scale)
+          if (f.confidence >= 0.8) factConfidence = 'high';
+          else if (f.confidence >= 0.6) factConfidence = 'medium';
+          else factConfidence = 'low';
+        } else {
+          // No confidence provided - DeepResearch facts are AI-verified, default to 'high'
+          factConfidence = 'high';
+        }
 
         facts.push({
           id: generateFactId(facts.length),
           statement: f.statement,
           sources: factSources.length > 0 ? factSources : [{
-            title: 'Valyu Research',
-            reliabilityTier: 3 as ReliabilityTier,
+            title: 'Valyu DeepResearch',
+            reliabilityTier: 2 as ReliabilityTier, // DeepResearch is reliable
           }],
-          confidence: assignConfidenceLevel(factSources),
-          primarySourceId: factSources[0]?.id,
+          confidence: factConfidence,
+          primarySourceId: f.primarySourceId || factSources[0]?.id,
         });
       }
     }
 
-    // Process quotes
-    if (result.structured_output.quotes) {
-      for (const q of result.structured_output.quotes) {
+    // Process quotes (v1 schema)
+    if (hasStructuredQuotes) {
+      const quoteArray = so.quotes as Array<{ quote: string; speaker: string; context?: string; source?: string }>;
+      for (const q of quoteArray) {
         quotes.push({
           id: generateQuoteId(quotes.length),
           quote: q.quote,
@@ -347,9 +503,10 @@ function transformDeepResearchToFacts(
       }
     }
 
-    // Process timeline
-    if (result.structured_output.timeline) {
-      for (const t of result.structured_output.timeline) {
+    // Process timeline (v1 schema)
+    if (hasStructuredTimeline) {
+      const timelineArray = so.timeline as Array<{ date: string; event: string; significance?: string }>;
+      for (const t of timelineArray) {
         timelineEvents.push({
           id: generateTimelineId(timelineEvents.length),
           date: t.date,
@@ -363,20 +520,37 @@ function transformDeepResearchToFacts(
       }
     }
 
-    // Process entities
-    if (result.structured_output.entities) {
-      for (const e of result.structured_output.entities) {
+    // Process entities (handle both v1 and v2 schemas)
+    if (hasStructuredEntities) {
+      const entityArray = so.entities as Array<{ name: string; type: string; description?: string; role?: string; bio?: string; quotes?: string[]; actions?: string[] }>;
+      for (const e of entityArray) {
+        // V1 entity
         entities.push({
           name: e.name,
           type: e.type as 'person' | 'location' | 'organization',
-          role: e.description || '',
-          details: '',
+          role: e.role || e.description || '',
+          details: e.bio || '',
+        });
+        // V2 entity (with enhanced fields)
+        entitiesV2.push({
+          name: e.name,
+          type: e.type as 'person' | 'location' | 'organization',
+          role: e.role || e.description || '',
+          details: e.bio || '',
+          bio: e.bio || '',
+          quoteIds: [], // Will be linked in dossier assembly
+          actions: e.actions || [],
         });
       }
     }
+
+    // Process verification gaps (v2 schema)
+    if (Array.isArray(so.verificationGaps)) {
+      gaps.push(...(so.verificationGaps as string[]));
+    }
   }
 
-  console.log(`[ValyuResearch:Transform] DeepResearch -> ${facts.length} facts, ${quotes.length} quotes, ${timelineEvents.length} events`);
+  console.log(`[ValyuResearch:Transform] DeepResearch -> ${facts.length} facts, ${quotes.length} quotes, ${timelineEvents.length} events, ${keyDevelopments.length} developments`);
 
   return {
     facts,
@@ -384,8 +558,12 @@ function transformDeepResearchToFacts(
     timelineEvents,
     entities,
     allCitations,
-    gaps: [],
+    gaps,
     rawSourceContent,
+    // V2 fields
+    narrative,
+    keyDevelopments,
+    entitiesV2,
   };
 }
 

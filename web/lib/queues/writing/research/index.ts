@@ -161,9 +161,16 @@ export async function executeResearchPhase(
 
   try {
     // Step 1: Decompose topic into researchable questions
-    console.log('[Research] Step 1: Decomposing topic into questions...');
-    const questions = await decomposeTopicIntoQuestions(userId, topic, angle, isDeepResearch, useValyu);
-    console.log(`[Research] Generated ${questions.length} research questions`);
+    // Skip for Valyu DeepResearch - it handles decomposition internally with chain-of-thought
+    let questions: Awaited<ReturnType<typeof decomposeTopicIntoQuestions>> = [];
+    
+    if (useValyu && isDeepResearch) {
+      console.log('[Research] Step 1: Skipping decomposition - DeepResearch handles internally');
+    } else {
+      console.log('[Research] Step 1: Decomposing topic into questions...');
+      questions = await decomposeTopicIntoQuestions(userId, topic, angle, isDeepResearch, useValyu);
+      console.log(`[Research] Generated ${questions.length} research questions`);
+    }
 
     // Step 2: Execute research and extract facts
     console.log('[Research] Step 2: Executing web search and extracting facts...');
