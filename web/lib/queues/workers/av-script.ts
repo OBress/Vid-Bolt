@@ -170,10 +170,39 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
     let finalShots: ShotPart1[];
     
     if (isPart1) {
-      // Generate shot summaries and detect entity references
-      console.log(`${logPrefix} Step 3: Generating shot summaries...`);
-      finalShots = await generateShotSummaries(userId, segments, outlineAssets);
-      console.log(`${logPrefix} Generated ${finalShots.length} shot summaries`);
+      // Generate shot summaries using chunked processing for scalability
+      // This handles videos of any length by processing in sequential chunks
+      // with sliding context windows for narrative coherence
+      console.log(`${logPrefix} Step 3: Generating shot summaries with chunked processor...`);
+      
+      const { processInChunks } = await import('@/lib/av-script/chunked-processor');
+      
+      // Create progress callback that updates the task status
+      const onProgress = taskId ? async (progress: number, currentStep: string) => {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          progress_percent: progress,
+          current_step: currentStep
+        });
+      } : undefined;
+      
+      // Process segments in chunks with context windows
+      const chunkedShots = await processInChunks(
+        userId,
+        segments,
+        outlineAssets,
+        undefined, // Use default config
+        onProgress
+      );
+      
+      // Convert to ShotPart1 format
+      finalShots = chunkedShots.map(shot => ({
+        ...shot,
+        media_type: shot.media_type as 'video' | 'motiongraphic',
+      })) as ShotPart1[];
+      
+      console.log(`${logPrefix} Generated ${finalShots.length} shot summaries via chunked processor`);
+
 
       // Step 3b: Process with Stock Media Director if enabled
       if (stockMediaLevel !== 'none') {
