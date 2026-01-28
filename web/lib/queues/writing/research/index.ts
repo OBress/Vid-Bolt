@@ -2,7 +2,7 @@
  * Research Module - Main Orchestrator
  * ============================================================================
  * Coordinates the research phase of the universal script generation system.
- * Uses OpenRouter web search for real-time fact gathering and verification.
+ * Supports both OpenRouter web search and Valyu AI research providers.
  */
 
 
@@ -16,6 +16,7 @@ import { GENRE_CONFIG } from '../config';
 import { decomposeTopicIntoQuestions, type ResearchQuestion } from './topic-decomposition';
 import { extractAndVerifyFacts } from './fact-extraction';
 import { assembleDossier } from './dossier';
+import { performValyuResearch } from './valyu-research-provider';
 
 // ============================================================================
 // TYPES
@@ -43,6 +44,10 @@ export interface ResearchOptions {
   angle?: string;
   /** Optional source preferences */
   sourcePreferences?: string;
+  /** Use Valyu AI instead of OpenRouter for research */
+  useValyu?: boolean;
+  /** Progress callback for long-running Valyu research */
+  onProgress?: (status: string, elapsedMs: number) => void;
 }
 
 // ============================================================================
@@ -116,14 +121,23 @@ export function shouldExecuteResearch(
  * This is the main entry point for the research module.
  * It coordinates:
  * 1. Topic decomposition into researchable questions
- * 2. Web search and fact extraction
+ * 2. Web search and fact extraction (via OpenRouter or Valyu)
  * 3. Fact verification and confidence scoring
  * 4. Dossier assembly
  */
 export async function executeResearchPhase(
   options: ResearchOptions
 ): Promise<ResearchResult> {
-  const { userId, topic, genre, researchToggle, angle, sourcePreferences } = options;
+  const { 
+    userId, 
+    topic, 
+    genre, 
+    researchToggle, 
+    angle, 
+    sourcePreferences,
+    useValyu = false,
+    onProgress,
+  } = options;
 
   // Check if research should be executed
   const researchDecision = shouldExecuteResearch(genre, researchToggle);
@@ -138,6 +152,7 @@ export async function executeResearchPhase(
 
   console.log(`[Research] Starting research phase for topic: ${topic.substring(0, 50)}...`);
   console.log(`[Research] Reason: ${researchDecision.reason}`);
+  console.log(`[Research] Provider: ${useValyu ? 'Valyu AI' : 'OpenRouter'}`);
   
   const isDeepResearch = researchDecision.isDeep === true;
   if (isDeepResearch) {
@@ -147,18 +162,36 @@ export async function executeResearchPhase(
   try {
     // Step 1: Decompose topic into researchable questions
     console.log('[Research] Step 1: Decomposing topic into questions...');
-    const questions = await decomposeTopicIntoQuestions(userId, topic, angle, isDeepResearch);
+    const questions = await decomposeTopicIntoQuestions(userId, topic, angle, isDeepResearch, useValyu);
     console.log(`[Research] Generated ${questions.length} research questions`);
 
     // Step 2: Execute research and extract facts
     console.log('[Research] Step 2: Executing web search and extracting facts...');
     const isLightResearch = researchToggle === 'light';
-    const extractedFacts = await extractAndVerifyFacts(
-      userId,
-      topic,
-      questions,
-      { isLightResearch, isDeepResearch, sourcePreferences }
-    );
+    
+    let extractedFacts;
+    
+    if (useValyu && researchToggle !== 'off') {
+      // Use Valyu AI for research
+      console.log('[Research] Using Valyu AI research provider...');
+      extractedFacts = await performValyuResearch({
+        userId,
+        topic,
+        questions,
+        researchToggle: researchToggle as 'deep' | 'full' | 'light',
+        sourcePreferences,
+        onProgress,
+      });
+    } else {
+      // Use OpenRouter web search (original path)
+      extractedFacts = await extractAndVerifyFacts(
+        userId,
+        topic,
+        questions,
+        { isLightResearch, isDeepResearch, sourcePreferences }
+      );
+    }
+    
     console.log(`[Research] Extracted ${extractedFacts.facts.length} facts, ${extractedFacts.quotes.length} quotes`);
 
     // Step 3: Assemble the research dossier

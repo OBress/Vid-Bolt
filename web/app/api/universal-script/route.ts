@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
       mustInclude, 
       mustAvoid,
       sourcePreferences,
+      stockMediaLevel,
       // Project settings
       pov,
       protagonistGender,
@@ -89,6 +90,7 @@ export async function POST(request: NextRequest) {
           mustInclude,
           mustAvoid,
           sourcePreferences,
+          stockMediaLevel: stockMediaLevel || 'standard_images',
           // Project settings
           pov: pov || '1st',
           protagonistGender: protagonistGender || 'any',
@@ -122,6 +124,7 @@ export async function POST(request: NextRequest) {
           mustInclude,
           mustAvoid,
           sourcePreferences,
+          stockMediaLevel: stockMediaLevel || 'standard_images',
           // Project settings for AI generation
           pov: pov || '1st',
           protagonistGender: protagonistGender || 'any',

@@ -49,6 +49,7 @@ import {
   gcpProvisionProcessor,
   segmentProcessor,
   stockMediaProcessor,
+  assetReferenceImageProcessor,
   startShutdownChecker,
   stopShutdownChecker,
 } from './workers';
@@ -155,6 +156,12 @@ const workerConfigs: WorkerConfig[] = [
     processor: stockMediaProcessor,
     concurrency: 2,
     description: 'Stock media scraping with classification',
+  },
+  {
+    queue: 'asset-reference-images',
+    processor: assetReferenceImageProcessor,
+    concurrency: 2,
+    description: 'AI reference image generation for video assets',
   },
 ];
 

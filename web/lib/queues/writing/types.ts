@@ -167,12 +167,21 @@ export interface VerifiedFact {
   confidence: ConfidenceLevel;
   /** Additional notes */
   notes?: string;
+  /** Primary source ID linking to main source (e.g., SRC-001) */
+  primarySourceId?: string;
+  /** Exact text location in primary source */
+  textRangeInSource?: {
+    start: number;
+    end: number;
+  };
 }
 
 /**
  * Source citation
  */
 export interface SourceCitation {
+  /** Unique source ID (e.g., SRC-001) - for Valyu attribution */
+  id?: string;
   /** URL or reference */
   url?: string;
   /** Source title */
@@ -185,6 +194,10 @@ export interface SourceCitation {
   reliabilityTier: ReliabilityTier;
   /** Relevant excerpt */
   excerpt?: string;
+  /** Full source content for hover preview - from Valyu */
+  fullContent?: string;
+  /** Publication type (academic, news, web, etc.) */
+  publicationType?: string;
 }
 
 /**
@@ -304,6 +317,17 @@ export interface ResearchDossier {
   gaps: ResearchGap[];
   /** Works cited */
   worksCited: SourceCitation[];
+  /** Full source documents from Valyu (for hover preview) */
+  sourceDocuments?: Array<{
+    id: string;
+    url: string;
+    title: string;
+    content: string;
+    publicationDate?: string;
+    author?: string;
+    reliabilityTier: ReliabilityTier;
+    accessedAt: string;
+  }>;
 }
 
 // ============================================================================

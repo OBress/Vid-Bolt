@@ -198,6 +198,13 @@ export function generateObjectId(index: number): string {
   return `OBJ-${String(index + 1).padStart(3, '0')}`;
 }
 
+/**
+ * Generate a unique source ID (for Valyu citations)
+ */
+export function generateSourceId(index: number): string {
+  return `SRC-${String(index + 1).padStart(3, '0')}`;
+}
+
 // ============================================================================
 // ENGAGEMENT ANALYSIS
 // ============================================================================

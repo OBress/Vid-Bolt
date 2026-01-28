@@ -1,0 +1,420 @@
+/**
+ * Valyu API Client
+ * ============================================================================
+ * Provides wrapper functions for Valyu's Search and DeepResearch APIs.
+ * Uses app-level API key from environment variables.
+ * 
+ * Documentation: https://docs.valyu.ai
+ */
+
+import type {
+  ValyuSearchParams,
+  ValyuSearchResponse,
+  ValyuDeepResearchParams,
+  ValyuDeepResearchCreateResponse,
+  ValyuDeepResearchResult,
+  DEFAULT_VALYU_CONFIG,
+} from './types';
+
+const VALYU_API_URL = 'https://api.valyu.ai/v1';
+
+// ============================================================================
+// API KEY MANAGEMENT
+// ============================================================================
+
+/**
+ * Get the Valyu API key from environment variables
+ */
+function getApiKey(): string {
+  const key = process.env.VALYU_API_KEY;
+  if (!key) {
+    throw new Error(
+      'VALYU_API_KEY environment variable is not set. ' +
+      'Please add your Valyu API key to .env.local'
+    );
+  }
+  return key;
+}
+
+// ============================================================================
+// SEARCH API
+// ============================================================================
+
+/**
+ * Perform a Valyu web search
+ * 
+ * @param params - Search parameters
+ * @returns Search results with content
+ * 
+ * @example
+ * const results = await valyuSearch({
+ *   query: 'Bronze Age collapse causes',
+ *   search_type: 'web',
+ *   max_num_results: 15,
+ *   response_length: 'large',
+ * });
+ */
+export async function valyuSearch(
+  params: ValyuSearchParams
+): Promise<ValyuSearchResponse> {
+  const apiKey = getApiKey();
+
+  console.log(`[Valyu:Search] Searching for: "${params.query.substring(0, 50)}..."`);
+
+  try {
+    const response = await fetch(`${VALYU_API_URL}/search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        query: params.query,
+        search_type: params.search_type || 'web',
+        max_num_results: params.max_num_results || 15,
+        relevance_threshold: params.relevance_threshold,
+        response_length: params.response_length || 'large',
+        start_date: params.start_date,
+        end_date: params.end_date,
+        included_sources: params.included_sources,
+        excluded_sources: params.excluded_sources,
+        category: params.category,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Valyu Search API error (${response.status}): ${errorText}`
+      );
+    }
+
+    const data = await response.json();
+    
+    console.log(`[Valyu:Search] Found ${data.results?.length || 0} results`);
+    
+    return {
+      success: true,
+      results: data.results || [],
+      total_results: data.total_results || data.results?.length || 0,
+    };
+  } catch (error) {
+    console.error('[Valyu:Search] Error:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// DEEPRESEARCH API
+// ============================================================================
+
+/**
+ * Create a new DeepResearch task
+ * 
+ * @param params - Research parameters
+ * @returns Task ID for polling
+ * 
+ * @example
+ * const task = await createDeepResearch({
+ *   query: 'Comprehensive analysis of Bronze Age collapse',
+ *   mode: 'standard',
+ *   output_formats: ['markdown'],  // or include a JSON Schema object for structured output
+ *   strategy: 'Focus on verified historical facts and expert analysis',
+ * });
+ */
+export async function createDeepResearch(
+  params: ValyuDeepResearchParams
+): Promise<ValyuDeepResearchCreateResponse> {
+  const apiKey = getApiKey();
+
+  console.log(`[Valyu:DeepResearch] Creating task for: "${params.query.substring(0, 50)}..."`);
+  console.log(`[Valyu:DeepResearch] Mode: ${params.mode}`);
+
+  try {
+    const response = await fetch(`${VALYU_API_URL}/deepresearch/tasks`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        query: params.query,
+        mode: params.mode,
+        output_formats: params.output_formats || ['markdown'],
+        search_type: params.search_type || 'web',
+        strategy: params.strategy,
+        max_price: params.max_price,
+        start_date: params.start_date,
+        end_date: params.end_date,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Valyu DeepResearch create error (${response.status}): ${errorText}`
+      );
+    }
+
+    const data = await response.json();
+
+    if (!data.deepresearch_id) {
+      return {
+        success: false,
+        deepresearch_id: '',
+        error: data.error || 'No task ID returned',
+      };
+    }
+
+    console.log(`[Valyu:DeepResearch] Task created: ${data.deepresearch_id}`);
+
+    return {
+      success: true,
+      deepresearch_id: data.deepresearch_id,
+    };
+  } catch (error) {
+    console.error('[Valyu:DeepResearch] Create error:', error);
+    return {
+      success: false,
+      deepresearch_id: '',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Get the status/result of a DeepResearch task
+ * 
+ * @param deepresearchId - Task ID from createDeepResearch
+ * @returns Current status and results if completed
+ */
+export async function getDeepResearchStatus(
+  deepresearchId: string
+): Promise<ValyuDeepResearchResult> {
+  const apiKey = getApiKey();
+
+  try {
+    const response = await fetch(
+      `${VALYU_API_URL}/deepresearch/tasks/${deepresearchId}/status`,
+      {
+        method: 'GET',
+        headers: {
+          'x-api-key': apiKey,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Valyu DeepResearch status error (${response.status}): ${errorText}`
+      );
+    }
+
+    const data = await response.json();
+
+    return {
+      deepresearch_id: deepresearchId,
+      status: data.status,
+      output: data.output,
+      structured_output: data.structured_output,
+      sources: data.sources || [],
+      cost: data.cost || 0,
+      pdf_url: data.pdf_url,
+      error: data.error,
+    };
+  } catch (error) {
+    console.error('[Valyu:DeepResearch] Status error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Wait for a DeepResearch task to complete
+ * Polls the status endpoint until completion or timeout
+ * 
+ * @param deepresearchId - Task ID from createDeepResearch
+ * @param options - Polling options
+ * @returns Final research results
+ * 
+ * @throws Error if task fails or times out
+ * 
+ * @example
+ * const result = await waitForDeepResearch(task.deepresearch_id, {
+ *   maxWaitMs: 20 * 60 * 1000, // 20 minutes
+ *   pollIntervalMs: 5000,       // Poll every 5 seconds
+ *   onProgress: (status) => console.log(`Status: ${status}`),
+ * });
+ */
+export async function waitForDeepResearch(
+  deepresearchId: string,
+  options: {
+    maxWaitMs?: number;
+    pollIntervalMs?: number;
+    onProgress?: (status: string, elapsedMs: number) => void;
+  } = {}
+): Promise<ValyuDeepResearchResult> {
+  const maxWaitMs = options.maxWaitMs || 30 * 60 * 1000; // 30 min default
+  const pollIntervalMs = options.pollIntervalMs || 5000;  // 5s default
+  const startTime = Date.now();
+
+  console.log(`[Valyu:DeepResearch] Waiting for task ${deepresearchId}`);
+  console.log(`[Valyu:DeepResearch] Max wait: ${maxWaitMs / 1000}s, poll interval: ${pollIntervalMs / 1000}s`);
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const elapsedMs = Date.now() - startTime;
+    
+    const result = await getDeepResearchStatus(deepresearchId);
+
+    // Report progress
+    if (options.onProgress) {
+      options.onProgress(result.status, elapsedMs);
+    }
+
+    // Check for terminal states
+    if (result.status === 'completed') {
+      console.log(`[Valyu:DeepResearch] Task completed in ${elapsedMs / 1000}s`);
+      console.log(`[Valyu:DeepResearch] Sources found: ${result.sources.length}`);
+      return result;
+    }
+
+    if (result.status === 'failed') {
+      console.error(`[Valyu:DeepResearch] Task failed: ${result.error}`);
+      throw new Error(`DeepResearch task failed: ${result.error || 'Unknown error'}`);
+    }
+
+    // Log progress periodically
+    if (elapsedMs % 30000 < pollIntervalMs) {
+      console.log(`[Valyu:DeepResearch] Still researching... (${Math.round(elapsedMs / 1000)}s elapsed)`);
+    }
+
+    // Wait before next poll
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+  }
+
+  // Timeout
+  const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+  throw new Error(
+    `DeepResearch timeout after ${elapsedSec}s. ` +
+    `Task ${deepresearchId} did not complete in time.`
+  );
+}
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+/**
+ * Perform a quick search with sensible defaults
+ * Convenience wrapper around valyuSearch
+ */
+export async function quickSearch(
+  query: string,
+  maxResults: number = 10
+): Promise<ValyuSearchResponse> {
+  return valyuSearch({
+    query,
+    search_type: 'web',
+    max_num_results: maxResults,
+    response_length: 'medium',
+  });
+}
+
+/**
+ * Perform comprehensive research using DeepResearch
+ * Combines create + wait into a single call
+ * 
+ * @param query - Research topic/question
+ * @param mode - 'fast' (~5-10 min) or 'standard' (~10-30 min)
+ * @param options - Additional options
+ */
+export async function performDeepResearch(
+  query: string,
+  mode: 'fast' | 'standard' = 'standard',
+  options: {
+    strategy?: string;
+    maxWaitMs?: number;
+    onProgress?: (status: string, elapsedMs: number) => void;
+  } = {}
+): Promise<ValyuDeepResearchResult> {
+  // Create the task with JSON Schema for structured facts extraction
+  // NOTE: Per Valyu docs, cannot mix JSON Schema with markdown/pdf - use one or the other
+  const createResponse = await createDeepResearch({
+    query,
+    mode,
+    // Use JSON Schema ONLY for structured research output (cannot mix with markdown/pdf)
+    output_formats: [
+      {
+        type: 'object',
+        properties: {
+          facts: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                statement: { type: 'string' },
+                confidence: { type: 'number' },
+                sources: { type: 'array', items: { type: 'string' } }
+              },
+              required: ['statement']
+            }
+          },
+          quotes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                quote: { type: 'string' },
+                speaker: { type: 'string' },
+                context: { type: 'string' },
+                source: { type: 'string' }
+              },
+              required: ['quote', 'speaker']
+            }
+          },
+          timeline: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                date: { type: 'string' },
+                event: { type: 'string' },
+                significance: { type: 'string' }
+              },
+              required: ['date', 'event']
+            }
+          },
+          entities: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                type: { type: 'string' },
+                description: { type: 'string' }
+              },
+              required: ['name', 'type']
+            }
+          },
+          summary: { type: 'string' }
+        },
+        required: ['facts', 'summary']
+      }
+    ],
+    search_type: 'web',
+    strategy: options.strategy || 
+      'Provide comprehensive, fact-based research suitable for documentary video production. ' +
+      'Focus on verified facts, expert quotes, chronological events, and key entities. ' +
+      'Cite all sources with URLs.',
+  });
+
+  if (!createResponse.success) {
+    throw new Error(`Failed to create DeepResearch task: ${createResponse.error}`);
+  }
+
+  // Wait for completion
+  return waitForDeepResearch(createResponse.deepresearch_id, {
+    maxWaitMs: options.maxWaitMs,
+    onProgress: options.onProgress,
+  });
+}

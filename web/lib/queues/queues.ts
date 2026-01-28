@@ -99,6 +99,9 @@ export const videoSegmentationQueue = createQueue('video-segmentation');
 /** Stock media scraping with classification */
 export const stockMediaQueue = createQueue('stock-media-scrape');
 
+/** AI reference image generation for video assets */
+export const assetReferenceImagesQueue = createQueue('asset-reference-images');
+
 /**
  * All active queues for graceful shutdown.
  */
@@ -118,6 +121,7 @@ export const allQueues = [
   gcpProvisioningQueue,
   videoSegmentationQueue,
   stockMediaQueue,
+  assetReferenceImagesQueue,
 ];
 
 /**

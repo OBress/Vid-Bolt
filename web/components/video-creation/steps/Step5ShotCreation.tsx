@@ -163,6 +163,7 @@ interface Step5ShotCreationProps {
     thumbnailUrl?: string;
     source?: string;
   }> | null;
+  assetReferenceImages?: Record<string, string> | null;
 }
 
 type ElementType = "all" | "character" | "object" | "location" | "stock";
@@ -186,6 +187,7 @@ export function Step5ShotCreation({
   audioChunks,
   script,
   stockMediaResults,
+  assetReferenceImages,
 }: Step5ShotCreationProps) {
   // Debug logging for shot data
   useEffect(() => {
@@ -217,7 +219,7 @@ export function Step5ShotCreation({
           id: String(idCounter++),
           type: "character",
           name: char.name,
-          image: null, // Placeholder - no generated image yet
+          image: assetReferenceImages?.[char.id] || null, // Use reference image if available
           prompt: char.role,
           originalId: char.id,
         });
@@ -229,7 +231,7 @@ export function Step5ShotCreation({
           id: String(idCounter++),
           type: "location",
           name: loc.name,
-          image: null, // Placeholder - no generated image yet
+          image: assetReferenceImages?.[loc.id] || null, // Use reference image if available
           prompt: loc.essence,
           originalId: loc.id,
         });
@@ -241,7 +243,7 @@ export function Step5ShotCreation({
           id: String(idCounter++),
           type: "object",
           name: obj.name,
-          image: null, // Placeholder - no generated image yet
+          image: assetReferenceImages?.[obj.id] || null, // Use reference image if available
           prompt: obj.type,
           originalId: obj.id,
         });
@@ -599,7 +601,7 @@ export function Step5ShotCreation({
                         <img
                           src={element.image}
                           alt={element.name}
-                          className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                          className="w-full h-full object-contain bg-black opacity-80 group-hover:opacity-100 transition-opacity"
                         />
                       ) : (
                         <div className="w-full h-full bg-gradient-to-br from-neutral-800 to-neutral-700 flex flex-col items-center justify-center gap-2">

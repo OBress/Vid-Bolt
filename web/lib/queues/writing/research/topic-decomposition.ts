@@ -62,22 +62,40 @@ export interface TopicDecomposition {
  * @param topic - The topic to decompose
  * @param angle - Optional specific angle/thesis to focus on
  * @param isDeepResearch - Whether to perform deep research (more questions, recent focus)
+ * @param useValyu - Whether using Valyu provider (optimizes for broader queries)
  * @returns Array of research questions
  */
 export async function decomposeTopicIntoQuestions(
   userId: string,
   topic: string,
   angle: string | undefined,
-  isDeepResearch: boolean = false
+  isDeepResearch: boolean = false,
+  useValyu: boolean = false
 ): Promise<ResearchQuestion[]> {
+  // VALYU OPTIMIZATION: Generate fewer, broader questions for Valyu's semantic search
+  const valyuGuidance = useValyu ? `
+VALYU OPTIMIZATION MODE:
+- Generate FEWER but BROADER questions (5-8 comprehensive queries instead of 20+)
+- Each question should cover MULTIPLE aspects of the topic
+- Prioritize scope over specificity - Valyu's semantic search handles nuance
+- Example: Instead of "What year did X happen?" use "Complete historical overview of X including key dates, figures, and events"
+- Each searchQuery should be a self-contained research prompt, not just keywords
+- Focus on comprehensive questions that will return rich, varied results
+` : '';
+
+  const questionCount = useValyu 
+    ? (isDeepResearch ? '8-12' : '5-8') 
+    : (isDeepResearch ? '20-30' : '10-20');
+
   const userPrompt = `Decompose this topic into researchable questions:
 
 TOPIC: ${topic}
 ${angle ? `ANGLE/FOCUS: ${angle}` : ''}
 ${isDeepResearch ? 'MODE: DEEP RESEARCH (Focus on recent events, breaking news, and comprehensive coverage)' : ''}
+${valyuGuidance}
 
 Generate a comprehensive set of research questions that will help create an authoritative, well-researched video script.
-${isDeepResearch ? 'Since this is a DEEP RESEARCH request, please generate MORE questions (20-30) and focus heavily on locating the most recent developments, multiple perspectives, and primary sources.' : ''}
+${isDeepResearch && !useValyu ? 'Since this is a DEEP RESEARCH request, please generate MORE questions (20-30) and focus heavily on locating the most recent developments, multiple perspectives, and primary sources.' : ''}
 
 Return as JSON:
 {
@@ -94,7 +112,7 @@ Return as JSON:
   "keyEntities": ["Person 1", "Location 1", "Organization 1"]
 }
 
-Generate ${isDeepResearch ? '20-30' : '10-20'} questions covering all categories. Prioritize unique angles and less-known facts.`;
+Generate ${questionCount} questions covering all categories. ${useValyu ? 'Prioritize comprehensive, broad questions over narrow specific ones.' : 'Prioritize unique angles and less-known facts.'}`;
 
   try {
     const response = await generateJSON<TopicDecomposition>(

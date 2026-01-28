@@ -3,7 +3,11 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { WizardProgress } from "./WizardProgress";
 import { StepNavigationConfirmDialog } from "./StepNavigationConfirmDialog";
+import { GPUToggle } from "./GPUToggle";
+import { VMStartupWarningDialog } from "./VMStartupWarningDialog";
 import { useNavigationStore } from "@/store/use-navigation-store";
+import { createClient } from "@/lib/supabase/client";
+import { useGCPVM } from "@/hooks/use-gcp-vm";
 // Legacy imports removed: Step4UniversalScript, StepMediaGeneration
 import { Step1Outline } from "./steps/Step1Outline";
 import { Step3Script } from "./steps/Step3Script";
@@ -98,6 +102,12 @@ export interface WizardState {
   // Step 6: Scene Review - generated media
   generatedMedia: GeneratedMedia[];
   generationError?: string | null;
+  // GPU Generation Toggle (admin-only)
+  gpuEnabled: boolean;
+  // Asset Reference Image Generation (Step 4→5 transition, parallel with AV Script)
+  assetImageTaskId: string | null;
+  // Generated reference images for assets { assetId: imageUrl }
+  assetReferenceImages: Record<string, string> | null;
 }
 
 // Step configuration for the wizard - 8 steps
@@ -178,6 +188,13 @@ export function VideoCreationWizard({
   });
   const [isSaving, setIsSaving] = useState(false);
 
+  // GPU VM status for Step 4->5 transition warning
+  const { displayStatus: vmDisplayStatus, startVM } = useGCPVM();
+  const [showVMWarning, setShowVMWarning] = useState(false);
+  const [isVMStarting, setIsVMStarting] = useState(false);
+  // Track if user has confirmed VM warning to bypass re-check
+  const vmWarningConfirmedRef = useRef(false);
+
   const [currentStep, setCurrentStep] = useState(1);
   const [maxStepReached, setMaxStepReached] = useState(1);
   const [state, setState] = useState<WizardState>({
@@ -210,6 +227,9 @@ export function VideoCreationWizard({
     avScriptPart2TaskId: null,
     isMediaGenerating: false,
     generatedMedia: [],
+    gpuEnabled: true, // Default: GPU enabled for full generation
+    assetImageTaskId: null,
+    assetReferenceImages: null,
   });
 
   // Step 3 ref for manual trigger
@@ -221,6 +241,30 @@ export function VideoCreationWizard({
       setCurrentVideoName(null);
     };
   }, [setCurrentVideoName]);
+
+  // Admin status for GPU toggle visibility
+  const [isAdmin, setIsAdmin] = useState(false);
+  const supabase = createClient();
+
+  useEffect(() => {
+    async function checkAdminStatus() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: userData } = await supabase
+        .from("users")
+        .select("is_admin")
+        .eq("id", user.id)
+        .single();
+
+      if (userData) {
+        setIsAdmin(userData.is_admin || false);
+      }
+    }
+    checkAdminStatus();
+  }, [supabase]);
 
   // Load existing video data when resuming
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
@@ -354,6 +398,10 @@ export function VideoCreationWizard({
           avScriptPart2TaskId: null,
           isMediaGenerating: false,
           generatedMedia: (video.metadata as any)?.generatedMedia || [],
+          gpuEnabled: true, // Default to enabled when loading video
+          assetImageTaskId: (video.metadata as any)?.assetImageTaskId || null,
+          assetReferenceImages:
+            (video.metadata as any)?.assetReferenceImages || null,
         });
 
         // Set the video name in the navigation store
@@ -542,6 +590,30 @@ export function VideoCreationWizard({
     setConfirmDialog({ isOpen: true, direction: "next" });
   }, [canGoNext]);
 
+  // Handle VM startup confirmation when GPU is enabled but VM is OFF
+  const handleVMConfirm = useCallback(async () => {
+    setIsVMStarting(true);
+    console.log("[Wizard] User confirmed, starting VM...");
+
+    try {
+      // Start the VM (fire and forget - don't wait for completion)
+      startVM?.();
+
+      // Close the warning dialog
+      setShowVMWarning(false);
+      setIsVMStarting(false);
+
+      // Set flag to bypass VM check on re-trigger
+      vmWarningConfirmedRef.current = true;
+
+      // Trigger the navigation again - this time the code will skip VM check
+      setConfirmDialog({ isOpen: true, direction: "next" });
+    } catch (err) {
+      console.error("[Wizard] Failed to start VM:", err);
+      setIsVMStarting(false);
+    }
+  }, [startVM]);
+
   const handleConfirmNavigation = useCallback(async () => {
     if (!confirmDialog) return;
 
@@ -693,9 +765,26 @@ export function VideoCreationWizard({
         // Step 3 → 4: Trigger script completion (which handles its own optimistic navigation)
         step3Ref.current.handleConfirm();
       } else if (currentStep === 4 && state.audioChunks.length > 0) {
-        // Step 4 → Step 5: OPTIMISTIC - Navigate immediately, start AV Script task in background
-        // The AV Script loading screen will appear because avScriptTaskId will be set
+        // Step 4 → Step 5: Check GPU toggle and VM status
 
+        // If GPU is disabled, skip VM check and proceed with AV Script only (placeholders)
+        if (!state.gpuEnabled) {
+          console.log("[Wizard] GPU disabled, proceeding with placeholders...");
+          // Fall through to standard AV Script flow below
+        } else if (vmDisplayStatus !== "ON" && !vmWarningConfirmedRef.current) {
+          // GPU enabled but VM is OFF and user hasn't confirmed yet - show warning dialog
+          console.log("[Wizard] VM not running, showing warning dialog");
+          setShowVMWarning(true);
+          return; // Exit early, will be called again from handleVMConfirm
+        } else if (vmWarningConfirmedRef.current) {
+          // User already confirmed VM startup, reset flag and proceed
+          console.log(
+            "[Wizard] VM warning confirmed, proceeding with VM startup in progress...",
+          );
+          vmWarningConfirmedRef.current = false;
+        }
+
+        // Proceed with AV Script (and optional GPU generation if enabled)
         if (state.videoId) {
           // Prepare data for background call
           // IMPORTANT: Apply cumulative time offset to word timestamps from each chunk
@@ -809,6 +898,61 @@ export function VideoCreationWizard({
                 isAvScriptLoading: false,
               }));
             });
+
+          // PARALLEL: If GPU enabled, also trigger asset reference image generation
+          if (state.gpuEnabled && state.outlineOutput?.assetRegistry) {
+            const assetCount =
+              (state.outlineOutput.assetRegistry.characters?.length || 0) +
+              (state.outlineOutput.assetRegistry.locations?.length || 0) +
+              (state.outlineOutput.assetRegistry.objects?.length || 0);
+
+            if (assetCount > 0) {
+              console.log(
+                `[Wizard] GPU enabled, triggering asset reference image generation for ${assetCount} assets...`,
+              );
+
+              fetch("/api/process/asset-reference-images", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  videoId: state.videoId,
+                  outlineAssets: state.outlineOutput.assetRegistry,
+                }),
+              })
+                .then((response) => response.json())
+                .then((data) => {
+                  if (data.taskId) {
+                    console.log(
+                      "[Wizard] Asset reference image task created:",
+                      data.taskId,
+                    );
+                    setState((prev) => ({
+                      ...prev,
+                      assetImageTaskId: data.taskId,
+                    }));
+                  } else {
+                    console.error(
+                      "[Wizard] Failed to create asset image task:",
+                      data,
+                    );
+                  }
+                })
+                .catch((err) => {
+                  console.error(
+                    "[Wizard] Failed to trigger asset image generation:",
+                    err,
+                  );
+                });
+            } else {
+              console.log(
+                "[Wizard] No assets to generate reference images for",
+              );
+            }
+          } else if (!state.gpuEnabled) {
+            console.log(
+              "[Wizard] GPU disabled, skipping asset reference image generation",
+            );
+          }
         }
 
         // OPTIMISTIC: Advance to step 5 immediately
@@ -1581,6 +1725,7 @@ export function VideoCreationWizard({
             audioChunks={state.audioChunks}
             script={state.script}
             stockMediaResults={state.stockMediaResults}
+            assetReferenceImages={state.assetReferenceImages}
             onUpdateShots={async (updatedShots) => {
               console.log("[Wizard] Updating shots:", updatedShots.length);
 
@@ -1817,20 +1962,35 @@ export function VideoCreationWizard({
     <div className="flex flex-col h-full w-full mx-auto">
       {/* Progress indicator with navigation buttons */}
       <div className="flex-shrink-0 pt-2">
-        <WizardProgress
-          steps={STEPS}
-          currentStep={currentStep}
-          maxStepReached={maxStepReached}
-          onBack={onBack}
-          onStepClick={goToStep}
-          skippedSteps={skippedSteps}
-          onPrevStep={handlePrevStepRequest}
-          onNextStep={handleNextStepRequest}
-          canGoPrev={canGoPrev}
-          canGoNext={canGoNext}
-          isFirstStep={isFirstStep}
-          isLastStep={isLastStep}
-        />
+        <div className="flex items-center">
+          <div className="flex-1">
+            <WizardProgress
+              steps={STEPS}
+              currentStep={currentStep}
+              maxStepReached={maxStepReached}
+              onBack={onBack}
+              onStepClick={goToStep}
+              skippedSteps={skippedSteps}
+              onPrevStep={handlePrevStepRequest}
+              onNextStep={handleNextStepRequest}
+              canGoPrev={canGoPrev}
+              canGoNext={canGoNext}
+              isFirstStep={isFirstStep}
+              isLastStep={isLastStep}
+            />
+          </div>
+          {/* Admin GPU Toggle - positioned after Step 8 */}
+          <div className="flex-shrink-0 pr-6">
+            <GPUToggle
+              enabled={state.gpuEnabled}
+              onToggle={(enabled) =>
+                setState((prev) => ({ ...prev, gpuEnabled: enabled }))
+              }
+              disabled={currentStep >= 5} // Lock after Step 4
+              isAdmin={isAdmin}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Step content */}
@@ -1867,6 +2027,14 @@ export function VideoCreationWizard({
             : null
         }
         isResetting={isResetting}
+      />
+
+      {/* VM Startup Warning Dialog */}
+      <VMStartupWarningDialog
+        isOpen={showVMWarning}
+        onClose={() => setShowVMWarning(false)}
+        onConfirm={handleVMConfirm}
+        isLoading={isVMStarting}
       />
     </div>
   );
