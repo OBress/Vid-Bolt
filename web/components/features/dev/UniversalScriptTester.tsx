@@ -314,6 +314,54 @@ export function UniversalScriptTester({
     return () => setMounted(false);
   }, []);
 
+  // LocalStorage key for persisting research data
+  const STORAGE_KEY = 'universal-script-tester-cache';
+
+  // Load cached data from localStorage on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const cached = localStorage.getItem(STORAGE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.output) setOutput(parsed.output);
+        if (parsed.comparisonResult) setComparisonResult(parsed.comparisonResult);
+        if (parsed.topic) setTopic(parsed.topic);
+        console.log('[UniversalScriptTester] Loaded cached research data from localStorage');
+      }
+    } catch (e) {
+      console.warn('[UniversalScriptTester] Failed to load cached data:', e);
+    }
+  }, []);
+
+  // Save to localStorage when output or comparisonResult changes
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    // Only save if we have data
+    if (output || comparisonResult) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          output,
+          comparisonResult,
+          topic,
+          savedAt: new Date().toISOString(),
+        }));
+        console.log('[UniversalScriptTester] Saved research data to localStorage');
+      } catch (e) {
+        console.warn('[UniversalScriptTester] Failed to save to localStorage:', e);
+      }
+    }
+  }, [output, comparisonResult, topic]);
+
+  // Clear cached data
+  const handleClearCache = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.removeItem(STORAGE_KEY);
+    setOutput(null);
+    setComparisonResult(null);
+    console.log('[UniversalScriptTester] Cleared cached research data');
+  }, []);
+
   // Poll for task updates
   const fetchTaskStatus = useCallback(
     async (id: string, isCompletionCheck = false) => {
@@ -1231,10 +1279,10 @@ export function UniversalScriptTester({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setComparisonResult(null)}
+                  onClick={handleClearCache}
                   className="text-neutral-400 border-neutral-700"
                 >
-                  Clear Results
+                  Clear Results & Cache
                 </Button>
               </div>
 
@@ -1714,12 +1762,24 @@ export function UniversalScriptTester({
                                             <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">
                                               {loc.type}
                                             </span>
+                                            {loc.era && (
+                                              <span className="text-xs bg-neutral-700 text-neutral-300 px-2 py-0.5 rounded">
+                                                {loc.era}
+                                              </span>
+                                            )}
                                           </div>
-                                          {loc.structuralDetails && (
-                                            <p className="text-sm text-neutral-400">
-                                              {loc.structuralDetails
-                                                .architecture ||
-                                                loc.structuralDetails.setting}
+                                          {/* Essence - main description */}
+                                          {loc.essence && (
+                                            <p className="text-sm text-neutral-300 mb-2 italic">
+                                              {loc.essence}
+                                            </p>
+                                          )}
+                                          {/* Structural/environmental details */}
+                                          {(loc.structuralDetails || loc.environmentalDetails) && (
+                                            <p className="text-sm text-neutral-500">
+                                              {loc.structuralDetails?.architectureStyle && `${loc.structuralDetails.architectureStyle} • `}
+                                              {loc.structuralDetails?.materials && `${loc.structuralDetails.materials} • `}
+                                              {loc.environmentalDetails?.weatherAtmosphere || loc.structuralDetails?.condition || ''}
                                             </p>
                                           )}
                                         </div>
@@ -1758,7 +1818,9 @@ export function UniversalScriptTester({
                                           </div>
                                           {obj.physicalDescription && (
                                             <p className="text-sm text-neutral-400">
-                                              {obj.physicalDescription}
+                                              {typeof obj.physicalDescription === 'string' 
+                                                ? obj.physicalDescription 
+                                                : obj.physicalDescription.detailedDescription || JSON.stringify(obj.physicalDescription)}
                                             </p>
                                           )}
                                         </div>
@@ -2439,6 +2501,13 @@ export function UniversalScriptTester({
                               <div className="text-neutral-500 text-xs">
                                 {char.role}
                               </div>
+                              {/* Quick physical description */}
+                              {char.physicalCharacteristics?.demographics && (
+                                <div className="text-neutral-400 text-xs mt-1">
+                                  {char.physicalCharacteristics.demographics.age}, {char.physicalCharacteristics.demographics.gender}
+                                  {char.physicalCharacteristics.bodyStructure?.build && `, ${char.physicalCharacteristics.bodyStructure.build}`}
+                                </div>
+                              )}
                               <div className="text-neutral-600 text-[10px] mt-1">
                                 {char.id}
                               </div>
@@ -2464,10 +2533,20 @@ export function UniversalScriptTester({
                                   setIsAssetDetailOpen(true);
                                 }}
                               >
-                                <div className="text-white font-medium text-sm">
-                                  {loc.name}
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-white font-medium text-sm">
+                                    {loc.name}
+                                  </span>
+                                  <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">
+                                    {loc.type}
+                                  </span>
+                                  {loc.era && (
+                                    <span className="text-[10px] bg-neutral-700 text-neutral-300 px-1.5 py-0.5 rounded">
+                                      {loc.era}
+                                    </span>
+                                  )}
                                 </div>
-                                <div className="text-neutral-500 text-xs">
+                                <div className="text-neutral-400 text-xs italic">
                                   {loc.essence}
                                 </div>
                                 <div className="text-neutral-600 text-[10px] mt-1">
@@ -2893,10 +2972,9 @@ export function UniversalScriptTester({
                           <span className="text-neutral-500 block text-xs">
                             Face
                           </span>
-                          {
-                            selectedAsset.physicalCharacteristics.faceFeatures
-                              ?.notableFeatures
-                          }
+                          {Array.isArray(selectedAsset.physicalCharacteristics.faceFeatures?.notableFeatures)
+                            ? selectedAsset.physicalCharacteristics.faceFeatures.notableFeatures.join(', ')
+                            : selectedAsset.physicalCharacteristics.faceFeatures?.notableFeatures}
                         </div>
                       </div>
                     </div>
@@ -2944,23 +3022,26 @@ export function UniversalScriptTester({
                       </h4>
                       <div className="bg-neutral-950 p-4 rounded-lg space-y-2 text-sm">
                         <p>
-                          {
-                            selectedAsset.physicalDescription
-                              .detailedDescription
-                          }
+                          {typeof selectedAsset.physicalDescription.detailedDescription === 'string' 
+                            ? selectedAsset.physicalDescription.detailedDescription 
+                            : JSON.stringify(selectedAsset.physicalDescription.detailedDescription)}
                         </p>
                         <div className="grid grid-cols-2 gap-4 mt-2">
                           <div>
                             <span className="text-neutral-500 text-xs">
                               Material:
                             </span>{" "}
-                            {selectedAsset.physicalDescription.materials}
+                            {typeof selectedAsset.physicalDescription.materials === 'string' 
+                              ? selectedAsset.physicalDescription.materials 
+                              : JSON.stringify(selectedAsset.physicalDescription.materials)}
                           </div>
                           <div>
                             <span className="text-neutral-500 text-xs">
                               Color:
                             </span>{" "}
-                            {selectedAsset.physicalDescription.color}
+                            {typeof selectedAsset.physicalDescription.color === 'string' 
+                              ? selectedAsset.physicalDescription.color 
+                              : JSON.stringify(selectedAsset.physicalDescription.color)}
                           </div>
                         </div>
                       </div>
