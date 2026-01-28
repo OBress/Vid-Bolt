@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { verifySessionOrSecret } from '@/lib/auth-checks';
 
 // Use service role client since this is called from workers without cookies
 const getServiceClient = () => createServiceClient(
@@ -13,6 +14,10 @@ const getServiceClient = () => createServiceClient(
  */
 export async function POST(request: Request) {
   try {
+    if (!(await verifySessionOrSecret(request))) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const clip = await request.json();
     
     // Validate required fields
@@ -51,7 +56,10 @@ export async function POST(request: Request) {
       `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/vector/embed`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Worker-Secret': process.env.INTERNAL_API_SECRET || ''
+        },
         body: JSON.stringify({ text: searchableText }),
       }
     );

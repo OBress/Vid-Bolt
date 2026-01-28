@@ -1,9 +1,14 @@
 
 import { NextResponse } from 'next/server';
 import { generateEmbedding } from '@/lib/ai/embedding';
+import { verifySessionOrSecret } from '@/lib/auth-checks';
 
 export async function POST(req: Request) {
   try {
+    if (!(await verifySessionOrSecret(req))) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { text } = await req.json();
 
     if (!text) {
