@@ -4,9 +4,8 @@
  * Replaces OpenRouter web search with Valyu APIs for comprehensive research.
  * 
  * Research Toggle Mapping:
- * - 'deep'  → Valyu DeepResearch (standard mode, ~10-15 min)
- * - 'full'  → Valyu Search with multiple queries (~3-5 min)
- * - 'light' → Valyu Search with single query (~1 min)
+ * - 'full' → Valyu DeepResearch (maximum extraction mode)
+ * - 'off'  → Skip research (handled at orchestrator level)
  */
 
 import { 
@@ -48,7 +47,7 @@ export interface ValyuResearchOptions {
   userId: string;
   topic: string;
   questions?: ResearchQuestion[]; // Optional - not used for DeepResearch (it handles decomposition internally)
-  researchToggle: 'deep' | 'full' | 'light';
+  researchToggle: 'full';
   sourcePreferences?: string;
   onProgress?: (status: string, elapsedMs: number) => void;
 }
@@ -72,14 +71,9 @@ export async function performValyuResearch(
   console.log(`[ValyuResearch] Questions to answer: ${questions?.length ?? 0} (DeepResearch handles decomposition internally)`);
 
   switch (researchToggle) {
-    case 'deep':
-      // DeepResearch doesn't need questions - it handles decomposition internally
-      return performDeepModeResearch(userId, topic, sourcePreferences, onProgress);
     case 'full':
-      // Full and light modes require questions (empty array okay)
-      return performFullModeResearch(userId, topic, questions ?? [], sourcePreferences);
-    case 'light':
-      return performLightModeResearch(userId, topic, questions ?? []);
+      // Full research uses DeepResearch for maximum information extraction
+      return performDeepModeResearch(userId, topic, sourcePreferences, onProgress);
   }
 }
 

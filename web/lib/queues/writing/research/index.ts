@@ -79,36 +79,12 @@ export function shouldExecuteResearch(
     };
   }
 
-  // Deep research for current events - maximum information extraction
-  if (researchToggle === 'deep') {
-    return {
-      execute: true,
-      reason: 'Deep research for current events - maximum information extraction',
-      isDeep: true,
-    };
-  }
-
-  // If genre requires research, execute full research
-  if (genreConfig.requiresResearch) {
-    return { 
-      execute: true, 
-      reason: `Genre "${genre}" requires research for accuracy` 
-    };
-  }
-
-  // Light research for verification only
-  if (researchToggle === 'light') {
-    return { 
-      execute: true, 
-      reason: 'Light research for fact verification' 
-    };
-  }
-
-  // Full research explicitly requested
+  // Full research - maximum information extraction (acts as deep research)
   if (researchToggle === 'full') {
     return { 
       execute: true, 
-      reason: 'Full research requested by user' 
+      reason: 'Full research with maximum information extraction',
+      isDeep: true,
     };
   }
 
@@ -174,7 +150,6 @@ export async function executeResearchPhase(
 
     // Step 2: Execute research and extract facts
     console.log('[Research] Step 2: Executing web search and extracting facts...');
-    const isLightResearch = researchToggle === 'light';
     
     let extractedFacts;
     
@@ -185,7 +160,7 @@ export async function executeResearchPhase(
         userId,
         topic,
         questions,
-        researchToggle: researchToggle as 'deep' | 'full' | 'light',
+        researchToggle: researchToggle as 'full',
         sourcePreferences,
         onProgress,
       });
@@ -195,7 +170,7 @@ export async function executeResearchPhase(
         userId,
         topic,
         questions,
-        { isLightResearch, isDeepResearch, sourcePreferences }
+        { isLightResearch: false, isDeepResearch, sourcePreferences }
       );
     }
     
@@ -223,17 +198,16 @@ export async function executeResearchPhase(
 }
 
 /**
- * Light research - just verify key claims without deep research.
- * Used when researchToggle is 'light'.
+ * Quick fact verification for specific claims.
+ * @deprecated Use executeResearchPhase with researchToggle='full' instead
  */
 export async function executeLightResearch(
   userId: string,
   topic: string,
   keyClaims: string[]
 ): Promise<ResearchResult> {
-  console.log('[Research] Executing light fact verification...');
+  console.log('[Research] Executing fact verification...');
   
-  // For light research, we just verify the provided claims
   const questions: ResearchQuestion[] = keyClaims.map((claim, i) => ({
     id: `Q-${i + 1}`,
     question: `Verify: ${claim}`,
@@ -245,13 +219,13 @@ export async function executeLightResearch(
     userId,
     topic,
     questions,
-    { isLightResearch: true }
+    { isLightResearch: false }
   );
 
   const dossier = await assembleDossier(
     userId,
     topic,
-    'light',
+    'full',
     extractedFacts
   );
 

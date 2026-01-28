@@ -25,12 +25,10 @@ export type ScriptGenre = typeof SCRIPT_GENRES[number];
 
 /**
  * Research toggle options
- * - 'deep': Maximum research for current events - saves everything for the writer
- * - 'full': Standard research with fact extraction
- * - 'light': Quick fact verification only
+ * - 'full': Full research with maximum information extraction (acts as deep research)
  * - 'off': No research
  */
-export const RESEARCH_TOGGLES = ['deep', 'full', 'light', 'off'] as const;
+export const RESEARCH_TOGGLES = ['full', 'off'] as const;
 export type ResearchToggle = typeof RESEARCH_TOGGLES[number];
 
 /**
