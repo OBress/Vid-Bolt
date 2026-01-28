@@ -56,8 +56,6 @@ export interface ExtractedFacts {
 }
 
 export interface ExtractionOptions {
-  /** Whether this is light (verification only) research */
-  isLightResearch?: boolean;
   /** Whether this is deep research for current events (maximum extraction) */
   isDeepResearch?: boolean;
   /** Source preferences from user */
@@ -83,7 +81,7 @@ export async function extractAndVerifyFacts(
   questions: ResearchQuestion[],
   options: ExtractionOptions = {}
 ): Promise<ExtractedFacts> {
-  const { isLightResearch = false, isDeepResearch = false, sourcePreferences } = options;
+  const { isDeepResearch = false, sourcePreferences } = options;
 
   const allFacts: VerifiedFact[] = [];
   const allQuotes: AttributableQuote[] = [];
@@ -95,8 +93,8 @@ export async function extractAndVerifyFacts(
   // Raw content saved for deep research (when LLM has no prior knowledge)
   const rawSourceContent: string[] = [];
 
-  // Process questions in batches - larger batches for deep research
-  const batchSize = isLightResearch ? 3 : (isDeepResearch ? 2 : 5); // Smaller batches for deep = more thorough per batch
+  // Process questions in batches - smaller batches for deep research = more thorough per batch
+  const batchSize = isDeepResearch ? 2 : 5;
   const questionBatches = chunkArray(questions, batchSize);
 
   for (let batchIndex = 0; batchIndex < questionBatches.length; batchIndex++) {
@@ -188,7 +186,7 @@ Return as JSON:
         userId,
         UNIVERSAL_PROMPTS.factExtraction,
         userPrompt,
-        { searchContextSize: isLightResearch ? 'low' : 'high' } // Always 'high' for deep (already set)
+        { searchContextSize: 'high' }
       );
 
       // Convert web citations to source citations

@@ -1,5 +1,5 @@
 // Research module exports
-export { executeResearchPhase, shouldExecuteResearch, executeLightResearch } from './index';
+export { executeResearchPhase, shouldExecuteResearch } from './index';
 export type { ResearchResult, ResearchOptions } from './index';
 export { decomposeTopicIntoQuestions, filterQuestionsByCategory, getTopPriorityQuestions } from './topic-decomposition';
 export type { ResearchQuestion, QuestionCategory, TopicDecomposition } from './topic-decomposition';

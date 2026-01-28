@@ -170,7 +170,7 @@ export async function executeResearchPhase(
         userId,
         topic,
         questions,
-        { isLightResearch: false, isDeepResearch, sourcePreferences }
+        { isDeepResearch, sourcePreferences }
       );
     }
     
@@ -195,42 +195,4 @@ export async function executeResearchPhase(
     console.error('[Research] Error during research phase:', error);
     throw error;
   }
-}
-
-/**
- * Quick fact verification for specific claims.
- * @deprecated Use executeResearchPhase with researchToggle='full' instead
- */
-export async function executeLightResearch(
-  userId: string,
-  topic: string,
-  keyClaims: string[]
-): Promise<ResearchResult> {
-  console.log('[Research] Executing fact verification...');
-  
-  const questions: ResearchQuestion[] = keyClaims.map((claim, i) => ({
-    id: `Q-${i + 1}`,
-    question: `Verify: ${claim}`,
-    category: 'factual',
-    searchQueries: [claim],
-  }));
-
-  const extractedFacts = await extractAndVerifyFacts(
-    userId,
-    topic,
-    questions,
-    { isLightResearch: false }
-  );
-
-  const dossier = await assembleDossier(
-    userId,
-    topic,
-    'full',
-    extractedFacts
-  );
-
-  return {
-    performed: true,
-    dossier,
-  };
 }
