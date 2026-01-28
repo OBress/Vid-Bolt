@@ -15,6 +15,12 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   ArrowLeft,
   Play,
   Loader2,
@@ -30,6 +36,8 @@ import {
   ChevronUp,
   Trash2,
   Plus,
+  X,
+  Package,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { createBrowserClient } from "@supabase/ssr";
@@ -223,6 +231,10 @@ export function Step1Outline({
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
 
+  // Simulated progress for Research phase (0-25% over ~10 minutes)
+  const [progressStartTime, setProgressStartTime] = useState<number | null>(null);
+  const [simulatedProgress, setSimulatedProgress] = useState(0);
+
   // Helper to normalize research toggle (handle legacy values)
   const normalizeResearchToggle = (value: string | undefined): ResearchToggle => {
     if (value === "off") return "off";
@@ -253,6 +265,12 @@ export function Step1Outline({
   const [editingSpine, setEditingSpine] = useState<NonNullable<
     OutlineOutput["spine"]
   > | null>(null);
+
+  // Asset detail modal state
+  const [selectedAsset, setSelectedAsset] = useState<{
+    type: 'character' | 'location' | 'object';
+    data: any;
+  } | null>(null);
 
   // Update state when props change
   useEffect(() => {
@@ -381,6 +399,33 @@ export function Step1Outline({
     return () => clearInterval(interval);
   }, [view, taskId, fetchTaskStatus]);
 
+  // Simulated progress timer for Research phase (0-25% over ~10 minutes)
+  useEffect(() => {
+    if (view !== "progress" || !progressStartTime) return;
+
+    // Only simulate during Research & Analysis phase (phase index 0)
+    const isResearchPhase =
+      !currentPhase ||
+      currentPhase.includes("Research") ||
+      currentStep?.includes("Research") ||
+      (currentPhase === null && currentStep === null); // Initial state
+
+    if (!isResearchPhase || progress >= 25) {
+      // Phase has advanced or backend reported 25%+, stop simulation
+      return;
+    }
+
+    const timer = setInterval(() => {
+      const elapsedSeconds = (Date.now() - progressStartTime) / 1000;
+      const expectedDuration = 600; // 10 minutes
+      // Simulate 0-24% (cap at 24 to show "still working", backend will push to 25)
+      const simulated = Math.min(24, (elapsedSeconds / expectedDuration) * 25);
+      setSimulatedProgress(simulated);
+    }, 500);
+
+    return () => clearInterval(timer);
+  }, [view, progressStartTime, currentPhase, currentStep, progress]);
+
   const startGeneration = async () => {
     setError(null);
     setIsStarting(true);
@@ -421,6 +466,8 @@ export function Step1Outline({
       setTaskId(data.taskId);
       setTaskStatus("pending");
       setProgress(0);
+      setProgressStartTime(Date.now());
+      setSimulatedProgress(0);
       setView("progress");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
@@ -768,15 +815,20 @@ export function Step1Outline({
         </div>
 
         {/* Progress bar */}
-        <div className="w-full max-w-md">
-          <Progress value={progress} className="h-2" />
-          <div className="flex justify-between mt-2 text-[10px] font-mono text-neutral-500">
-            <span>
-              {taskStatus === "running" ? "Processing..." : "Initializing..."}
-            </span>
-            <span>{progress}%</span>
-          </div>
-        </div>
+        {(() => {
+          const displayProgress = Math.max(simulatedProgress, progress);
+          return (
+            <div className="w-full max-w-md">
+              <Progress value={displayProgress} className="h-2" />
+              <div className="flex justify-between mt-2 text-[10px] font-mono text-neutral-500">
+                <span>
+                  {taskStatus === "running" ? "Processing..." : "Initializing..."}
+                </span>
+                <span>{Math.round(displayProgress)}%</span>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Phase checklist */}
         <div className="w-full max-w-md bg-neutral-900/50 border border-neutral-800 rounded-lg p-4">
@@ -864,7 +916,7 @@ export function Step1Outline({
         <div className="flex-1 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
           {output && (
             <div className="grid grid-cols-2 gap-2">
-              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+              <div className="flex flex-col items-center justify-center py-3 px-2 bg-neutral-900/50 border border-neutral-800 rounded-lg">
                 <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Beats
                 </div>
@@ -872,7 +924,7 @@ export function Step1Outline({
                   {beatCount}
                 </div>
               </div>
-              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+              <div className="flex flex-col items-center justify-center py-3 px-2 bg-neutral-900/50 border border-neutral-800 rounded-lg">
                 <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Assets
                 </div>
@@ -880,7 +932,7 @@ export function Step1Outline({
                   {assetCount}
                 </div>
               </div>
-              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+              <div className="flex flex-col items-center justify-center py-3 px-2 bg-neutral-900/50 border border-neutral-800 rounded-lg">
                 <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Facts
                 </div>
@@ -888,7 +940,7 @@ export function Step1Outline({
                   {output.researchDossier?.facts?.length || 0}
                 </div>
               </div>
-              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+              <div className="flex flex-col items-center justify-center py-3 px-2 bg-neutral-900/50 border border-neutral-800 rounded-lg">
                 <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Sources
                 </div>
@@ -897,7 +949,7 @@ export function Step1Outline({
                     (output.researchDossier?.sourceDocuments?.length || 0)}
                 </div>
               </div>
-              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+              <div className="flex flex-col items-center justify-center py-3 px-2 bg-neutral-900/50 border border-neutral-800 rounded-lg">
                 <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Time
                 </div>
@@ -909,7 +961,7 @@ export function Step1Outline({
                   m
                 </div>
               </div>
-              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+              <div className="flex flex-col items-center justify-center py-3 px-2 bg-neutral-900/50 border border-neutral-800 rounded-lg">
                 <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Quotes
                 </div>
@@ -917,7 +969,7 @@ export function Step1Outline({
                   {output.researchDossier?.quotes?.length || 0}
                 </div>
               </div>
-              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+              <div className="flex flex-col items-center justify-center py-3 px-2 bg-neutral-900/50 border border-neutral-800 rounded-lg">
                 <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Words
                 </div>
@@ -929,7 +981,7 @@ export function Step1Outline({
                   )}
                 </div>
               </div>
-              <div className="flex flex-col items-center justify-center p-1.5 bg-neutral-900/50 border border-neutral-800 rounded-xl aspect-square">
+              <div className="flex flex-col items-center justify-center py-3 px-2 bg-neutral-900/50 border border-neutral-800 rounded-lg">
                 <div className="text-[8px] text-neutral-500 uppercase tracking-widest font-bold">
                   Confidence
                 </div>
@@ -1037,7 +1089,8 @@ export function Step1Outline({
                       {output.assetRegistry.characters.map((char) => (
                         <div
                           key={char.id}
-                          className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
+                          onClick={() => setSelectedAsset({ type: 'character', data: char })}
+                          className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg cursor-pointer hover:bg-neutral-700/50 hover:border-orange-500/50 transition-colors"
                         >
                           <div className="font-medium text-white">
                             {char.name}
@@ -1045,6 +1098,11 @@ export function Step1Outline({
                           <div className="text-sm text-neutral-500">
                             {char.role}
                           </div>
+                          {char.physicalCharacteristics?.demographics && (
+                            <div className="text-xs text-neutral-400 mt-1">
+                              {[char.physicalCharacteristics.demographics.age, char.physicalCharacteristics.demographics.gender, char.physicalCharacteristics.demographics.ethnicity].filter(Boolean).join(', ')}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1062,7 +1120,8 @@ export function Step1Outline({
                       {output.assetRegistry.locations.map((loc) => (
                         <div
                           key={loc.id}
-                          className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
+                          onClick={() => setSelectedAsset({ type: 'location', data: loc })}
+                          className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg cursor-pointer hover:bg-neutral-700/50 hover:border-blue-500/50 transition-colors"
                         >
                           <div className="font-medium text-white">
                             {loc.name}
@@ -1084,7 +1143,8 @@ export function Step1Outline({
                       {output.assetRegistry.objects.map((obj) => (
                         <div
                           key={obj.id}
-                          className="p-3 bg-neutral-800/50 border border-neutral-700 rounded-lg"
+                          onClick={() => setSelectedAsset({ type: 'object', data: obj })}
+                          className="p-3 bg-neutral-800/50 border border-neutral-700 rounded-lg cursor-pointer hover:bg-neutral-700/50 hover:border-green-500/50 transition-colors"
                         >
                           <div className="font-medium text-white text-sm">
                             {obj.name}
@@ -1092,6 +1152,11 @@ export function Step1Outline({
                           <div className="text-xs text-neutral-500">
                             {obj.type}
                           </div>
+                          {(obj as any).physicalDescription?.detailedDescription && (
+                            <div className="text-xs text-neutral-400 mt-1 line-clamp-2">
+                              {(obj as any).physicalDescription.detailedDescription}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1106,6 +1171,291 @@ export function Step1Outline({
           </div>
         </div>
       </div>
+
+      {/* Asset Detail Modal */}
+      <Dialog open={!!selectedAsset} onOpenChange={() => setSelectedAsset(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedAsset?.type === 'character' && <Users className="w-5 h-5 text-orange-500" />}
+              {selectedAsset?.type === 'location' && <MapPin className="w-5 h-5 text-blue-500" />}
+              {selectedAsset?.type === 'object' && <Package className="w-5 h-5 text-green-500" />}
+              {selectedAsset?.data?.name || 'Asset Details'}
+            </DialogTitle>
+          </DialogHeader>
+
+          {selectedAsset?.type === 'character' && selectedAsset.data && (
+            <div className="space-y-4">
+              {/* Role */}
+              <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                <div className="text-xs text-orange-400 uppercase tracking-wider mb-1">Role</div>
+                <div className="text-white">{selectedAsset.data.role}</div>
+              </div>
+
+              {/* Demographics */}
+              {selectedAsset.data.physicalCharacteristics?.demographics && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Demographics</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(selectedAsset.data.physicalCharacteristics.demographics).map(([key, value]) => (
+                      value && (
+                        <div key={key}>
+                          <span className="text-neutral-500 capitalize">{key}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Body Structure */}
+              {selectedAsset.data.physicalCharacteristics?.bodyStructure && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Body Structure</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(selectedAsset.data.physicalCharacteristics.bodyStructure).map(([key, value]) => (
+                      value && (
+                        <div key={key}>
+                          <span className="text-neutral-500 capitalize">{key}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Face Features */}
+              {selectedAsset.data.physicalCharacteristics?.faceFeatures && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Face Features</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(selectedAsset.data.physicalCharacteristics.faceFeatures).map(([key, value]) => (
+                      value && (
+                        <div key={key}>
+                          <span className="text-neutral-500 capitalize">{key}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Hair */}
+              {selectedAsset.data.physicalCharacteristics?.hair && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Hair</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(selectedAsset.data.physicalCharacteristics.hair).map(([key, value]) => (
+                      value && (
+                        <div key={key}>
+                          <span className="text-neutral-500 capitalize">{key}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Expressions */}
+              {selectedAsset.data.expressions && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Expressions</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(selectedAsset.data.expressions).map(([key, value]) => (
+                      value && (
+                        <div key={key}>
+                          <span className="text-neutral-500 capitalize">{key}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Wardrobe */}
+              {selectedAsset.data.wardrobe && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Wardrobe</div>
+                  <div className="text-sm text-white">{selectedAsset.data.wardrobe.defaultOutfit}</div>
+                </div>
+              )}
+
+              {/* Visual Instructions */}
+              {selectedAsset.data.visualInstructions && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Visual Instructions</div>
+                  {selectedAsset.data.visualInstructions.consistencyAnchors?.length > 0 && (
+                    <div className="mb-2">
+                      <span className="text-xs text-green-400">Must Include: </span>
+                      <span className="text-sm text-white">{selectedAsset.data.visualInstructions.consistencyAnchors.join(', ')}</span>
+                    </div>
+                  )}
+                  {selectedAsset.data.visualInstructions.prohibitions?.length > 0 && (
+                    <div>
+                      <span className="text-xs text-red-400">Prohibitions: </span>
+                      <span className="text-sm text-white">{selectedAsset.data.visualInstructions.prohibitions.join(', ')}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {selectedAsset?.type === 'location' && selectedAsset.data && (
+            <div className="space-y-4">
+              {/* Essence */}
+              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                <div className="text-xs text-blue-400 uppercase tracking-wider mb-1">Essence</div>
+                <div className="text-white">{selectedAsset.data.essence}</div>
+              </div>
+
+              {/* Structural Details */}
+              {selectedAsset.data.structuralDetails && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Structural Details</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(selectedAsset.data.structuralDetails).map(([key, value]) => (
+                      value && !Array.isArray(value) && (
+                        <div key={key}>
+                          <span className="text-neutral-500 capitalize">{key}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                  {selectedAsset.data.structuralDetails.keyElements?.length > 0 && (
+                    <div className="mt-2">
+                      <span className="text-neutral-500">Key Elements: </span>
+                      <span className="text-white">{selectedAsset.data.structuralDetails.keyElements.join(', ')}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Environmental Details */}
+              {selectedAsset.data.environmentalDetails && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Environment</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(selectedAsset.data.environmentalDetails).map(([key, value]) => (
+                      value && (
+                        <div key={key}>
+                          <span className="text-neutral-500 capitalize">{key}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Lighting */}
+              {selectedAsset.data.lighting && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Lighting</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(selectedAsset.data.lighting).map(([key, value]) => (
+                      value && (
+                        <div key={key}>
+                          <span className="text-neutral-500 capitalize">{key}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Visual Instructions */}
+              {selectedAsset.data.visualInstructions && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Visual Instructions</div>
+                  {selectedAsset.data.visualInstructions.consistencyAnchors?.length > 0 && (
+                    <div className="mb-2">
+                      <span className="text-xs text-green-400">Must Include: </span>
+                      <span className="text-sm text-white">{selectedAsset.data.visualInstructions.consistencyAnchors.join(', ')}</span>
+                    </div>
+                  )}
+                  {selectedAsset.data.visualInstructions.prohibitions?.length > 0 && (
+                    <div>
+                      <span className="text-xs text-red-400">Prohibitions: </span>
+                      <span className="text-sm text-white">{selectedAsset.data.visualInstructions.prohibitions.join(', ')}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {selectedAsset?.type === 'object' && selectedAsset.data && (
+            <div className="space-y-4">
+              {/* Type */}
+              <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                <div className="text-xs text-green-400 uppercase tracking-wider mb-1">Type</div>
+                <div className="text-white">{selectedAsset.data.type}</div>
+              </div>
+
+              {/* Physical Description */}
+              {(selectedAsset.data as any).physicalDescription && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Physical Description</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries((selectedAsset.data as any).physicalDescription).map(([key, value]) => (
+                      value && !Array.isArray(value) && (
+                        <div key={key}>
+                          <span className="text-neutral-500 capitalize">{key}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Interaction Notes */}
+              {(selectedAsset.data as any).interactionNotes && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Interaction Notes</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries((selectedAsset.data as any).interactionNotes).map(([key, value]) => (
+                      value && (
+                        <div key={key}>
+                          <span className="text-neutral-500 capitalize">{key}: </span>
+                          <span className="text-white">{String(value)}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Visual Instructions */}
+              {(selectedAsset.data as any).visualInstructions && (
+                <div className="p-3 bg-neutral-800/50 rounded-lg">
+                  <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Visual Instructions</div>
+                  {(selectedAsset.data as any).visualInstructions.consistencyAnchors?.length > 0 && (
+                    <div className="mb-2">
+                      <span className="text-xs text-green-400">Must Include: </span>
+                      <span className="text-sm text-white">{(selectedAsset.data as any).visualInstructions.consistencyAnchors.join(', ')}</span>
+                    </div>
+                  )}
+                  {(selectedAsset.data as any).visualInstructions.prohibitions?.length > 0 && (
+                    <div>
+                      <span className="text-xs text-red-400">Prohibitions: </span>
+                      <span className="text-sm text-white">{(selectedAsset.data as any).visualInstructions.prohibitions.join(', ')}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -109,6 +109,7 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
           researchToggle: input.researchToggle,
           angle: input.angle,
           sourcePreferences: input.sourcePreferences,
+          useValyu: true, // Enable Valyu for V2 fields (narrative, keyDevelopments, entitiesV2)
         });
 
         await completeStep(taskId, stepId);

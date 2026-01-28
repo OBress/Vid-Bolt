@@ -104,6 +104,14 @@ interface ResearchDocsPanelProps {
 // ============================================================================
 
 export function ResearchDocsPanel({ dossier }: ResearchDocsPanelProps) {
+  // Debug logging for V2 data troubleshooting
+  console.log('[ResearchDocsPanel] V2 fields present:', {
+    narrative: !!dossier.narrative,
+    keyDevelopments: dossier.keyDevelopments?.length || 0,
+    entitiesV2: dossier.entitiesV2?.length || 0,
+    entities: dossier.entities?.length || 0,
+  });
+
   // Count helpers
   const factsCount = dossier.facts?.length || 0;
   const quotesCount = dossier.quotes?.length || 0;

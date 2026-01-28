@@ -123,6 +123,8 @@ interface UniversalScriptOutput {
       id: string;
       name: string;
       essence: string;
+      type?: string;
+      era?: string;
       structuralDetails?: any;
       environmentalDetails?: any;
       visualInstructions?: any;
