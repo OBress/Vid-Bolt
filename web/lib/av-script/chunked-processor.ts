@@ -382,10 +382,10 @@ async function generateChunkShots(
     const aiSummary = response.summaries?.find(s => s.index === i);
     const textLower = segment.text.toLowerCase();
     
-    // Detect entity references
-    const characterRefs = characterNames.filter(c => textLower.includes(c.name)).map(c => c.id);
-    const locationRefs = locationNames.filter(l => textLower.includes(l.name)).map(l => l.id);
-    const objectRefs = objectNames.filter(o => textLower.includes(o.name)).map(o => o.id);
+    // Detect entity references - store names (not IDs) since these are used for search queries
+    const characterRefs = characterNames.filter(c => textLower.includes(c.name)).map(c => outlineAssets?.characters?.find(ch => ch.id === c.id)?.name || c.name);
+    const locationRefs = locationNames.filter(l => textLower.includes(l.name)).map(l => outlineAssets?.locations?.find(lo => lo.id === l.id)?.name || l.name);
+    const objectRefs = objectNames.filter(o => textLower.includes(o.name)).map(o => outlineAssets?.objects?.find(ob => ob.id === o.id)?.name || o.name);
     
     return {
       segment_index: segment.segment_index,
@@ -417,29 +417,43 @@ async function generateChunkShots(
 function buildSystemPrompt(context: ChunkContext, outlineAssets?: OutlineAssets): string {
   const parts: string[] = [];
   
-  // Base instructions
-  parts.push(`You are a visual director creating shots for a documentary-style video.
-Choose the best visual treatment for each segment.
+  // Base instructions - Visual Philosophy (principle-based, not prescriptive)
+  parts.push(`You are a premium documentary director creating Netflix-quality visuals.
+Ask yourself: "What makes this moment MOST powerful?"
 
-YOUR TOOLS:
+## VISUAL PHILOSOPHY
 
-**"video"** - AI-generated cinematic video
-Creates cinematic 3D-style video scenes. Use for narrative moments,
-imagined events, emotional beats, and scenes requiring fluid motion.
-This is your primary tool for creative, abstract, or fictional content.
+**"video"** - AI-generated cinematic scene
+A single continuous moment. One camera, one subject, one atmosphere.
+Best when the power is in WATCHING something unfold - movement, emotion, scale.
+Creates atmosphere through cinematography: lighting, depth, motion, texture.
 
-**"motiongraphic"** - Animated React compositions (Remotion)
-The container for all non-AI-video content. Capabilities include:
-- One or more stock images/videos with effects (Ken Burns, overlays, etc.)
-- AI-generated images with animation
-- Text animations, maps, timelines, data displays
-- Any combination—montages, comparisons, annotated layouts, etc.
+**"motiongraphic"** - Composed visual storytelling
+Multiple elements working together. Images, text, graphics, annotations.
+Best when the power is in RELATIONSHIPS - connecting ideas, revealing patterns,
+building visual arguments, or highlighting within context.
 
-ALWAYS use "motiongraphic" when stock_worthy is true.
+Examples of powerful motiongraphic moments:
+- Crime boards linking suspects with connecting lines between AI images
+- Articles on screen with key passages highlighted
+- Before/after reveals, timelines with photos, maps with traced paths
+- Visual evidence displays, document close-ups with annotations
 
-For motiongraphics, you can request multiple images by setting image_count.
-Use this whenever having more images would improve the visual quality.
-If unset, defaults to 1.`);
+The choice is NOT "cinematic vs data" - motiongraphics CAN be atmospheric.
+Ask: "Is this a SINGLE SCENE or a COMPOSITION of elements?"
+
+## STOCK FOOTAGE RULES
+
+stock_worthy = TRUE only for "proof" moments:
+- INTRODUCING a famous person for the first time (show THE actual person)
+- REVEALING an iconic landmark being discussed (show THE actual place)
+- HISTORICAL FOOTAGE of a specific documented event
+
+stock_worthy = FALSE (use AI instead) for:
+- Generic concepts (documents, money, crowds, skylines)
+- Atmospheric b-roll where AI interpretation would be more premium
+
+For motiongraphics, set image_count if multiple images work together.`);
 
   // Previous shots context (for continuity)
   if (!context.isFirstChunk && context.previousShots.length > 0) {
@@ -465,9 +479,9 @@ Avoid repetitive imagery - vary your visual approaches while keeping the same st
 Generate visual summaries for the following ${context.currentSegments.length} segments.
 For each segment, provide:
 1. A 1-sentence visual summary (under 25 words) describing what should be shown
-2. Your choice of media_type: "video" or "motiongraphic"
-3. stock_worthy: true for famous people, landmarks, historical events, or real-world imagery
-4. image_count: (optional) number of images if more than 1 would improve the shot`);
+2. Your choice of media_type: "video" (default) or "motiongraphic" (rare - data/layouts only)
+3. stock_worthy: true ONLY for introducing famous people, iconic landmarks, or historical footage
+4. image_count: (optional) for motiongraphics, number of images if multiple improve clarity`);
 
   // Upcoming content preview (for transitions)
   if (!context.isLastChunk && context.upcomingSegments.length > 0) {
@@ -560,9 +574,10 @@ function generateFallbackShot(
   const locationNames = outlineAssets?.locations?.map(l => ({ id: l.id, name: l.name.toLowerCase() })) || [];
   const objectNames = outlineAssets?.objects?.map(o => ({ id: o.id, name: o.name.toLowerCase() })) || [];
   
-  const characterRefs = characterNames.filter(c => textLower.includes(c.name)).map(c => c.id);
-  const locationRefs = locationNames.filter(l => textLower.includes(l.name)).map(l => l.id);
-  const objectRefs = objectNames.filter(o => textLower.includes(o.name)).map(o => o.id);
+  // Store names (not IDs) since these are used for search queries
+  const characterRefs = characterNames.filter(c => textLower.includes(c.name)).map(c => outlineAssets?.characters?.find(ch => ch.id === c.id)?.name || c.name);
+  const locationRefs = locationNames.filter(l => textLower.includes(l.name)).map(l => outlineAssets?.locations?.find(lo => lo.id === l.id)?.name || l.name);
+  const objectRefs = objectNames.filter(o => textLower.includes(o.name)).map(o => outlineAssets?.objects?.find(ob => ob.id === o.id)?.name || o.name);
   
   return {
     segment_index: segment.segment_index,

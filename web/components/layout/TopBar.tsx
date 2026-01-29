@@ -2,7 +2,6 @@
 
 import { usePathname } from "next/navigation";
 import { Bell } from "lucide-react";
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { getActiveLabel } from "@/app/command-center/navigation";
 import { useMediaProjects } from "@/hooks/use-media-projects";
@@ -15,37 +14,6 @@ export function TopBar() {
   const pathname = usePathname();
   const { projects } = useMediaProjects();
   const { currentVideoName } = useNavigationStore();
-  const [lastUpdate, setLastUpdate] = useState<string>("LOADING...");
-
-  useEffect(() => {
-    const fetchDate = async () => {
-      try {
-        const response = await fetch("/api/git-info");
-        const data = await response.json();
-        const dateStr = data.date;
-        if (dateStr) {
-          const date = new Date(dateStr);
-          const formattedDate = new Intl.DateTimeFormat("en-US", {
-            timeZone: "America/New_York",
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-          }).format(date);
-
-          const cleaned = formattedDate.replace(",", "");
-          setLastUpdate(`${cleaned} EST`);
-        } else {
-          setLastUpdate("UNAVAILABLE");
-        }
-      } catch (err) {
-        setLastUpdate("UNAVAILABLE");
-      }
-    };
-    fetchDate();
-  }, []);
 
   // Extract project name if on a media project page
   const { label, displayLabel } = useMemo(() => {
@@ -102,9 +70,6 @@ export function TopBar() {
         >
           <Bell className="w-4 h-4" />
         </Button>
-        <div className="text-xs text-neutral-500 ml-2 uppercase">
-          LAST UPDATE: {lastUpdate}
-        </div>
       </div>
     </div>
   );

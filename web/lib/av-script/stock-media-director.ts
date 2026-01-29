@@ -16,7 +16,12 @@ import { ShotPart1 } from '@/lib/queues/workers/av-script';
 import { generateEmbedding } from '@/lib/ai/embedding';
 import { getSupabaseServiceClient } from '@/lib/queues/shared';
 import { validateStockImage } from '@/lib/classification/media-classifier';
-import { searchAndStoreImages, deleteStockMediaAsset } from '@/lib/av-script/stock-media-utils';
+import { searchAndStoreImages, searchAndStoreFirstMatch, deleteStockMediaAsset } from '@/lib/av-script/stock-media-utils';
+
+// Helper function to escape special regex characters
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 // ============================================================================
 // TYPES
@@ -78,7 +83,7 @@ const CONTEXT_WINDOW_SIZE = 2;
 const MAX_CANDIDATES_PER_SHOT = 3;
 
 /** Timeout for individual shot evaluation (ms) - 90s to account for rate limiting delays and retries */
-const SHOT_TIMEOUT_MS = 90000;
+const SHOT_TIMEOUT_MS = 150000; // 2.5 minutes - allows for on-demand Serper + sequential validation
 
 /** Maximum concurrent validation calls - issue was image format not rate limits */
 const MAX_CONCURRENT_VALIDATIONS = 5;
@@ -91,6 +96,7 @@ export class StockMediaDirector {
   private config: StockMediaDirectorConfig;
   private logPrefix = '[StockMediaDirector]';
   private usedStockIds: Set<string> = new Set(); // Track already-used stock media
+  private deletedStockIds: Set<string> = new Set(); // Track deleted stock media to prevent race conditions
 
   constructor(config: StockMediaDirectorConfig) {
     this.config = config;
@@ -351,8 +357,8 @@ export class StockMediaDirector {
 
     // Primary: shot summary
     if (shot.summary) {
-      // Remove any existing @() references for cleaner search
-      parts.push(shot.summary.replace(/@\([^)]+\)/g, '').trim());
+      // Extract entity names from @() references instead of stripping them
+      parts.push(shot.summary.replace(/@\(([^)]+)\)/g, '$1').trim());
     }
 
     // Secondary: shot text (first 150 chars for more context)
@@ -382,20 +388,22 @@ export class StockMediaDirector {
     const hasEntities = (shot.character_refs?.length || 0) > 0 || (shot.location_refs?.length || 0) > 0;
     
     if (shot.character_refs && shot.character_refs.length > 0) {
-      // Clean up character names - remove parenthetical notes
-      const cleanNames = shot.character_refs.map(name => 
-        name.replace(/\s*\([^)]*\)/g, '').trim()
-      ).filter(Boolean);
+      // Clean up character names - remove parenthetical notes and filter out ID-like refs (CHAR-001)
+      const cleanNames = shot.character_refs
+        .filter(name => !name.match(/^(CHAR|LOC|OBJ)-\d+$/i)) // Filter out IDs
+        .map(name => name.replace(/\s*\([^)]*\)/g, '').trim())
+        .filter(Boolean);
       if (cleanNames.length > 0) {
         parts.push(cleanNames.join(' '));
       }
     }
     
     if (shot.location_refs && shot.location_refs.length > 0) {
-      // Clean up location names - remove parenthetical notes
-      const cleanLocations = shot.location_refs.map(loc => 
-        loc.replace(/\s*\([^)]*\)/g, '').trim()
-      ).filter(Boolean);
+      // Clean up location names - remove parenthetical notes and filter out ID-like refs
+      const cleanLocations = shot.location_refs
+        .filter(loc => !loc.match(/^(CHAR|LOC|OBJ)-\d+$/i)) // Filter out IDs
+        .map(loc => loc.replace(/\s*\([^)]*\)/g, '').trim())
+        .filter(Boolean);
       if (cleanLocations.length > 0) {
         parts.push(cleanLocations.join(' '));
       }
@@ -404,12 +412,26 @@ export class StockMediaDirector {
     // PRIORITY 2: If we have entities, add context from summary (cleaned up)
     if (hasEntities && shot.summary) {
       // Extract just the subject matter, not the shot direction
-      // Remove @() references, "A shot of", "Image of", etc.
+      // Replace @(EntityName) with just EntityName, then clean up prefixes
       let cleanSummary = shot.summary
-        .replace(/@\([^)]+\)/g, '')  // Remove @() refs
+        .replace(/@\(([^)]+)\)/g, '$1')  // Extract name from @() refs
         .replace(/^(A |An |The )?(shot|image|photo|picture|view|montage|close-up|wide shot) of /i, '')
         .replace(/\s+/g, ' ')
         .trim();
+      
+      // Remove entity names that are already included from refs to avoid duplication
+      // e.g., prevent "Donald Trump Donald Trump as a child"
+      const allEntityNames = [
+        ...(shot.character_refs || []),
+        ...(shot.location_refs || []),
+      ].map(n => n.replace(/\s*\([^)]*\)/g, '').trim()).filter(Boolean);
+      
+      for (const name of allEntityNames) {
+        // Remove the name (case-insensitive) at word boundaries
+        const nameRegex = new RegExp(`\\b${escapeRegex(name)}\\b`, 'gi');
+        cleanSummary = cleanSummary.replace(nameRegex, '');
+      }
+      cleanSummary = cleanSummary.replace(/\s+/g, ' ').trim();
       
       // Only add if it adds meaningful context (not just repeating entity names)
       if (cleanSummary.length > 10 && !cleanSummary.toLowerCase().includes('concept')) {
@@ -420,8 +442,9 @@ export class StockMediaDirector {
     // PRIORITY 3: If NO entities, fall back to summary but be very selective
     if (!hasEntities && shot.summary) {
       // This shot has no specific entities - try to extract concrete nouns
+      // Replace @(EntityName) with just EntityName instead of stripping
       let cleanSummary = shot.summary
-        .replace(/@\([^)]+\)/g, '')
+        .replace(/@\(([^)]+)\)/g, '$1')  // Extract name from @() refs
         .replace(/^(A |An |The )?(shot|image|photo|picture|view|montage|close-up|wide shot) of /i, '')
         .trim();
       
@@ -508,28 +531,64 @@ export class StockMediaDirector {
       
       // Build focused search query for Serper (concrete subjects + "photo" suffix)
       const searchQuery = this.buildSerperQuery(shot);
+      const shotDescription = shot.summary || shot.text;
       
-      // Search and store new images (fetch more if multi-image shot)
-      const maxImages = Math.max(5, imageCount * 2); // Extra buffer for validation failures
-      const result = await searchAndStoreImages(
-        searchQuery,
-        this.config.userId,
-        this.config.videoId,
-        maxImages
-      );
+      // OPTIMIZATION: For single-image shots, use efficient "first match wins"
+      // This downloads sequentially and stops after first valid match = much less R2 storage
+      if (imageCount === 1) {
+        const match = await searchAndStoreFirstMatch(
+          searchQuery,
+          shotDescription,
+          this.config.userId,
+          this.config.videoId
+        );
+        
+        if (match) {
+          console.log(`${this.logPrefix} Shot ${index}: First-match found, using directly`);
+          
+          // Return immediately with the matched image
+          const stockMediaRef: StockMediaRef = {
+            id: match.id,
+            url: match.publicUrl,
+            thumbnailUrl: match.publicUrl,
+            description: match.title,
+            similarity: 1.0, // Direct match
+          };
+          
+          this.usedStockIds.add(match.id);
+          
+          return {
+            ...shot,
+            media_type: shot.media_type || 'video' as 'video' | 'motiongraphic',
+            stock_media_ref: stockMediaRef,
+            summary: shot.summary,
+          };
+        }
+        
+        // No match found, fall through to fallback
+        console.log(`${this.logPrefix} Shot ${index}: First-match search returned no valid images`);
+      } else {
+        // Multi-image shots: Use batch storage (need multiple images)
+        const maxImages = imageCount * 2; // Extra buffer for validation failures
+        const result = await searchAndStoreImages(
+          searchQuery,
+          this.config.userId,
+          this.config.videoId,
+          maxImages
+        );
 
-      if (result.stored.length > 0) {
-        console.log(`${this.logPrefix} Shot ${index}: Stored ${result.stored.length} new images, retrying vector search`);
+        if (result.stored.length > 0) {
+          console.log(`${this.logPrefix} Shot ${index}: Stored ${result.stored.length} new images, retrying vector search`);
+          
+          // Re-query vector DB for this shot (more candidates for multi-image)
+          const newCandidates = await this.searchVectorDBForShot(shot, index, imageCount * 3);
+          
+          // Retry evaluation with new candidates (mark as retry to prevent infinite loop)
+          return this.evaluateShot(context, newCandidates, true);
+        }
         
-        // Re-query vector DB for this shot (more candidates for multi-image)
-        const newCandidates = await this.searchVectorDBForShot(shot, index, imageCount * 3);
-        
-        // Retry evaluation with new candidates (mark as retry to prevent infinite loop)
-        return this.evaluateShot(context, newCandidates, true);
+        console.log(`${this.logPrefix} Shot ${index}: Serper search returned no valid images`);
       }
-      
-      // No images found via Serper, fall through to fallback
-      console.log(`${this.logPrefix} Shot ${index}: Serper search returned no valid images`);
     }
 
     // =========================================================================
@@ -555,6 +614,11 @@ export class StockMediaDirector {
     const validRefs: StockMediaRef[] = [];
     
     for (const candidate of sortedCandidates) {
+      // Skip if already deleted earlier in this run (prevents race conditions)
+      if (this.deletedStockIds.has(candidate.id)) {
+        continue;
+      }
+
       // Skip if already used (unless multi-image which may need duplicates across shots)
       if (this.usedStockIds.has(candidate.id) && imageCount === 1) {
         continue;
@@ -586,6 +650,7 @@ export class StockMediaDirector {
           const isCorruptedFile = validation.details?.includes('Corrupted image');
           if (validation.failureReason !== 'error' || isCorruptedFile) {
             await deleteStockMediaAsset(candidate.id, candidate.r2_key);
+            this.deletedStockIds.add(candidate.id); // Track deletion to prevent race conditions
           }
           
           // Continue to next candidate

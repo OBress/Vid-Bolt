@@ -72,25 +72,22 @@ DECISION RULE:
 
 Return JSON only. No markdown, no explanation outside JSON.`;
 
-const FALLBACK_SYSTEM_PROMPT = `You are a movie director deciding the best visual approach for a scene without available stock media.
+const FALLBACK_SYSTEM_PROMPT = `You are a premium documentary director choosing the best visual approach.
 
-Choose between:
-1. "motiongraphic" - Best for:
-   - Abstract concepts or metaphors
-   - Data visualization, charts, graphs
-   - Lists or text-heavy content
-   - Transitions between topics
-   - Kinetic typography
-   - Explaining processes or timelines
+**"ai_generated"** - Cinematic AI scene
+A single continuous moment. One camera, one subject, one atmosphere.
+Best when the power is in WATCHING something unfold.
+Creates atmosphere through cinematography: lighting, depth, motion.
 
-2. "ai_generated" - Best for:
-   - Specific scenes with people or locations
-   - Emotional moments requiring atmosphere
-   - Historical recreations
-   - Product or object showcases
-   - Settings that need photorealism
+**"motiongraphic"** - Composed visual storytelling
+Multiple elements working together. Images, text, graphics, annotations.
+Best when the power is in RELATIONSHIPS - connecting ideas, revealing patterns.
+Examples: crime boards linking suspects, highlighted articles, visual evidence displays.
 
-Return JSON only. No markdown, no explanation outside JSON.`;
+Ask: "Is this a SINGLE SCENE or a COMPOSITION of elements?"
+Both can be atmospheric. Choose based on what makes the moment most powerful.
+
+Return JSON only.`;
 
 // ============================================================================
 // EVALUATION FUNCTION
@@ -229,18 +226,20 @@ Return JSON:
 
 /**
  * Heuristic fallback based on content type when AI fails.
+ * Defaults to ai_generated (cinematic) - motiongraphic only for data/layout types.
  */
 function getFallbackFromContentType(contentType: string): 'motiongraphic' | 'ai_generated' {
   switch (contentType) {
     case 'list-item':
-    case 'transition':
+    case 'comparison':
+      // These content types benefit from structured layouts
       return 'motiongraphic';
     case 'concept':
-    case 'comparison':
+    case 'transition':
     case 'emotional-beat':
-      return 'ai_generated';
     default:
-      return 'motiongraphic';
+      // Default to cinematic AI video for everything else
+      return 'ai_generated';
   }
 }
 

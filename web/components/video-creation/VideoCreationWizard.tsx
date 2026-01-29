@@ -495,7 +495,8 @@ export function VideoCreationWizard({
         case 4: // Audio
           return state.audioChunks.length > 0;
         case 5: // Shot Creation
-          return true; // No blocking requirements
+          // Only allow navigation once AV Script Part 1 is generated
+          return !!state.avScriptPart1Output?.shots?.length;
         case 6: // Scene Review
           return true; // No blocking requirements
         case 7: // Editor
@@ -506,7 +507,7 @@ export function VideoCreationWizard({
           return false;
       }
     },
-    [state.outlineOutput, state.scriptOutput, state.script, state.audioChunks],
+    [state.outlineOutput, state.scriptOutput, state.script, state.audioChunks, state.avScriptPart1Output],
   );
 
   const canGoNext = useMemo(
@@ -1734,6 +1735,26 @@ export function VideoCreationWizard({
                   avScriptTaskId: null,
                   isAvScriptLoading: false,
                 });
+
+                // Refresh stock media to include on-demand Serper images from Step 5
+                if (state.videoId) {
+                  try {
+                    const stockRes = await fetch(
+                      `/api/stock-media/by-video?videoId=${state.videoId}`,
+                    );
+                    if (stockRes.ok) {
+                      const stockData = await stockRes.json();
+                      updateState({
+                        stockMediaResults: stockData.stockMedia || null,
+                      });
+                      console.log(
+                        `[Wizard] Refreshed stock media after AV Script: ${stockData.stockMedia?.length || 0} items`,
+                      );
+                    }
+                  } catch (err) {
+                    console.error("[Wizard] Failed to refresh stock media:", err);
+                  }
+                }
               }}
               onError={(error) => {
                 console.error("[Wizard] AV Script Part 1 failed:", error);
@@ -1770,7 +1791,31 @@ export function VideoCreationWizard({
               }
               advanceToStep(6);
             }}
-            onBack={() => goToStep(4)}
+            onBack={async () => {
+              // Clear Step 5 data (including on-demand stock media) before going back
+              if (state.videoId) {
+                try {
+                  console.log('[Wizard] Resetting Step 5 data before going back...');
+                  const response = await fetch(`/api/videos/${state.videoId}/reset-step`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fromStep: 5, toStep: 4 }),
+                  });
+                  const result = await response.json();
+                  if (result.r2FilesDeleted) {
+                    console.log(`[Wizard] Cleaned up ${result.r2FilesDeleted} R2 files`);
+                  }
+                  // Also clear local state
+                  updateState({
+                    avScriptPart1Output: undefined,
+                    stockMediaResults: undefined,
+                  });
+                } catch (err) {
+                  console.error('[Wizard] Failed to reset Step 5 data:', err);
+                }
+              }
+              goToStep(4);
+            }}
             outlineAssets={state.outlineOutput?.assetRegistry}
             avScriptShots={state.avScriptPart1Output?.shots}
             audioChunks={state.audioChunks}

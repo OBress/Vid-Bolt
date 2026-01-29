@@ -101,20 +101,33 @@ export async function searchAndStoreImages(
   console.log(`[StockMediaUtils] Searching Serper for: "${query}" (max: ${maxImages})`);
 
   try {
-    // Search Serper
-    const images = await searchSerperImages(query, {
+    // Search Serper - try large images first for better quality
+    let images = await searchSerperImages(query, {
       maxResults: maxImages + 5, // Fetch extra in case some fail
+      size: 'large',
     });
 
-    console.log(`[StockMediaUtils] Found ${images.length} images from Serper`);
+    // Fallback to medium if insufficient large results
+    if (images.length < maxImages) {
+      console.log(`[StockMediaUtils] Only ${images.length}/${maxImages} large images, trying medium`);
+      const mediumImages = await searchSerperImages(query, {
+        maxResults: maxImages + 5 - images.length,
+        size: 'medium',
+      });
+      images = [...images, ...mediumImages];
+    }
+
+    console.log(`[StockMediaUtils] Found ${images.length} images from Serper (large+medium)`);
 
     for (const img of images) {
       if (stored.length >= maxImages) break;
 
-      // Skip known problematic URLs
+      // Skip known problematic URLs (FB/IG CDNs block external access)
       if (
         img.imageUrl.includes('lookaside.instagram.com') ||
         img.imageUrl.includes('fbcdn.net') ||
+        img.imageUrl.includes('fbsbx.com') ||
+        img.imageUrl.includes('lookaside.facebook.com') ||
         !img.imageUrl.startsWith('http')
       ) {
         continue;
@@ -249,6 +262,190 @@ export async function searchAndStoreImages(
 
   console.log(`[StockMediaUtils] Complete: ${stored.length} stored, ${failed} failed`);
   return { stored, failed };
+}
+
+// ==========================================================================
+// First Match Search (Efficient On-Demand)
+// ==========================================================================
+
+/**
+ * Search Serper for ONE image that matches a shot requirement.
+ * Processes images sequentially and stops immediately on first valid match.
+ * 
+ * Much more efficient than searchAndStoreImages for on-demand scraping
+ * because it avoids downloading/storing extra images that won't be used.
+ * 
+ * @param query - Search query for the images
+ * @param shotDescription - The shot summary to validate against
+ * @param userId - User ID
+ * @param videoId - Video project ID
+ * @returns First matching image or null if none found
+ */
+export async function searchAndStoreFirstMatch(
+  query: string,
+  shotDescription: string,
+  userId: string,
+  videoId: string
+): Promise<StoredStockImage | null> {
+  const supabase = getSupabaseClient();
+
+  console.log(`[StockMediaUtils] First-match search for: "${query.substring(0, 50)}..."`);
+
+  try {
+    // Search Serper - fetch 10 candidates
+    let images = await searchSerperImages(query, {
+      maxResults: 10,
+      size: 'large',
+    });
+
+    // Fallback to medium if insufficient large results
+    if (images.length < 5) {
+      const mediumImages = await searchSerperImages(query, {
+        maxResults: 10 - images.length,
+        size: 'medium',
+      });
+      images = [...images, ...mediumImages];
+    }
+
+    console.log(`[StockMediaUtils] Found ${images.length} candidates, validating sequentially`);
+
+    for (const img of images) {
+      // Skip known problematic URLs (FB/IG CDNs block external access)
+      if (
+        img.imageUrl.includes('lookaside.instagram.com') ||
+        img.imageUrl.includes('fbcdn.net') ||
+        img.imageUrl.includes('fbsbx.com') ||
+        img.imageUrl.includes('lookaside.facebook.com') ||
+        !img.imageUrl.startsWith('http')
+      ) {
+        continue;
+      }
+
+      try {
+        // Get file extension and check for supported formats
+        const extension = getExtensionFromUrl(img.imageUrl);
+        
+        const SUPPORTED_IMAGE_FORMATS = ['jpg', 'jpeg', 'png', 'webp'];
+        if (!SUPPORTED_IMAGE_FORMATS.includes(extension.toLowerCase())) {
+          continue;
+        }
+        
+        // Download image
+        const imageBuffer = await downloadSerperImage(img.imageUrl);
+
+        // Size checks
+        if (imageBuffer.length < 5000 || imageBuffer.length > 10 * 1024 * 1024) {
+          continue;
+        }
+
+        // Convert buffer to base64 for classification
+        const mimeType = extension === 'jpg' ? 'image/jpeg' : `image/${extension}`;
+        const base64DataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+
+        // STEP 1: Quality classification (watermark, NSFW, etc.)
+        let classification;
+        try {
+          classification = await classifyAndValidateImage(
+            base64DataUrl,
+            userId,
+            img.width,
+            img.height
+          );
+          
+          if (!classification.isValid) {
+            console.log(`[StockMediaUtils] First-match rejected (quality): ${classification.rejectionReason}`);
+            continue;
+          }
+        } catch {
+          continue;
+        }
+
+        // STEP 2: Shot relevance validation (does it match the specific shot?)
+        try {
+          const validation = await validateStockImage(
+            base64DataUrl, // Use base64 directly, not a URL
+            userId,
+            shotDescription
+            // No r2_key since image isn't stored yet
+          );
+
+          if (!validation.isValid) {
+            console.log(`[StockMediaUtils] First-match rejected (relevance): ${validation.failureReason}`);
+            continue;
+          }
+          
+          console.log(`[StockMediaUtils] First-match found! Relevance: ${validation.relevanceScore}/10`);
+        } catch {
+          continue;
+        }
+
+        // STEP 3: Store the matching image (only if it passed both checks!)
+        const imageId = `serper-${Date.now()}-${uuidv4().slice(0, 8)}`;
+        const r2Key = generateVideoStockImageKey(userId, videoId, imageId, extension);
+
+        await uploadAudioBuffer(imageBuffer, r2Key, mimeType);
+        const publicUrl = getPublicUrl(r2Key);
+
+        // Generate embedding from AI classification
+        const embeddingText = classification?.embeddingText || `${img.title}. ${query}`;
+        const embedding = await safeGenerateEmbedding(embeddingText);
+
+        // Store in DB
+        const { data, error: insertError } = await supabase
+          .from('stock_media')
+          .insert({
+            user_id: userId,
+            video_id: videoId,
+            source: 'serper',
+            external_id: img.id || img.imageUrl,
+            r2_key: r2Key,
+            metadata: {
+              mediaType: 'image',
+              title: img.title,
+              description: classification?.description || img.title,
+              url: publicUrl,
+              thumbnailUrl: img.thumbnailUrl || publicUrl,
+              source: img.source,
+              query,
+              width: img.width,
+              height: img.height,
+              ...(classification && {
+                aiDescription: classification.description,
+                aiSubjects: classification.subjects,
+                namedEntities: classification.namedEntities,
+                qualityScore: classification.qualityScore,
+                resolutionScore: classification.resolutionScore,
+              }),
+            },
+            ...(embedding && { embedding }),
+          })
+          .select('id')
+          .single();
+
+        if (insertError) {
+          try { await deleteFile(r2Key); } catch {}
+          continue;
+        }
+
+        // SUCCESS! Return immediately
+        console.log(`[StockMediaUtils] First-match stored: ${imageId}`);
+        return {
+          id: data.id,
+          r2Key,
+          publicUrl,
+          title: classification?.description || img.title,
+          query,
+        };
+      } catch {
+        continue;
+      }
+    }
+  } catch (err) {
+    console.error(`[StockMediaUtils] First-match search error:`, err);
+  }
+
+  console.log(`[StockMediaUtils] First-match: No valid image found`);
+  return null;
 }
 
 // ==========================================================================

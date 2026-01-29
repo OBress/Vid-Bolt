@@ -1014,45 +1014,17 @@ export async function validateStockImage(
         console.log(`[Stock Validation] Warning: Very large image ${base64SizeKB}KB - may cause issues`);
       }
     } catch (fetchError) {
-      console.error('[Stock Validation] Failed to fetch from R2, falling back to CDN URL:', fetchError);
-      // Fall back to CDN URL - but first validate it's not a corrupted file
-      try {
-        const cdnResponse = await fetch(imageUrl, { method: 'HEAD' });
-        if (cdnResponse.ok) {
-          const contentLength = parseInt(cdnResponse.headers.get('content-length') || '0', 10);
-          const contentType = cdnResponse.headers.get('content-type') || '';
-          
-          // Reject if too small (likely corrupted stub) or wrong content type
-          if (contentLength < 5000) {
-            console.log(`[Stock Validation] CDN image too small (${contentLength} bytes) - likely corrupted`);
-            return {
-              isValid: false,
-              hasWatermark: false,
-              isNSFW: false,
-              isRelevant: false,
-              failureReason: 'error',
-              details: `Corrupted image (${Math.round(contentLength / 1024)}KB) - likely a blocked download`,
-            };
-          }
-          
-          if (!contentType.startsWith('image/')) {
-            console.log(`[Stock Validation] CDN response is not an image: ${contentType}`);
-            return {
-              isValid: false,
-              hasWatermark: false,
-              isNSFW: false,
-              isRelevant: false,
-              failureReason: 'error',
-              details: `Invalid content type: ${contentType}`,
-            };
-          }
-          
-          console.log(`[Stock Validation] CDN fallback validated: ${contentLength} bytes, ${contentType}`);
-        }
-      } catch (cdnCheckError) {
-        console.error('[Stock Validation] CDN pre-check failed:', cdnCheckError);
-        // Continue anyway - OpenRouter will handle the error
-      }
+      // R2 fetch failed - file was likely deleted by another parallel shot's validation
+      // Do NOT fall back to CDN URL as this causes 404 errors in OpenRouter
+      console.warn('[Stock Validation] Failed to fetch from R2 (file may have been deleted by another shot):', fetchError);
+      return {
+        isValid: false,
+        hasWatermark: false,
+        isNSFW: false,
+        isRelevant: false,
+        failureReason: 'error' as const,
+        details: 'Image no longer exists in storage (deleted by parallel validation)',
+      };
     }
   }
 
