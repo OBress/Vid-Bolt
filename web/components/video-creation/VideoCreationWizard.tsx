@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { WizardProgress } from "./WizardProgress";
 import { StepNavigationConfirmDialog } from "./StepNavigationConfirmDialog";
 import { GPUToggle } from "./GPUToggle";
+import { StockMediaOverrideToggle } from "./StockMediaOverrideToggle";
 import { VMStartupWarningDialog } from "./VMStartupWarningDialog";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { createClient } from "@/lib/supabase/client";
@@ -104,6 +105,8 @@ export interface WizardState {
   generationError?: string | null;
   // GPU Generation Toggle (admin-only)
   gpuEnabled: boolean;
+  // Stock Media Override (admin-only) - enables stock media in Step 5 even if disabled in Step 1
+  stockMediaOverride: boolean;
   // Asset Reference Image Generation (Step 4→5 transition, parallel with AV Script)
   assetImageTaskId: string | null;
   // Generated reference images for assets { assetId: imageUrl }
@@ -228,6 +231,7 @@ export function VideoCreationWizard({
     isMediaGenerating: false,
     generatedMedia: [],
     gpuEnabled: true, // Default: GPU enabled for full generation
+    stockMediaOverride: false, // Default: no override, respect Step 1 setting
     assetImageTaskId: null,
     assetReferenceImages: null,
   });
@@ -399,6 +403,7 @@ export function VideoCreationWizard({
           isMediaGenerating: false,
           generatedMedia: (video.metadata as any)?.generatedMedia || [],
           gpuEnabled: true, // Default to enabled when loading video
+          stockMediaOverride: false, // Override is session-only, always starts false
           assetImageTaskId: (video.metadata as any)?.assetImageTaskId || null,
           assetReferenceImages:
             (video.metadata as any)?.assetReferenceImages || null,
@@ -861,7 +866,10 @@ export function VideoCreationWizard({
               wordTimestamps,
               totalDurationSeconds: totalDuration,
               outlineAssets: state.outlineOutput?.assetRegistry || null,
-              stockMediaLevel: state.outlineConfig?.stockMediaLevel || "none",
+              // Use override if enabled, otherwise respect Step 1 setting
+              stockMediaLevel: state.stockMediaOverride
+                ? "standard_images"
+                : (state.outlineConfig?.stockMediaLevel || "none"),
             }),
           })
             .then((response) => response.json())
@@ -2022,8 +2030,17 @@ export function VideoCreationWizard({
               isLastStep={isLastStep}
             />
           </div>
-          {/* Admin GPU Toggle - positioned after Step 8 */}
-          <div className="flex-shrink-0 pr-6">
+          {/* Admin Toggles - Stock Override above GPU */}
+          <div className="flex-shrink-0 pr-6 flex flex-col gap-2">
+            <StockMediaOverrideToggle
+              enabled={state.stockMediaOverride}
+              onToggle={(enabled) =>
+                setState((prev) => ({ ...prev, stockMediaOverride: enabled }))
+              }
+              disabled={currentStep >= 5} // Lock after Step 4
+              isAdmin={isAdmin}
+              showOverride={state.outlineConfig?.stockMediaLevel === "none"}
+            />
             <GPUToggle
               enabled={state.gpuEnabled}
               onToggle={(enabled) =>
