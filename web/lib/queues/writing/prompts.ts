@@ -327,6 +327,13 @@ Create an exhaustively detailed character profile for consistent visual generati
 
 CRITICAL INSTRUCTION: You MUST include the main protagonist/subject of the story (e.g., if the story is about Jamie Dimon, Jamie Dimon MUST be a character). Do not skip the central figure.
 
+⚠️ CRITICAL - NO NAME HALLUCINATION:
+- If the character name is a DESCRIPTIVE IDENTIFIER (e.g., "The Victim", "Unnamed Witness", "Unknown Person", "The Attacker"), keep it EXACTLY as provided
+- DO NOT invent a fictional name for unidentified people
+- DO NOT add made-up names in parentheses like "The Victim (John Smith)"
+- These are REAL unidentified people - inventing names is FACTUALLY INCORRECT
+- Example: Input "The Victim" → Output "name": "The Victim" NOT "name": "Elias Thorne"
+
 SECTION 1 - IMMUTABLE PHYSICAL CHARACTERISTICS (never change):
 - Demographics: Age, gender, ethnicity if specified
 - Body Structure: Height, build, posture, gait
@@ -408,16 +415,27 @@ Your goal is to identify the VISUAL ASSETS (Characters, Locations, Objects) requ
 CRITICAL INSTRUCTION: You must consolidated variations of the same entity into a single entry.
 Example: "Jamie Dimon", "Young Jamie", "CEO Jamie Dimon" -> MERGE into one "Jamie Dimon" character.
 
+NAMING PRIORITY FOR CHARACTERS:
+- Use the MOST RECOGNIZABLE name as the primary "name" field
+- For content creators/influencers, prefer their online handle over legal name
+  - Example: "penguinz0" NOT "Charlie White" (but include "Charlie White", "moistcr1tikal" in aliases)
+  - Example: "MrBeast" NOT "Jimmy Donaldson" (but include "Jimmy Donaldson" in aliases)
+  - Example: "Adin Ross" is fine as-is since he uses his real name
+- For public figures, use the name they're most known by
+  - Example: "Elon Musk" (recognizable), "JPMorgan CEO Jamie Dimon" -> just "Jamie Dimon"
+- ALWAYS include all variations (legal name, nicknames, handles, titles) in the aliases array
+
 Output a JSON object with this structure:
 {
   "people": [
     {
-      "name": "Full Name",
-      "aliases": ["list", "of", "variations", "found"],
+      "name": "Most Recognizable Name (handle/nickname if more famous)",
+      "aliases": ["legal name", "other handles", "nicknames", "titles"],
       "role": "Role in story",
       "details": "Combined details from all contexts",
       "significance": "Why they matter",
-      "beatIndices": [0, 2, 5] // Beats where they likely appear
+      "beatIndices": [0, 2, 5],
+      "isUnnamed": false // Set to true ONLY for unidentified people
     }
   ],
   "locations": [
@@ -440,10 +458,19 @@ Output a JSON object with this structure:
 
 RULES:
 1. CHARACTERS: Include the main subject and any named people who speak or take action.
-2. LOCATIONS: Include every specific setting mentioned (e.g., "The London Office", "Senate Hearing Room").
-3. OBJECTS: Include specific props that are manipulated or focused on (e.g., "The Whale Trade Spreadsheet", "The 2008 Balance Sheet").
-4. MERGING: If "The London Whale" and "Bruno Iksil" are the same person, create ONE entry for "Bruno Iksil" with alias "The London Whale".
-5. BEAT INDICES: Infer which beat index (0-based) these asset appear in based on the provided summary.`,
+2. NAMING: Use the most recognizable/famous name as "name", put ALL variations in "aliases" (including legal name).
+3. LOCATIONS: Include every specific setting mentioned (e.g., "The London Office", "Senate Hearing Room").
+4. OBJECTS: Include specific props that are manipulated or focused on (e.g., "The Whale Trade Spreadsheet", "The 2008 Balance Sheet").
+5. MERGING: If "The London Whale" and "Bruno Iksil" are the same person, create ONE entry for "Bruno Iksil" with alias "The London Whale".
+6. BEAT INDICES: Infer which beat index (0-based) these asset appear in based on the provided summary.
+
+⚠️ CRITICAL - UNIDENTIFIED PEOPLE (NO HALLUCINATION):
+7. If a person's real name is UNKNOWN, use a DESCRIPTIVE IDENTIFIER as the name:
+   - Examples: "The Victim", "Unnamed Bystander", "Unknown Witness", "The Attacker"
+   - Set "isUnnamed": true for these characters
+   - NEVER invent fictional names (like "John Smith" or "Elias Thorne") for real unidentified people
+   - This is FACTUALLY INCORRECT and misleading to viewers
+   - If research says "unnamed victim", output name: "The Victim", NOT a made-up name`,
 
   // ==========================================================================
   // PHASE 5: SCRIPT EXPANSION

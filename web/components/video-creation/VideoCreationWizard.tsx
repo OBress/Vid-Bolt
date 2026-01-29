@@ -1218,7 +1218,50 @@ export function VideoCreationWizard({
 
               // Check if we should skip step 2 (Stock Media)
               if (config?.stockMediaLevel === "none") {
+                // OPTIMISTIC: Set loading flag and navigate immediately (matching Step 2 -> 3 pattern)
+                console.log(
+                  "[Wizard] OPTIMISTIC: Stock media disabled, skipping to Step 3 with script generation...",
+                );
+                setState((prev) => ({
+                  ...prev,
+                  isScriptLoading: true,
+                }));
                 advanceToStep(3);
+
+                // Trigger script generation in background
+                if (state.videoId) {
+                  fetch("/api/process/script-writing", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ videoId: state.videoId }),
+                  })
+                    .then((res) => res.json())
+                    .then((data) => {
+                      if (data.taskId) {
+                        console.log("[Wizard] Script task created:", data.taskId);
+                        setState((prev) => ({
+                          ...prev,
+                          scriptTaskId: data.taskId,
+                        }));
+                      } else {
+                        console.error(
+                          "[Wizard] Failed to create script task:",
+                          data,
+                        );
+                        setState((prev) => ({
+                          ...prev,
+                          isScriptLoading: false,
+                        }));
+                      }
+                    })
+                    .catch((err) => {
+                      console.error("[Wizard] Script generation failed:", err);
+                      setState((prev) => ({
+                        ...prev,
+                        isScriptLoading: false,
+                      }));
+                    });
+                }
               } else {
                 // OPTIMISTIC: Set loading and navigate immediately
                 console.log(

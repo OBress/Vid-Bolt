@@ -112,6 +112,7 @@ interface AIEntityResult {
     details: string;
     significance: string;
     beatIndices: number[];
+    isUnnamed?: boolean; // True for unidentified people (e.g., "The Victim")
   }>;
   locations: Array<{
     name: string;

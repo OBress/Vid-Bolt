@@ -37,7 +37,7 @@ import { createBrowserClient } from "@supabase/ssr";
 // TYPES
 // ============================================================================
 
-type ViewState = "review" | "progress" | "output";
+type ViewState = "progress" | "output";
 
 interface OutlineOutput {
   researchDossier?: any;
@@ -194,11 +194,10 @@ export const Step3Script = memo(
       },
       ref,
     ) => {
-      // Determine initial view: output if we have script, progress if auto-loading, otherwise review
+      // Determine initial view: output if we have script, otherwise progress (auto-start will trigger generation)
       const [view, setView] = useState<ViewState>(() => {
         if (initialScriptOutput) return "output";
-        if (isLoadingProp || taskIdProp) return "progress";
-        return "review"; // Fallback for edge cases
+        return "progress"; // Always go to progress - auto-start will trigger generation
       });
 
       const [taskId, setTaskId] = useState<string | null>(taskIdProp || null);
@@ -263,6 +262,50 @@ export const Step3Script = memo(
           setTaskStatus("pending");
         }
       }, [taskIdProp, taskId]);
+
+      // Note: isLoading sync removed - no longer needed since we default to progress view
+
+      // AUTO-START: If we're in progress view without a task, automatically trigger script generation
+      const hasAutoStarted = useRef(false);
+      useEffect(() => {
+        if (
+          view === "progress" &&
+          !hasAutoStarted.current &&
+          outlineData?.spine &&
+          !initialScriptOutput &&
+          !taskId &&
+          !isLoadingProp &&
+          !isStarting
+        ) {
+          console.log("[Step3] Auto-starting script generation");
+          hasAutoStarted.current = true;
+          setIsStarting(true);
+          setProgress(0);
+          
+          fetch("/api/process/script-writing", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ videoId }),
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.taskId) {
+                console.log("[Step3] Script task created:", data.taskId);
+                setTaskId(data.taskId);
+                setTaskStatus("pending");
+              } else {
+                console.error("[Step3] Failed to create script task:", data);
+                setError(data.error || "Failed to start script generation");
+              }
+              setIsStarting(false);
+            })
+            .catch((err) => {
+              console.error("[Step3] Script generation failed:", err);
+              setError("Failed to start script generation");
+              setIsStarting(false);
+            });
+        }
+      }, [view, outlineData, initialScriptOutput, taskId, isLoadingProp, isStarting, videoId]);
 
       // Click outside to exit edit mode (but not when clicking AI Rewrite or Beat Outline)
       useEffect(() => {
@@ -335,7 +378,7 @@ export const Step3Script = memo(
             }
           } else if (statusData.status === "failed") {
             setError(statusData.error_message || "Task failed");
-            setView("review");
+            // Stay on progress view with error displayed
           }
         },
         [supabase],
@@ -383,7 +426,7 @@ export const Step3Script = memo(
           setTaskStatus("pending");
         } catch (err) {
           setError(err instanceof Error ? err.message : "Unknown error");
-          setView("review"); // Go back to review on error
+          // Stay on progress view with error displayed
         } finally {
           setIsStarting(false);
         }
@@ -691,250 +734,6 @@ export const Step3Script = memo(
         );
         return idx >= 0 ? idx : 0;
       };
-
-      // =========================================================================
-      // RENDER: REVIEW VIEW (Show outline data before generating script)
-      // =========================================================================
-      if (view === "review") {
-        if (!outlineData?.spine) {
-          return (
-            <div className="flex flex-col items-center justify-center h-full gap-6 text-center">
-              <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center text-red-500">
-                <FileText className="w-8 h-8" />
-              </div>
-              <div className="space-y-2">
-                <h2 className="text-2xl font-bold">Outline Not Found</h2>
-                <p className="text-neutral-500 max-w-md">
-                  Please complete Step 1 (Outline Generation) before writing the
-                  script.
-                </p>
-              </div>
-              <Button onClick={onBack} variant="outline" className="gap-2">
-                <ArrowLeft className="w-4 h-4" />
-                Go Back to Outline
-              </Button>
-            </div>
-          );
-        }
-
-        const beatCount = outlineData.spine.beatCount || 0;
-        const assetCount =
-          (outlineData.assetRegistry?.characters?.length || 0) +
-          (outlineData.assetRegistry?.locations?.length || 0) +
-          (outlineData.assetRegistry?.objects?.length || 0);
-
-        return (
-          <div className="flex h-[calc(100vh-160px)] gap-6 w-full max-w-[96vw] mx-auto px-8 py-6">
-            {/* LEFT SIDEBAR */}
-            <div className="w-80 shrink-0 flex flex-col gap-6 h-full">
-              {/* Header & Stats */}
-              <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl p-5 space-y-4 shrink-0">
-                <div className="space-y-1">
-                  <h2 className="text-xl font-bold tracking-tight">
-                    Write Your Script
-                  </h2>
-                  <p className="text-neutral-500 text-sm">
-                    Review the outline below, then generate your script.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 bg-neutral-800/50 rounded-lg text-center">
-                    <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-0.5">
-                      Beats
-                    </div>
-                    <div className="text-lg font-mono text-white">
-                      {beatCount}
-                    </div>
-                  </div>
-                  <div className="p-3 bg-neutral-800/50 rounded-lg text-center">
-                    <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-0.5">
-                      Assets
-                    </div>
-                    <div className="text-lg font-mono text-white">
-                      {assetCount}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Navigation Tabs */}
-              <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl overflow-hidden flex-1 flex flex-col">
-                <Tabs
-                  value={activeTab}
-                  onValueChange={setActiveTab}
-                  className="flex-1 flex flex-col"
-                  orientation="vertical"
-                >
-                  <TabsList className="bg-transparent flex-col flex-1 items-stretch p-0 gap-0 border-b border-neutral-800 w-full">
-                    <TabsTrigger
-                      value="spine"
-                      className="flex-1 justify-center gap-3 px-6 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/50 text-neutral-400 data-[state=active]:text-white transition-all text-sm uppercase tracking-wider font-medium"
-                    >
-                      <Layout className="w-5 h-5" />
-                      Outline
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="assets"
-                      className="flex-1 justify-center gap-3 px-6 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/50 text-neutral-400 data-[state=active]:text-white transition-all text-sm uppercase tracking-wider font-medium"
-                    >
-                      <Users className="w-5 h-5" />
-                      Assets
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="research"
-                      className="flex-1 justify-center gap-3 px-6 rounded-none border-l-2 border-transparent data-[state=active]:border-orange-500 data-[state=active]:bg-neutral-800/50 text-neutral-400 data-[state=active]:text-white transition-all text-sm uppercase tracking-wider font-medium"
-                    >
-                      <Search className="w-5 h-5" />
-                      Research
-                    </TabsTrigger>
-                  </TabsList>
-
-                  {/* Action Buttons */}
-                  <div className="mt-auto p-5 border-t border-neutral-800 space-y-3 shrink-0">
-                    {error && (
-                      <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs">
-                        {error}
-                      </div>
-                    )}
-                    <Button
-                      onClick={startGeneration}
-                      disabled={isStarting || isLocked}
-                      className="w-full h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest gap-2"
-                    >
-                      {isStarting ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Starting...
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-4 h-4" />
-                          Generate Script
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </Tabs>
-              </div>
-            </div>
-
-            {/* RIGHT CONTENT AREA - Show outline summary */}
-            <div className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden h-full">
-              <div className="h-full overflow-y-auto p-6">
-                {activeTab === "spine" && outlineData.spine && (
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-bold mb-4">
-                      {outlineData.spine.title || "Video Outline"}
-                    </h3>
-                    {outlineData.spine.beats.map((beat, index) => (
-                      <div
-                        key={index}
-                        className="p-4 bg-neutral-800/30 border border-neutral-700 rounded-lg"
-                      >
-                        <div className="flex items-center gap-3 mb-2">
-                          <div className="w-6 h-6 rounded bg-orange-500/20 text-orange-500 flex items-center justify-center text-xs font-bold">
-                            {index + 1}
-                          </div>
-                          <span className="text-xs px-2 py-0.5 rounded bg-neutral-700 text-neutral-300">
-                            {beat.classification?.type}
-                          </span>
-                          <span className="text-xs text-neutral-500">
-                            {beat.classification?.section}
-                          </span>
-                        </div>
-                        <p className="text-sm text-white">
-                          {beat.contentSummary}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {activeTab === "assets" && outlineData.assetRegistry && (
-                  <div className="space-y-6">
-                    {outlineData.assetRegistry.characters?.length > 0 && (
-                      <div>
-                        <h3 className="text-lg font-bold mb-4">Characters</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                          {outlineData.assetRegistry.characters.map((char) => (
-                            <div
-                              key={char.id}
-                              className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
-                            >
-                              <div className="font-medium text-white">
-                                {char.name}
-                              </div>
-                              <div className="text-sm text-neutral-500">
-                                {char.role}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {outlineData.assetRegistry.locations?.length > 0 && (
-                      <div>
-                        <h3 className="text-lg font-bold mb-4">Locations</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                          {outlineData.assetRegistry.locations.map((loc) => (
-                            <div
-                              key={loc.id}
-                              className="p-4 bg-neutral-800/50 border border-neutral-700 rounded-lg"
-                            >
-                              <div className="font-medium text-white">
-                                {loc.name}
-                              </div>
-                              <div className="text-sm text-neutral-500">
-                                {loc.essence}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {activeTab === "research" && outlineData.researchDossier && (
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-bold mb-4">Research Summary</h3>
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="p-4 bg-neutral-800/50 rounded-lg text-center">
-                        <div className="text-2xl font-bold text-white">
-                          {outlineData.researchDossier.metadata?.factCount || 0}
-                        </div>
-                        <div className="text-xs text-neutral-500 uppercase">
-                          Verified Facts
-                        </div>
-                      </div>
-                      <div className="p-4 bg-neutral-800/50 rounded-lg text-center">
-                        <div className="text-2xl font-bold text-white">
-                          {outlineData.researchDossier.metadata?.quoteCount ||
-                            0}
-                        </div>
-                        <div className="text-xs text-neutral-500 uppercase">
-                          Quotes
-                        </div>
-                      </div>
-                      <div className="p-4 bg-neutral-800/50 rounded-lg text-center">
-                        <div className="text-2xl font-bold text-white">
-                          {outlineData.researchDossier.metadata
-                            ?.overallConfidence || 0}
-                          %
-                        </div>
-                        <div className="text-xs text-neutral-500 uppercase">
-                          Confidence
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      }
 
       // =========================================================================
       // RENDER: PROGRESS VIEW

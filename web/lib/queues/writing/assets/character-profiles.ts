@@ -22,6 +22,7 @@ interface CharacterInput {
   role: string;
   details: string;
   beatIndices: number[];
+  isUnnamed?: boolean; // True for unidentified people (e.g., "The Victim")
 }
 
 // ============================================================================
@@ -92,8 +93,16 @@ async function generateSingleCharacterProfile(
         .join('\n')
     : '';
 
-  const userPrompt = `Create a detailed visual character profile for AI image generation consistency:
+  // Warning for unidentified characters
+  const unnamedWarning = person.isUnnamed 
+    ? `\n⚠️ CRITICAL: "${person.name}" is an UNIDENTIFIED PERSON. Their real name is UNKNOWN.
+- Keep the name EXACTLY as "${person.name}" - do NOT invent a fictional name
+- Do NOT add made-up names in parentheses
+- This is a REAL person whose identity is unknown - making up a name is FACTUALLY WRONG\n`
+    : '';
 
+  const userPrompt = `Create a detailed visual character profile for AI image generation consistency:
+${unnamedWarning}
 CHARACTER: ${person.name}
 ROLE: ${person.role}
 KNOWN DETAILS: ${person.details}
