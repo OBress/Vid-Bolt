@@ -218,7 +218,30 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
 
         console.log(`${logPrefix} Step 3b: Processing with Stock Media Director (level: ${stockMediaLevel})...`);
         const { processWithStockMedia } = await import('@/lib/av-script/stock-media-director');
-        const shotsWithMedia = await processWithStockMedia(userId, videoId, finalShots, stockMediaLevel);
+        
+        // Fetch video name to use as topic context for stock media relevance decisions
+        let videoTopic = '';
+        try {
+          const { data: video } = await supabase.from('videos').select('name, idea').eq('id', videoId).single();
+          videoTopic = video?.name || video?.idea || '';
+          console.log(`${logPrefix} Using video topic for stock context: "${videoTopic.substring(0, 50)}..."`);
+        } catch (e) {
+          console.warn(`${logPrefix} Could not fetch video name for stock context`);
+        }
+        
+        // Extract main entity names from outline assets as spine beats
+        const spineBeats: string[] = [];
+        if (outlineAssets?.characters) {
+          spineBeats.push(...outlineAssets.characters.map(c => c.name));
+        }
+        if (outlineAssets?.locations) {
+          spineBeats.push(...outlineAssets.locations.map(l => l.name));
+        }
+        
+        const shotsWithMedia = await processWithStockMedia(userId, videoId, finalShots, stockMediaLevel, {
+          videoTopic,
+          spineBeats,
+        });
         
         // Update finalShots with stock media matches and compute visual_source
         finalShots = shotsWithMedia.map(shot => ({

@@ -99,10 +99,11 @@ async function resetStepData(
         // Delete stock_media database entries for this video
         try {
           // First, get all stock_media entries for this video
+          // NOTE: Records are inserted with video_id column, NOT metadata.videoId
           const { data: stockEntries, error: fetchError } = await supabase
             .from('stock_media')
             .select('id, r2_key')
-            .eq('metadata->>videoId', videoId);
+            .eq('video_id', videoId);
 
           if (fetchError) {
             console.error('[Reset Step 2] Error fetching stock_media:', fetchError);
@@ -113,14 +114,15 @@ async function resetStepData(
               const { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } = await import("@/lib/services/r2-storage");
               
               if (isR2Configured()) {
-                // Delete all stock media files for this video
-                const prefix = `${STORAGE_PATHS.STOCK_SCRAPER.ROOT}/${videoId}/`;
-                const r2Result = await deleteFilesWithPrefix(prefix);
+                // Delete stock images at users/{userId}/videos/{videoId}/images/stock/
+                const stockImagesPrefix = `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.VIDEOS}/${videoId}/${STORAGE_PATHS.IMAGES.STOCK}/`;
+                console.log(`[Reset Step 2] Deleting R2 files with prefix: ${stockImagesPrefix}`);
+                const r2Result = await deleteFilesWithPrefix(stockImagesPrefix);
                 result.r2FilesDeleted = r2Result.deleted;
                 
                 // Also try to delete individual r2_keys if stored differently
                 for (const entry of stockEntries) {
-                  if (entry.r2_key && !entry.r2_key.startsWith(prefix)) {
+                  if (entry.r2_key && !entry.r2_key.startsWith(stockImagesPrefix)) {
                     try {
                       const { deleteFile } = await import("@/lib/services/r2-storage");
                       await deleteFile(entry.r2_key);
@@ -142,11 +144,11 @@ async function resetStepData(
               console.error("[Reset Step 2] R2 cleanup error:", r2Error);
             }
 
-            // Delete database entries
+            // Delete database entries (use video_id column, not metadata)
             const { error: deleteError } = await supabase
               .from('stock_media')
               .delete()
-              .eq('metadata->>videoId', videoId);
+              .eq('video_id', videoId);
 
             if (deleteError) {
               result.errors.push(`Failed to delete stock_media entries: ${deleteError.message}`);

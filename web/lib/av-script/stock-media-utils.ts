@@ -279,13 +279,18 @@ export async function searchAndStoreImages(
  * @param shotDescription - The shot summary to validate against
  * @param userId - User ID
  * @param videoId - Video project ID
+ * @param videoContext - Optional video context for holistic relevance decisions
  * @returns First matching image or null if none found
  */
 export async function searchAndStoreFirstMatch(
   query: string,
   shotDescription: string,
   userId: string,
-  videoId: string
+  videoId: string,
+  videoContext?: {
+    videoTopic?: string;
+    spineBeats?: string[];
+  }
 ): Promise<StoredStockImage | null> {
   const supabase = getSupabaseClient();
 
@@ -365,8 +370,9 @@ export async function searchAndStoreFirstMatch(
           const validation = await validateStockImage(
             base64DataUrl, // Use base64 directly, not a URL
             userId,
-            shotDescription
-            // No r2_key since image isn't stored yet
+            shotDescription,
+            undefined, // No r2_key since image isn't stored yet
+            videoContext // Pass video context for holistic relevance decisions
           );
 
           if (!validation.isValid) {

@@ -522,14 +522,16 @@ Analyze this image for THREE criteria:
    - Drug-related content
    - Other harmful content (hate symbols, disturbing imagery)
 
-3. **RELEVANCE**: Does this image ACCURATELY match what we're looking for?
-   We need: "{SHOT_DESCRIPTION}"
+3. **RELEVANCE**: Does this image make sense for the video we are producing?
+{VIDEO_CONTEXT}
+   
+   This specific shot needs: "{SHOT_DESCRIPTION}"
    
    Consider:
-   - Does the image show what is described?
-   - Is the subject/person/scene correct?
-   - Would this image make sense in a video about this topic?
-   - Be STRICT - a 70% match is NOT good enough for professional video
+   - Does the image show what is described in the shot?
+   - Is this image directly relevant to the overall video topic?
+   - Would this image make sense in the context of the overall story?
+   - Be strict - tangentially related images are NOT acceptable
 
 Return a JSON object with these exact fields:
 {
@@ -542,12 +544,14 @@ Return a JSON object with these exact fields:
   "nsfwDetails": "Description of NSFW content if found",
   
   "isRelevant": true/false,
-  "relevanceScore": 0 to 10 (10 = perfect match, 0 = completely wrong),
+  "relevanceScore": 0 to 10 (10 = perfect match for both shot AND video topic, 0 = completely wrong),
   "whatImageShows": "Brief description of what the image actually shows",
-  "relevanceReason": "Why it matches or doesn't match"
+  "relevanceReason": "Why it matches or doesn't match the video topic and this specific shot"
 }
 
-BE VERY STRICT about relevance. If we ask for "archival photos of Martin Luther King Jr." and the image shows a random woman in a costume, that is 0/10 relevance.
+BE VERY STRICT about relevance. An image must be relevant to BOTH:
+- The overall video topic (if provided)
+- The specific shot description
 
 Respond with valid JSON only, no markdown.`;
 
@@ -974,13 +978,20 @@ export async function classifyAndValidateImage(
  * @param userId - User ID for API calls  
  * @param shotDescription - Description of what the shot needs (for relevance check)
  * @param r2Key - Optional R2 storage key - if provided, fetches directly from R2 (bypasses CDN delays)
+ * @param videoContext - Optional video context for holistic relevance decisions
  * @returns Validation result with details
  */
 export async function validateStockImage(
   imageUrl: string,
   userId: string,
   shotDescription?: string,
-  r2Key?: string
+  r2Key?: string,
+  videoContext?: {
+    /** Overall video topic/title */
+    videoTopic?: string;
+    /** Main spine beats/sections */
+    spineBeats?: string[];
+  }
 ): Promise<StockImageValidation> {
   // Determine the image URL to use for validation
   // If r2Key is provided, fetch directly from R2 as base64 to bypass CDN propagation delays
@@ -1070,7 +1081,22 @@ export async function validateStockImage(
   }
 
   // COMPREHENSIVE VALIDATION with relevance check
-  const prompt = COMPREHENSIVE_VALIDATION_PROMPT.replace('{SHOT_DESCRIPTION}', shotDescription);
+  // Build video context section if provided
+  let videoContextSection = '';
+  if (videoContext?.videoTopic || (videoContext?.spineBeats && videoContext.spineBeats.length > 0)) {
+    videoContextSection = '   **VIDEO CONTEXT** (use this to understand overall story relevance):\n';
+    if (videoContext.videoTopic) {
+      videoContextSection += `   - Video Topic: "${videoContext.videoTopic}"\n`;
+    }
+    if (videoContext.spineBeats && videoContext.spineBeats.length > 0) {
+      videoContextSection += `   - Story Beats: ${videoContext.spineBeats.slice(0, 5).join(', ')}\n`;
+    }
+  }
+  
+  const prompt = COMPREHENSIVE_VALIDATION_PROMPT
+    .replace('{VIDEO_CONTEXT}', videoContextSection)
+    .replace('{SHOT_DESCRIPTION}', shotDescription);
+
 
   const messages: OpenRouterMessage[] = [
     { role: 'system', content: prompt },

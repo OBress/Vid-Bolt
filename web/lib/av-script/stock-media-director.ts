@@ -31,6 +31,10 @@ export interface StockMediaDirectorConfig {
   userId: string;
   videoId: string;
   stockMediaLevel: 'none' | 'standard_images' | 'extensive_images' | 'standard_images_video' | 'extensive_images_video';
+  /** Overall video topic/title for contextual relevance decisions */
+  videoTopic?: string;
+  /** Main spine beats/sections for understanding story structure */
+  spineBeats?: string[];
 }
 
 export interface StockMediaRef {
@@ -97,6 +101,7 @@ export class StockMediaDirector {
   private logPrefix = '[StockMediaDirector]';
   private usedStockIds: Set<string> = new Set(); // Track already-used stock media
   private deletedStockIds: Set<string> = new Set(); // Track deleted stock media to prevent race conditions
+  private pendingDeletions: Map<string, string> = new Map(); // Deferred deletions: id -> r2_key
 
   constructor(config: StockMediaDirectorConfig) {
     this.config = config;
@@ -168,6 +173,40 @@ export class StockMediaDirector {
     } catch (err) {
       console.warn(`${this.logPrefix} Entity tagging failed:`, err);
     }
+  }
+
+  /**
+   * Clean up queued deletions after all shots are processed.
+   * Only deletes images that are NOT in usedStockIds.
+   * This prevents race conditions where parallel shots haven't finished claiming their images.
+   */
+  private async cleanupPendingDeletions(): Promise<void> {
+    if (this.pendingDeletions.size === 0) {
+      return;
+    }
+
+    let deletedCount = 0;
+    let keptCount = 0;
+
+    for (const [id, r2Key] of this.pendingDeletions) {
+      // Check if this image was claimed by any shot during processing
+      if (this.usedStockIds.has(id)) {
+        console.log(`${this.logPrefix} Keeping ${id} (used by a shot)`);
+        keptCount++;
+        continue;
+      }
+
+      // Safe to delete - not used by any shot
+      try {
+        await deleteStockMediaAsset(id, r2Key);
+        this.deletedStockIds.add(id);
+        deletedCount++;
+      } catch (err) {
+        console.warn(`${this.logPrefix} Failed to delete ${id}:`, err);
+      }
+    }
+
+    console.log(`${this.logPrefix} Cleanup: ${deletedCount} deleted, ${keptCount} kept (used by shots)`);
   }
 
   /**
@@ -262,7 +301,10 @@ export class StockMediaDirector {
     
     await processNext();
 
-    // Step 4: Log summary
+    // Step 4: Clean up unused images (deferred deletion)
+    await this.cleanupPendingDeletions();
+    
+    // Step 5: Log summary
     const matched = results.filter((r: ShotWithStockMedia) => r.stock_media_ref).length;
     const fallbacks = results.filter((r: ShotWithStockMedia) => r.fallback_type).length;
     console.log(`${this.logPrefix} Complete: ${matched} shots matched, ${fallbacks} fallbacks assigned`);
@@ -444,89 +486,65 @@ export class StockMediaDirector {
    * Build search query specifically for Serper image search.
    * Creates CONCRETE, SUBJECT-FOCUSED queries that will find real documentary/archival content.
    * 
-   * Unlike buildSearchQuery (for vector similarity), this:
-   * 1. Prioritizes ENTITY NAMES over abstract descriptions
-   * 2. Adds "photo" or "historical photo" to find real images
-   * 3. Avoids narrative/abstract text that leads to random results
+   * Uses Gemini 3 Flash to intelligently convert the shot summary into an
+   * optimal image search query. This is far more effective than rule-based
+   * string manipulation because the AI can:
+   * 1. Extract key subjects (people, places, objects)
+   * 2. Remove production language naturally
+   * 3. Format specifically for image search
+   * 4. Adapt based on context
    */
-  private buildSerperQuery(shot: ShotPart1): string {
-    const parts: string[] = [];
+  private async buildSerperQuery(shot: ShotPart1): Promise<string> {
+    const { generateText } = await import('@/lib/ai/openrouter');
     
-    // PRIORITY 1: Entity names (people, locations) - these are what we're actually searching for
-    const hasEntities = (shot.character_refs?.length || 0) > 0 || (shot.location_refs?.length || 0) > 0;
+    // Prepare the summary - strip @() syntax for the AI
+    const cleanSummary = (shot.summary || shot.text?.substring(0, 150) || '')
+      .replace(/@\(([^)]+)\)/g, '$1');
     
-    if (shot.character_refs && shot.character_refs.length > 0) {
-      // Clean up character names - remove parenthetical notes and filter out ID-like refs (CHAR-001)
-      const cleanNames = shot.character_refs
-        .filter(name => !name.match(/^(CHAR|LOC|OBJ)-\d+$/i)) // Filter out IDs
-        .map(name => name.replace(/\s*\([^)]*\)/g, '').trim())
-        .filter(Boolean);
-      if (cleanNames.length > 0) {
-        parts.push(cleanNames.join(' '));
-      }
-    }
-    
-    if (shot.location_refs && shot.location_refs.length > 0) {
-      // Clean up location names - remove parenthetical notes and filter out ID-like refs
-      const cleanLocations = shot.location_refs
-        .filter(loc => !loc.match(/^(CHAR|LOC|OBJ)-\d+$/i)) // Filter out IDs
-        .map(loc => loc.replace(/\s*\([^)]*\)/g, '').trim())
-        .filter(Boolean);
-      if (cleanLocations.length > 0) {
-        parts.push(cleanLocations.join(' '));
-      }
-    }
-    
-    // PRIORITY 2: If we have entities, add context from summary (cleaned up)
-    if (hasEntities && shot.summary) {
-      // Extract just the subject matter, not the shot direction
-      // Replace @(EntityName) with just EntityName, then clean up prefixes
-      let cleanSummary = shot.summary
-        .replace(/@\(([^)]+)\)/g, '$1')  // Extract name from @() refs
-        .replace(/^(A |An |The )?(shot|image|photo|picture|view|montage|close-up|wide shot) of /i, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+    const systemPrompt = `You are a Google Images search query optimizer. Convert visual descriptions into optimal image search queries.
+
+RULES:
+1. Extract ONLY concrete subjects (real people, real places, real objects)
+2. Remove ALL production language (cinematic, motiongraphic, aerial, close-up, etc.)
+3. Remove abstract concepts and metaphors
+4. Keep the query under 8 words
+5. Add "photo" at the end for better image results
+6. Return ONLY the search query, nothing else
+
+EXAMPLES:
+- "@(Donald Trump) speaking at rally podium" → "Donald Trump campaign rally speech photo"
+- "Crime board with evidence connecting suspects" → "crime investigation evidence board photo"
+- "Aerial view of New York skyline at sunset" → "New York skyline photo"
+- "Motiongraphic showing stock market crash visualization" → "stock market trading floor photo"`;
+
+    const userPrompt = `Convert this visual description into an image search query:
+
+Visual: "${cleanSummary}"
+Video topic: "${this.config.videoTopic || 'documentary'}"
+
+Return ONLY the search query:`;
+
+    try {
+      const response = await generateText(
+        this.config.userId,
+        systemPrompt,
+        userPrompt,
+        { temperature: 0.3, maxTokens: 50 } // Low temp for consistent formatting
+      );
       
-      // Remove entity names that are already included from refs to avoid duplication
-      // e.g., prevent "Donald Trump Donald Trump as a child"
-      const allEntityNames = [
-        ...(shot.character_refs || []),
-        ...(shot.location_refs || []),
-      ].map(n => n.replace(/\s*\([^)]*\)/g, '').trim()).filter(Boolean);
+      const query = response.content.trim()
+        .replace(/^["']|["']$/g, '') // Remove quotes if present
+        .replace(/\n.*/g, ''); // Take only first line
       
-      for (const name of allEntityNames) {
-        // Remove the name (case-insensitive) at word boundaries
-        const nameRegex = new RegExp(`\\b${escapeRegex(name)}\\b`, 'gi');
-        cleanSummary = cleanSummary.replace(nameRegex, '');
-      }
-      cleanSummary = cleanSummary.replace(/\s+/g, ' ').trim();
-      
-      // Only add if it adds meaningful context (not just repeating entity names)
-      if (cleanSummary.length > 10 && !cleanSummary.toLowerCase().includes('concept')) {
-        parts.push(cleanSummary.substring(0, 50));
-      }
+      console.log(`${this.logPrefix} AI-generated Serper query: "${query}" (from: "${cleanSummary.substring(0, 50)}...")`);
+      return query;
+    } catch (error) {
+      // Fallback to simple cleaning if AI fails
+      console.warn(`${this.logPrefix} AI query generation failed, using fallback:`, error);
+      const fallbackQuery = cleanSummary.substring(0, 50) + ' photo';
+      console.log(`${this.logPrefix} Fallback Serper query: "${fallbackQuery}"`);
+      return fallbackQuery;
     }
-    
-    // PRIORITY 3: If NO entities, fall back to summary but be very selective
-    if (!hasEntities && shot.summary) {
-      // This shot has no specific entities - try to extract concrete nouns
-      // Replace @(EntityName) with just EntityName instead of stripping
-      let cleanSummary = shot.summary
-        .replace(/@\(([^)]+)\)/g, '$1')  // Extract name from @() refs
-        .replace(/^(A |An |The )?(shot|image|photo|picture|view|montage|close-up|wide shot) of /i, '')
-        .trim();
-      
-      // Take first 60 chars of cleaned summary
-      parts.push(cleanSummary.substring(0, 60));
-    }
-    
-    // SUFFIX: Add "photo" or "historical photo" to get real images, not graphics
-    if (parts.length > 0) {
-      const suffix = this.isHistoricalContent(shot) ? 'historical photo' : 'photo';
-      parts.push(suffix);
-    }
-    
-    return parts.join(' ').replace(/\s+/g, ' ').trim();
   }
   
   /**
@@ -616,7 +634,7 @@ export class StockMediaDirector {
       console.log(`${this.logPrefix} Shot ${index}: Fresh scrape (skipping vector pool)`);
       
       // Build focused search query for Serper (concrete subjects + "photo" suffix)
-      const searchQuery = this.buildSerperQuery(shot);
+      const searchQuery = await this.buildSerperQuery(shot);
       const shotDescription = shot.summary || shot.text;
       
       // OPTIMIZATION: For single-image shots, use efficient "first match wins"
@@ -626,7 +644,11 @@ export class StockMediaDirector {
           searchQuery,
           shotDescription,
           this.config.userId,
-          this.config.videoId
+          this.config.videoId,
+          { // Pass video context for holistic relevance decisions
+            videoTopic: this.config.videoTopic,
+            spineBeats: this.config.spineBeats,
+          }
         );
         
         if (match) {
@@ -729,19 +751,23 @@ export class StockMediaDirector {
           candidate.url, 
           this.config.userId,
           shot.summary || shot.text, // Pass shot description for relevance checking
-          candidate.r2_key // Pass r2_key for direct R2 fetching (bypasses CDN delays)
+          candidate.r2_key, // Pass r2_key for direct R2 fetching (bypasses CDN delays)
+          { // Pass video context for holistic relevance decisions
+            videoTopic: this.config.videoTopic,
+            spineBeats: this.config.spineBeats,
+          }
         );
 
         if (!validation.isValid) {
           console.log(`${this.logPrefix} Shot ${index}: Candidate ${candidate.id} invalid (${validation.failureReason}): ${validation.details}`);
           
-          // Delete if it's a confirmed content issue (watermark/nsfw/irrelevant)
-          // OR if it's a corrupted file (blocked download that stored garbage)
-          // Don't delete on transient API errors (like 429 rate limits)
+          // DEFERRED DELETION: Queue for deletion instead of immediate delete
+          // This prevents race conditions where parallel shots haven't had a chance
+          // to add their images to usedStockIds yet
           const isCorruptedFile = validation.details?.includes('Corrupted image');
           if (validation.failureReason !== 'error' || isCorruptedFile) {
-            await deleteStockMediaAsset(candidate.id, candidate.r2_key);
-            this.deletedStockIds.add(candidate.id); // Track deletion to prevent race conditions
+            this.pendingDeletions.set(candidate.id, candidate.r2_key);
+            console.log(`${this.logPrefix} Shot ${index}: Candidate ${candidate.id} queued for deletion`);
           }
           
           // Continue to next candidate
@@ -1035,13 +1061,22 @@ export async function processWithStockMedia(
   userId: string,
   videoId: string,
   shots: ShotPart1[],
-  stockMediaLevel: StockMediaDirectorConfig['stockMediaLevel']
+  stockMediaLevel: StockMediaDirectorConfig['stockMediaLevel'],
+  options?: {
+    /** Overall video topic/title for contextual relevance decisions */
+    videoTopic?: string;
+    /** Main spine beats/sections for understanding story structure */
+    spineBeats?: string[];
+  }
 ): Promise<ShotWithStockMedia[]> {
   const director = createStockMediaDirector({
     userId,
     videoId,
     stockMediaLevel,
+    videoTopic: options?.videoTopic,
+    spineBeats: options?.spineBeats,
   });
 
   return director.processShots(shots);
 }
+
