@@ -52,6 +52,8 @@ export interface ShotPart1 {
   stock_worthy?: boolean;
   // Number of images the AI wants for this shot (default: 1, for multi-image layouts)
   image_count?: number;
+  // Entity name to reuse stock media for (e.g. "Donald Trump") - ensures visual consistency
+  reuse_entity?: string;
   // Entity references detected in the text
   character_refs?: string[];  // Character IDs referenced
   location_refs?: string[];   // Location IDs referenced  

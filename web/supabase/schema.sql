@@ -417,6 +417,29 @@ $$;
 ALTER FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."get_stock_media_by_entity"("p_video_id" "uuid", "p_entity_name" "text") RETURNS TABLE("id" "uuid", "r2_key" "text", "metadata" "jsonb")
+    LANGUAGE "sql" STABLE
+    AS $$
+  SELECT 
+    stock_media.id,
+    stock_media.r2_key,
+    stock_media.metadata
+  FROM public.stock_media
+  WHERE 
+    stock_media.video_id = p_video_id
+    AND stock_media.entity_name = p_entity_name
+  ORDER BY stock_media.created_at DESC
+  LIMIT 1;
+$$;
+
+
+ALTER FUNCTION "public"."get_stock_media_by_entity"("p_video_id" "uuid", "p_entity_name" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."get_stock_media_by_entity"("p_video_id" "uuid", "p_entity_name" "text") IS 'Find stock media by exact entity name match within a video. Returns most recent match.';
+
+
+
 CREATE OR REPLACE FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" STABLE
     SET "search_path" TO ''
@@ -943,11 +966,16 @@ CREATE TABLE IF NOT EXISTS "public"."stock_media" (
     "created_at" timestamp with time zone DEFAULT "now"(),
     "user_id" "uuid",
     "video_id" "uuid",
+    "entity_name" "text",
     CONSTRAINT "stock_media_source_check" CHECK (("source" = ANY (ARRAY['wikimedia'::"text", 'youtube'::"text", 'pixabay'::"text", 'pexels'::"text", 'google'::"text", 'serper'::"text", 'other'::"text"])))
 );
 
 
 ALTER TABLE "public"."stock_media" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."stock_media"."entity_name" IS 'Entity name for deterministic reuse (e.g. "Donald Trump"). When set, this image can be reused for the same entity in future shots.';
+
 
 
 COMMENT ON CONSTRAINT "stock_media_source_check" ON "public"."stock_media" IS 'Allowed sources: wikimedia, youtube, pixabay, pexels, google, serper (Google Images via Serper API), other';
@@ -1314,6 +1342,10 @@ CREATE INDEX "idx_stock_media_user_id" ON "public"."stock_media" USING "btree" (
 
 
 CREATE INDEX "idx_stock_media_user_video" ON "public"."stock_media" USING "btree" ("user_id", "video_id");
+
+
+
+CREATE INDEX "idx_stock_media_video_entity" ON "public"."stock_media" USING "btree" ("video_id", "entity_name") WHERE ("entity_name" IS NOT NULL);
 
 
 
@@ -2224,6 +2256,12 @@ GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "service_role";
 GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "anon";
 GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_stock_media_by_entity"("p_video_id" "uuid", "p_entity_name" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_stock_media_by_entity"("p_video_id" "uuid", "p_entity_name" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_stock_media_by_entity"("p_video_id" "uuid", "p_entity_name" "text") TO "service_role";
 
 
 

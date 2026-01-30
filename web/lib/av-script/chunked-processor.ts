@@ -93,6 +93,7 @@ export interface ChunkShotResult {
   text: string;
   summary: string;
   stock_worthy: boolean;
+  reuse_entity?: string; // Entity name to reuse (e.g. "Donald Trump") or null for fresh scrape
   image_count?: number;
   character_refs?: string[];
   location_refs?: string[];
@@ -442,7 +443,7 @@ Examples of powerful motiongraphic moments:
 The choice is NOT "cinematic vs data" - motiongraphics CAN be atmospheric.
 Ask: "Is this a SINGLE SCENE or a COMPOSITION of elements?"
 
-## STOCK FOOTAGE RULES
+## STOCK FOOTAGE & ENTITY REUSE
 
 stock_worthy = TRUE only for "proof" moments:
 - INTRODUCING a famous person for the first time (show THE actual person)
@@ -452,6 +453,11 @@ stock_worthy = TRUE only for "proof" moments:
 stock_worthy = FALSE (use AI instead) for:
 - Generic concepts (documents, money, crowds, skylines)
 - Atmospheric b-roll where AI interpretation would be more premium
+
+reuse_entity: For VISUAL CONSISTENCY when an entity appears AGAIN:
+- If showing @(Donald Trump) and you showed him before → reuse_entity: "Donald Trump"
+- If it's the FIRST time showing someone → leave reuse_entity null (fresh search)
+- This ensures the same person/place looks consistent throughout the video
 
 For motiongraphics, set image_count if multiple images work together.`);
 
@@ -479,9 +485,10 @@ Avoid repetitive imagery - vary your visual approaches while keeping the same st
 Generate visual summaries for the following ${context.currentSegments.length} segments.
 For each segment, provide:
 1. A 1-sentence visual summary (under 25 words) describing what should be shown
-2. Your choice of media_type: "video" (default) or "motiongraphic" (rare - data/layouts only)
-3. stock_worthy: true ONLY for introducing famous people, iconic landmarks, or historical footage
-4. image_count: (optional) for motiongraphics, number of images if multiple improve clarity`);
+2. Your choice of media_type: "video" (default) or "motiongraphic"
+3. stock_worthy: true ONLY for famous people, iconic landmarks, or historical footage
+4. reuse_entity: The entity name if this entity appeared before and should reuse its image (e.g. "Donald Trump")
+5. image_count: (optional) for motiongraphics, number of images if multiple improve clarity`);
 
   // Upcoming content preview (for transitions)
   if (!context.isLastChunk && context.upcomingSegments.length > 0) {
@@ -516,7 +523,7 @@ ${JSON.stringify(segmentData, null, 2)}
 Return JSON:
 {
   "summaries": [
-    { "index": 0, "summary": "Brief visual description...", "media_type": "motiongraphic", "stock_worthy": true, "image_count": 3 }
+    { "index": 0, "summary": "Brief visual description...", "media_type": "video", "stock_worthy": true, "reuse_entity": "Donald Trump" }
   ]
 }`;
 }

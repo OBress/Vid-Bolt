@@ -388,7 +388,8 @@ fi
         initializeParams: {
           sourceImage: IMAGE_FAMILY,
           diskSizeGb: '300',
-          diskType: DISK_TYPE
+          diskType: DISK_TYPE,
+          resourcePolicies: [] // Explicitly disable snapshot schedules/backups
         }
       }],
       networkInterfaces: [{

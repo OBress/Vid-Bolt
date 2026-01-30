@@ -102,6 +102,74 @@ export class StockMediaDirector {
     this.config = config;
   }
 
+  // =========================================================================
+  // ENTITY REUSE METHODS
+  // =========================================================================
+
+  /**
+   * Look up existing stock media by entity name.
+   * Uses RPC function for deterministic matching (not vector similarity).
+   */
+  private async getStockMediaByEntity(entityName: string): Promise<StockMediaCandidate | null> {
+    const supabase = getSupabaseServiceClient();
+    
+    try {
+      const { data, error } = await supabase.rpc('get_stock_media_by_entity', {
+        p_video_id: this.config.videoId,
+        p_entity_name: entityName
+      });
+
+      if (error || !data || data.length === 0) {
+        console.log(`${this.logPrefix} No existing stock media for entity: ${entityName}`);
+        return null;
+      }
+
+      const row = data[0];
+      const m = row.metadata || {};
+      
+      console.log(`${this.logPrefix} Found existing stock media for entity: ${entityName}`);
+      
+      return {
+        id: row.id,
+        r2_key: row.r2_key,
+        source: m.source || 'serper',
+        similarity: 1.0, // Perfect match for entity reuse
+        mediaType: m.mediaType || 'image',
+        description: m.description || m.title || entityName,
+        url: m.url || '',
+        thumbnailUrl: m.thumbnailUrl || m.url || '',
+        subjects: m.subjects,
+        mood: m.mood,
+        metadata: m,
+      };
+    } catch (err) {
+      console.warn(`${this.logPrefix} Entity lookup failed for ${entityName}:`, err);
+      return null;
+    }
+  }
+
+  /**
+   * Tag a stock media record with an entity name for future reuse.
+   */
+  private async tagStockMediaWithEntity(stockMediaId: string, entityName: string): Promise<void> {
+    const supabase = getSupabaseServiceClient();
+    
+    try {
+      const { error } = await supabase
+        .from('stock_media')
+        .update({ entity_name: entityName })
+        .eq('id', stockMediaId);
+
+      if (error) {
+        console.warn(`${this.logPrefix} Failed to tag entity ${entityName}:`, error);
+      } else {
+        console.log(`${this.logPrefix} Tagged stock media ${stockMediaId} as entity: ${entityName}`);
+      }
+    } catch (err) {
+      console.warn(`${this.logPrefix} Entity tagging failed:`, err);
+    }
+  }
+
   /**
    * Process all shots in parallel to match stock media or assign fallback types.
    * This is the main entry point for the Stock Media Director.
@@ -524,10 +592,28 @@ export class StockMediaDirector {
     const imageCount = shot.image_count || 1;
 
     // =========================================================================
-    // NO CANDIDATES: Try on-demand Serper search (only on first attempt)
+    // STEP 1: ENTITY REUSE CHECK (deterministic, no vector search)
     // =========================================================================
-    if (candidates.length === 0 && !isRetry) {
-      console.log(`${this.logPrefix} Shot ${index}: No candidates, triggering on-demand Serper search`);
+    if (shot.reuse_entity && !isRetry) {
+      console.log(`${this.logPrefix} Shot ${index}: Checking entity reuse for "${shot.reuse_entity}"`);
+      
+      const existingMedia = await this.getStockMediaByEntity(shot.reuse_entity);
+      
+      if (existingMedia) {
+        console.log(`${this.logPrefix} Shot ${index}: Reusing existing stock media for ${shot.reuse_entity}`);
+        this.usedStockIds.add(existingMedia.id);
+        return this.buildMatchedShot(shot, existingMedia);
+      }
+      
+      // Entity not found yet - will be tagged after fresh scrape below
+      console.log(`${this.logPrefix} Shot ${index}: No existing media for ${shot.reuse_entity}, will scrape fresh`);
+    }
+
+    // =========================================================================
+    // STEP 2: FRESH SCRAPE (skip vector search, scrape directly)
+    // =========================================================================
+    if (!isRetry) {
+      console.log(`${this.logPrefix} Shot ${index}: Fresh scrape (skipping vector pool)`);
       
       // Build focused search query for Serper (concrete subjects + "photo" suffix)
       const searchQuery = this.buildSerperQuery(shot);
@@ -545,6 +631,11 @@ export class StockMediaDirector {
         
         if (match) {
           console.log(`${this.logPrefix} Shot ${index}: First-match found, using directly`);
+          
+          // Tag with entity for future reuse if specified
+          if (shot.reuse_entity) {
+            await this.tagStockMediaWithEntity(match.id, shot.reuse_entity);
+          }
           
           // Return immediately with the matched image
           const stockMediaRef: StockMediaRef = {
