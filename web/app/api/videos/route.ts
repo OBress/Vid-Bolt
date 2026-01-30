@@ -97,19 +97,21 @@ export async function POST(request: NextRequest) {
 // GET /api/videos - List user's videos with filtering
 export async function GET(request: NextRequest) {
   try {
+    // Authenticate user
+    const { user, error: authError } = await getAuthenticatedUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     
     // Extract query parameters
-    const userId = searchParams.get("userId");
+    const userId = user.id;
     const projectId = searchParams.get("projectId");
     const status = searchParams.get("status");
     const stage = searchParams.get("stage");
     const limit = parseInt(searchParams.get("limit") || "20", 10);
     const offset = parseInt(searchParams.get("offset") || "0", 10);
-
-    if (!userId) {
-      return NextResponse.json({ error: "userId is required" }, { status: 400 });
-    }
 
     const supabase = getServiceClient();
 
