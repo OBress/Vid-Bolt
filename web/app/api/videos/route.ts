@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import type { CreateVideoInput, VideoProject, ListVideosParams } from "@/types/video";
+import type { CreateVideoInput } from "@/types/video";
 
 // Helper to get authenticated Supabase client
 async function getAuthenticatedUser() {
@@ -97,19 +97,20 @@ export async function POST(request: NextRequest) {
 // GET /api/videos - List user's videos with filtering
 export async function GET(request: NextRequest) {
   try {
+    // Get authenticated user
+    const { user, error: authError } = await getAuthenticatedUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     
     // Extract query parameters
-    const userId = searchParams.get("userId");
     const projectId = searchParams.get("projectId");
     const status = searchParams.get("status");
     const stage = searchParams.get("stage");
     const limit = parseInt(searchParams.get("limit") || "20", 10);
     const offset = parseInt(searchParams.get("offset") || "0", 10);
-
-    if (!userId) {
-      return NextResponse.json({ error: "userId is required" }, { status: 400 });
-    }
 
     const supabase = getServiceClient();
 
@@ -117,7 +118,7 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from("video_projects")
       .select("*", { count: "exact" })
-      .eq("user_id", userId)
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
