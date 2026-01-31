@@ -270,6 +270,33 @@ export function Step5ShotCreation({
     return converted;
   });
 
+  // Sync stockMediaResults prop changes to elements state
+  // This is needed because useState initializer only runs once on mount
+  useEffect(() => {
+    if (!stockMediaResults || stockMediaResults.length === 0) return;
+
+    console.log(
+      "[Step5] Syncing stock media to elements:",
+      stockMediaResults.length,
+    );
+
+    setElements((prevElements) => {
+      // Filter out existing stock elements
+      const nonStockElements = prevElements.filter((e) => e.type !== "stock");
+
+      // Add updated stock media elements
+      const stockElements: ElementItem[] = stockMediaResults.map((media) => ({
+        id: `stock-${media.id}`,
+        type: "stock" as ElementType,
+        name: media.title || `Stock ${media.source || "Image"}`,
+        image: media.thumbnailUrl || media.url || null,
+        originalId: media.id,
+      }));
+
+      return [...nonStockElements, ...stockElements];
+    });
+  }, [stockMediaResults]);
+
   // Check if we have missing elements (outline was lost)
   const hasNoElements = elements.length === 0 && !outlineAssets;
 
