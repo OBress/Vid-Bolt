@@ -339,13 +339,108 @@ async function resetStepData(
         console.log('');
         break;
 
-      case 6: // Scene Review - Delete generated images/videos from R2
+      case 6: // Scene Review - Delete ALL media (generated + stock) from R2 and Supabase
+        console.log('');
+        console.log('╔══════════════════════════════════════════════════════════════╗');
+        console.log('║  🧹 [Reset Step 6] COMPLETE CLEANUP - All media deletion     ║');
+        console.log(`║  Video ID: ${videoId.padEnd(47)}║`);
+        console.log('╚══════════════════════════════════════════════════════════════╝');
+        console.log('');
+
+        // Clear Step 6's metadata (NOT Step 5's av_script_part1 or shot_list)
         if (metadataUpdates.generated_scenes) {
           delete metadataUpdates.generated_scenes;
           result.resetFields.push('metadata.generated_scenes');
         }
+        if (metadataUpdates.generatedMedia) {
+          delete metadataUpdates.generatedMedia;
+          result.resetFields.push('metadata.generatedMedia');
+        }
 
-        // Delete R2 generated images and footage
+        // =====================================================================
+        // STOCK MEDIA CLEANUP (matching Step 5 behavior)
+        // =====================================================================
+        try {
+          // Get all stock_media entries for this video
+          const { data: stockEntries, error: fetchError } = await supabase
+            .from('stock_media')
+            .select('id, r2_key')
+            .eq('video_id', videoId);
+
+          if (fetchError) {
+            console.error('[Reset Step 6] Error fetching stock_media:', fetchError);
+            result.errors.push(`Failed to fetch stock_media: ${fetchError.message}`);
+          } else if (stockEntries && stockEntries.length > 0) {
+            console.log(`[Reset Step 6] Found ${stockEntries.length} stock_media entries to delete`);
+            
+            // Delete R2 stock files
+            try {
+              const { deleteFilesWithPrefix, deleteFile, isR2Configured, STORAGE_PATHS } = await import("@/lib/services/r2-storage");
+              
+              if (isR2Configured()) {
+                // Delete stock images at users/{userId}/videos/{videoId}/images/stock/
+                const stockImagesPrefix = `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.VIDEOS}/${videoId}/${STORAGE_PATHS.IMAGES.STOCK}/`;
+                console.log(`[Reset Step 6] Deleting R2 stock images with prefix: ${stockImagesPrefix}`);
+                const stockImagesResult = await deleteFilesWithPrefix(stockImagesPrefix);
+                result.r2FilesDeleted += stockImagesResult.deleted;
+                
+                // Delete stock footage at users/{userId}/videos/{videoId}/footage/stock/
+                const stockFootagePrefix = `${STORAGE_PATHS.USERS}/${userId}/${STORAGE_PATHS.VIDEOS}/${videoId}/${STORAGE_PATHS.FOOTAGE.STOCK}/`;
+                console.log(`[Reset Step 6] Deleting R2 stock footage with prefix: ${stockFootagePrefix}`);
+                const stockFootageResult = await deleteFilesWithPrefix(stockFootagePrefix);
+                result.r2FilesDeleted += stockFootageResult.deleted;
+                
+                // Delete individual r2_keys if stored differently
+                for (const entry of stockEntries) {
+                  if (entry.r2_key) {
+                    try {
+                      await deleteFile(entry.r2_key);
+                      result.r2FilesDeleted++;
+                    } catch (e) {
+                      // Ignore individual delete errors (may already be deleted)
+                    }
+                  }
+                }
+                
+                if (stockImagesResult.errors.length > 0) {
+                  result.errors.push(...stockImagesResult.errors);
+                }
+                if (stockFootageResult.errors.length > 0) {
+                  result.errors.push(...stockFootageResult.errors);
+                }
+                console.log(`[Reset Step 6] Deleted ${result.r2FilesDeleted} R2 stock media files`);
+              }
+            } catch (r2Error) {
+              const errorMsg = r2Error instanceof Error ? r2Error.message : String(r2Error);
+              result.errors.push(`R2 stock cleanup failed: ${errorMsg}`);
+              console.error("[Reset Step 6] R2 stock cleanup error:", r2Error);
+            }
+
+            // Delete stock_media database entries
+            const { error: deleteError } = await supabase
+              .from('stock_media')
+              .delete()
+              .eq('video_id', videoId);
+
+            if (deleteError) {
+              result.errors.push(`Failed to delete stock_media entries: ${deleteError.message}`);
+              console.error('[Reset Step 6] Error deleting stock_media:', deleteError);
+            } else {
+              result.resetFields.push(`stock_media (${stockEntries.length} entries)`);
+              console.log(`[Reset Step 6] Deleted ${stockEntries.length} stock_media entries`);
+            }
+          } else {
+            console.log('[Reset Step 6] No stock_media entries found for this video');
+          }
+        } catch (dbError) {
+          const errorMsg = dbError instanceof Error ? dbError.message : String(dbError);
+          result.errors.push(`Stock media DB cleanup failed: ${errorMsg}`);
+          console.error("[Reset Step 6] DB cleanup error:", dbError);
+        }
+
+        // =====================================================================
+        // GENERATED MEDIA CLEANUP
+        // =====================================================================
         try {
           const { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } = await import("@/lib/services/r2-storage");
           
@@ -363,13 +458,17 @@ async function resetStepData(
             if (imagesResult.errors.length > 0 || footageResult.errors.length > 0) {
               result.errors.push(...imagesResult.errors, ...footageResult.errors);
             }
-            console.log(`[Reset Step 6] Deleted ${result.r2FilesDeleted} R2 generated files`);
+            console.log(`[Reset Step 6] Deleted ${imagesResult.deleted + footageResult.deleted} R2 generated files`);
           }
         } catch (r2Error) {
           const errorMsg = r2Error instanceof Error ? r2Error.message : String(r2Error);
-          result.errors.push(`R2 cleanup failed: ${errorMsg}`);
-          console.error("[Reset Step 6] R2 cleanup error:", r2Error);
+          result.errors.push(`R2 generated cleanup failed: ${errorMsg}`);
+          console.error("[Reset Step 6] R2 generated cleanup error:", r2Error);
         }
+
+        console.log('');
+        console.log(`✅ [Reset Step 6] CLEANUP COMPLETE - R2 files: ${result.r2FilesDeleted || 0}, DB entries: ${result.resetFields.filter(f => f.includes('stock_media')).length > 0 ? 'cleared' : 'none'}`);
+        console.log('');
         break;
 
       case 7: // Editor

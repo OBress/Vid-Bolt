@@ -1099,6 +1099,11 @@ export function VideoCreationWizard({
                 stateUpdates.avScriptPart1Output = null;
                 stateUpdates.isAvScriptLoading = false;
                 break;
+              case 6: // Scene Review - only clear Step 6 data, NOT Step 5's shot data
+                stateUpdates.generatedMedia = [];
+                stateUpdates.avScriptPart2TaskId = null;
+                stateUpdates.isMediaGenerating = false;
+                break;
             }
 
             if (Object.keys(stateUpdates).length > 0) {

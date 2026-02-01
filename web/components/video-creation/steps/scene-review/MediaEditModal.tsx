@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import type { GeneratedMedia, KeyframeData } from "@/types/video";
 import { KeyframeThumbnail } from "./KeyframeThumbnail";
 import { KeyframeEditPopup } from "./KeyframeEditPopup";
+import { TypeChangeConfirmDialog } from "./TypeChangeConfirmDialog";
 
 // Shot data type (from av-script worker)
 interface ShotData {
@@ -107,6 +108,12 @@ export function MediaEditModal({
   const [isKeyframeRegenerating, setIsKeyframeRegenerating] = useState(false);
   const [availableLoras, setAvailableLoras] = useState<string[]>([]);
   
+  // Session tracking for cleanup on cancel
+  const [originalType, setOriginalType] = useState<string | null>(null);
+  const pendingUrls = useRef<Set<string>>(new Set());
+  const [showTypeChangeDialog, setShowTypeChangeDialog] = useState(false);
+  const [isCleaning, setIsCleaning] = useState(false);
+  
   // Fetch available LORAs
   useEffect(() => {
     async function fetchLoras() {
@@ -131,25 +138,107 @@ export function MediaEditModal({
       setVisualPrompt(media.visual_prompt || shot.summary || "");
       setMediaType(media.media_type || shot.media_type || "image");
       setKeyframes(media.keyframes || {});
+      // Snapshot original type for detecting changes
+      setOriginalType(media.media_type || shot.media_type || "image");
     } else if (shot) {
       setVisualPrompt(shot.summary || "");
       setMediaType(shot.media_type || "image");
       setKeyframes({});
+      setOriginalType(shot.media_type || "image");
     }
+    // Reset pending URLs when modal opens with new shot
+    pendingUrls.current = new Set();
   }, [shot, media]);
 
+  // Cleanup function for pending URLs
+  const cleanupPendingUrls = useCallback(async (urlsToDelete: string[]) => {
+    if (urlsToDelete.length === 0) return;
+    
+    try {
+      const response = await fetch("/api/media/cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          urls: urlsToDelete,
+          videoId,
+        }),
+      });
+      const result = await response.json();
+      console.log("[MediaEditModal] Cleanup result:", result);
+    } catch (error) {
+      console.error("[MediaEditModal] Cleanup failed:", error);
+    }
+  }, [videoId]);
+
+  // Handle cancel - cleanup any unsaved pending URLs
+  const handleCancel = useCallback(async () => {
+    const urlsToCleanup = Array.from(pendingUrls.current);
+    if (urlsToCleanup.length > 0) {
+      setIsCleaning(true);
+      await cleanupPendingUrls(urlsToCleanup);
+      setIsCleaning(false);
+    }
+    pendingUrls.current = new Set();
+    onClose();
+  }, [cleanupPendingUrls, onClose]);
+
+  // Early return if no shot - must be after all hooks
   if (!shot) return null;
 
-  const handleSave = () => {
+  // Collect URLs to delete when type changes
+  const getUrlsToDeleteOnTypeChange = (): string[] => {
+    const urls: string[] = [];
+    
+    // If there's existing media and type changed, queue for deletion
+    if (media?.media_url) {
+      urls.push(media.media_url);
+    }
+    if (media?.thumbnail_url) {
+      urls.push(media.thumbnail_url);
+    }
+    
+    // If switching away from video, also delete keyframe images
+    if (originalType === "video" && mediaType !== "video") {
+      if (keyframes.start?.image_url) urls.push(keyframes.start.image_url);
+      if (keyframes.end?.image_url) urls.push(keyframes.end.image_url);
+    }
+    
+    return urls;
+  };
+
+  // Perform the actual save
+  const performSave = async (deleteUrls: string[] = []) => {
+    // Clean up old media if type changed
+    if (deleteUrls.length > 0) {
+      await cleanupPendingUrls(deleteUrls);
+    }
+    
+    // Clean up any unused pending URLs (new generations not being kept)
+    const unusedPending = Array.from(pendingUrls.current).filter(
+      url => url !== media?.media_url
+    );
+    if (unusedPending.length > 0) {
+      await cleanupPendingUrls(unusedPending);
+    }
+    
     const updatedMedia: GeneratedMedia = {
       shot_index: shot.segment_index,
       media_type: mediaType,
-      generation_status: media?.generation_status || "pending",
-      media_url: media?.media_url,
-      thumbnail_url: media?.thumbnail_url,
+      // Reset status if type changed and had media
+      generation_status: mediaType !== originalType && media?.media_url 
+        ? "pending" 
+        : (media?.generation_status || "pending"),
+      // Clear media URL if type changed
+      media_url: mediaType !== originalType && media?.media_url 
+        ? undefined 
+        : media?.media_url,
+      thumbnail_url: mediaType !== originalType && media?.media_url 
+        ? undefined 
+        : media?.thumbnail_url,
       visual_prompt: visualPrompt,
       generation_params: media?.generation_params,
-      keyframes: keyframes.start ? {
+      // Clear keyframes if switching away from video
+      keyframes: mediaType === "video" && keyframes.start ? {
         start: keyframes.start,
         end: keyframes.end,
       } : undefined,
@@ -157,8 +246,31 @@ export function MediaEditModal({
       created_at: media?.created_at,
       updated_at: new Date().toISOString(),
     };
+    
+    pendingUrls.current = new Set();
     onSave(updatedMedia);
+    setShowTypeChangeDialog(false);
     onClose();
+  };
+
+  const handleSave = () => {
+    // Check if type changed and has existing media
+    const typeChanged = mediaType !== originalType;
+    const hasExistingMedia = !!media?.media_url;
+    const hasKeyframeImages = !!(keyframes.start?.image_url || keyframes.end?.image_url);
+    
+    if (typeChanged && (hasExistingMedia || hasKeyframeImages)) {
+      // Show confirmation dialog
+      setShowTypeChangeDialog(true);
+    } else {
+      // No type change or no media to delete, save directly
+      performSave();
+    }
+  };
+  
+  const handleTypeChangeConfirm = () => {
+    const urlsToDelete = getUrlsToDeleteOnTypeChange();
+    performSave(urlsToDelete);
   };
   
   // Handle keyframe save from popup
@@ -394,12 +506,14 @@ export function MediaEditModal({
                 <KeyframeThumbnail
                   label="Start Frame"
                   imageUrl={keyframes.start?.image_url}
+                  prompt={keyframes.start?.prompt}
                   status={keyframes.start?.generation_status}
                   onClick={() => setKeyframeEditing("start")}
                 />
                 <KeyframeThumbnail
                   label="End Frame"
                   imageUrl={keyframes.end?.image_url}
+                  prompt={keyframes.end?.prompt}
                   status={keyframes.end?.generation_status}
                   optional
                   onClick={() => setKeyframeEditing("end")}
@@ -496,11 +610,21 @@ export function MediaEditModal({
         <DialogFooter className="flex-shrink-0 flex gap-2 justify-end pt-4 border-t border-neutral-800 bg-neutral-950">
           <Button
             variant="ghost"
-            onClick={onClose}
+            onClick={handleCancel}
+            disabled={isCleaning}
             className="text-neutral-300 hover:bg-neutral-800"
           >
-            <X className="w-4 h-4 mr-2" />
-            Cancel
+            {isCleaning ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Cleaning...
+              </>
+            ) : (
+              <>
+                <X className="w-4 h-4 mr-2" />
+                Cancel
+              </>
+            )}
           </Button>
           <Button
             onClick={handleSave}
@@ -526,6 +650,16 @@ export function MediaEditModal({
         onRegenerate={handleKeyframeRegenerate}
         isRegenerating={isKeyframeRegenerating}
         availableLoras={availableLoras}
+      />
+      
+      {/* Type Change Confirmation Dialog */}
+      <TypeChangeConfirmDialog
+        isOpen={showTypeChangeDialog}
+        onCancel={() => setShowTypeChangeDialog(false)}
+        onConfirm={handleTypeChangeConfirm}
+        fromType={originalType || "image"}
+        toType={mediaType}
+        hasKeyframes={originalType === "video" && (!!keyframes.start?.image_url || !!keyframes.end?.image_url)}
       />
     </Dialog>
   );

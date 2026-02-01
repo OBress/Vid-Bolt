@@ -106,7 +106,7 @@ export function getBucketName(): string {
   return bucketName;
 }
 
-function getPublicBaseUrl(): string {
+export function getPublicBaseUrl(): string {
   const publicUrl = process.env.R2_PUBLIC_URL;
   if (!publicUrl) {
     throw new Error("Missing R2_PUBLIC_URL environment variable");
