@@ -10,6 +10,7 @@
 
 import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus, updateTaskOutput } from '@/lib/queues/shared';
+import type { ShotForGpuGeneration } from '@/lib/av-script/gpu-batch-generation';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -426,6 +427,10 @@ export interface AVScriptPart2JobData {
     objects?: Array<{ id: string; name: string; type: string }>;
   };
   mode?: 'part2';
+  /** Enable GPU generation (when true, calls GPU API after prompt generation) */
+  gpuEnabled?: boolean;
+  /** Aspect ratio for generated media */
+  aspectRatio?: '16:9' | '9:16';
 }
 
 export interface GeneratedMediaItem {
@@ -435,6 +440,8 @@ export interface GeneratedMediaItem {
   media_url?: string;
   thumbnail_url?: string;
   visual_prompt: string;
+  /** Error message if generation failed */
+  error_message?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -453,10 +460,10 @@ export interface AVScriptPart2Output {
  * Process AV Script Part 2 - Generate visual prompts and placeholder media
  */
 export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (job: Job<AVScriptPart2JobData>) => {
-  const { taskId, userId, videoId, shots, outlineAssets } = job.data;
+  const { taskId, userId, videoId, shots, outlineAssets, gpuEnabled = false, aspectRatio = '16:9' } = job.data;
   const logPrefix = '[AVScript-Part2]';
   
-  console.log(`${logPrefix} Starting job ${job.id} for video ${videoId} with ${shots.length} shots`);
+  console.log(`${logPrefix} Starting job ${job.id} for video ${videoId} with ${shots.length} shots (GPU: ${gpuEnabled})`);
 
   try {
     const supabase = getSupabaseServiceClient();
@@ -470,83 +477,202 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
       });
     }
 
-    // Step 1: Generate detailed visual prompts using AI
-    console.log(`${logPrefix} Step 1: Generating detailed visual prompts...`);
+    // Step 1: Generate detailed visual prompts using specialized agents
+    console.log(`${logPrefix} Step 1: Generating visual prompts via Multi-Agent system...`);
+    
+    // Import the multi-agent architecture
+    const { buildAgentContext, routeToAgent } = await import('@/lib/av-script/agent-prompts');
     const { generateJSON } = await import('@/lib/ai/openrouter');
     
-    // Build entity context for prompts
-    const entityContext = buildEntityContext(outlineAssets);
+    // Build project metadata for context
+    const projectMetadata = {
+      videoTitle: 'Video Project', // Could be enhanced with actual video title from DB
+      videoSummary: '', // Could be enhanced
+      spineBeats: [],
+      visualStyle: 'cinematic, documentary',
+      aspectRatio: '16:9' as const,
+    };
     
-    let detailedPrompts: Array<{ index: number; prompt: string }> = [];
+    // Process each shot through its specialized agent
+    let detailedPrompts: Array<{ index: number; prompt: string; agentUsed: string }> = [];
     
-    try {
-      const response = await generateJSON<{ prompts: Array<{ index: number; prompt: string }> }>(
-        userId,
-        `You are a visual director creating detailed image/video generation prompts.
-For each shot, create a rich, descriptive prompt suitable for AI image/video generation.
-
-Guidelines:
-- Be specific about composition, lighting, colors, mood
-- Describe camera angle and framing
-- Include relevant stylistic details
-- Keep prompts under 150 words
-- Match the tone to the content type
-${entityContext}`,
-        `Generate detailed visual prompts for these ${shots.length} shots:
-
-${JSON.stringify(shots.map((s, i) => ({
-  index: i,
-  type: s.content_type,
-  media: s.media_type,
-  summary: s.summary,
-  text: s.text.substring(0, 200),
-})), null, 2)}
-
-Return JSON:
-{
-  "prompts": [
-    { "index": 0, "prompt": "Detailed visual prompt..." }
-  ]
-}`
-      );
+    // Process in parallel batches of 3 to avoid rate limits
+    const BATCH_SIZE = 3;
+    for (let batchStart = 0; batchStart < shots.length; batchStart += BATCH_SIZE) {
+      const batchEnd = Math.min(batchStart + BATCH_SIZE, shots.length);
+      const batchShots = shots.slice(batchStart, batchEnd);
       
-      detailedPrompts = response.prompts || [];
-      console.log(`${logPrefix} Generated ${detailedPrompts.length} detailed prompts`);
-    } catch (aiError) {
-      console.error(`${logPrefix} AI prompt generation failed, using summaries:`, aiError);
-      // Fall back to using existing summaries
-      detailedPrompts = shots.map((s, i) => ({ index: i, prompt: s.summary }));
+      const batchPromises = batchShots.map(async (shot, batchIdx) => {
+        const globalIdx = batchStart + batchIdx;
+        const context = buildAgentContext(
+          shot,
+          shots,
+          projectMetadata,
+          outlineAssets || {}
+        );
+        
+        try {
+          // Route to appropriate agent based on media type
+          const mediaType = shot.media_type || 'image';
+          console.log(`${logPrefix} Shot ${globalIdx}: Routing to ${mediaType} agent`);
+          
+          let prompt: string;
+          let agentUsed: string;
+          
+          if (mediaType === 'motiongraphic') {
+            // Motion graphics use the 2-step pipeline
+            const result = await routeToAgent(userId, 'motiongraphic', context);
+            // For motiongraphics, combine description and elements into a prompt
+            const mgResult = result as { description: string; elements: any[]; style_notes: string };
+            prompt = `${mgResult.description}\n\nElements: ${mgResult.elements?.map((e: any) => e.description || e.content).join(', ')}\n\nStyle: ${mgResult.style_notes}`;
+            agentUsed = 'MotionGraphicPromptAgent + RemotionCodeAgent';
+          } else if (mediaType === 'video') {
+            // For video, we need a keyframe first, but for now generate as image
+            const result = await routeToAgent(userId, 'image', context);
+            const imgResult = result as { prompt: string };
+            prompt = imgResult.prompt;
+            agentUsed = 'ImageGenerationAgent';
+          } else {
+            // Image generation
+            const result = await routeToAgent(userId, 'image', context);
+            const imgResult = result as { prompt: string };
+            prompt = imgResult.prompt;
+            agentUsed = 'ImageGenerationAgent';
+          }
+          
+          return { index: globalIdx, prompt, agentUsed };
+        } catch (agentError) {
+          console.error(`${logPrefix} Shot ${globalIdx} agent failed, using summary:`, agentError);
+          return { index: globalIdx, prompt: shot.summary, agentUsed: 'fallback' };
+        }
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      detailedPrompts.push(...batchResults);
+      
+      // Progress update for UI
+      const progress = Math.round(10 + (batchEnd / shots.length) * 30);
+      if (taskId) {
+        await updateTaskStatus(taskId, { 
+          status: 'running', 
+          progress_percent: progress, 
+          current_step: `Generating prompts (${batchEnd}/${shots.length})` 
+        });
+      }
     }
+    
+    console.log(`${logPrefix} Generated ${detailedPrompts.length} prompts via agents:`, 
+      detailedPrompts.reduce((acc, p) => {
+        acc[p.agentUsed] = (acc[p.agentUsed] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>)
+    );
 
     if (taskId) {
       await updateTaskStatus(taskId, { 
         status: 'running', 
         progress_percent: 40, 
-        current_step: 'Creating placeholder media' 
+        current_step: gpuEnabled ? 'Generating media via GPU...' : 'Creating placeholder media' 
       });
     }
 
-    // Step 2: Create GeneratedMedia entries with placeholder URLs
-    console.log(`${logPrefix} Step 2: Creating placeholder media entries...`);
-    
-    const generatedMedia: GeneratedMediaItem[] = shots.map((shot, i) => {
-      const detailedPrompt = detailedPrompts.find(p => p.index === i)?.prompt || shot.summary;
-      const timestamp = Date.now();
+    // Step 2: Create GeneratedMedia entries
+    // If GPU enabled, use batch generation with VRAM mode switching
+    // Otherwise, use placeholder URLs
+    let generatedMedia: GeneratedMediaItem[];
+
+    if (gpuEnabled) {
+      console.log(`${logPrefix} Step 2: Generating media via GPU batch processing...`);
       
-      // Generate placeholder URL based on media type
-      // These are mock URLs - in production, real generation would happen here
-      const placeholderUrl = getPlaceholderUrl(shot.media_type || 'image', i, timestamp);
+      // Import GPU batch generation module
+      const { processGpuBatchGeneration } = await import('@/lib/av-script/gpu-batch-generation');
       
-      return {
-        shot_index: shot.segment_index,
-        media_type: shot.media_type || 'image',
-        generation_status: 'completed' as const,
-        media_url: placeholderUrl,
-        visual_prompt: detailedPrompt,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+      // Prepare shots for GPU generation
+      const shotsForGpu: ShotForGpuGeneration[] = shots.map((shot, i) => ({
+        segment_index: shot.segment_index,
+        media_type: shot.media_type, // 'video' | 'motiongraphic' from ShotPart1
+        visual_prompt: detailedPrompts.find(p => p.index === i)?.prompt || shot.summary,
+        duration_seconds: shot.duration_seconds || 5,
+        // For video shots, they'll need a keyframe image first
+        // For now, video shots without input_image_url will fallback to placeholder
+        input_image_url: undefined, // Will be set after image generation if needed
+      }));
+      
+      // Progress callback for UI updates
+      const onProgress = async (message: string, percent: number) => {
+        if (taskId) {
+          await updateTaskStatus(taskId, { 
+            status: 'running', 
+            progress_percent: 40 + Math.round(percent * 0.4), // Scale 0-100 to 40-80
+            current_step: message 
+          });
+        }
       };
-    });
+      
+      // Run batch GPU generation
+      const gpuResult = await processGpuBatchGeneration(
+        userId,
+        videoId,
+        shotsForGpu,
+        aspectRatio as '16:9' | '9:16',
+        onProgress
+      );
+      
+      // Convert GPU results to GeneratedMediaItem format
+      generatedMedia = shots.map((shot, i) => {
+        const gpuItem = gpuResult.results.find(r => r.shot_index === shot.segment_index);
+        const detailedPrompt = detailedPrompts.find(p => p.index === i)?.prompt || shot.summary;
+        
+        if (gpuItem) {
+          return {
+            shot_index: shot.segment_index,
+            media_type: shot.media_type || 'image',
+            generation_status: gpuItem.generation_status,
+            media_url: gpuItem.media_url,
+            visual_prompt: detailedPrompt,
+            error_message: gpuItem.error_message,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+        }
+        
+        // Fallback for any missing results
+        return {
+          shot_index: shot.segment_index,
+          media_type: shot.media_type || 'image',
+          generation_status: 'failed' as const,
+          media_url: getPlaceholderUrl(shot.media_type || 'image', i, Date.now()),
+          visual_prompt: detailedPrompt,
+          error_message: 'No GPU result received',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      });
+      
+      console.log(`${logPrefix} GPU generation complete: ${gpuResult.stats.imagesGenerated} images, ${gpuResult.stats.videosGenerated} videos`);
+      
+    } else {
+      // GPU disabled - use placeholder URLs
+      console.log(`${logPrefix} Step 2: Creating placeholder media entries (GPU disabled)...`);
+      
+      generatedMedia = shots.map((shot, i) => {
+        const detailedPrompt = detailedPrompts.find(p => p.index === i)?.prompt || shot.summary;
+        const timestamp = Date.now();
+        
+        // Generate placeholder URL based on media type
+        const placeholderUrl = getPlaceholderUrl(shot.media_type || 'image', i, timestamp);
+        
+        return {
+          shot_index: shot.segment_index,
+          media_type: shot.media_type || 'image',
+          generation_status: 'completed' as const,
+          media_url: placeholderUrl,
+          visual_prompt: detailedPrompt,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      });
+    }
 
     if (taskId) {
       await updateTaskStatus(taskId, { 

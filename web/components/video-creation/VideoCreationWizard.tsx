@@ -1001,6 +1001,8 @@ export function VideoCreationWizard({
               videoId: state.videoId,
               shots: state.avScriptPart1Output.shots,
               outlineAssets: state.outlineOutput?.assetRegistry || null,
+              gpuEnabled: state.gpuEnabled,
+              aspectRatio: "16:9", // TODO: Get from project config
             }),
           })
             .then((response) => response.json())

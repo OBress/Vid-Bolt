@@ -39,6 +39,8 @@ export async function POST(request: NextRequest) {
       videoId,
       shots,
       outlineAssets,
+      gpuEnabled = false,
+      aspectRatio = "16:9",
     } = body;
 
     if (!videoId || !shots || shots.length === 0) {
@@ -90,6 +92,8 @@ export async function POST(request: NextRequest) {
         shots,
         outlineAssets,
         mode: 'part2',  // Explicitly mark as Part 2
+        gpuEnabled,
+        aspectRatio,
       },
       {
         jobId: task.id,

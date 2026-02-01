@@ -149,31 +149,58 @@ export function Step6SceneReview({
     setSelectedShotIndex(shotIndex);
   }, []);
 
-  // Placeholder generate function for a single shot
+  // Generate shot using multi-agent system via API
   const handleGenerateShot = useCallback(
-    (shotIndex: number) => {
-      console.log(`[Step6] Generate shot ${shotIndex} (placeholder)`);
+    async (shotIndex: number) => {
+      console.log(`[Step6] Regenerating shot ${shotIndex} via Multi-Agent API`);
 
       // Add to generating set
       setGeneratingShots((prev) => new Set(prev).add(shotIndex));
 
       // Get the shot and any existing/pending media
       const shot = shots.find((s) => s.segment_index === shotIndex);
-      if (!shot) return;
+      if (!shot) {
+        console.error(`[Step6] Shot ${shotIndex} not found`);
+        setGeneratingShots((prev) => {
+          const newSet = new Set(prev);
+          newSet.delete(shotIndex);
+          return newSet;
+        });
+        return;
+      }
 
       const existingMedia =
         pendingChanges.get(shotIndex) || mediaMap.get(shotIndex);
 
-      // Simulate generation with a delay
-      setTimeout(() => {
-        // Create mock generated media
+      try {
+        // Call the regenerate-shot API
+        const response = await fetch('/api/videos/regenerate-shot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            videoId,
+            shotIndex,
+            mediaType: existingMedia?.media_type || shot.media_type || 'image',
+            customPrompt: existingMedia?.visual_prompt,
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to regenerate shot');
+        }
+
+        const result = await response.json();
+        console.log(`[Step6] Shot ${shotIndex} agent used:`, result.agentResult);
+
+        // Create generated media with the new prompt
         const generatedItem: GeneratedMedia = {
           shot_index: shotIndex,
           media_type: existingMedia?.media_type || shot.media_type || "image",
           generation_status: "completed",
-          // Use a placeholder image (could use different ones based on media type)
+          // Use a placeholder image for now - real GPU generation would happen next
           media_url: `https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?q=80&w=400&auto=format&fit=crop&t=${Date.now()}_${shotIndex}`,
-          visual_prompt: existingMedia?.visual_prompt || shot.summary || "",
+          visual_prompt: result.generatedPrompt || existingMedia?.visual_prompt || shot.summary || "",
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -185,19 +212,33 @@ export function Step6SceneReview({
           return newMap;
         });
 
+        console.log(`[Step6] Shot ${shotIndex} regeneration complete`);
+      } catch (error) {
+        console.error(`[Step6] Shot ${shotIndex} regeneration failed:`, error);
+        // Still mark as complete but with error state
+        const errorItem: GeneratedMedia = {
+          shot_index: shotIndex,
+          media_type: existingMedia?.media_type || shot.media_type || "image",
+          generation_status: "failed",
+          visual_prompt: existingMedia?.visual_prompt || shot.summary || "",
+          error_message: error instanceof Error ? error.message : 'Unknown error',
+          updated_at: new Date().toISOString(),
+        };
+        setPendingChanges((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(shotIndex, errorItem);
+          return newMap;
+        });
+      } finally {
         // Remove from generating set
         setGeneratingShots((prev) => {
           const newSet = new Set(prev);
           newSet.delete(shotIndex);
           return newSet;
         });
-
-        console.log(
-          `[Step6] Shot ${shotIndex} generation complete (placeholder)`,
-        );
-      }, 2000); // 2 second mock delay
+      }
     },
-    [shots, mediaMap, pendingChanges],
+    [shots, mediaMap, pendingChanges, videoId],
   );
 
   // Generate all pending shots
