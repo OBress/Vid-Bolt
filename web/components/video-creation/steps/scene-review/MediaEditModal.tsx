@@ -13,13 +13,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   ChevronRight,
   Image,
   Film,
@@ -30,9 +23,12 @@ import {
   Loader2,
   Clock,
   Type,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { GeneratedMedia } from "@/types/video";
+import type { GeneratedMedia, KeyframeData } from "@/types/video";
+import { KeyframeThumbnail } from "./KeyframeThumbnail";
+import { KeyframeEditPopup } from "./KeyframeEditPopup";
 
 // Shot data type (from av-script worker)
 interface ShotData {
@@ -78,6 +74,7 @@ const CONTENT_TYPE_OPTIONS = [
 interface MediaEditModalProps {
   isOpen: boolean;
   onClose: () => void;
+  videoId: string;
   shot: ShotData | null;
   media: GeneratedMedia | null;
   onSave: (updatedMedia: GeneratedMedia) => void;
@@ -88,6 +85,7 @@ interface MediaEditModalProps {
 export function MediaEditModal({
   isOpen,
   onClose,
+  videoId,
   shot,
   media,
   onSave,
@@ -99,15 +97,44 @@ export function MediaEditModal({
   const [mediaType, setMediaType] = useState<
     "image" | "video" | "motiongraphic"
   >("image");
+  
+  // Keyframe state for video shots
+  const [keyframes, setKeyframes] = useState<{
+    start?: KeyframeData;
+    end?: KeyframeData;
+  }>({});
+  const [keyframeEditing, setKeyframeEditing] = useState<"start" | "end" | null>(null);
+  const [isKeyframeRegenerating, setIsKeyframeRegenerating] = useState(false);
+  const [availableLoras, setAvailableLoras] = useState<string[]>([]);
+  
+  // Fetch available LORAs
+  useEffect(() => {
+    async function fetchLoras() {
+      try {
+        const response = await fetch("/api/loras");
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.loras) {
+            setAvailableLoras(data.loras.map((l: { name: string }) => l.name));
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch LORAs:", error);
+      }
+    }
+    fetchLoras();
+  }, []);
 
   // Initialize form when shot/media changes
   useEffect(() => {
     if (shot && media) {
       setVisualPrompt(media.visual_prompt || shot.summary || "");
       setMediaType(media.media_type || shot.media_type || "image");
+      setKeyframes(media.keyframes || {});
     } else if (shot) {
       setVisualPrompt(shot.summary || "");
       setMediaType(shot.media_type || "image");
+      setKeyframes({});
     }
   }, [shot, media]);
 
@@ -122,6 +149,10 @@ export function MediaEditModal({
       thumbnail_url: media?.thumbnail_url,
       visual_prompt: visualPrompt,
       generation_params: media?.generation_params,
+      keyframes: keyframes.start ? {
+        start: keyframes.start,
+        end: keyframes.end,
+      } : undefined,
       error_message: media?.error_message,
       created_at: media?.created_at,
       updated_at: new Date().toISOString(),
@@ -129,6 +160,86 @@ export function MediaEditModal({
     onSave(updatedMedia);
     onClose();
   };
+  
+  // Handle keyframe save from popup
+  const handleKeyframeSave = (data: KeyframeData) => {
+    if (keyframeEditing === "start") {
+      setKeyframes((prev) => ({ ...prev, start: data }));
+    } else if (keyframeEditing === "end") {
+      setKeyframes((prev) => ({ ...prev, end: data }));
+    }
+    setKeyframeEditing(null);
+  };
+  
+  // Handle keyframe regeneration - call the API
+  const handleKeyframeRegenerate = async (data: KeyframeData) => {
+    if (!shot || !keyframeEditing) return;
+    
+    setIsKeyframeRegenerating(true);
+    
+    // Update state to show generating
+    const frameType = keyframeEditing;
+    setKeyframes((prev) => ({
+      ...prev,
+      [frameType]: { ...data, generation_status: "generating" },
+    }));
+    
+    try {
+      const response = await fetch("/api/keyframe/regenerate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videoId,
+          shotIndex: shot.segment_index,
+          frameType,
+          prompt: data.prompt,
+          loraName: data.generation_params?.lora_name,
+          loraWeight: data.generation_params?.lora_weight,
+          seed: data.generation_params?.seed,
+          aspectRatio: data.generation_params?.aspect_ratio,
+        }),
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        // Update with the expected image URL (will be available after webhook)
+        setKeyframes((prev) => ({
+          ...prev,
+          [frameType]: {
+            ...data,
+            image_url: result.imageUrl,
+            generation_status: "generating", // Will be updated by webhook
+          },
+        }));
+      } else {
+        // Mark as failed
+        setKeyframes((prev) => ({
+          ...prev,
+          [frameType]: {
+            ...data,
+            generation_status: "failed",
+            error_message: result.error || "Generation failed",
+          },
+        }));
+      }
+    } catch (error) {
+      console.error("Keyframe regeneration failed:", error);
+      setKeyframes((prev) => ({
+        ...prev,
+        [frameType]: {
+          ...data,
+          generation_status: "failed",
+          error_message: "Network error",
+        },
+      }));
+    } finally {
+      setIsKeyframeRegenerating(false);
+    }
+  };
+  
+  // Check if video can be regenerated (needs start keyframe)
+  const canRegenerateVideo = mediaType !== "video" || keyframes.start?.image_url;
 
   const handleRegenerate = () => {
     if (onRegenerate) {
@@ -143,7 +254,7 @@ export function MediaEditModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="bg-neutral-950 border-neutral-800 text-white sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="bg-neutral-950 border-neutral-800 text-white sm:max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             <span className="text-xs font-bold px-2 py-1 rounded bg-neutral-800 text-neutral-300 border border-neutral-700">
@@ -156,8 +267,8 @@ export function MediaEditModal({
           </DialogDescription>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto">
         <div className="space-y-6 my-4">
-          {/* Timing Info Bar */}
           <div className="flex items-center gap-4 p-3 bg-neutral-900/50 rounded-lg border border-neutral-800">
             <div className="flex items-center gap-2 text-neutral-400">
               <Clock className="w-4 h-4" />
@@ -197,11 +308,20 @@ export function MediaEditModal({
               </Label>
               <div className="aspect-video bg-neutral-900 rounded-lg border border-neutral-800 overflow-hidden relative flex items-center justify-center">
                 {media?.media_url ? (
-                  <img
-                    src={media.media_url}
-                    alt={`Shot ${shot.segment_index + 1}`}
-                    className="w-full h-full object-cover"
-                  />
+                  mediaType === "video" ? (
+                    <video
+                      src={media.media_url}
+                      controls
+                      className="w-full h-full object-contain bg-black"
+                      poster={media.thumbnail_url}
+                    />
+                  ) : (
+                    <img
+                      src={media.media_url}
+                      alt={`Shot ${shot.segment_index + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                  )
                 ) : (
                   <div className="flex flex-col items-center gap-2 text-neutral-600">
                     {mediaType === "video" ? (
@@ -230,9 +350,14 @@ export function MediaEditModal({
               <div className="aspect-video bg-neutral-900/50 rounded-lg border border-dashed border-neutral-700 flex flex-col items-center justify-center gap-3 p-4">
                 <Button
                   variant="secondary"
-                  className="bg-orange-600 hover:bg-orange-700 text-white"
+                  className={cn(
+                    "text-white",
+                    canRegenerateVideo
+                      ? "bg-orange-600 hover:bg-orange-700"
+                      : "bg-neutral-700 cursor-not-allowed",
+                  )}
                   onClick={handleRegenerate}
-                  disabled={isRegenerating}
+                  disabled={isRegenerating || !canRegenerateVideo}
                 >
                   {isRegenerating ? (
                     <>
@@ -247,11 +372,46 @@ export function MediaEditModal({
                   )}
                 </Button>
                 <p className="text-xs text-neutral-500 text-center">
-                  Generate a new {mediaType} based on the prompt below
+                  {mediaType === "video" && !canRegenerateVideo
+                    ? "Configure start frame first"
+                    : `Generate a new ${mediaType} based on the prompt below`}
                 </p>
               </div>
             </div>
           </div>
+
+          {/* Keyframe Section for Video Shots */}
+          {mediaType === "video" && (
+            <div className="space-y-3 p-4 bg-neutral-900/50 rounded-lg border border-neutral-800">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-orange-500" />
+                <Label className="text-neutral-300 text-sm font-medium">Keyframes</Label>
+              </div>
+              <p className="text-xs text-neutral-500">
+                Configure start/end frames for video generation. Start frame is required.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <KeyframeThumbnail
+                  label="Start Frame"
+                  imageUrl={keyframes.start?.image_url}
+                  status={keyframes.start?.generation_status}
+                  onClick={() => setKeyframeEditing("start")}
+                />
+                <KeyframeThumbnail
+                  label="End Frame"
+                  imageUrl={keyframes.end?.image_url}
+                  status={keyframes.end?.generation_status}
+                  optional
+                  onClick={() => setKeyframeEditing("end")}
+                />
+              </div>
+              {!keyframes.start?.image_url && (
+                <p className="text-xs text-amber-500 flex items-center gap-1">
+                  ⚠️ Start frame required before generating video
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Visual Prompt */}
           <div className="space-y-2">
@@ -331,8 +491,9 @@ export function MediaEditModal({
             </div>
           </div>
         </div>
+        </div>
 
-        <DialogFooter className="flex gap-2 justify-end pt-4 border-t border-neutral-800">
+        <DialogFooter className="flex-shrink-0 flex gap-2 justify-end pt-4 border-t border-neutral-800 bg-neutral-950">
           <Button
             variant="ghost"
             onClick={onClose}
@@ -350,6 +511,22 @@ export function MediaEditModal({
           </Button>
         </DialogFooter>
       </DialogContent>
+      
+      {/* Keyframe Edit Popup */}
+      <KeyframeEditPopup
+        isOpen={keyframeEditing !== null}
+        onClose={() => setKeyframeEditing(null)}
+        frameType={keyframeEditing || "start"}
+        keyframeData={
+          keyframeEditing === "start"
+            ? keyframes.start
+            : keyframes.end
+        }
+        onSave={handleKeyframeSave}
+        onRegenerate={handleKeyframeRegenerate}
+        isRegenerating={isKeyframeRegenerating}
+        availableLoras={availableLoras}
+      />
     </Dialog>
   );
 }

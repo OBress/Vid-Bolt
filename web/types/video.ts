@@ -55,6 +55,31 @@ export interface ShotEvent {
 }
 
 /**
+ * Keyframe data for video shot generation
+ * Used to store start/end frame configuration for video generation
+ */
+export interface KeyframeData {
+  /** Generated keyframe image URL */
+  image_url?: string;
+  /** Prompt for keyframe image generation */
+  prompt: string;
+  /** Current generation status */
+  generation_status: 'pending' | 'generating' | 'completed' | 'failed';
+  /** Generation parameters for the keyframe */
+  generation_params?: {
+    seed?: number;
+    lora_name?: string;
+    lora_weight?: number;
+    aspect_ratio?: '16:9' | '9:16';
+  };
+  /** Error message if generation failed */
+  error_message?: string;
+  /** Timestamps */
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
  * Generated media item for a shot (Step 6: Scene Review)
  * Tracks the generation status and result for each shot's visual media
  */
@@ -69,13 +94,20 @@ export interface GeneratedMedia {
   media_url?: string;
   /** Thumbnail URL for video/motion content */
   thumbnail_url?: string;
-  /** The visual prompt used for generation */
+  /** The visual prompt used for generation (for video: describes motion/animation) */
   visual_prompt: string;
-  /** Parameters used for generation (future expansion) */
+  /** Parameters used for generation */
   generation_params?: {
     model?: string;
     style?: string;
     seed?: number;
+    lora_name?: string;
+    lora_weight?: number;
+  };
+  /** Keyframes for video generation (start required, end optional) */
+  keyframes?: {
+    start: KeyframeData;
+    end?: KeyframeData;
   };
   /** Error message if generation failed */
   error_message?: string;

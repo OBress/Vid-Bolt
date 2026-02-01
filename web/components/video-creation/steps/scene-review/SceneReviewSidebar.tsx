@@ -235,24 +235,6 @@ export function SceneReviewSidebar({
 
       {/* Footer Actions */}
       <div className="p-4 border-t border-neutral-800 space-y-3">
-        {/* Generate All Button */}
-        <Button
-          className="w-full bg-orange-600 hover:bg-orange-700 text-white"
-          disabled={generatingCount > 0 || pendingCount === 0}
-          onClick={onGenerateAll}
-        >
-          {generatingCount > 0 ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Generating ({generatingCount})...
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-4 h-4 mr-2" />
-              Generate All ({pendingCount})
-            </>
-          )}
-        </Button>
 
         {/* Save All Button (if pending changes) */}
         {pendingChanges.size > 0 && (

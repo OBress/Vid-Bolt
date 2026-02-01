@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useCallback } from "react";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { SceneCard } from "./SceneCard";
 import type { GeneratedMedia } from "@/types/video";
@@ -35,6 +36,16 @@ export function SceneList({
   onEditShot,
   onGenerateShot,
 }: SceneListProps) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Convert vertical scroll to horizontal scroll
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (scrollContainerRef.current && e.deltaY !== 0) {
+      e.preventDefault();
+      scrollContainerRef.current.scrollLeft += e.deltaY;
+    }
+  }, []);
+
   if (shots.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center bg-[#0a0a0a] p-8">
@@ -49,7 +60,11 @@ export function SceneList({
   }
 
   return (
-    <ScrollArea className="w-full h-full bg-[#0a0a0a]">
+    <div 
+      ref={scrollContainerRef}
+      className="w-full h-full bg-[#0a0a0a] overflow-x-auto overflow-y-hidden"
+      onWheel={handleWheel}
+    >
       <div className="flex gap-4 p-8 min-w-max">
         {shots.map((shot) => {
           // Check pending changes first, then existing media
@@ -72,7 +87,6 @@ export function SceneList({
           );
         })}
       </div>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
+    </div>
   );
 }

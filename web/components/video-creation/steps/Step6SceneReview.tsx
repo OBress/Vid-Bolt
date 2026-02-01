@@ -424,6 +424,7 @@ export function Step6SceneReview({
       <MediaEditModal
         isOpen={editingShotIndex !== null}
         onClose={handleCloseEdit}
+        videoId={videoId}
         shot={editingShot || null}
         media={editingMedia}
         onSave={handleSaveEdit}
