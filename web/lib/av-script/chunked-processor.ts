@@ -98,6 +98,15 @@ export interface ChunkShotResult {
   character_refs?: string[];
   location_refs?: string[];
   object_refs?: string[];
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NEW: Descriptive visual intent (routing tags + natural language)
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  /** AI's natural language description of the visual approach */
+  visual_description?: string;
+  /** Routing tags for generation tool selection */
+  visual_elements?: import('@/types/video').RoutingTag[];
 }
 
 /**
@@ -375,6 +384,8 @@ async function generateChunkShots(
       media_type: 'video' | 'motiongraphic';
       stock_worthy?: boolean;
       image_count?: number;
+      visual_description?: string;
+      visual_elements?: import('@/types/video').RoutingTag[];
     }>;
   }>(userId, systemPrompt, userPrompt);
   
@@ -399,6 +410,8 @@ async function generateChunkShots(
       summary: aiSummary?.summary || generateFallbackSummary(segment),
       stock_worthy: aiSummary?.stock_worthy ?? false,
       image_count: aiSummary?.image_count,
+      visual_description: aiSummary?.visual_description,
+      visual_elements: aiSummary?.visual_elements,
       character_refs: characterRefs.length > 0 ? characterRefs : undefined,
       location_refs: locationRefs.length > 0 ? locationRefs : undefined,
       object_refs: objectRefs.length > 0 ? objectRefs : undefined,
@@ -484,11 +497,40 @@ Avoid repetitive imagery - vary your visual approaches while keeping the same st
 ## YOUR TASK
 Generate visual summaries for the following ${context.currentSegments.length} segments.
 For each segment, provide:
-1. A 1-sentence visual summary (under 25 words) describing what should be shown
-2. Your choice of media_type: "video" (default) or "motiongraphic"
+1. summary: A 1-sentence visual description (under 25 words) describing what should be shown
+2. media_type: "video" (default) or "motiongraphic"
 3. stock_worthy: true ONLY for famous people, iconic landmarks, or historical footage
-4. reuse_entity: The entity name if this entity appeared before and should reuse its image (e.g. "Donald Trump")
-5. image_count: (optional) for motiongraphics, number of images if multiple improve clarity`);
+4. reuse_entity: The entity name if this entity appeared before and should reuse its image
+5. image_count: (optional) for motiongraphics, number of images if multiple improve clarity
+6. visual_description: A detailed description of what you envision (1-2 sentences)
+7. visual_elements: Array of routing tags for generation tools
+
+## ROUTING TAGS (visual_elements)
+Select ALL that apply from these categories:
+
+CORE (GPU generation):
+- "ai_video" → LTX-2 video generation (cinematic motion)
+- "ai_image" → Z-Image Turbo (high-quality stills)
+
+STOCK (real footage):
+- "stock_image" → Static photos of real people/places
+- "stock_video" → Real video footage
+- "stock_audience" → Audience reaction clips
+
+REMOTION (composition):
+- "remotion_overlay" → Text, captions, lower-thirds on top
+- "remotion_image_manipulation" → Ken Burns, layers, montages
+- "remotion_video_manipulation" → Annotations on video
+
+AUDIO (optional):
+- "sound_effects" → SFX (whoosh, impact, etc.)
+- "music" → Background music/score
+
+Examples:
+- Single AI video: ["ai_video"]
+- Photo montage with Ken Burns: ["stock_image", "remotion_image_manipulation"]
+- Video with lower-third caption: ["ai_video", "remotion_overlay"]
+- Quote card with no base media: ["remotion_overlay"]`);
 
   // Upcoming content preview (for transitions)
   if (!context.isLastChunk && context.upcomingSegments.length > 0) {
@@ -523,8 +565,17 @@ ${JSON.stringify(segmentData, null, 2)}
 Return JSON:
 {
   "summaries": [
-    { "index": 0, "summary": "Brief visual description...", "media_type": "video", "stock_worthy": true, "reuse_entity": "Donald Trump" }
+    { 
+      "index": 0, 
+      "summary": "Brief visual description...", 
+      "media_type": "video", 
+      "stock_worthy": true, 
+      "reuse_entity": "Donald Trump",
+      "visual_description": "Cinematic slow-motion shot of the subject speaking at a podium with dramatic lighting",
+      "visual_elements": ["ai_video", "remotion_overlay"]
+    }
   ]
+}
 }`;
 }
 

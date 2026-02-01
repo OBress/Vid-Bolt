@@ -15,7 +15,8 @@ import {
   Edit2,
   CheckCircle2,
 } from "lucide-react";
-import type { GeneratedMedia } from "@/types/video";
+import type { GeneratedMedia, RoutingTag } from "@/types/video";
+import { ROUTING_TAG_CONFIG } from "@/types/video";
 
 // Shot data type (from av-script worker)
 interface ShotData {
@@ -27,6 +28,9 @@ interface ShotData {
   media_type?: "image" | "video" | "motiongraphic";
   text: string;
   summary?: string;
+  // NEW: Descriptive visual intent
+  visual_description?: string;
+  visual_elements?: RoutingTag[];
 }
 
 // Content type colors
@@ -157,9 +161,29 @@ export function SceneCard({
                 ) : (
                   <Image className="w-10 h-10 text-neutral-600" />
                 )}
-                <span className="text-xs text-neutral-500 font-medium uppercase tracking-wide">
-                  {mediaType === "motiongraphic" ? "Motion Graphic" : mediaType}
-                </span>
+                {/* Show visual_elements routing tags if available */}
+                {shot.visual_elements && shot.visual_elements.length > 0 ? (
+                  <div className="flex flex-wrap gap-1 justify-center" title={shot.visual_description}>
+                    {shot.visual_elements.slice(0, 2).map((tag) => {
+                      const config = ROUTING_TAG_CONFIG[tag];
+                      return (
+                        <span 
+                          key={tag}
+                          className={cn("text-[9px] font-medium px-1.5 py-0.5 rounded", config?.style || "bg-neutral-800 text-neutral-300")}
+                        >
+                          {config?.label || tag}
+                        </span>
+                      );
+                    })}
+                    {shot.visual_elements.length > 2 && (
+                      <span className="text-[9px] text-neutral-500">+{shot.visual_elements.length - 2}</span>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-xs text-neutral-500 font-medium uppercase tracking-wide">
+                    {mediaType === "motiongraphic" ? "Motion Graphic" : mediaType}
+                  </span>
+                )}
               </>
             )}
           </div>

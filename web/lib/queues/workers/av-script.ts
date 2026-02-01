@@ -47,8 +47,18 @@ export interface ShotPart1 {
   text: string;
   summary: string;  // Brief summary of what happens visually - may include @(StockMedia:id) references
   visual_prompt?: string;  // Prompt for AI image generation
-  // Visual source for clear UI labeling (binary taxonomy)
+  // Visual source for clear UI labeling (binary taxonomy) - LEGACY
   visual_source?: 'ai_video' | 'motiongraphic';
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NEW: Descriptive visual intent (routing tags + natural language)
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  /** AI's natural language description of the visual approach */
+  visual_description?: string;
+  /** Routing tags for generation tool selection */
+  visual_elements?: import('@/types/video').RoutingTag[];
+  
   // Stock-worthy flag: true if this shot depicts famous people/landmarks suitable for stock media
   stock_worthy?: boolean;
   // Number of images the AI wants for this shot (default: 1, for multi-image layouts)

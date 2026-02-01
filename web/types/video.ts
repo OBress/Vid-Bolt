@@ -27,6 +27,46 @@ export const VIDEO_STAGES = [
 export type VideoStage = typeof VIDEO_STAGES[number] | 'idea' | 'media'; // Keep legacy for types
 
 // ============================================================================
+// ROUTING TAGS (for shot generation routing)
+// ============================================================================
+
+/**
+ * Routing tags determine which generation tools/services process each shot.
+ * The AI outputs these tags, and the system routes to appropriate APIs.
+ */
+export type RoutingTag =
+  // Core GPU generation
+  | 'ai_video'                        // → GPU API: LTX-2 video generation
+  | 'ai_image'                        // → GPU API: Z-Image Turbo images
+  // Stock media
+  | 'stock_image'                     // → Valyu Search: static photos
+  | 'stock_video'                     // → Valyu Search: video footage
+  | 'stock_audience'                  // → Valyu Search: audience reactions
+  // Audio
+  | 'sound_effects'                   // → Audio API: SFX library
+  | 'music'                           // → Audio API: music/score
+  // Remotion operations
+  | 'remotion_overlay'                // → Remotion: text/graphics overlay
+  | 'remotion_image_manipulation'     // → Remotion: Ken Burns, layers, montages
+  | 'remotion_video_manipulation';    // → Remotion: video annotations
+
+/**
+ * Badge styles and labels for routing tags (UI display)
+ */
+export const ROUTING_TAG_CONFIG: Record<RoutingTag, { style: string; label: string }> = {
+  ai_video: { style: 'bg-violet-900/50 text-violet-300', label: 'AI Video' },
+  ai_image: { style: 'bg-sky-900/50 text-sky-300', label: 'AI Image' },
+  stock_image: { style: 'bg-amber-900/50 text-amber-300', label: 'Stock Photo' },
+  stock_video: { style: 'bg-amber-900/50 text-amber-300', label: 'Stock Video' },
+  stock_audience: { style: 'bg-amber-900/50 text-amber-300', label: 'Audience' },
+  sound_effects: { style: 'bg-emerald-900/50 text-emerald-300', label: 'SFX' },
+  music: { style: 'bg-emerald-900/50 text-emerald-300', label: 'Music' },
+  remotion_overlay: { style: 'bg-indigo-900/50 text-indigo-300', label: 'Overlay' },
+  remotion_image_manipulation: { style: 'bg-purple-900/50 text-purple-300', label: 'Image FX' },
+  remotion_video_manipulation: { style: 'bg-fuchsia-900/50 text-fuchsia-300', label: 'Video FX' },
+};
+
+// ============================================================================
 // SHARED CONTENT TYPES
 // ============================================================================
 
@@ -86,7 +126,7 @@ export interface KeyframeData {
 export interface GeneratedMedia {
   /** Links to ShotPart1.segment_index */
   shot_index: number;
-  /** Type of media to generate */
+  /** Type of media to generate (legacy - kept for backwards compat) */
   media_type: 'image' | 'video' | 'motiongraphic';
   /** Current generation status */
   generation_status: 'pending' | 'generating' | 'completed' | 'failed';
@@ -96,6 +136,16 @@ export interface GeneratedMedia {
   thumbnail_url?: string;
   /** The visual prompt used for generation (for video: describes motion/animation) */
   visual_prompt: string;
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NEW: Descriptive visual intent (routing tags + natural language)
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  /** AI's natural language description of the visual approach */
+  visual_description?: string;
+  /** Routing tags for generation tool selection */
+  visual_elements?: RoutingTag[];
+  
   /** Parameters used for generation */
   generation_params?: {
     model?: string;

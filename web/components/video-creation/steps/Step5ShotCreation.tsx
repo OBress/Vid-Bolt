@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { AudioChunk } from "@/types/video";
+import { AudioChunk, ROUTING_TAG_CONFIG, type RoutingTag } from "@/types/video";
 import {
   EntityReference,
   createEntityLookup,
@@ -63,8 +63,11 @@ type ShotItem = {
   text: string;
   summary?: string;
   visual_prompt?: string;
-  // Visual source for clear UI labeling (binary taxonomy)
+  // Visual source for clear UI labeling (binary taxonomy) - LEGACY
   visual_source?: "ai_video" | "motiongraphic";
+  // NEW: Descriptive visual intent
+  visual_description?: string;
+  visual_elements?: import("@/types/video").RoutingTag[];
   // Number of images AI requested for this shot (for multi-image motiongraphics)
   image_count?: number;
   character_refs?: string[];
@@ -807,43 +810,52 @@ export function Step5ShotCreation({
                             <span className="text-[10px] text-neutral-600">
                               {shot.duration_seconds.toFixed(1)}s
                             </span>
-                            {/* Visual source badges (binary taxonomy) */}
-                            {displayShot.visual_source === "ai_video" && (
-                              <span className="text-[10px] font-medium bg-violet-900/50 text-violet-300 px-2 py-1 rounded">
-                                <Sparkles className="w-3 h-3 inline mr-1" />
-                                AI Video
-                              </span>
+                            {/* Visual elements routing tags */}
+                            {displayShot.visual_elements && displayShot.visual_elements.length > 0 ? (
+                              displayShot.visual_elements.slice(0, 3).map((tag) => {
+                                const config = ROUTING_TAG_CONFIG[tag as RoutingTag];
+                                return (
+                                  <span 
+                                    key={tag} 
+                                    className={cn("text-[10px] font-medium px-2 py-1 rounded", config?.style || "bg-neutral-800 text-neutral-300")}
+                                    title={displayShot.visual_description}
+                                  >
+                                    {config?.label || tag}
+                                  </span>
+                                );
+                              })
+                            ) : (
+                              <>
+                                {/* Fallback to legacy visual_source badges */}
+                                {displayShot.visual_source === "ai_video" && (
+                                  <span className="text-[10px] font-medium bg-violet-900/50 text-violet-300 px-2 py-1 rounded">
+                                    <Sparkles className="w-3 h-3 inline mr-1" />
+                                    AI Video
+                                  </span>
+                                )}
+                                {displayShot.visual_source === "motiongraphic" && (
+                                  <span className="text-[10px] font-medium bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded">
+                                    <Layers className="w-3 h-3 inline mr-1" />
+                                    Motion Graphic
+                                  </span>
+                                )}
+                                {/* Fallback for missing visual_source - show based on media_type */}
+                                {!displayShot.visual_source &&
+                                  displayShot.media_type === "video" && (
+                                    <span className="text-[10px] font-medium bg-emerald-900/50 text-emerald-300 px-2 py-1 rounded">
+                                      <Film className="w-3 h-3 inline mr-1" />
+                                      Video
+                                    </span>
+                                  )}
+                                {!displayShot.visual_source &&
+                                  displayShot.media_type === "motiongraphic" && (
+                                    <span className="text-[10px] font-medium bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded">
+                                      <Layers className="w-3 h-3 inline mr-1" />
+                                      Motion Graphic
+                                    </span>
+                                  )}
+                              </>
                             )}
-                            {displayShot.visual_source === "motiongraphic" && (
-                              <span className="text-[10px] font-medium bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded">
-                                <Layers className="w-3 h-3 inline mr-1" />
-                                Motion Graphic
-                              </span>
-                            )}
-                            {/* Show image count for multi-image shots */}
-                            {displayShot.image_count &&
-                              displayShot.image_count > 1 && (
-                                <span className="text-[10px] font-medium bg-sky-900/50 text-sky-300 px-2 py-1 rounded">
-                                  <Image className="w-3 h-3 inline mr-1" />
-                                  {displayShot.stock_media_refs?.length || 0}/
-                                  {displayShot.image_count} images
-                                </span>
-                              )}
-                            {/* Fallback for missing visual_source - show based on media_type */}
-                            {!displayShot.visual_source &&
-                              displayShot.media_type === "video" && (
-                                <span className="text-[10px] font-medium bg-emerald-900/50 text-emerald-300 px-2 py-1 rounded">
-                                  <Film className="w-3 h-3 inline mr-1" />
-                                  Video
-                                </span>
-                              )}
-                            {!displayShot.visual_source &&
-                              displayShot.media_type === "motiongraphic" && (
-                                <span className="text-[10px] font-medium bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded">
-                                  <Layers className="w-3 h-3 inline mr-1" />
-                                  Motion Graphic
-                                </span>
-                              )}
                           </div>
                         </div>
 
