@@ -110,6 +110,33 @@ export function useGCPVM(): UseGCPVMReturn {
     }
   }, [userId, projectId, connectionChecked, checkConnection]);
 
+  // Real-time subscription for VM status updates
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = supabase
+      .channel('vm-status-hook-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'user_gcp_config',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          const newData = payload.new as { status?: string; external_ip?: string };
+          if (newData.status) setStatus(newData.status);
+          if (newData.external_ip) setIp(newData.external_ip);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId, supabase]);
+
   // Polling for status (only when connected)
   // Dynamic interval: 5s during transitions, 60s when stable
   useEffect(() => {
@@ -136,7 +163,8 @@ export function useGCPVM(): UseGCPVMReturn {
               if (newStatus === "RUNNING") shouldUpdate = false;
               if (newStatus === "STOPPED" || newStatus === "TERMINATED") setTargetStatus(null);
             } else if (targetStatus === "RUNNING") {
-              if (newStatus === "STOPPED" || newStatus === "TERMINATED") shouldUpdate = false;
+              // Also ignore NOT_FOUND during provisioning
+              if (newStatus === "STOPPED" || newStatus === "TERMINATED" || newStatus === "NOT_FOUND") shouldUpdate = false;
               if (newStatus === "RUNNING") setTargetStatus(null);
             }
           }

@@ -3,7 +3,7 @@
 import { useRef, useCallback } from "react";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { SceneCard } from "./SceneCard";
-import type { GeneratedMedia } from "@/types/video";
+import type { GeneratedMedia, RoutingTag, SoundEffect } from "@/types/video";
 
 // Shot data type (from av-script worker)
 interface ShotData {
@@ -15,6 +15,11 @@ interface ShotData {
   media_type?: "image" | "video" | "motiongraphic";
   text: string;
   summary?: string;
+  // NEW: Routing tags from Step 5
+  visual_source?: 'ai_video' | 'motiongraphic';
+  visual_description?: string;
+  visual_elements?: RoutingTag[];
+  sound_effects?: SoundEffect[];
 }
 
 interface SceneListProps {

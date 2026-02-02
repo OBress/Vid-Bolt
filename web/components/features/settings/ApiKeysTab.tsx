@@ -199,6 +199,33 @@ export function ApiKeysTab() {
     init();
   }, [supabase]);
 
+  // Real-time subscription for VM status updates
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = supabase
+      .channel('vm-status-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'user_gcp_config',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          const newData = payload.new as { status?: string; external_ip?: string };
+          if (newData.status) setVmStatus(newData.status);
+          if (newData.external_ip) setVmIp(newData.external_ip);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId, supabase]);
+
   // Polling for GCP status
   // Dynamic interval: 5s during transitions, 60s when stable
   useEffect(() => {
@@ -229,8 +256,8 @@ export function ApiKeysTab() {
               if (status === "STOPPED" || status === "TERMINATED")
                 setTargetStatus(null);
             } else if (targetStatus === "RUNNING") {
-              // Waiting for start: Ignore STOPPED/TERMINATED
-              if (status === "STOPPED" || status === "TERMINATED")
+              // Waiting for start: Ignore STOPPED/TERMINATED/NOT_FOUND
+              if (status === "STOPPED" || status === "TERMINATED" || status === "NOT_FOUND")
                 shouldUpdate = false;
               if (status === "RUNNING") setTargetStatus(null);
             }

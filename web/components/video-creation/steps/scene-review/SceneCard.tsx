@@ -246,7 +246,7 @@ export function SceneCard({
         </div>
       </div>
 
-      {/* Content Type & Media Type Badges */}
+      {/* Content Type & Routing Tag Badges */}
       <div className="flex items-center gap-2 p-3 border-b border-white/5 bg-neutral-900/20">
         {/* Content type badge */}
         <span
@@ -259,19 +259,50 @@ export function SceneCard({
           {shot.content_type}
         </span>
 
-        {/* Media type badge */}
-        <span
-          className={cn(
-            "text-[10px] font-medium px-2 py-1 rounded border",
-            mediaType === "image"
-              ? "bg-sky-900/30 text-sky-300 border-sky-700/50"
-              : mediaType === "video"
-                ? "bg-emerald-900/30 text-emerald-300 border-emerald-700/50"
-                : "bg-indigo-900/30 text-indigo-300 border-indigo-700/50",
-          )}
-        >
-          {mediaType === "motiongraphic" ? "motion" : mediaType}
-        </span>
+        {/* Routing tag badges - show visual_elements or fall back to media_type */}
+        {shot.visual_elements && shot.visual_elements.length > 0 ? (
+          shot.visual_elements
+            .filter(tag => !['sound_effects', 'music'].includes(tag))
+            .slice(0, 2)
+            .map((tag) => {
+              const config = ROUTING_TAG_CONFIG[tag];
+              return (
+                <span
+                  key={tag}
+                  className={cn(
+                    "text-[10px] font-medium px-2 py-1 rounded",
+                    config?.style || "bg-neutral-800 text-neutral-300"
+                  )}
+                  title={shot.visual_description}
+                >
+                  {config?.label || tag}
+                </span>
+              );
+            })
+        ) : (
+          <span
+            className={cn(
+              "text-[10px] font-medium px-2 py-1 rounded border",
+              mediaType === "image"
+                ? "bg-sky-900/30 text-sky-300 border-sky-700/50"
+                : mediaType === "video"
+                  ? "bg-emerald-900/30 text-emerald-300 border-emerald-700/50"
+                  : "bg-indigo-900/30 text-indigo-300 border-indigo-700/50",
+            )}
+          >
+            {mediaType === "motiongraphic" ? "motion" : mediaType}
+          </span>
+        )}
+        
+        {/* Audio indicator for sound effects */}
+        {shot.sound_effects && shot.sound_effects.length > 0 && (
+          <span 
+            className="text-[10px] font-medium px-2 py-1 rounded bg-emerald-900/50 text-emerald-300"
+            title={shot.sound_effects.map(sfx => sfx.type).join(', ')}
+          >
+            🔊 {shot.sound_effects.length} SFX
+          </span>
+        )}
 
         {/* Video play icon for video type */}
         {mediaType === "video" && hasMedia && (

@@ -6,10 +6,10 @@ import { SceneList } from "./scene-review/SceneList";
 import { MediaEditModal } from "./scene-review/MediaEditModal";
 import { Save, Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { GeneratedMedia } from "@/types/video";
+import type { GeneratedMedia, RoutingTag, SoundEffect } from "@/types/video";
 
 // Shot data type (from av-script worker - ShotPart1)
-interface ShotData {
+export interface ShotData {
   segment_index: number;
   start_seconds: number;
   end_seconds: number;
@@ -21,6 +21,11 @@ interface ShotData {
   character_refs?: string[];
   location_refs?: string[];
   object_refs?: string[];
+  // NEW: Routing tags from Step 5
+  visual_source?: 'ai_video' | 'motiongraphic';
+  visual_description?: string;
+  visual_elements?: RoutingTag[];
+  sound_effects?: SoundEffect[];
 }
 
 // Asset registry from outline
@@ -36,6 +41,7 @@ interface Step6SceneReviewProps {
   shots: ShotData[];
   outlineAssets?: AssetRegistry;
   generatedMedia?: GeneratedMedia[];
+  gpuEnabled?: boolean;
   onUpdateMedia: (media: GeneratedMedia[]) => Promise<void>;
   onContinue: () => void;
   onBack: () => void;
@@ -49,6 +55,7 @@ export function Step6SceneReview({
   shots = [],
   outlineAssets,
   generatedMedia = [],
+  gpuEnabled = true,
   onUpdateMedia,
   onContinue,
   onBack,
@@ -149,11 +156,28 @@ export function Step6SceneReview({
     setSelectedShotIndex(shotIndex);
   }, []);
 
-  // Generate shot using multi-agent system via API
+  // Determine generation type from routing tags
+  const getGenerationType = useCallback((elements?: RoutingTag[]): 'image' | 'video' | 'motiongraphic' | 'stock' => {
+    if (!elements || elements.length === 0) return 'image';
+    
+    // Stock - already assigned in Step 5, skip generation
+    if (elements.some(e => e.startsWith('stock_'))) return 'stock';
+    
+    // AI Video
+    if (elements.includes('ai_video')) return 'video';
+    
+    // AI Image
+    if (elements.includes('ai_image')) return 'image';
+    
+    // Remotion/Motion Graphics
+    if (elements.some(e => e.startsWith('remotion_'))) return 'motiongraphic';
+    
+    return 'image';
+  }, []);
+
+  // Generate shot using routing-based endpoints
   const handleGenerateShot = useCallback(
     async (shotIndex: number) => {
-      console.log(`[Step6] Regenerating shot ${shotIndex} via Multi-Agent API`);
-
       // Add to generating set
       setGeneratingShots((prev) => new Set(prev).add(shotIndex));
 
@@ -169,56 +193,105 @@ export function Step6SceneReview({
         return;
       }
 
-      const existingMedia =
-        pendingChanges.get(shotIndex) || mediaMap.get(shotIndex);
+      const existingMedia = pendingChanges.get(shotIndex) || mediaMap.get(shotIndex);
+      const generationType = getGenerationType(shot.visual_elements);
+
+      console.log(`[Step6] Generating shot ${shotIndex} with type: ${generationType}`);
+
+      // Stock media - skip generation, already assigned in Step 5
+      if (generationType === 'stock') {
+        console.log(`[Step6] Shot ${shotIndex} uses stock media, skipping generation`);
+        setGeneratingShots((prev) => {
+          const newSet = new Set(prev);
+          newSet.delete(shotIndex);
+          return newSet;
+        });
+        return;
+      }
+
+      // GPU disabled - skip AI/motion graphic generation
+      if (!gpuEnabled && ['image', 'video', 'motiongraphic'].includes(generationType)) {
+        console.log(`[Step6] GPU disabled, skipping ${generationType} generation for shot ${shotIndex}`);
+        setGeneratingShots((prev) => {
+          const newSet = new Set(prev);
+          newSet.delete(shotIndex);
+          return newSet;
+        });
+        return;
+      }
 
       try {
-        // Call the regenerate-shot API
-        const response = await fetch('/api/videos/regenerate-shot', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            videoId,
-            shotIndex,
-            mediaType: existingMedia?.media_type || shot.media_type || 'image',
-            customPrompt: existingMedia?.visual_prompt,
-          }),
-        });
+        let response: Response;
+        const prompt = existingMedia?.visual_prompt || shot.summary || shot.text.substring(0, 200);
+
+        if (generationType === 'video') {
+          // Video requires keyframe
+          const keyframeUrl = existingMedia?.keyframes?.start?.image_url;
+          if (!keyframeUrl) {
+            throw new Error('Keyframe image required for video generation. Please generate a start frame first.');
+          }
+          response = await fetch(`/api/videos/${videoId}/generate/video`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              shotIndex,
+              prompt,
+              keyframeUrl,
+            }),
+          });
+        } else if (generationType === 'motiongraphic') {
+          response = await fetch(`/api/videos/${videoId}/generate/motiongraphic`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              shotIndex,
+              prompt,
+            }),
+          });
+        } else {
+          // Default: image generation
+          response = await fetch(`/api/videos/${videoId}/generate/image`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              shotIndex,
+              prompt,
+            }),
+          });
+        }
 
         if (!response.ok) {
           const error = await response.json();
-          throw new Error(error.error || 'Failed to regenerate shot');
+          throw new Error(error.error || 'Failed to generate media');
         }
 
         const result = await response.json();
-        console.log(`[Step6] Shot ${shotIndex} agent used:`, result.agentResult);
+        console.log(`[Step6] Shot ${shotIndex} generation result:`, result);
 
-        // Create generated media with the new prompt
+        // Create pending media entry (status will be updated by task tracking)
         const generatedItem: GeneratedMedia = {
           shot_index: shotIndex,
-          media_type: existingMedia?.media_type || shot.media_type || "image",
-          generation_status: "completed",
-          // Use a placeholder image for now - real GPU generation would happen next
-          media_url: `https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?q=80&w=400&auto=format&fit=crop&t=${Date.now()}_${shotIndex}`,
-          visual_prompt: result.generatedPrompt || existingMedia?.visual_prompt || shot.summary || "",
+          media_type: generationType === 'motiongraphic' ? 'motiongraphic' : generationType === 'video' ? 'video' : 'image',
+          generation_status: generationType === 'motiongraphic' ? 'completed' : 'generating',
+          visual_prompt: prompt,
+          visual_elements: shot.visual_elements,
+          visual_description: shot.visual_description,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
 
-        // Update pending changes
         setPendingChanges((prev) => {
           const newMap = new Map(prev);
           newMap.set(shotIndex, generatedItem);
           return newMap;
         });
 
-        console.log(`[Step6] Shot ${shotIndex} regeneration complete`);
+        console.log(`[Step6] Shot ${shotIndex} generation triggered, taskId: ${result.taskId}`);
       } catch (error) {
-        console.error(`[Step6] Shot ${shotIndex} regeneration failed:`, error);
-        // Still mark as complete but with error state
+        console.error(`[Step6] Shot ${shotIndex} generation failed:`, error);
         const errorItem: GeneratedMedia = {
           shot_index: shotIndex,
-          media_type: existingMedia?.media_type || shot.media_type || "image",
+          media_type: generationType === 'motiongraphic' ? 'motiongraphic' : generationType === 'video' ? 'video' : 'image',
           generation_status: "failed",
           visual_prompt: existingMedia?.visual_prompt || shot.summary || "",
           error_message: error instanceof Error ? error.message : 'Unknown error',
@@ -230,7 +303,6 @@ export function Step6SceneReview({
           return newMap;
         });
       } finally {
-        // Remove from generating set
         setGeneratingShots((prev) => {
           const newSet = new Set(prev);
           newSet.delete(shotIndex);
@@ -238,7 +310,7 @@ export function Step6SceneReview({
         });
       }
     },
-    [shots, mediaMap, pendingChanges, videoId],
+    [shots, mediaMap, pendingChanges, videoId, getGenerationType],
   );
 
   // Generate all pending shots

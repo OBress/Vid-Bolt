@@ -1932,6 +1932,7 @@ export function VideoCreationWizard({
             shots={state.avScriptPart1Output?.shots || []}
             outlineAssets={state.outlineOutput?.assetRegistry}
             generatedMedia={state.generatedMedia}
+            gpuEnabled={state.gpuEnabled}
             onUpdateMedia={async (media) => {
               console.log("[Wizard] Updating generated media:", media.length);
               updateState({ generatedMedia: media });
