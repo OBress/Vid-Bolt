@@ -151,6 +151,17 @@ export interface RemotionCodeOutput {
   estimated_render_time_ms: number;
 }
 
+export interface SfxAgentOutput {
+  should_have_sfx: boolean;
+  sound_effects: Array<{
+    type: string;               // "chain snap" (1-2 word UI label)
+    description: string;        // "Heavy metal chain breaking" (for search/gen)
+    trigger_at_seconds: number; // Absolute time (e.g., 12.345)
+    anchor_word?: string;       // Word it's timed to
+    reasoning?: string;         // Why this effect here
+  }>;
+}
+
 // ============================================================================
 // CONTEXT BUILDER
 // ============================================================================
@@ -485,6 +496,70 @@ Return valid JSON:
   "code": "import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, Sequence } from 'remotion';\\n\\nexport const CrimeBoardComposition: React.FC = () => {\\n  const frame = useCurrentFrame();\\n  const { fps, durationInFrames } = useVideoConfig();\\n  // ... component code\\n};",
   "dependencies": ["remotion", "@remotion/media"],
   "estimated_render_time_ms": 500
+}`;
+
+const SFX_DIRECTOR_SYSTEM_PROMPT = `You enhance video experiences through thoughtful audio design.
+
+## YOUR ROLE
+Sound effects should **enhance** the viewer experience—not distract from it.
+You have complete creative freedom. Use your judgment to determine:
+- Whether a shot needs SFX at all (many won't, and that's fine)
+- What effect fits the moment (use descriptive names!)
+- Exactly when it should trigger (millisecond precision via word timestamps)
+
+## PHILOSOPHY
+- **Less is more**: A well-placed effect has more impact than many
+- **Serve the story**: Audio supports narration, never competes with it
+- **Trust silence**: Some moments are stronger without sound design
+- **Natural rhythm**: Effects should feel inevitable, not forced
+
+## EFFECT NAMING
+Use **descriptive 1-2 word names** for the \`type\` field (UI display):
+
+✓ Good: "chain snap", "page flip", "door slam", "glass shatter", "crowd gasp"
+✗ Bad: "impact", "whoosh", "hit", "sfx", "sound"
+
+## EFFECT DESCRIPTION
+For each effect, include a **single sentence description** for audio search/generation:
+- Describe what the sound actually IS
+- Include texture, intensity, and context
+- Example: "Heavy metal chain links breaking sharply under tension"
+
+## INPUT
+You receive:
+- Shot context (text, summary, duration, content_type)
+- Word timestamps for the shot (word, start_seconds, end_seconds)
+- Previous shots and whether they had SFX
+
+## TIMING
+Use word_timestamps to place effects with precision.
+Effects can trigger ON a word, BEFORE it (0.1s), or AFTER it.
+Timing is in absolute seconds (e.g., 12.345).
+
+## OUTPUT
+Return empty array if no SFX needed—that's a valid creative choice.
+{
+  "should_have_sfx": false,
+  "sound_effects": []
+}
+
+Or with effects:
+{
+  "should_have_sfx": true,
+  "sound_effects": [
+    { 
+      "type": "tension rise", 
+      "description": "Low rumbling bass that builds in intensity, creating suspense",
+      "trigger_at_seconds": 12.300, 
+      "anchor_word": "until" 
+    },
+    { 
+      "type": "chain snap", 
+      "description": "Heavy metal chain links breaking sharply under tension",
+      "trigger_at_seconds": 14.125, 
+      "anchor_word": "chain" 
+    }
+  ]
 }`;
 
 

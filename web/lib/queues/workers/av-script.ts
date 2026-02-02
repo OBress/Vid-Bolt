@@ -59,6 +59,11 @@ export interface ShotPart1 {
   /** Routing tags for generation tool selection */
   visual_elements?: import('@/types/video').RoutingTag[];
   
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Sound Effects (millisecond-precise audio placement)
+  // ═══════════════════════════════════════════════════════════════════════════
+  sound_effects?: import('@/types/video').SoundEffect[];
+  
   // Stock-worthy flag: true if this shot depicts famous people/landmarks suitable for stock media
   stock_worthy?: boolean;
   // Number of images the AI wants for this shot (default: 1, for multi-image layouts)

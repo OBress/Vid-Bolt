@@ -107,6 +107,11 @@ export interface ChunkShotResult {
   visual_description?: string;
   /** Routing tags for generation tool selection */
   visual_elements?: import('@/types/video').RoutingTag[];
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Sound Effects (millisecond-precise audio placement)
+  // ═══════════════════════════════════════════════════════════════════════════
+  sound_effects?: import('@/types/video').SoundEffect[];
 }
 
 /**
@@ -386,6 +391,7 @@ async function generateChunkShots(
       image_count?: number;
       visual_description?: string;
       visual_elements?: import('@/types/video').RoutingTag[];
+      sound_effects?: import('@/types/video').SoundEffect[];
     }>;
   }>(userId, systemPrompt, userPrompt);
   
@@ -412,6 +418,7 @@ async function generateChunkShots(
       image_count: aiSummary?.image_count,
       visual_description: aiSummary?.visual_description,
       visual_elements: aiSummary?.visual_elements,
+      sound_effects: aiSummary?.sound_effects,
       character_refs: characterRefs.length > 0 ? characterRefs : undefined,
       location_refs: locationRefs.length > 0 ? locationRefs : undefined,
       object_refs: objectRefs.length > 0 ? objectRefs : undefined,
@@ -514,8 +521,6 @@ CORE (GPU generation):
 
 STOCK (real footage):
 - "stock_image" → Static photos of real people/places
-- "stock_video" → Real video footage
-- "stock_audience" → Audience reaction clips
 
 REMOTION (composition):
 - "remotion_overlay" → Text, captions, lower-thirds on top
@@ -525,6 +530,19 @@ REMOTION (composition):
 AUDIO (optional):
 - "sound_effects" → SFX (whoosh, impact, etc.)
 - "music" → Background music/score
+
+## SOUND DESIGN
+
+Include sound effects that **enhance** the video without distracting from it.
+
+When adding SFX to a shot:
+- "type": 1-2 word label for display (e.g., "door slam", "crowd gasp")
+- "description": Single sentence describing the actual sound (for audio search/generation)
+- "trigger_at_seconds": Use word_timestamps to anchor precisely
+- "anchor_word": Which spoken word triggers this effect
+
+Good SFX: Enhances reveal moments, emphasizes impacts, builds tension
+Bad SFX: Generic whooshes on every cut, distracting clicks
 
 Examples:
 - Single AI video: ["ai_video"]
@@ -556,6 +574,13 @@ function buildUserPrompt(context: ChunkContext): string {
     type: s.content_type,
     text: s.text.substring(0, 200), // Truncate for token efficiency
     duration: s.duration_seconds,
+    start_seconds: s.start_seconds,
+    // Include word timestamps for SFX anchoring
+    word_timestamps: s.word_timestamps?.slice(0, 15).map(w => ({
+      word: w.word,
+      start: w.start_seconds,
+      end: w.end_seconds
+    }))
   }));
 
   return `Generate visual summaries for these ${context.currentSegments.length} video segments (chunk ${context.chunkIndex + 1}/${context.totalChunks}):
@@ -572,7 +597,15 @@ Return JSON:
       "stock_worthy": true, 
       "reuse_entity": "Donald Trump",
       "visual_description": "Cinematic slow-motion shot of the subject speaking at a podium with dramatic lighting",
-      "visual_elements": ["ai_video", "remotion_overlay"]
+      "visual_elements": ["ai_video", "remotion_overlay"],
+      "sound_effects": [
+        {
+          "type": "paper rustle",
+          "description": "Heavy legal documents shuffled on desk",
+          "trigger_at_seconds": 12.8,
+          "anchor_word": "contract"
+        }
+      ]
     }
   ]
 }

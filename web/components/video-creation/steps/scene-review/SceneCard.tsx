@@ -31,6 +31,8 @@ interface ShotData {
   // NEW: Descriptive visual intent
   visual_description?: string;
   visual_elements?: RoutingTag[];
+  // Sound effects with millisecond-precise timing
+  sound_effects?: import("@/types/video").SoundEffect[];
 }
 
 // Content type colors
@@ -161,28 +163,48 @@ export function SceneCard({
                 ) : (
                   <Image className="w-10 h-10 text-neutral-600" />
                 )}
-                {/* Show visual_elements routing tags if available */}
+                {/* Show visual_elements routing tags if available (filter out audio tags) */}
                 {shot.visual_elements && shot.visual_elements.length > 0 ? (
                   <div className="flex flex-wrap gap-1 justify-center" title={shot.visual_description}>
-                    {shot.visual_elements.slice(0, 2).map((tag) => {
-                      const config = ROUTING_TAG_CONFIG[tag];
-                      return (
-                        <span 
-                          key={tag}
-                          className={cn("text-[9px] font-medium px-1.5 py-0.5 rounded", config?.style || "bg-neutral-800 text-neutral-300")}
-                        >
-                          {config?.label || tag}
-                        </span>
-                      );
-                    })}
-                    {shot.visual_elements.length > 2 && (
-                      <span className="text-[9px] text-neutral-500">+{shot.visual_elements.length - 2}</span>
-                    )}
+                    {shot.visual_elements
+                      .filter(tag => !['sound_effects', 'music'].includes(tag))
+                      .slice(0, 2)
+                      .map((tag) => {
+                        const config = ROUTING_TAG_CONFIG[tag];
+                        return (
+                          <span 
+                            key={tag}
+                            className={cn("text-[9px] font-medium px-1.5 py-0.5 rounded", config?.style || "bg-neutral-800 text-neutral-300")}
+                          >
+                            {config?.label || tag}
+                          </span>
+                        );
+                      })}
                   </div>
                 ) : (
                   <span className="text-xs text-neutral-500 font-medium uppercase tracking-wide">
                     {mediaType === "motiongraphic" ? "Motion Graphic" : mediaType}
                   </span>
+                )}
+                
+                {/* Audio Indicator - Descriptive Sound Effects */}
+                {shot.sound_effects && shot.sound_effects.length > 0 && (
+                  <div 
+                    className="flex items-center gap-1 mt-1.5 justify-center flex-wrap"
+                    title={shot.sound_effects.map(sfx => 
+                      `${sfx.type}${sfx.anchor_word ? ` @ "${sfx.anchor_word}"` : ''}`
+                    ).join(', ')}
+                  >
+                    {shot.sound_effects.slice(0, 2).map((sfx, idx) => (
+                      <span 
+                        key={idx}
+                        className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-900/70 text-emerald-300 flex items-center gap-0.5"
+                      >
+                        <span>🔊</span>
+                        <span>{sfx.type}</span>
+                      </span>
+                    ))}
+                  </div>
                 )}
               </>
             )}

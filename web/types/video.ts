@@ -66,6 +66,22 @@ export const ROUTING_TAG_CONFIG: Record<RoutingTag, { style: string; label: stri
   remotion_video_manipulation: { style: 'bg-fuchsia-900/50 text-fuchsia-300', label: 'Video FX' },
 };
 
+/**
+ * Sound effect with millisecond-precise timing
+ */
+export interface SoundEffect {
+  /** Short label for UI display (1-2 words, e.g., "chain snap") */
+  type: string;
+  /** Full description for stock audio search/generation (e.g., "Heavy metal chain breaking under tension") */
+  description: string;
+  /** Absolute trigger time in seconds (e.g., 12.345) */
+  trigger_at_seconds: number;
+  /** Word this effect is anchored to (for debugging/display) */
+  anchor_word?: string;
+  /** Optional reasoning for this effect */
+  reasoning?: string;
+}
+
 // ============================================================================
 // SHARED CONTENT TYPES
 // ============================================================================

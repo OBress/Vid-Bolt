@@ -68,6 +68,8 @@ type ShotItem = {
   // NEW: Descriptive visual intent
   visual_description?: string;
   visual_elements?: import("@/types/video").RoutingTag[];
+  // Sound effects with millisecond-precise timing
+  sound_effects?: import("@/types/video").SoundEffect[];
   // Number of images AI requested for this shot (for multi-image motiongraphics)
   image_count?: number;
   character_refs?: string[];
@@ -810,9 +812,12 @@ export function Step5ShotCreation({
                             <span className="text-[10px] text-neutral-600">
                               {shot.duration_seconds.toFixed(1)}s
                             </span>
-                            {/* Visual elements routing tags */}
+                            {/* Visual elements routing tags (filter out audio tags) */}
                             {displayShot.visual_elements && displayShot.visual_elements.length > 0 ? (
-                              displayShot.visual_elements.slice(0, 3).map((tag) => {
+                              displayShot.visual_elements
+                                .filter(tag => !['sound_effects', 'music'].includes(tag))
+                                .slice(0, 3)
+                                .map((tag) => {
                                 const config = ROUTING_TAG_CONFIG[tag as RoutingTag];
                                 return (
                                   <span 
@@ -859,8 +864,35 @@ export function Step5ShotCreation({
                           </div>
                         </div>
 
-                        {/* Shot Thumbnail - show stock media if matched */}
-                        <div className="w-24 aspect-video bg-neutral-900 rounded border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center shrink-0 overflow-hidden">
+                        {/* Right side: Audio indicators + Thumbnail */}
+                        <div className="flex items-center gap-3 shrink-0">
+                          {/* Audio Indicator - Descriptive Sound Effects */}
+                          {displayShot.sound_effects && displayShot.sound_effects.length > 0 && (
+                            <div 
+                              className="flex items-center gap-1.5"
+                              title={displayShot.sound_effects.map(sfx => 
+                                `${sfx.type}${sfx.anchor_word ? ` @ "${sfx.anchor_word}"` : ''} (${sfx.trigger_at_seconds?.toFixed(2)}s)`
+                              ).join('\n')}
+                            >
+                              {displayShot.sound_effects.slice(0, 2).map((sfx, idx) => (
+                                <span 
+                                  key={idx}
+                                  className="text-[10px] font-medium px-2 py-1 rounded bg-emerald-900/50 text-emerald-300 flex items-center gap-1"
+                                >
+                                  <span>🔊</span>
+                                  <span>{sfx.type}</span>
+                                </span>
+                              ))}
+                              {displayShot.sound_effects.length > 2 && (
+                                <span className="text-[9px] text-neutral-500">
+                                  +{displayShot.sound_effects.length - 2}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          
+                          {/* Shot Thumbnail */}
+                          <div className="w-24 aspect-video bg-neutral-900 rounded border border-neutral-800 group-hover:border-neutral-700 flex items-center justify-center shrink-0 overflow-hidden">
                           {displayShot.stock_media_ref?.thumbnailUrl ? (
                             <img
                               src={displayShot.stock_media_ref.thumbnailUrl}
@@ -876,6 +908,7 @@ export function Step5ShotCreation({
                           ) : (
                             <Image className="w-4 h-4 text-neutral-700" />
                           )}
+                        </div>
                         </div>
                       </div>
                     );
