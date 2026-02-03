@@ -198,7 +198,7 @@ export function GPUApiTester({
 }: GPUApiTesterProps) {
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("system");
-  const [apiMode, setApiMode] = useState<ApiMode>("mock");
+  const [apiMode, setApiMode] = useState<ApiMode>("real");
   const [vramMode, setVramMode] = useState<VramMode | null>(null);
 
   // System/Mode State
