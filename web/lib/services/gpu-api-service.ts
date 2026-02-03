@@ -649,6 +649,78 @@ export async function callGpuHealthReady(): Promise<{
 }
 
 // ============================================================================
+// VM READINESS CHECK
+// ============================================================================
+
+export interface VmReadinessResult {
+  ready: boolean;
+  ip?: string;
+  reason?: string;
+  currentMode?: VramMode;
+  isModeSwitching?: boolean;
+}
+
+/**
+ * Check if GPU VM is ready for operations.
+ * Ready = RUNNING status + health endpoint responds + not switching modes
+ * 
+ * @param userId - Optional user ID to check specific user's VM config
+ * @returns VmReadinessResult indicating readiness state
+ */
+export async function checkGpuVmReady(
+  userId?: string,
+): Promise<VmReadinessResult> {
+  try {
+    // 1. Get dynamic URL (checks user_gcp_config for RUNNING + IP)
+    const baseUrl = await fetchDynamicGpuApiUrl(userId);
+    
+    // Extract IP from URL for logging
+    const extractedIp = baseUrl.replace("http://", "").replace(":8000", "");
+
+    if (baseUrl === "http://localhost:8000") {
+      // No dynamic VM found, check if localhost is available
+      const health = await callGpuHealth();
+      if (!health.success) {
+        return { ready: false, reason: "No GPU VM available (localhost not responding)" };
+      }
+      return { ready: true, ip: "localhost" };
+    }
+
+    // 2. Health check
+    const health = await callGpuHealth();
+    if (!health.success) {
+      return {
+        ready: false,
+        ip: extractedIp,
+        reason: `Health check failed: ${health.error}`,
+      };
+    }
+
+    // 3. Check if mode is switching (for optimization)
+    const mode = await callGpuGetMode();
+    if (mode.success && mode.data?.is_switching) {
+      return {
+        ready: false,
+        ip: extractedIp,
+        reason: `Mode switching to ${mode.data.switching_target}`,
+        isModeSwitching: true,
+      };
+    }
+
+    return {
+      ready: true,
+      ip: extractedIp,
+      currentMode: mode.data?.mode as VramMode,
+    };
+  } catch (error) {
+    return {
+      ready: false,
+      reason: error instanceof Error ? error.message : "Unknown error checking VM readiness",
+    };
+  }
+}
+
+// ============================================================================
 // SYSTEM STATUS
 // ============================================================================
 

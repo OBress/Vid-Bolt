@@ -45,6 +45,7 @@ import type {
   LocationProfile,
   ObjectProfile,
 } from '@/lib/queues/writing/types';
+import { waitForGpuReady } from './gpu-health-guard';
 
 // ============================================================================
 // CONFIGURATION
@@ -266,6 +267,12 @@ export const assetReferenceImageProcessor: Processor<AssetReferenceImageJobData>
   const logPrefix = '[Assets/ReferenceImages]';
 
   console.log(`${logPrefix} Starting job ${job.id} for video ${videoId}`);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PRE-FLIGHT: Ensure GPU VM is ready before processing
+  // ══════════════════════════════════════════════════════════════════════════
+  const vmStatus = await waitForGpuReady(userId, logPrefix);
+  console.log(`${logPrefix} Proceeding with GPU VM at ${vmStatus.ip}`);
 
   // Validate R2 configuration
   if (!isR2Configured()) {

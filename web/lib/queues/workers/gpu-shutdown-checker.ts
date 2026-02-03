@@ -4,14 +4,13 @@
  * Monitors user VMs for inactivity and automatically shuts them down
  * when no GPU API calls have been made within the user's configured timeout.
  * 
- * This runs as a standalone process with its own repeatable job.
+ * Runs as a BullMQ repeatable job every 5 minutes.
  */
 
+import { Job, Processor } from 'bullmq';
 import { createClient } from '@supabase/supabase-js';
 import { stopNode } from '../../gcp/provision';
 import { getValidGCPToken } from '../../gcp/token-refresh';
-
-const SHUTDOWN_CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface GCPConfig {
   user_id: string;
@@ -110,28 +109,11 @@ export async function checkForInactiveVMs(): Promise<{ checked: number; shutdown
 }
 
 /**
- * Start the shutdown checker as a recurring process
+ * BullMQ Processor for GPU shutdown checking
  */
-export function startShutdownChecker(): NodeJS.Timeout {
-  console.log('[GPU Shutdown Checker] Starting with interval:', SHUTDOWN_CHECK_INTERVAL_MS / 1000, 'seconds');
-  
-  // Run immediately on start
-  checkForInactiveVMs().catch(err => {
-    console.error('[GPU Shutdown Checker] Initial check failed:', err);
-  });
-  
-  // Then run on interval
-  return setInterval(() => {
-    checkForInactiveVMs().catch(err => {
-      console.error('[GPU Shutdown Checker] Scheduled check failed:', err);
-    });
-  }, SHUTDOWN_CHECK_INTERVAL_MS);
-}
+export const gpuShutdownCheckProcessor: Processor = async (job: Job) => {
+  console.log(`[GPU Shutdown Checker] Job ${job.id} started`);
+  const result = await checkForInactiveVMs();
+  return { success: true, ...result };
+};
 
-/**
- * Stop the shutdown checker
- */
-export function stopShutdownChecker(intervalId: NodeJS.Timeout): void {
-  console.log('[GPU Shutdown Checker] Stopping...');
-  clearInterval(intervalId);
-}

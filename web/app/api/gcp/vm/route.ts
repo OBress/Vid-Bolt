@@ -78,6 +78,8 @@ export async function POST(req: NextRequest) {
             project_id: projectId,
             instance_name: "vidbolt-workflow",
             status: 'PROVISIONING',
+            // Reset activity timestamp to prevent shutdown checker from using stale values
+            last_gpu_activity_at: new Date().toISOString(),
             metadata: { 
                 jobId: job.id, 
                 logs: ["[System] Provisioning Job Queued..."] 
@@ -91,7 +93,11 @@ export async function POST(req: NextRequest) {
         await supabase.from("user_gcp_config").update({ status: 'STOPPING' }).eq('user_id', userId);
     } else if (action === "start") {
         result = await startNode(gcpToken, projectId);
-        await supabase.from("user_gcp_config").update({ status: 'STAGING' }).eq('user_id', userId);
+        // Reset activity timestamp when starting to prevent immediate shutdown from stale values
+        await supabase.from("user_gcp_config").update({ 
+            status: 'STAGING',
+            last_gpu_activity_at: new Date().toISOString()
+        }).eq('user_id', userId);
     } else if (action === "status") {
         result = await getNodeStatus(gcpToken, projectId);
         // Update DB with latest status if successful

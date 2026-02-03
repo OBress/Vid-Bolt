@@ -105,6 +105,9 @@ export const assetReferenceImagesQueue = createQueue('asset-reference-images');
 /** Research comparison/testing for dev tools */
 export const researchCompareQueue = createQueue('research-compare');
 
+/** GPU VM inactivity shutdown checker (repeatable) */
+export const gpuShutdownCheckQueue = createQueue('gpu-shutdown-check');
+
 /**
  * All active queues for graceful shutdown.
  */
@@ -126,6 +129,7 @@ export const allQueues = [
   stockMediaQueue,
   assetReferenceImagesQueue,
   researchCompareQueue,
+  gpuShutdownCheckQueue,
 ];
 
 /**

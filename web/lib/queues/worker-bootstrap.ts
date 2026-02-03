@@ -32,7 +32,7 @@ console.log('  PEXELS_API_KEY:', process.env.PEXELS_API_KEY ? 'âœ“ present' : 'â
 
 import { Worker, Processor } from 'bullmq';
 import { getRedisConnection, closeRedisConnection, isRedisReady } from './redis';
-import { allQueues, closeAllQueues } from './queues';
+import { allQueues, closeAllQueues, gpuShutdownCheckQueue } from './queues';
 import { 
   writingProcessor, 
   universalScriptProcessor,
@@ -51,8 +51,7 @@ import {
   stockMediaProcessor,
   assetReferenceImageProcessor,
   researchCompareProcessor,
-  startShutdownChecker,
-  stopShutdownChecker,
+  gpuShutdownCheckProcessor,
 } from './workers';
 
 // ============================================================================
@@ -170,14 +169,42 @@ const workerConfigs: WorkerConfig[] = [
     concurrency: 2,
     description: 'Research comparison for dev tools',
   },
+  {
+    queue: 'gpu-shutdown-check',
+    processor: gpuShutdownCheckProcessor,
+    concurrency: 1,
+    description: 'GPU VM inactivity shutdown checker',
+  },
 ];
+
+// ============================================================================
+// REPEATABLE JOB REGISTRATION
+// ============================================================================
+
+/**
+ * Register repeatable jobs for scheduled tasks.
+ * These persist in Redis and automatically trigger on schedule.
+ */
+async function registerRepeatableJobs(): Promise<void> {
+  console.log('[WorkerBootstrap] Registering repeatable jobs...');
+  
+  // GPU shutdown check - every 5 minutes
+  await gpuShutdownCheckQueue.add(
+    'check-inactive-vms',
+    {},
+    { 
+      repeat: { every: 5 * 60 * 1000 },
+      jobId: 'gpu-shutdown-repeatable'  // Prevents duplicate registrations
+    }
+  );
+  console.log('[WorkerBootstrap] Registered: gpu-shutdown-check (every 5 minutes)');
+}
 
 // ============================================================================
 // WORKER MANAGEMENT
 // ============================================================================
 
 const workers: Worker[] = [];
-let shutdownCheckerId: NodeJS.Timeout | null = null;
 
 async function startWorkers(): Promise<void> {
   console.log('='.repeat(60));
@@ -241,18 +268,12 @@ async function startWorkers(): Promise<void> {
   console.log('[WorkerBootstrap] Press Ctrl+C to stop');
   console.log('='.repeat(60));
   
-  // Start the GPU shutdown checker (runs every 5 minutes)
-  shutdownCheckerId = startShutdownChecker();
+  // Register the GPU shutdown checker as a repeatable job (every 5 minutes)
+  await registerRepeatableJobs();
 }
 
 async function stopWorkers(): Promise<void> {
   console.log('\n[WorkerBootstrap] Shutting down workers...');
-  
-  // Stop the GPU shutdown checker
-  if (shutdownCheckerId) {
-    stopShutdownChecker(shutdownCheckerId);
-    shutdownCheckerId = null;
-  }
   
   // Close all workers
   await Promise.all(workers.map(async (w) => {

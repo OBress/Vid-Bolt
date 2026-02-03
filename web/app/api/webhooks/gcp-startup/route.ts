@@ -28,7 +28,10 @@ export async function POST(req: NextRequest) {
       // Build update payload
       const updateData: any = {
           status: status === 'ready' ? 'RUNNING' : status.toUpperCase(),
-          last_seen_at: new Date().toISOString()
+          last_seen_at: new Date().toISOString(),
+          // Reset activity timestamp when VM becomes ready to prevent immediate shutdown
+          // from stale timestamps left over from previous sessions
+          ...(status === 'ready' && { last_gpu_activity_at: new Date().toISOString() })
       };
       
       if (ip) {
@@ -63,6 +66,37 @@ export async function POST(req: NextRequest) {
       if (error) {
           console.error("DB Update Error", error);
           throw error;
+      }
+      
+      // ════════════════════════════════════════════════════════════════════════
+      // DISPATCH PENDING GPU JOBS when VM becomes ready
+      // ════════════════════════════════════════════════════════════════════════
+      if (status === 'ready') {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        const internalSecret = process.env.INTERNAL_API_SECRET;
+        
+        if (internalSecret) {
+          console.log(`[GCP Webhook] Triggering pending GPU job dispatch for user ${user_id}`);
+          
+          // Fire-and-forget: dispatch pending jobs
+          fetch(`${appUrl}/api/internal/dispatch-pending-gpu-jobs`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Internal-Secret': internalSecret,
+            },
+            body: JSON.stringify({ user_id }),
+          })
+            .then(res => res.json())
+            .then(data => {
+              console.log(`[GCP Webhook] Dispatch result: ${data.dispatched || 0} jobs dispatched`);
+            })
+            .catch(err => {
+              console.error('[GCP Webhook] Failed to dispatch pending jobs:', err);
+            });
+        } else {
+          console.warn('[GCP Webhook] INTERNAL_API_SECRET not set, skipping job dispatch');
+        }
       }
       
       return NextResponse.json({ success: true });
