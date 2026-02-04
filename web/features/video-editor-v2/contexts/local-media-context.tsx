@@ -21,13 +21,18 @@ interface LocalMediaContextType {
   removeMediaFile: (id: string) => Promise<void>;
   clearMediaFiles: () => Promise<void>;
   refreshMedia: () => Promise<void>;
+  loadMore: () => Promise<void>;
   isLoading: boolean;
   uploadProgress: UploadProgress | null;
+  hasMore: boolean;
+  totalCount: number;
 }
 
 const LocalMediaContext = createContext<LocalMediaContextType | undefined>(
   undefined
 );
+
+const PAGE_SIZE = 50;
 
 /**
  * Convert S3 MediaFile to LocalMediaFile format
@@ -54,6 +59,7 @@ function toLocalMediaFile(media: MediaFile): LocalMediaFile {
  *
  * Provides context for managing media files stored in S3.
  * All media is stored in S3 with metadata in Supabase for cross-device sync.
+ * Supports pagination for large media libraries.
  */
 export const LocalMediaProvider: React.FC<{ 
   children: React.ReactNode;
@@ -65,34 +71,50 @@ export const LocalMediaProvider: React.FC<{
   const [localMediaFiles, setLocalMediaFiles] = useState<LocalMediaFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+  const [currentOffset, setCurrentOffset] = useState(0);
   
   const { user } = useAuth();
 
-  // Load media files from Supabase on mount
-  const loadMediaFiles = useCallback(async () => {
+  const hasMore = localMediaFiles.length < totalCount;
+
+  // Load media files from Supabase on mount (first page)
+  const loadMediaFiles = useCallback(async (reset = true) => {
     if (!user?.id) {
       console.log('[LocalMedia] No authenticated user, skipping media load');
       setLocalMediaFiles([]);
+      setTotalCount(0);
       return;
     }
 
     try {
       setIsLoading(true);
-      console.log('[LocalMedia] Loading media from S3/Supabase for project:', projectId || 'all');
+      const offset = reset ? 0 : currentOffset;
+      console.log('[LocalMedia] Loading media from S3/Supabase for project:', projectId || 'all', 'offset:', offset);
       
-      const mediaFiles = await getMedia(projectId);
-      const files = mediaFiles.map(toLocalMediaFile);
+      const { media, total } = await getMedia(projectId, { limit: PAGE_SIZE, offset });
+      const files = media.map(toLocalMediaFile);
       
-      console.log(`[LocalMedia] Loaded ${files.length} media files`);
-      setLocalMediaFiles(files);
+      console.log(`[LocalMedia] Loaded ${files.length} media files (total: ${total})`);
+      
+      if (reset) {
+        setLocalMediaFiles(files);
+        setCurrentOffset(PAGE_SIZE);
+      } else {
+        setLocalMediaFiles((prev) => [...prev, ...files]);
+        setCurrentOffset((prev) => prev + PAGE_SIZE);
+      }
+      setTotalCount(total);
     } catch (error) {
       console.error("[LocalMedia] Error loading media files:", error);
-      // Don't throw - just set empty array
-      setLocalMediaFiles([]);
+      if (reset) {
+        setLocalMediaFiles([]);
+        setTotalCount(0);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [user?.id, projectId]);
+  }, [user?.id, projectId, currentOffset]);
 
   useEffect(() => {
     loadMediaFiles();
@@ -192,11 +214,19 @@ export const LocalMediaProvider: React.FC<{
   }, [localMediaFiles]);
 
   /**
-   * Refresh media from server
+   * Refresh media from server (resets to first page)
    */
   const refreshMedia = useCallback(async (): Promise<void> => {
-    await loadMediaFiles();
+    await loadMediaFiles(true);
   }, [loadMediaFiles]);
+
+  /**
+   * Load more media (next page)
+   */
+  const loadMore = useCallback(async (): Promise<void> => {
+    if (!hasMore || isLoading) return;
+    await loadMediaFiles(false);
+  }, [loadMediaFiles, hasMore, isLoading]);
 
   const value = {
     localMediaFiles,
@@ -204,8 +234,11 @@ export const LocalMediaProvider: React.FC<{
     removeMediaFile,
     clearMediaFiles,
     refreshMedia,
+    loadMore,
     isLoading,
     uploadProgress,
+    hasMore,
+    totalCount,
   };
 
   return (

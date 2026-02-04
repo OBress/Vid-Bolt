@@ -137,20 +137,59 @@ export async function registerMedia(data: {
 }
 
 /**
- * Get all media files for the current user
+ * Pagination options for media queries
  */
-export async function getMedia(projectId?: string): Promise<MediaFile[]> {
-  const url = projectId 
-    ? `/api/video-editor/media?projectId=${projectId}`
+export interface MediaPaginationOptions {
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Paginated response from getMedia
+ */
+export interface PaginatedMediaResponse {
+  media: MediaFile[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * Get all media files for the current user (paginated)
+ */
+export async function getMedia(
+  projectId?: string,
+  options?: MediaPaginationOptions
+): Promise<PaginatedMediaResponse> {
+  const params = new URLSearchParams();
+  if (projectId) params.set('projectId', projectId);
+  if (options?.limit) params.set('limit', options.limit.toString());
+  if (options?.offset) params.set('offset', options.offset.toString());
+  
+  const queryString = params.toString();
+  const url = queryString 
+    ? `/api/video-editor/media?${queryString}`
     : '/api/video-editor/media';
     
-  const response = await apiRequest<{ success: boolean; error?: string; media: MediaFile[] }>(url);
+  const response = await apiRequest<{ 
+    success: boolean; 
+    error?: string; 
+    media: MediaFile[];
+    total: number;
+    limit: number;
+    offset: number;
+  }>(url);
 
   if (!response.success) {
     throw new Error(response.error || 'Failed to get media');
   }
 
-  return response.media || [];
+  return {
+    media: response.media || [],
+    total: response.total ?? 0,
+    limit: response.limit ?? 50,
+    offset: response.offset ?? 0,
+  };
 }
 
 /**

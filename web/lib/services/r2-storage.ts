@@ -12,7 +12,7 @@
  *   {userId}/gpu-api-test/
  */
 
-import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // ============================================================================
@@ -257,6 +257,60 @@ export async function deleteFile(key: string): Promise<void> {
   });
 
   await client.send(command);
+}
+
+/**
+ * Batch delete multiple files from R2 storage.
+ * Uses S3's DeleteObjectsCommand for efficient multi-key deletion.
+ * Handles batching automatically (max 1000 keys per request).
+ * 
+ * @param keys - Array of storage keys to delete
+ * @returns Object with count of deleted files and any errors
+ */
+export async function deleteFiles(keys: string[]): Promise<{ deleted: number; errors: string[] }> {
+  if (keys.length === 0) {
+    return { deleted: 0, errors: [] };
+  }
+
+  const client = getS3Client();
+  const bucketName = getBucketName();
+  const errors: string[] = [];
+  let deleted = 0;
+
+  // S3 allows max 1000 keys per DeleteObjects request
+  const BATCH_SIZE = 1000;
+  
+  for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+    const batch = keys.slice(i, i + BATCH_SIZE);
+    
+    try {
+      const command = new DeleteObjectsCommand({
+        Bucket: bucketName,
+        Delete: {
+          Objects: batch.map(key => ({ Key: key })),
+          Quiet: true, // Don't return individual success responses
+        },
+      });
+
+      const response = await client.send(command);
+      
+      // Count deleted (batch size minus errors)
+      const batchErrors = response.Errors?.length ?? 0;
+      deleted += batch.length - batchErrors;
+      
+      // Collect individual errors
+      if (response.Errors) {
+        for (const err of response.Errors) {
+          errors.push(`Failed to delete ${err.Key}: ${err.Message || 'Unknown error'}`);
+        }
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      errors.push(`Batch delete failed: ${errorMessage}`);
+    }
+  }
+
+  return { deleted, errors };
 }
 
 /**

@@ -34,22 +34,27 @@ export async function GET(request: NextRequest) {
     // 2. Get query parameters
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get("projectId");
+    
+    // Pagination params (default: 50 items, max: 100)
+    const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
+    const offset = parseInt(searchParams.get("offset") || "0");
 
-    // 3. Query media using service role
+    // 3. Query media using service role with pagination
     const serviceClient = getServiceClient();
     
     let query = serviceClient
       .from("video_editor_media")
-      .select("*")
+      .select("*", { count: "exact" })
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
 
     // Filter by project if specified
     if (projectId) {
       query = query.eq("project_id", projectId);
     }
 
-    const { data: mediaList, error: queryError } = await query;
+    const { data: mediaList, error: queryError, count } = await query;
 
     if (queryError) {
       console.error("[VideoEditorMedia] Query error:", queryError);
@@ -79,6 +84,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       media,
+      total: count ?? media.length,
+      limit,
+      offset,
     });
   } catch (error) {
     console.error("[VideoEditorMedia] Error listing media:", error);
