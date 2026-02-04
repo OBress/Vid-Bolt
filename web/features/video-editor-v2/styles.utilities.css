@@ -1,0 +1,85 @@
+@utility radix-context-menu {
+  z-index: 100;
+}
+@utility font-league-spartan {
+  font-family: 'League Spartan', sans-serif;
+}
+@utility font-bungee-inline {
+  font-family: 'Bungee Inline', cursive;
+}
+@utility scrollbar-hide {
+  /* Scrollbar utilities - completely hidden */
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@utility scrollbar-hide-horizontal {
+  /* Hide horizontal scrollbar but keep vertical scrollbar visible */
+  overflow-x: scroll !important;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+  
+  &::-webkit-scrollbar:horizontal {
+    display: none !important;
+    height: 0 !important;
+  }
+}
+
+@utility scrollbar-thin {
+  /* Minimal thin scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+  
+  &::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 4px;
+  }
+  
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.5);
+  }
+  
+  &::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@utility timeline-minimal-scrollbar {
+  /* Extra minimal scrollbar for timeline areas */
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.2) transparent;
+  
+  &::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.2);
+    border-radius: 3px;
+  }
+  
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.4);
+  }
+  
+  &::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}

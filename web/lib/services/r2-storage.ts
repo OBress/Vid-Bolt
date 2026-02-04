@@ -62,6 +62,14 @@ export const STORAGE_PATHS = {
     GENERATED: 'footage/generated',
   },
   EXPORTS: 'exports',
+  
+  // Video Editor V2 - cross-project media library
+  VIDEO_EDITOR: {
+    ROOT: 'video-editor',
+    MEDIA: 'video-editor/media',           // User's media library
+    THUMBNAILS: 'video-editor/thumbnails', // Generated thumbnails
+    PROJECTS: 'video-editor/projects',     // Project-specific media
+  },
 } as const;
 
 // Initialize S3 client for R2
@@ -399,6 +407,58 @@ export function generateStockScraperImageKey(imageId: string, ext: string = 'jpg
  */
 export function generateStockScraperAudioKey(audioId: string, ext: string = 'mp3'): string {
   return `${STORAGE_PATHS.STOCK_SCRAPER.AUDIO}/${audioId}.${ext}`;
+}
+
+// ============================================================================
+// Video Editor V2 Key Generators
+// ============================================================================
+// Used by the professional video editor for media library storage.
+
+/**
+ * Generate storage key for video editor media file.
+ * Path format: video-editor/{userId}/media/{uuid}-{filename}
+ * or: video-editor/{userId}/projects/{projectId}/{uuid}-{filename}
+ * 
+ * @param userId - User ID
+ * @param projectId - Optional project ID (if media is project-specific)
+ * @param filename - Original filename
+ * @returns Storage key
+ */
+export function generateVideoEditorMediaKey(
+  userId: string,
+  projectId: string | null,
+  filename: string
+): string {
+  const uuid = crypto.randomUUID();
+  const safeName = filename.replace(/[^a-zA-Z0-9.-]/g, '_');
+  
+  if (projectId) {
+    return `${STORAGE_PATHS.VIDEO_EDITOR.PROJECTS}/${userId}/${projectId}/${uuid}-${safeName}`;
+  }
+  return `${STORAGE_PATHS.VIDEO_EDITOR.MEDIA}/${userId}/${uuid}-${safeName}`;
+}
+
+/**
+ * Generate storage key for video editor thumbnail.
+ * Path format: video-editor/{userId}/thumbnails/{uuid}.{ext}
+ * or: video-editor/{userId}/projects/{projectId}/thumbnails/{uuid}.{ext}
+ * 
+ * @param userId - User ID
+ * @param projectId - Optional project ID
+ * @param extension - File extension (default: jpg)
+ * @returns Storage key
+ */
+export function generateVideoEditorThumbnailKey(
+  userId: string,
+  projectId: string | null,
+  extension: string = 'jpg'
+): string {
+  const uuid = crypto.randomUUID();
+  
+  if (projectId) {
+    return `${STORAGE_PATHS.VIDEO_EDITOR.PROJECTS}/${userId}/${projectId}/thumbnails/${uuid}.${extension}`;
+  }
+  return `${STORAGE_PATHS.VIDEO_EDITOR.THUMBNAILS}/${userId}/${uuid}.${extension}`;
 }
 
 // ============================================================================

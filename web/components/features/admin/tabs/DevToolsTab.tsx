@@ -9,14 +9,18 @@ import {
   ArrowLeft,
   Download,
   Layers,
+  Film,
+  Music,
 } from "lucide-react";
 import { UniversalScriptTester } from "@/components/features/dev/UniversalScriptTester";
 import { AVScriptTester } from "@/components/features/dev/AVScriptTester";
 import { GPUApiTester } from "@/components/features/dev/GPUApiTester";
 import { StockScraperTester } from "@/components/features/dev/StockScraperTester";
 import { MotionGraphicsTester } from "@/components/features/dev/MotionGraphicsTester";
+import { VideoEditorTester } from "@/components/features/dev/VideoEditorTester";
+import { AudioCleaningTester } from "@/components/features/dev/AudioCleaningTester";
 
-type ActiveTester = "universal" | "av" | "gpu" | "stock" | "motion" | null;
+type ActiveTester = "universal" | "av" | "gpu" | "stock" | "motion" | "video-editor" | "audio-cleaning" | null;
 
 export function DevToolsTab() {
   const [activeTester, setActiveTester] = useState<ActiveTester>(null);
@@ -65,6 +69,26 @@ export function DevToolsTab() {
   if (activeTester === "motion") {
     return (
       <MotionGraphicsTester
+        isOpen={true}
+        onClose={() => setActiveTester(null)}
+        inline={true}
+      />
+    );
+  }
+
+  if (activeTester === "video-editor") {
+    return (
+      <VideoEditorTester
+        isOpen={true}
+        onClose={() => setActiveTester(null)}
+        inline={true}
+      />
+    );
+  }
+
+  if (activeTester === "audio-cleaning") {
+    return (
+      <AudioCleaningTester
         isOpen={true}
         onClose={() => setActiveTester(null)}
         inline={true}
@@ -176,6 +200,48 @@ export function DevToolsTab() {
         <Button
           onClick={() => setActiveTester("motion")}
           className="w-full bg-pink-600 hover:bg-pink-700"
+        >
+          Open Tester
+        </Button>
+      </div>
+
+      {/* Video Editor Section */}
+      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
+        <div className="h-10 w-10 rounded-full bg-cyan-500/10 flex items-center justify-center">
+          <Film className="w-5 h-5 text-cyan-500" />
+        </div>
+        <div>
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
+            Video Editor V2
+          </h3>
+          <p className="text-neutral-400 text-xs h-10">
+            Timeline-based video editor with tracks, clips, and playback.
+          </p>
+        </div>
+        <Button
+          onClick={() => setActiveTester("video-editor")}
+          className="w-full bg-cyan-600 hover:bg-cyan-700"
+        >
+          Open Tester
+        </Button>
+      </div>
+
+      {/* Audio Cleaning Section */}
+      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
+        <div className="h-10 w-10 rounded-full bg-green-500/10 flex items-center justify-center">
+          <Music className="w-5 h-5 text-green-500" />
+        </div>
+        <div>
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
+            Audio Cleaning
+          </h3>
+          <p className="text-neutral-400 text-xs h-10">
+            Remove AI fingerprints, watermarks & metadata from audio.
+          </p>
+        </div>
+        <Button
+          onClick={() => setActiveTester("audio-cleaning")}
+          className="w-full bg-green-600 hover:bg-green-700"
         >
           Open Tester
         </Button>

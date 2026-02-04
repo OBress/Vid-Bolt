@@ -1,0 +1,187 @@
+/**
+ * Lower Third Templates
+ * 
+ * Professional lower third motion graphics for displaying
+ * names, titles, and information overlays.
+ */
+
+import { MotionGraphicsTemplate, MotionGraphicsCategory } from '../../types/motion-graphics';
+
+export const lowerThirdTemplates: MotionGraphicsTemplate[] = [
+  {
+    id: 'lower-third-modern',
+    name: 'Modern Lower Third',
+    description: 'Clean, modern lower third with animated entrance',
+    category: MotionGraphicsCategory.LOWER_THIRD,
+    tags: ['lower-third', 'name', 'title', 'modern', 'corporate'],
+    duration: 150, // 5 seconds at 30fps
+    isBuiltIn: true,
+    editableProperties: [
+      {
+        id: 'name',
+        label: 'Name',
+        type: 'text',
+        value: 'John Doe',
+        defaultValue: 'John Doe',
+        group: 'Content',
+      },
+      {
+        id: 'title',
+        label: 'Title / Role',
+        type: 'text',
+        value: 'Creative Director',
+        defaultValue: 'Creative Director',
+        group: 'Content',
+      },
+      {
+        id: 'primaryColor',
+        label: 'Primary Color',
+        type: 'color',
+        value: '#3B82F6',
+        defaultValue: '#3B82F6',
+        group: 'Style',
+      },
+      {
+        id: 'textColor',
+        label: 'Text Color',
+        type: 'color',
+        value: '#FFFFFF',
+        defaultValue: '#FFFFFF',
+        group: 'Style',
+      },
+    ],
+    remotionCode: `LowerThird`,
+  },
+  {
+    id: 'lower-third-minimal',
+    name: 'Minimal Lower Third',
+    description: 'Simple and elegant text overlay',
+    category: MotionGraphicsCategory.LOWER_THIRD,
+    tags: ['lower-third', 'minimal', 'simple', 'elegant'],
+    duration: 120,
+    isBuiltIn: true,
+    editableProperties: [
+      {
+        id: 'name',
+        label: 'Name',
+        type: 'text',
+        value: 'Jane Smith',
+        defaultValue: 'Jane Smith',
+        group: 'Content',
+      },
+      {
+        id: 'title',
+        label: 'Subtitle',
+        type: 'text',
+        value: 'CEO & Founder',
+        defaultValue: 'CEO & Founder',
+        group: 'Content',
+      },
+      {
+        id: 'primaryColor',
+        label: 'Accent Color',
+        type: 'color',
+        value: '#10B981',
+        defaultValue: '#10B981',
+        group: 'Style',
+      },
+      {
+        id: 'textColor',
+        label: 'Text Color',
+        type: 'color',
+        value: '#FFFFFF',
+        defaultValue: '#FFFFFF',
+        group: 'Style',
+      },
+    ],
+    remotionCode: `LowerThird`,
+  },
+  {
+    id: 'lower-third-news',
+    name: 'News Style Lower Third',
+    description: 'Broadcast news style name plate',
+    category: MotionGraphicsCategory.LOWER_THIRD,
+    tags: ['lower-third', 'news', 'broadcast', 'professional'],
+    duration: 180,
+    isBuiltIn: true,
+    editableProperties: [
+      {
+        id: 'name',
+        label: 'Name',
+        type: 'text',
+        value: 'Reporter Name',
+        defaultValue: 'Reporter Name',
+        group: 'Content',
+      },
+      {
+        id: 'title',
+        label: 'Location / Beat',
+        type: 'text',
+        value: 'Washington D.C.',
+        defaultValue: 'Washington D.C.',
+        group: 'Content',
+      },
+      {
+        id: 'primaryColor',
+        label: 'Primary Color',
+        type: 'color',
+        value: '#DC2626',
+        defaultValue: '#DC2626',
+        group: 'Style',
+      },
+      {
+        id: 'textColor',
+        label: 'Text Color',
+        type: 'color',
+        value: '#FFFFFF',
+        defaultValue: '#FFFFFF',
+        group: 'Style',
+      },
+    ],
+    remotionCode: `LowerThird`,
+  },
+  {
+    id: 'lower-third-social',
+    name: 'Social Media Lower Third',
+    description: 'Perfect for YouTube, TikTok, and Instagram',
+    category: MotionGraphicsCategory.LOWER_THIRD,
+    tags: ['lower-third', 'social', 'youtube', 'tiktok', 'instagram'],
+    duration: 120,
+    isBuiltIn: true,
+    editableProperties: [
+      {
+        id: 'name',
+        label: 'Channel Name',
+        type: 'text',
+        value: '@YourChannel',
+        defaultValue: '@YourChannel',
+        group: 'Content',
+      },
+      {
+        id: 'title',
+        label: 'Description',
+        type: 'text',
+        value: 'Subscribe for more!',
+        defaultValue: 'Subscribe for more!',
+        group: 'Content',
+      },
+      {
+        id: 'primaryColor',
+        label: 'Background Color',
+        type: 'color',
+        value: '#8B5CF6',
+        defaultValue: '#8B5CF6',
+        group: 'Style',
+      },
+      {
+        id: 'textColor',
+        label: 'Text Color',
+        type: 'color',
+        value: '#FFFFFF',
+        defaultValue: '#FFFFFF',
+        group: 'Style',
+      },
+    ],
+    remotionCode: `LowerThird`,
+  },
+];
