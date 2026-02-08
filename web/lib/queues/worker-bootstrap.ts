@@ -46,6 +46,8 @@ import {
   gpuVideoCreateProcessor,
   gpuLtx2CreateProcessor,
   gpuLtx2InterpolateProcessor,
+  gpuMusicCreateProcessor,
+  gpuSfxCreateProcessor,
   gcpProvisionProcessor,
   segmentProcessor,
   stockMediaProcessor,
@@ -138,6 +140,18 @@ const workerConfigs: WorkerConfig[] = [
     processor: gpuLtx2InterpolateProcessor,
     concurrency: 3,
     description: 'GPU LTX-2 interpolation',
+  },
+  {
+    queue: 'gpu-music-create',
+    processor: gpuMusicCreateProcessor,
+    concurrency: 2,
+    description: 'GPU music generation (ACE-Step 1.5)',
+  },
+  {
+    queue: 'gpu-sfx-create',
+    processor: gpuSfxCreateProcessor,
+    concurrency: 3,
+    description: 'GPU sound effect generation (AudioGen)',
   },
   {
     queue: 'gcp-provisioning-queue',

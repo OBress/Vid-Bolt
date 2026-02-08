@@ -25,6 +25,8 @@ import {
   callGpuVideoGenerate,
   callGpuLtx2Generate,
   callGpuLtx2Interpolate,
+  callGpuMusicGenerate,
+  callGpuSoundEffectGenerate,
 } from '@/lib/services/gpu-api-service';
 import type { AspectRatio, FPS } from '@/lib/services/gpu-api-service';
 
@@ -190,6 +192,8 @@ export interface GpuImageEditJobData {
   aspectRatio?: AspectRatio;
   seed?: number;
   maskImageUrl?: string;
+  loraName?: string;
+  loraStrength?: number;
   // Pre-generated URLs for batch jobs
   putUrl?: string;
   publicUrl?: string;
@@ -197,7 +201,7 @@ export interface GpuImageEditJobData {
 }
 
 export const gpuImageEditProcessor: Processor<GpuImageEditJobData> = async (job: Job<GpuImageEditJobData>) => {
-  const { taskId, userId, prompt, sourceImageUrl, aspectRatio, seed, maskImageUrl } = job.data;
+  const { taskId, userId, prompt, sourceImageUrl, aspectRatio, seed, maskImageUrl, loraName, loraStrength } = job.data;
   const supabase = getSupabaseServiceClient();
 
   console.log(`[GPUApiTest] Starting image edit for task ${taskId}`);
@@ -230,6 +234,8 @@ export const gpuImageEditProcessor: Processor<GpuImageEditJobData> = async (job:
       aspect_ratio: aspectRatio || '16:9',
       mask_image_url: maskImageUrl || undefined,
       seed: seed || undefined,
+      lora_name: loraName || undefined,
+      lora_strength: loraStrength ?? undefined,
       save_url: putUrl,
       webhook_url: getWebhookUrl(),
       item_id: taskId,
@@ -573,6 +579,181 @@ export const gpuLtx2InterpolateProcessor: Processor<GpuLtx2InterpolateJobData> =
     return { success: true, videoUrl: finalPublicUrl, generationTime: result.generationTime };
   } catch (error) {
     await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'ltx2_interpolate', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
+    throw error;
+  }
+};
+
+// ============================================================================
+// MUSIC GENERATION PROCESSOR
+// ============================================================================
+
+export interface GpuMusicCreateJobData {
+  taskId: string;
+  userId: string;
+  prompt: string;
+  lyrics?: string;
+  durationSeconds?: number;
+  seed?: number;
+  // Pre-generated URLs for batch jobs
+  putUrl?: string;
+  publicUrl?: string;
+  r2Key?: string;
+}
+
+export const gpuMusicCreateProcessor: Processor<GpuMusicCreateJobData> = async (job: Job<GpuMusicCreateJobData>) => {
+  const { taskId, userId, prompt, lyrics, durationSeconds, seed } = job.data;
+  const supabase = getSupabaseServiceClient();
+
+  console.log(`[GPUApiTest] Starting music generation for task ${taskId}`);
+
+  try {
+    if (!isR2Configured()) throw new Error('R2 storage is not configured.');
+
+    await updateTaskStatus(taskId, { status: 'running', current_phase: 'audio_generation', current_step: 'Generating presigned URL...', progress_percent: 10 });
+
+    // Use pre-generated URLs if provided (batch jobs), otherwise generate new ones
+    let key = job.data.r2Key;
+    let putUrl = job.data.putUrl;
+    let publicUrl = job.data.publicUrl;
+
+    if (!putUrl || !publicUrl) {
+      key = generateGpuTestKey(userId, 'music', 'wav');
+      const urls = await generatePresignedPutUrl(key, 'audio/wav');
+      putUrl = urls.putUrl;
+      publicUrl = urls.publicUrl;
+    }
+
+    await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
+
+    const gpuJobId = uuidv4();
+    let result = await callGpuMusicGenerate({
+      job_id: gpuJobId,
+      prompt,
+      lyrics: lyrics || undefined,
+      duration_seconds: durationSeconds || 30,
+      seed: seed || undefined,
+      save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: taskId,
+      webhook_secret: getWebhookSecret(),
+    });
+
+    if (result.success && result.isAsync) {
+      // Music can take a while for long durations (up to 10 min for 600s music)
+      const webhookResult = await waitForJobCompletion(taskId, 'Generating music', 900000);  // 15 min timeout
+      result = { ...result, ...webhookResult };
+    }
+
+    // Final status update with logging
+    const finalStatus = result.success ? 'completed' : 'failed';
+    const finalPublicUrl = result.success ? getPublicUrl(key!) : undefined;
+
+    console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
+    
+    const { error: updateError, data: updateData } = await supabase.from('tasks').update({
+      status: finalStatus,
+      current_step: result.success ? 'Complete' : 'Failed',
+      progress_percent: result.success ? 100 : 0,
+      completed_at: new Date().toISOString(),
+      output_data: { success: result.success, type: 'music_generation', audioUrl: finalPublicUrl, generationTime: result.generationTime, durationSeconds: durationSeconds || 30, error: result.success ? undefined : result.errorMessage, r2Key: key },
+    }).eq('id', taskId).select('id, status');
+
+    if (updateError) {
+      console.error(`[GPUApiTest] FAILED to update task ${taskId}:`, updateError);
+    } else {
+      console.log(`[GPUApiTest] Task ${taskId} updated successfully:`, updateData);
+    }
+
+    if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
+    return { success: true, audioUrl: finalPublicUrl, generationTime: result.generationTime };
+  } catch (error) {
+    await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'music_generation', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
+    throw error;
+  }
+};
+
+// ============================================================================
+// SOUND EFFECT GENERATION PROCESSOR
+// ============================================================================
+
+export interface GpuSfxCreateJobData {
+  taskId: string;
+  userId: string;
+  prompt: string;
+  durationSeconds?: number;
+  seed?: number;
+  // Pre-generated URLs for batch jobs
+  putUrl?: string;
+  publicUrl?: string;
+  r2Key?: string;
+}
+
+export const gpuSfxCreateProcessor: Processor<GpuSfxCreateJobData> = async (job: Job<GpuSfxCreateJobData>) => {
+  const { taskId, userId, prompt, durationSeconds, seed } = job.data;
+  const supabase = getSupabaseServiceClient();
+
+  console.log(`[GPUApiTest] Starting sound effect generation for task ${taskId}`);
+
+  try {
+    if (!isR2Configured()) throw new Error('R2 storage is not configured.');
+
+    await updateTaskStatus(taskId, { status: 'running', current_phase: 'audio_generation', current_step: 'Generating presigned URL...', progress_percent: 10 });
+
+    // Use pre-generated URLs if provided (batch jobs), otherwise generate new ones
+    let key = job.data.r2Key;
+    let putUrl = job.data.putUrl;
+    let publicUrl = job.data.publicUrl;
+
+    if (!putUrl || !publicUrl) {
+      key = generateGpuTestKey(userId, 'sfx', 'wav');
+      const urls = await generatePresignedPutUrl(key, 'audio/wav');
+      putUrl = urls.putUrl;
+      publicUrl = urls.publicUrl;
+    }
+
+    await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
+
+    const gpuJobId = uuidv4();
+    let result = await callGpuSoundEffectGenerate({
+      job_id: gpuJobId,
+      prompt,
+      duration_seconds: durationSeconds || 5,
+      seed: seed || undefined,
+      save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: taskId,
+      webhook_secret: getWebhookSecret(),
+    });
+
+    if (result.success && result.isAsync) {
+      const webhookResult = await waitForJobCompletion(taskId, 'Generating sound effect', 120000);  // 2 min for short SFX
+      result = { ...result, ...webhookResult };
+    }
+
+    // Final status update with logging
+    const finalStatus = result.success ? 'completed' : 'failed';
+    const finalPublicUrl = result.success ? getPublicUrl(key!) : undefined;
+
+    console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
+    
+    const { error: updateError, data: updateData } = await supabase.from('tasks').update({
+      status: finalStatus,
+      current_step: result.success ? 'Complete' : 'Failed',
+      progress_percent: result.success ? 100 : 0,
+      completed_at: new Date().toISOString(),
+      output_data: { success: result.success, type: 'sfx_generation', audioUrl: finalPublicUrl, generationTime: result.generationTime, durationSeconds: durationSeconds || 5, error: result.success ? undefined : result.errorMessage, r2Key: key },
+    }).eq('id', taskId).select('id, status');
+
+    if (updateError) {
+      console.error(`[GPUApiTest] FAILED to update task ${taskId}:`, updateError);
+    } else {
+      console.log(`[GPUApiTest] Task ${taskId} updated successfully:`, updateData);
+    }
+
+    if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
+    return { success: true, audioUrl: finalPublicUrl, generationTime: result.generationTime };
+  } catch (error) {
+    await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'sfx_generation', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
     throw error;
   }
 };

@@ -400,18 +400,18 @@ export async function generatePresignedPutUrl(
  * Path format: temporary/gpu-api-test/{userId}/{type}_{timestamp}_{random}.{ext}
  * 
  * @param userId - User ID
- * @param type - Type of asset (image or video)
- * @param extension - File extension (default: png for images, mp4 for videos)
+ * @param type - Type of asset (image, video, music, sfx)
+ * @param extension - File extension (default: png for images, mp4 for videos, mp3 for audio)
  * @returns Storage key
  */
 export function generateGpuTestKey(
   userId: string,
-  type: "image" | "video",
+  type: "image" | "video" | "music" | "sfx",
   extension?: string
 ): string {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 9);
-  const ext = extension || (type === "video" ? "mp4" : "png");
+  const ext = extension || (type === "video" ? "mp4" : type === "image" ? "png" : "mp3");
   return `${STORAGE_PATHS.TEMPORARY}/${STORAGE_PATHS.GPU_TEST}/${userId}/${type}_${timestamp}_${random}.${ext}`;
 }
 

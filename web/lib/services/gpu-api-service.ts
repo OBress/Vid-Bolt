@@ -17,6 +17,7 @@ export type VramMode =
   | "image_generation"
   | "image_editing"
   | "video_generation"
+  | "audio_creation"
   | "all";
 
 /** Request body for POST /api/v1/image/generate */
@@ -53,6 +54,10 @@ export interface ImageEditRequest {
   item_id?: string;
   /** Optional: HMAC signing secret */
   webhook_secret?: string;
+  /** Optional: LoRA to apply (e.g., 'multiple-angles' for 96 camera positions) */
+  lora_name?: string;
+  /** LoRA strength (0.0-1.0), default 0.9 when LoRA is specified */
+  lora_strength?: number;
 }
 
 /** Request body for POST /api/v1/video/generate */
@@ -76,6 +81,34 @@ export interface VideoGenerateRequest {
   webhook_secret?: string;
 }
 
+/** Request body for POST /api/v1/music/generate */
+export interface MusicGenerateRequest {
+  job_id: string;
+  prompt: string;
+  /** Optional lyrics for vocal generation */
+  lyrics?: string;
+  /** Duration in seconds (10-600), default 30 */
+  duration_seconds?: number;
+  seed?: number;
+  save_url: string;
+  webhook_url?: string;
+  item_id?: string;
+  webhook_secret?: string;
+}
+
+/** Request body for POST /api/v1/sfx/generate */
+export interface SoundEffectGenerateRequest {
+  job_id: string;
+  prompt: string;
+  /** Duration in seconds (1-30), default 5 */
+  duration_seconds?: number;
+  seed?: number;
+  save_url: string;
+  webhook_url?: string;
+  item_id?: string;
+  webhook_secret?: string;
+}
+
 /** Successful response from GPU API (legacy sync response) */
 export interface GPUApiSuccessResponse {
   status: "completed";
@@ -86,8 +119,8 @@ export interface GPUApiSuccessResponse {
 /** Async job accepted response (202 Accepted) */
 export interface GPUApiAsyncJobResponse {
   job_id: string;
-  status: "pending" | "processing";
-  status_url: string;
+  status: "pending" | "processing" | "queued";
+  status_url?: string;
   message: string;
 }
 
@@ -235,6 +268,36 @@ async function updateGpuActivity(): Promise<void> {
   } catch (err) {
     // Don't fail the GPU call if activity tracking fails
     console.log(`[GPUApiService] Activity tracking error (non-fatal)`);
+  }
+}
+
+/**
+ * Force update the GPU activity timestamp (bypasses throttle).
+ * Use this for significant user actions like VRAM mode changes that should
+ * always reset the auto-shutdown timer.
+ */
+export async function forceUpdateGpuActivity(): Promise<void> {
+  lastActivityUpdateTime = Date.now();
+  
+  try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+    
+    const { error } = await supabase
+      .from("user_gcp_config")
+      .update({ last_gpu_activity_at: new Date().toISOString() })
+      .eq("status", "RUNNING");
+    
+    if (error) {
+      console.log(`[GPUApiService] Failed to force update activity: ${error.message}`);
+    } else {
+      console.log(`[GPUApiService] Force updated GPU activity timestamp`);
+    }
+  } catch (err) {
+    console.log(`[GPUApiService] Force activity tracking error (non-fatal)`);
   }
 }
 
@@ -524,6 +587,158 @@ export async function callGpuVideoGenerate(
   if (
     statusCode === 202 &&
     (response.status === "pending" || response.status === "processing")
+  ) {
+    const asyncResponse = response as GPUApiAsyncJobResponse;
+    return {
+      success: true,
+      isAsync: true,
+      jobId: asyncResponse.job_id,
+      generationTime: undefined,
+      debug,
+    };
+  }
+
+  // Error response
+  const errorResponse = response as GPUApiErrorResponse;
+  return {
+    success: false,
+    errorCode: errorResponse.error_code,
+    errorMessage: errorResponse.error_message,
+    debug,
+  };
+}
+
+// ============================================================================
+// MUSIC GENERATION
+// ============================================================================
+
+export interface MusicGenerateResult {
+  success: boolean;
+  publicUrl?: string;
+  generationTime?: number;
+  isAsync?: boolean;
+  jobId?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  debug: {
+    request: MusicGenerateRequest;
+    response: unknown;
+    statusCode: number;
+    gpuApiUrl: string;
+  };
+  finalJob?: JobInfo;
+}
+
+/**
+ * Generate music via the GPU API using ACE-Step 1.5.
+ *
+ * @param request - Music generation request matching API spec
+ * @returns Result with success status, URL, and debug info
+ */
+export async function callGpuMusicGenerate(
+  request: MusicGenerateRequest
+): Promise<MusicGenerateResult> {
+  const { response, rawRequest, rawResponse, statusCode } = await callGpuApi(
+    "/api/v1/music/generate",
+    request
+  );
+
+  const debug = {
+    request: rawRequest,
+    response: rawResponse,
+    statusCode,
+    gpuApiUrl: getGpuApiUrl(),
+  };
+
+  if (response.status === "completed") {
+    return {
+      success: true,
+      publicUrl: (response as GPUApiSuccessResponse).save_url,
+      generationTime: (response as GPUApiSuccessResponse).generation_time,
+      debug,
+    };
+  }
+
+  // Handle 202 Accepted (async job accepted) - treat as success with async flag
+  if (
+    statusCode === 202 &&
+    (response.status === "pending" || response.status === "processing" || response.status === "queued")
+  ) {
+    const asyncResponse = response as GPUApiAsyncJobResponse;
+    return {
+      success: true,
+      isAsync: true,
+      jobId: asyncResponse.job_id,
+      generationTime: undefined,
+      debug,
+    };
+  }
+
+  // Error response
+  const errorResponse = response as GPUApiErrorResponse;
+  return {
+    success: false,
+    errorCode: errorResponse.error_code,
+    errorMessage: errorResponse.error_message,
+    debug,
+  };
+}
+
+// ============================================================================
+// SOUND EFFECT GENERATION
+// ============================================================================
+
+export interface SoundEffectGenerateResult {
+  success: boolean;
+  publicUrl?: string;
+  generationTime?: number;
+  isAsync?: boolean;
+  jobId?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  debug: {
+    request: SoundEffectGenerateRequest;
+    response: unknown;
+    statusCode: number;
+    gpuApiUrl: string;
+  };
+  finalJob?: JobInfo;
+}
+
+/**
+ * Generate a sound effect via the GPU API using AudioGen.
+ *
+ * @param request - Sound effect generation request matching API spec
+ * @returns Result with success status, URL, and debug info
+ */
+export async function callGpuSoundEffectGenerate(
+  request: SoundEffectGenerateRequest
+): Promise<SoundEffectGenerateResult> {
+  const { response, rawRequest, rawResponse, statusCode } = await callGpuApi(
+    "/api/v1/sfx/generate",
+    request
+  );
+
+  const debug = {
+    request: rawRequest,
+    response: rawResponse,
+    statusCode,
+    gpuApiUrl: getGpuApiUrl(),
+  };
+
+  if (response.status === "completed") {
+    return {
+      success: true,
+      publicUrl: (response as GPUApiSuccessResponse).save_url,
+      generationTime: (response as GPUApiSuccessResponse).generation_time,
+      debug,
+    };
+  }
+
+  // Handle 202 Accepted (async job accepted) - treat as success with async flag
+  if (
+    statusCode === 202 &&
+    (response.status === "pending" || response.status === "processing" || response.status === "queued")
   ) {
     const asyncResponse = response as GPUApiAsyncJobResponse;
     return {
@@ -847,7 +1062,7 @@ export async function callGpuGetMode(): Promise<{
  * Switch between image and video modes
  */
 export async function callGpuSwitchMode(
-  targetMode: "image" | "video"
+  targetMode: "image" | "video" | "audio"
 ): Promise<{
   success: boolean;
   data?: ModeSwitchResponse;
@@ -1195,11 +1410,15 @@ export async function callGpuSetVramMode(mode: VramMode): Promise<{
       body: JSON.stringify({ mode }),
     });
     if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status}` };
+      const errorData = await response.json().catch(() => ({}));
+      const detail = errorData.detail || errorData.error || errorData.message || JSON.stringify(errorData);
+      console.error(`[GPUApiService] setVramMode failed: HTTP ${response.status} - ${detail}`);
+      return { success: false, error: `HTTP ${response.status}: ${detail}` };
     }
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
+    console.error(`[GPUApiService] setVramMode error:`, error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",

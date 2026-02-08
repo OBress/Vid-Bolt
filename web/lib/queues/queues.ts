@@ -86,6 +86,12 @@ export const gpuLtx2CreateQueue = createQueue('gpu-ltx2-create');
 /** GPU LTX-2 keyframe interpolation */
 export const gpuLtx2InterpolateQueue = createQueue('gpu-ltx2-interpolate');
 
+/** GPU music generation (ACE-Step 1.5) */
+export const gpuMusicCreateQueue = createQueue('gpu-music-create');
+
+/** GPU sound effect generation (AudioGen) */
+export const gpuSfxCreateQueue = createQueue('gpu-sfx-create');
+
 // ============================================================================
 // QUEUE UTILITIES
 // ============================================================================
@@ -124,6 +130,8 @@ export const allQueues = [
   gpuVideoCreateQueue,
   gpuLtx2CreateQueue,
   gpuLtx2InterpolateQueue,
+  gpuMusicCreateQueue,
+  gpuSfxCreateQueue,
   gcpProvisioningQueue,
   videoSegmentationQueue,
   stockMediaQueue,

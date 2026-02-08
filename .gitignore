@@ -40,3 +40,6 @@ next-env.d.ts
 
 # GPT Story Writer
 /gpt-story-writer-niche-sys
+
+# MMM
+/mmm

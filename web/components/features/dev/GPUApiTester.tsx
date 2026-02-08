@@ -41,6 +41,8 @@ import {
   Clock,
   Filter,
   ArrowLeft,
+  Music,
+  Volume2,
 } from "lucide-react";
 
 // ============================================================================
@@ -65,6 +67,7 @@ interface TestResult {
   type: string;
   imageUrl?: string;
   videoUrl?: string;
+  audioUrl?: string;
   error?: string;
   errorCode?: string;
   generationTime?: number;
@@ -77,7 +80,7 @@ interface TestResult {
 }
 
 type TestStatus = "idle" | "loading" | "success" | "error";
-type TabType = "system" | "mode" | "image" | "image-edit" | "video" | "loras";
+type TabType = "system" | "mode" | "image" | "image-edit" | "video" | "music" | "sfx" | "loras";
 type AspectRatio = "16:9" | "9:16";
 type FPS = 8 | 12 | 16 | 24 | 30;
 type ApiMode = "mock" | "real";
@@ -85,10 +88,11 @@ type VramMode =
   | "image_generation"
   | "image_editing"
   | "video_generation"
+  | "audio_creation"
   | "all";
 
 // Job tracking types for queue panel
-type JobType = "image" | "image-edit" | "video" | "ltx2" | "ltx2-interpolate";
+type JobType = "image" | "image-edit" | "video" | "ltx2" | "ltx2-interpolate" | "music" | "sfx";
 type QueueFilter =
   | "all"
   | "queued"
@@ -240,6 +244,8 @@ export function GPUApiTester({
   const [editMaskUrl, setEditMaskUrl] = useState("");
   const [editAspectRatio, setEditAspectRatio] = useState<AspectRatio>("16:9");
   const [editSeed, setEditSeed] = useState<string>("");
+  const [editLoraName, setEditLoraName] = useState<string>("");
+  const [editLoraStrength, setEditLoraStrength] = useState<number>(0.9);
   const [editStatus, setEditStatus] = useState<TestStatus>("idle");
   const [editResult, setEditResult] = useState<TestResult | null>(null);
   const [editDebugExpanded, setEditDebugExpanded] = useState(false);
@@ -260,7 +266,26 @@ export function GPUApiTester({
   const [videoResult, setVideoResult] = useState<TestResult | null>(null);
   const [videoDebugExpanded, setVideoDebugExpanded] = useState(false);
 
-  // =========================================================================
+  // Music Generation State
+  const [musicPrompt, setMusicPrompt] = useState(
+    "Upbeat electronic music with synth melodies",
+  );
+  const [musicLyrics, setMusicLyrics] = useState("");
+  const [musicDuration, setMusicDuration] = useState(30);
+  const [musicSeed, setMusicSeed] = useState<string>("");
+  const [musicStatus, setMusicStatus] = useState<TestStatus>("idle");
+  const [musicResult, setMusicResult] = useState<TestResult | null>(null);
+  const [musicDebugExpanded, setMusicDebugExpanded] = useState(false);
+
+  // Sound Effect Generation State
+  const [sfxPrompt, setSfxPrompt] = useState(
+    "Thunder rumbling in the distance",
+  );
+  const [sfxDuration, setSfxDuration] = useState(5);
+  const [sfxSeed, setSfxSeed] = useState<string>("");
+  const [sfxStatus, setSfxStatus] = useState<TestStatus>("idle");
+  const [sfxResult, setSfxResult] = useState<TestResult | null>(null);
+  const [sfxDebugExpanded, setSfxDebugExpanded] = useState(false);
   // QUEUE & BATCH STATE
   // =========================================================================
   const [trackedJobs, setTrackedJobs] = useState<Map<string, TrackedJob>>(
@@ -1126,6 +1151,7 @@ export function GPUApiTester({
   };
 
   const handleSetVramMode = async (mode: VramMode) => {
+    setModeSwitching(true);
     try {
       const response = await fetch("/api/gpu-api/settings/vram-mode", {
         method: "POST",
@@ -1135,9 +1161,13 @@ export function GPUApiTester({
       const data = await response.json();
       if (data.success) {
         setVramMode(data.data.mode);
+      } else {
+        console.error("[GPUApiTester] Set VRAM mode failed:", data.error);
       }
-    } catch {
-      // Ignore error
+    } catch (err) {
+      console.error("[GPUApiTester] Set VRAM mode error:", err);
+    } finally {
+      setModeSwitching(false);
     }
   };
 
@@ -1303,6 +1333,8 @@ export function GPUApiTester({
           maskImageUrl: editMaskUrl || undefined,
           aspectRatio: editAspectRatio,
           seed: editSeed ? parseInt(editSeed) : undefined,
+          loraName: editLoraName || undefined,
+          loraStrength: editLoraName ? editLoraStrength : undefined,
         }),
       });
 
@@ -1373,6 +1405,74 @@ export function GPUApiTester({
     }
   };
 
+  const handleTestMusicGeneration = async () => {
+    setMusicStatus("loading");
+    setMusicResult(null);
+
+    try {
+      const response = await fetch("/api/gpu-api/test/music", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: musicPrompt,
+          lyrics: musicLyrics || undefined,
+          durationSeconds: musicDuration,
+          seed: musicSeed ? parseInt(musicSeed) : undefined,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to start test");
+
+      const result = await pollForResult(data.taskId, (update) =>
+        setMusicResult(update),
+      );
+      setMusicResult(result);
+      setMusicStatus(result.success ? "success" : "error");
+      setMusicDebugExpanded(!result.success);
+    } catch (err) {
+      setMusicResult({
+        success: false,
+        type: "music_generation",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+      setMusicStatus("error");
+    }
+  };
+
+  const handleTestSfxGeneration = async () => {
+    setSfxStatus("loading");
+    setSfxResult(null);
+
+    try {
+      const response = await fetch("/api/gpu-api/test/sfx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: sfxPrompt,
+          durationSeconds: sfxDuration,
+          seed: sfxSeed ? parseInt(sfxSeed) : undefined,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to start test");
+
+      const result = await pollForResult(data.taskId, (update) =>
+        setSfxResult(update),
+      );
+      setSfxResult(result);
+      setSfxStatus(result.success ? "success" : "error");
+      setSfxDebugExpanded(!result.success);
+    } catch (err) {
+      setSfxResult({
+        success: false,
+        type: "sfx_generation",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+      setSfxStatus("error");
+    }
+  };
   const handleReset = (tab: TabType) => {
     switch (tab) {
       case "image":
@@ -1386,6 +1486,14 @@ export function GPUApiTester({
       case "video":
         setVideoStatus("idle");
         setVideoResult(null);
+        break;
+      case "music":
+        setMusicStatus("idle");
+        setMusicResult(null);
+        break;
+      case "sfx":
+        setSfxStatus("idle");
+        setSfxResult(null);
         break;
     }
   };
@@ -1937,6 +2045,39 @@ export function GPUApiTester({
         </Button>
 
         <Button
+          variant={activeTab === "music" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setActiveTab("music")}
+          className={
+            activeTab === "music" ? "bg-purple-600 hover:bg-purple-700" : ""
+          }
+        >
+          <Music className="w-4 h-4 mr-2" />
+          Music
+          {musicStatus !== "idle" && (
+            <span className="ml-2">
+              {renderStatusBadge(musicStatus, musicResult)}
+            </span>
+          )}
+        </Button>
+        <Button
+          variant={activeTab === "sfx" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setActiveTab("sfx")}
+          className={
+            activeTab === "sfx" ? "bg-orange-600 hover:bg-orange-700" : ""
+          }
+        >
+          <Volume2 className="w-4 h-4 mr-2" />
+          SFX
+          {sfxStatus !== "idle" && (
+            <span className="ml-2">
+              {renderStatusBadge(sfxStatus, sfxResult)}
+            </span>
+          )}
+        </Button>
+
+        <Button
           variant={activeTab === "loras" ? "default" : "ghost"}
           size="sm"
           onClick={() => setActiveTab("loras")}
@@ -2301,6 +2442,21 @@ export function GPUApiTester({
                         Video Gen
                       </Button>
                       <Button
+                        onClick={() => handleSetVramMode("audio_creation")}
+                        disabled={
+                          vramMode === "audio_creation" || modeSwitching
+                        }
+                        className={
+                          vramMode === "audio_creation"
+                            ? "bg-pink-600"
+                            : "bg-neutral-700 hover:bg-neutral-600"
+                        }
+                        size="sm"
+                      >
+                        <Music className="w-4 h-4 mr-2" />
+                        Audio
+                      </Button>
+                      <Button
                         onClick={() => handleSetVramMode("all")}
                         disabled={vramMode === "all" || modeSwitching}
                         className={
@@ -2318,9 +2474,11 @@ export function GPUApiTester({
                       {vramMode === "image_generation" &&
                         "Z-Image Turbo only (~8GB VRAM)"}
                       {vramMode === "image_editing" &&
-                        "LightX2V only (~12GB VRAM)"}
+                        "Qwen-Image-Edit-2511 (~12GB VRAM)"}
                       {vramMode === "video_generation" &&
                         "LTX-2 only (~20GB VRAM)"}
+                      {vramMode === "audio_creation" &&
+                        "ACE-Step 1.5 + AudioGen (~8GB VRAM)"}
                       {vramMode === "all" && "All models loaded (~40GB+ VRAM)"}
                       {!vramMode && "Select a VRAM mode"}
                     </div>
@@ -2699,6 +2857,58 @@ export function GPUApiTester({
                   />
                 </div>
 
+                {/* LoRA Selection */}
+                <div className="p-4 bg-neutral-900/50 rounded-lg border border-neutral-700">
+                  <label className="text-sm font-medium text-neutral-400 mb-3 block flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-pink-400" />
+                    LoRA Enhancement{" "}
+                    <span className="text-neutral-600">(optional)</span>
+                  </label>
+                  <div className="space-y-4">
+                    <div>
+                      <select
+                        value={editLoraName}
+                        onChange={(e) => setEditLoraName(e.target.value)}
+                        className="w-full bg-neutral-900 border border-neutral-700 text-neutral-200 rounded-md px-3 py-2"
+                        disabled={editStatus === "loading"}
+                      >
+                        <option value="">None (standard editing)</option>
+                        <option value="multiple-angles">
+                          Multiple Angles - 96-position camera control
+                        </option>
+                      </select>
+                      {editLoraName === "multiple-angles" && (
+                        <p className="text-xs text-neutral-500 mt-2">
+                          Prompt format: &lt;sks&gt; {"{azimuth}"} {"{elevation}"} {"{distance}"}
+                          <br />
+                          Example: &lt;sks&gt; 45 30 1.5
+                        </p>
+                      )}
+                    </div>
+                    {editLoraName && (
+                      <div>
+                        <label className="text-sm text-neutral-500 mb-2 block">
+                          LoRA Strength: {editLoraStrength.toFixed(1)}
+                        </label>
+                        <Slider
+                          value={[editLoraStrength]}
+                          onValueChange={(val) => setEditLoraStrength(val[0])}
+                          min={0.1}
+                          max={1.0}
+                          step={0.1}
+                          disabled={editStatus === "loading"}
+                          className="my-2"
+                        />
+                        <div className="flex justify-between text-xs text-neutral-600">
+                          <span>0.1 (subtle)</span>
+                          <span>0.5</span>
+                          <span>1.0 (strong)</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="flex gap-2">
                   <Button
                     onClick={() => handleQueueJob("image-edit")}
@@ -3005,6 +3215,375 @@ export function GPUApiTester({
 
                 {renderResult(videoResult, videoDebugExpanded, () =>
                   setVideoDebugExpanded(!videoDebugExpanded),
+                )}
+              </div>
+            )}
+
+            {/* Music Generation Tab */}
+            {activeTab === "music" && (
+              <div className="space-y-6">
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Music Style/Genre Prompt{" "}
+                    <span className="text-neutral-600">(required)</span>
+                  </label>
+                  <Textarea
+                    value={musicPrompt}
+                    onChange={(e) => setMusicPrompt(e.target.value)}
+                    placeholder="Describe the music style, instruments, mood..."
+                    className="min-h-[100px] bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={musicStatus === "loading"}
+                    maxLength={500}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Lyrics{" "}
+                    <span className="text-neutral-600">(optional)</span>
+                  </label>
+                  <Textarea
+                    value={musicLyrics}
+                    onChange={(e) => setMusicLyrics(e.target.value)}
+                    placeholder="Add lyrics if you want vocal music..."
+                    className="min-h-[80px] bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={musicStatus === "loading"}
+                    maxLength={3000}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Duration: {musicDuration}s{" "}
+                    <span className="text-neutral-600">(10-600 seconds)</span>
+                  </label>
+                  <Slider
+                    value={[musicDuration]}
+                    onValueChange={(val) => setMusicDuration(val[0])}
+                    min={10}
+                    max={600}
+                    step={5}
+                    disabled={musicStatus === "loading"}
+                    className="my-3"
+                  />
+                  <div className="flex justify-between text-xs text-neutral-600">
+                    <span>10s</span>
+                    <span>1m</span>
+                    <span>5m</span>
+                    <span>10m</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Seed <span className="text-neutral-600">(optional)</span>
+                  </label>
+                  <Input
+                    type="number"
+                    value={musicSeed}
+                    onChange={(e) => setMusicSeed(e.target.value)}
+                    placeholder="Leave empty for random"
+                    className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={musicStatus === "loading"}
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    onClick={handleTestMusicGeneration}
+                    disabled={!musicPrompt.trim() || musicStatus === "loading"}
+                    className="flex-1 bg-purple-600 hover:bg-purple-700"
+                  >
+                    {musicStatus === "loading" ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Music className="w-4 h-4 mr-2" />
+                        Generate Music
+                      </>
+                    )}
+                  </Button>
+                  {musicStatus !== "idle" && musicStatus !== "loading" && (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleReset("music")}
+                      className="border-neutral-700"
+                      size="sm"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+
+                {/* Result */}
+                {musicResult && (
+                  <div
+                    className={`p-4 rounded-lg border ${
+                      musicResult.success
+                        ? "bg-green-900/20 border-green-700"
+                        : "bg-red-900/20 border-red-700"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-3">
+                      {musicResult.success ? (
+                        <>
+                          <CheckCircle2 className="w-5 h-5 text-green-400" />
+                          <span className="text-green-400 font-medium">
+                            Music Generated
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertCircle className="w-5 h-5 text-red-400" />
+                          <span className="text-red-400 font-medium">
+                            Generation Failed
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    {musicResult.success && musicResult.audioUrl && (
+                      <div className="space-y-3">
+                        <audio
+                          controls
+                          className="w-full"
+                          src={musicResult.audioUrl}
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => copyToClipboard(musicResult.audioUrl!)}
+                            className="border-neutral-700"
+                          >
+                            <Copy className="w-4 h-4 mr-2" />
+                            Copy URL
+                          </Button>
+                          <a
+                            href={musicResult.audioUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-neutral-700"
+                            >
+                              <ExternalLink className="w-4 h-4 mr-2" />
+                              Open
+                            </Button>
+                          </a>
+                        </div>
+                        {musicResult.generationTime && (
+                          <p className="text-sm text-neutral-400">
+                            Generation time: {musicResult.generationTime.toFixed(2)}s
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {!musicResult.success && musicResult.error && (
+                      <p className="text-sm text-red-300">{musicResult.error}</p>
+                    )}
+
+                    {/* Debug section */}
+                    <button
+                      onClick={() => setMusicDebugExpanded(!musicDebugExpanded)}
+                      className="flex items-center gap-1 text-sm text-neutral-500 hover:text-neutral-400 mt-3"
+                    >
+                      {musicDebugExpanded ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                      Debug Info
+                    </button>
+                    {musicDebugExpanded && musicResult.debug && (
+                      <pre className="mt-2 p-2 bg-neutral-950 rounded text-xs text-neutral-400 overflow-x-auto">
+                        {JSON.stringify(musicResult.debug, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Sound Effect Generation Tab */}
+            {activeTab === "sfx" && (
+              <div className="space-y-6">
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Sound Effect Description{" "}
+                    <span className="text-neutral-600">(required)</span>
+                  </label>
+                  <Textarea
+                    value={sfxPrompt}
+                    onChange={(e) => setSfxPrompt(e.target.value)}
+                    placeholder="Describe the sound effect..."
+                    className="min-h-[100px] bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={sfxStatus === "loading"}
+                    maxLength={500}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Duration: {sfxDuration}s{" "}
+                    <span className="text-neutral-600">(1-30 seconds)</span>
+                  </label>
+                  <Slider
+                    value={[sfxDuration]}
+                    onValueChange={(val) => setSfxDuration(val[0])}
+                    min={1}
+                    max={30}
+                    step={1}
+                    disabled={sfxStatus === "loading"}
+                    className="my-3"
+                  />
+                  <div className="flex justify-between text-xs text-neutral-600">
+                    <span>1s</span>
+                    <span>10s</span>
+                    <span>20s</span>
+                    <span>30s</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
+                    Seed <span className="text-neutral-600">(optional)</span>
+                  </label>
+                  <Input
+                    type="number"
+                    value={sfxSeed}
+                    onChange={(e) => setSfxSeed(e.target.value)}
+                    placeholder="Leave empty for random"
+                    className="bg-neutral-900 border-neutral-700 text-neutral-200 relative z-20 cursor-text"
+                    disabled={sfxStatus === "loading"}
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    onClick={handleTestSfxGeneration}
+                    disabled={!sfxPrompt.trim() || sfxStatus === "loading"}
+                    className="flex-1 bg-orange-600 hover:bg-orange-700"
+                  >
+                    {sfxStatus === "loading" ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Volume2 className="w-4 h-4 mr-2" />
+                        Generate SFX
+                      </>
+                    )}
+                  </Button>
+                  {sfxStatus !== "idle" && sfxStatus !== "loading" && (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleReset("sfx")}
+                      className="border-neutral-700"
+                      size="sm"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+
+                {/* Result */}
+                {sfxResult && (
+                  <div
+                    className={`p-4 rounded-lg border ${
+                      sfxResult.success
+                        ? "bg-green-900/20 border-green-700"
+                        : "bg-red-900/20 border-red-700"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-3">
+                      {sfxResult.success ? (
+                        <>
+                          <CheckCircle2 className="w-5 h-5 text-green-400" />
+                          <span className="text-green-400 font-medium">
+                            Sound Effect Generated
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertCircle className="w-5 h-5 text-red-400" />
+                          <span className="text-red-400 font-medium">
+                            Generation Failed
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    {sfxResult.success && sfxResult.audioUrl && (
+                      <div className="space-y-3">
+                        <audio
+                          controls
+                          className="w-full"
+                          src={sfxResult.audioUrl}
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => copyToClipboard(sfxResult.audioUrl!)}
+                            className="border-neutral-700"
+                          >
+                            <Copy className="w-4 h-4 mr-2" />
+                            Copy URL
+                          </Button>
+                          <a
+                            href={sfxResult.audioUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-neutral-700"
+                            >
+                              <ExternalLink className="w-4 h-4 mr-2" />
+                              Open
+                            </Button>
+                          </a>
+                        </div>
+                        {sfxResult.generationTime && (
+                          <p className="text-sm text-neutral-400">
+                            Generation time: {sfxResult.generationTime.toFixed(2)}s
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {!sfxResult.success && sfxResult.error && (
+                      <p className="text-sm text-red-300">{sfxResult.error}</p>
+                    )}
+
+                    {/* Debug section */}
+                    <button
+                      onClick={() => setSfxDebugExpanded(!sfxDebugExpanded)}
+                      className="flex items-center gap-1 text-sm text-neutral-500 hover:text-neutral-400 mt-3"
+                    >
+                      {sfxDebugExpanded ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                      Debug Info
+                    </button>
+                    {sfxDebugExpanded && sfxResult.debug && (
+                      <pre className="mt-2 p-2 bg-neutral-950 rounded text-xs text-neutral-400 overflow-x-auto">
+                        {JSON.stringify(sfxResult.debug, null, 2)}
+                      </pre>
+                    )}
+                  </div>
                 )}
               </div>
             )}

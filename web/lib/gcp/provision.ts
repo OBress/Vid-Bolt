@@ -387,7 +387,7 @@ fi
         autoDelete: true,
         initializeParams: {
           sourceImage: IMAGE_FAMILY,
-          diskSizeGb: '300',
+          diskSizeGb: '350',
           diskType: DISK_TYPE,
           resourcePolicies: [] // Explicitly disable snapshot schedules/backups
         }

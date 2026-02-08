@@ -131,7 +131,7 @@ async function waitForModeReady(
 /**
  * Ensure GPU is in the correct VRAM mode
  */
-async function ensureMode(targetMode: 'image_generation' | 'image_editing' | 'video_generation'): Promise<boolean> {
+async function ensureMode(targetMode: 'image_generation' | 'image_editing' | 'video_generation' | 'audio_creation'): Promise<boolean> {
   // Get current mode
   const currentMode = await callGpuGetMode();
   
@@ -142,7 +142,10 @@ async function ensureMode(targetMode: 'image_generation' | 'image_editing' | 'vi
   
   // Switch mode
   console.log(`[GPU-Batch] Switching to ${targetMode} mode...`);
-  const switchTarget = targetMode === 'video_generation' ? 'video' : 'image';
+  const switchTarget: 'image' | 'video' | 'audio' =
+    targetMode === 'video_generation' ? 'video' :
+    targetMode === 'audio_creation' ? 'audio' :
+    'image';
   const switchResult = await callGpuSwitchMode(switchTarget);
   
   if (!switchResult.success) {

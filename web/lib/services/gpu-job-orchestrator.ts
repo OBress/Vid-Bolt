@@ -14,6 +14,8 @@ import {
   gpuImageCreateQueue,
   gpuImageEditQueue,
   gpuLtx2CreateQueue,
+  gpuMusicCreateQueue,
+  gpuSfxCreateQueue,
 } from '@/lib/queues/queues';
 import { Queue } from 'bullmq';
 
@@ -25,7 +27,9 @@ export type GpuJobType =
   | 'asset_reference_images'
   | 'image_generation'
   | 'image_editing'
-  | 'video_generation';
+  | 'video_generation'
+  | 'music_generation'
+  | 'sfx_generation';
 
 export interface GpuJobSubmission {
   userId: string;
@@ -52,6 +56,8 @@ const JOB_TYPE_TO_QUEUE: Record<GpuJobType, string> = {
   'image_generation': 'gpu-image-create',
   'image_editing': 'gpu-image-edit',
   'video_generation': 'gpu-ltx2-create',
+  'music_generation': 'gpu-music-create',
+  'sfx_generation': 'gpu-sfx-create',
 };
 
 const JOB_TYPE_TO_QUEUE_INSTANCE: Record<GpuJobType, Queue> = {
@@ -59,6 +65,8 @@ const JOB_TYPE_TO_QUEUE_INSTANCE: Record<GpuJobType, Queue> = {
   'image_generation': gpuImageCreateQueue,
   'image_editing': gpuImageEditQueue,
   'video_generation': gpuLtx2CreateQueue,
+  'music_generation': gpuMusicCreateQueue,
+  'sfx_generation': gpuSfxCreateQueue,
 };
 
 // ============================================================================

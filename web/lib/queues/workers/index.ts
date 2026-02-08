@@ -17,6 +17,8 @@ export {
   gpuVideoCreateProcessor,
   gpuLtx2CreateProcessor,
   gpuLtx2InterpolateProcessor,
+  gpuMusicCreateProcessor,
+  gpuSfxCreateProcessor,
 } from './gpu-api-test';
 export { gcpProvisionProcessor } from './gcp-provision';
 export { segmentProcessor, createSegmentationWorker } from './segment';

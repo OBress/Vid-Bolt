@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { callGpuGetVramMode, callGpuSetVramMode, type VramMode } from "@/lib/services/gpu-api-service";
+import { callGpuGetVramMode, callGpuSetVramMode, forceUpdateGpuActivity, type VramMode } from "@/lib/services/gpu-api-service";
 
 /**
  * GET /api/gpu-api/settings/vram-mode
@@ -59,14 +59,16 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { mode } = body;
 
-    const validModes = ["image_generation", "image_editing", "video_generation", "all"];
+    const validModes = ["image_generation", "image_editing", "video_generation", "audio_creation", "all"];
     if (!validModes.includes(mode)) {
-      return NextResponse.json({ error: "Invalid mode. Must be 'image_generation', 'image_editing', 'video_generation', or 'all'" }, { status: 400 });
+      return NextResponse.json({ error: "Invalid mode. Must be 'image_generation', 'image_editing', 'video_generation', 'audio_creation', or 'all'" }, { status: 400 });
     }
 
     const result = await callGpuSetVramMode(mode as VramMode);
     
     if (result.success) {
+      // Reset auto-shutdown timer since user is actively interacting with GPU
+      forceUpdateGpuActivity().catch(() => {});
       return NextResponse.json({ success: true, data: result.data });
     } else {
       return NextResponse.json({ success: false, error: result.error }, { status: 500 });

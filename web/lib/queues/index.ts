@@ -18,6 +18,8 @@ export {
   gpuVideoCreateQueue,
   gpuLtx2CreateQueue,
   gpuLtx2InterpolateQueue,
+  gpuMusicCreateQueue,
+  gpuSfxCreateQueue,
   allQueues, 
   closeAllQueues 
 } from './queues';

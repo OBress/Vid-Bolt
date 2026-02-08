@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { gpuImageEditQueue } from "@/lib/queues";
+import { gpuSfxCreateQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 /**
- * POST /api/gpu-api/test/image-edit
+ * POST /api/gpu-api/test/sfx
  * 
- * Triggers single image edit test via BullMQ.
+ * Triggers sound effect generation test via BullMQ.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { prompt, sourceImageUrl, aspectRatio, maskImageUrl, seed, loraName, loraStrength } = body;
+    const { prompt, durationSeconds, seed } = body;
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
       return NextResponse.json(
@@ -40,7 +40,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[GPUApiTest] Creating image edit task for prompt: ${prompt.substring(0, 50)}...`);
+    // Validate duration (1-30 seconds)
+    const duration = durationSeconds ?? 5;
+    if (duration < 1 || duration > 30) {
+      return NextResponse.json(
+        { error: "Duration must be between 1 and 30 seconds" },
+        { status: 400 }
+      );
+    }
+
+    console.log(`[GPUApiTest] Creating sound effect task for prompt: ${prompt.substring(0, 50)}...`);
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -55,10 +64,10 @@ export async function POST(request: NextRequest) {
       .insert({
         user_id: user.id,
         type: "video",
-        name: `GPU Test: Image Edit`,
+        name: `GPU Test: Sound Effect`,
         status: "pending",
         steps: [],
-        input_data: { prompt, sourceImageUrl, aspectRatio, maskImageUrl, seed, loraName, loraStrength, testType: 'image_edit' },
+        input_data: { prompt, durationSeconds: duration, seed, testType: 'sfx_generation' },
         output_data: {},
       })
       .select()
@@ -69,23 +78,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    const job = await gpuImageEditQueue.add('image-edit', {
+    const job = await gpuSfxCreateQueue.add('sfx-create', {
       taskId: task.id,
       userId: user.id,
       prompt,
-      sourceImageUrl: sourceImageUrl || undefined,
-      aspectRatio: aspectRatio || '16:9',
-      maskImageUrl: maskImageUrl || undefined,
+      durationSeconds: duration,
       seed: seed || undefined,
-      loraName: loraName || undefined,
-      loraStrength: loraStrength ?? undefined,
     }, { jobId: task.id });
 
-    console.log(`[GPUApiTest] Triggered image edit test for task ${task.id}, job ${job.id}`);
+    console.log(`[GPUApiTest] Triggered sound effect test for task ${task.id}, job ${job.id}`);
 
     return NextResponse.json({ success: true, taskId: task.id, jobId: job.id });
   } catch (error) {
-    console.error("[GPUApiTest] Image edit error:", error);
+    console.error("[GPUApiTest] Sound effect error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }

@@ -1,15 +1,31 @@
 /**
  * Visual Director Workflow Worker
  * ============================================================================
- * BullMQ worker for the visual director pipeline that plans scenes,
- * generates images, and creates videos.
+ * BullMQ worker for the visual director pipeline that generates images
+ * and videos for a video project's shot list using the GPU API.
  * 
- * NOTE: This is a simplified placeholder. Full GPU integration will use
- * webhooks instead of polling (future implementation).
+ * Pipeline:
+ * 1. Fetch shot list from video_projects.metadata (from AV Script Part 1)
+ * 2. Build ShotForGpuGeneration[] from shots
+ * 3. Call processGpuBatchGeneration() for batch image + video generation
+ *    (handles VRAM mode switching, R2 storage, webhook tracking)
+ * 4. Map results to EnhancedShot[] format and store in metadata
+ * 5. Update media_generation progress tracking
  */
 
 import { Job, Processor } from 'bullmq';
-import { getSupabaseServiceClient } from '@/lib/queues/shared';
+import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
+import {
+  processGpuBatchGeneration,
+  type ShotForGpuGeneration,
+} from '@/lib/av-script/gpu-batch-generation';
+import type { ShotPart1 } from './av-script';
+import type {
+  EnhancedShot,
+  MediaGenerationProgress,
+  VideoProjectMetadata,
+} from '@/types/media-generation';
+import type { AspectRatio } from '@/lib/services/gpu-api-service';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -41,6 +57,136 @@ export interface VisualDirectorJobData {
     visual_description: string;
   }>;
   finalScript?: string;
+  /** Enable GPU generation (default: true) */
+  gpuEnabled?: boolean;
+  /** Aspect ratio override (default: from metadata or '16:9') */
+  aspectRatio?: '16:9' | '9:16';
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+const LOG_PREFIX = '[VisualDirector]';
+
+/**
+ * Extract shots from video metadata, supporting multiple storage formats.
+ */
+function extractShotsFromMetadata(metadata: Record<string, unknown>): ShotPart1[] {
+  // Priority: av_script_part1 → shot_list
+  const avScriptPart1 = metadata.av_script_part1 as { shots?: ShotPart1[] } | undefined;
+  if (avScriptPart1?.shots?.length) {
+    return avScriptPart1.shots;
+  }
+
+  const shotList = metadata.shot_list as ShotPart1[] | undefined;
+  if (shotList?.length) {
+    return shotList;
+  }
+
+  return [];
+}
+
+/**
+ * Determine the aspect ratio from metadata or job data.
+ */
+function resolveAspectRatio(
+  jobAspectRatio?: '16:9' | '9:16',
+  metadata?: Record<string, unknown>
+): AspectRatio {
+  if (jobAspectRatio) return jobAspectRatio;
+
+  const visuals = metadata?.visuals as { aspectRatio?: '16:9' | '9:16' } | undefined;
+  if (visuals?.aspectRatio) return visuals.aspectRatio;
+
+  return '16:9';
+}
+
+/**
+ * Build ShotForGpuGeneration[] from ShotPart1[].
+ */
+function buildGpuShots(shots: ShotPart1[]): ShotForGpuGeneration[] {
+  return shots.map((shot) => ({
+    segment_index: shot.segment_index,
+    media_type: shot.media_type || 'motiongraphic',
+    visual_prompt: shot.visual_prompt || shot.summary || `Visual for segment ${shot.segment_index}`,
+    duration_seconds: shot.duration_seconds || 5,
+    // Video shots need a keyframe image — these get generated in the image batch first,
+    // then the batch pipeline uses them for video generation if input_image_url is provided.
+    // For now, video shots without a pre-existing keyframe will fall back to placeholder.
+    input_image_url: undefined,
+  }));
+}
+
+/**
+ * Build basic shots from expandedBeats when no AV script data exists.
+ */
+function buildShotsFromBeats(
+  expandedBeats: VisualDirectorJobData['expandedBeats']
+): ShotForGpuGeneration[] {
+  if (!expandedBeats?.length) return [];
+
+  return expandedBeats.map((beat, index) => ({
+    segment_index: index,
+    media_type: 'motiongraphic' as const,
+    visual_prompt: beat.visual_description || beat.expanded_content || `Visual for beat ${index}`,
+    duration_seconds: 5,
+    input_image_url: undefined,
+  }));
+}
+
+/**
+ * Map GPU generation results back to EnhancedShot[] format.
+ */
+function mapResultsToEnhancedShots(
+  shots: ShotPart1[],
+  gpuResults: Awaited<ReturnType<typeof processGpuBatchGeneration>>
+): EnhancedShot[] {
+  return shots.map((shot) => {
+    const gpuResult = gpuResults.results.find(
+      (r) => r.shot_index === shot.segment_index
+    );
+
+    const isImage = shot.media_type !== 'video';
+    const isCompleted = gpuResult?.generation_status === 'completed';
+
+    const enhanced: EnhancedShot = {
+      // Core shot fields
+      segment_index: shot.segment_index,
+      start_seconds: shot.start_seconds,
+      end_seconds: shot.end_seconds,
+      duration_seconds: shot.duration_seconds,
+      text: shot.text,
+      visual_prompt: shot.visual_prompt || shot.summary,
+
+      // Media type
+      media_type: isImage ? 'image' : 'video',
+
+      // Generation status
+      generationStatus: isCompleted ? 'completed' : 'failed',
+    };
+
+    if (gpuResult && isCompleted) {
+      if (isImage) {
+        enhanced.baseImageUrl = gpuResult.media_url;
+        enhanced.baseImageStatus = 'completed';
+        enhanced.startImageUrl = gpuResult.media_url;
+      } else {
+        enhanced.videoUrl = gpuResult.media_url;
+        enhanced.videoStatus = 'completed';
+      }
+    } else if (gpuResult) {
+      if (isImage) {
+        enhanced.baseImageStatus = 'failed';
+        enhanced.baseImageError = gpuResult.error_message;
+      } else {
+        enhanced.videoStatus = 'failed';
+        enhanced.videoError = gpuResult.error_message;
+      }
+    }
+
+    return enhanced;
+  });
 }
 
 // ============================================================================
@@ -48,98 +194,342 @@ export interface VisualDirectorJobData {
 // ============================================================================
 
 export const visualDirectorProcessor: Processor<VisualDirectorJobData> = async (job: Job<VisualDirectorJobData>) => {
-  const { taskId, userId, videoId, spine, assetRegistry, expandedBeats } = job.data;
+  const {
+    taskId,
+    userId,
+    videoId,
+    expandedBeats,
+    gpuEnabled = true,
+    aspectRatio: jobAspectRatio,
+  } = job.data;
 
-  console.log(`[VisualDirector] Starting job ${job.id} for video ${videoId}`);
+  console.log(`${LOG_PREFIX} Starting job ${job.id} for video ${videoId} (GPU: ${gpuEnabled})`);
 
   try {
     const supabase = getSupabaseServiceClient();
 
-    // Step 1: Build scene list from beats
-    console.log('[VisualDirector] Step 1: Building scene list from expanded beats...');
-    const scenes = (expandedBeats || []).map((beat, index) => ({
-      scene_id: `scene-${index}`,
-      beat_id: beat.beat_id,
-      content: beat.expanded_content,
-      visual_description: beat.visual_description,
-      shots: []
-    }));
-    console.log(`[VisualDirector] Created ${scenes.length} scenes`);
+    // =========================================================================
+    // STEP 1: Fetch video metadata and extract shots
+    // =========================================================================
+    console.log(`${LOG_PREFIX} Step 1: Fetching video metadata...`);
 
-    // Step 2: Build generation queues (placeholder - actual GPU calls would go here)
-    console.log('[VisualDirector] Step 2: Building generation task queues...');
-    const imageQueue: Array<{ taskId: string; sceneId: string; prompt: string }> = [];
-    const videoQueue: Array<{ taskId: string; sceneId: string; imageUrl: string }> = [];
-
-    for (const scene of scenes) {
-      if (scene.visual_description) {
-        imageQueue.push({
-          taskId: `img-${scene.scene_id}`,
-          sceneId: scene.scene_id,
-          prompt: scene.visual_description,
-        });
-      }
+    if (taskId) {
+      await updateTaskStatus(taskId, {
+        status: 'running',
+        current_phase: 'media_generation',
+        current_step: 'Fetching shot list...',
+        progress_percent: 5,
+      });
     }
 
-    console.log(`[VisualDirector] Queue sizes - Images: ${imageQueue.length}, Videos: ${videoQueue.length}`);
-
-    // Step 3-5: Placeholder for actual GPU generation (will use webhooks)
-    console.log('[VisualDirector] Step 3-5: GPU generation (placeholder - pending webhook implementation)');
-    const generatedImages: Record<string, string> = {};
-    const generatedVideos: Record<string, string> = {};
-
-    // Step 6: Store results in metadata
-    console.log('[VisualDirector] Step 6: Storing results in video metadata...');
-
-    const visualDirectorOutput = {
-      scenes,
-      generatedImages,
-      generatedVideos,
-      stats: {
-        totalScenes: scenes.length,
-        totalShots: scenes.reduce((sum, s) => sum + (s.shots?.length || 0), 0),
-        imagesQueued: imageQueue.length,
-        videosQueued: videoQueue.length,
-      },
-    };
-
-    const { data: video } = await supabase
+    const { data: video, error: fetchError } = await supabase
       .from('video_projects')
       .select('metadata')
       .eq('id', videoId)
       .single();
 
-    const existingMetadata = (video?.metadata || {}) as Record<string, unknown>;
+    if (fetchError) {
+      throw new Error(`Failed to fetch video ${videoId}: ${fetchError.message}`);
+    }
 
-    const { error } = await supabase
+    const metadata = (video?.metadata || {}) as Record<string, unknown>;
+    const aspectRatio = resolveAspectRatio(jobAspectRatio, metadata);
+
+    // Try to extract shots from existing AV script data
+    const existingShots = extractShotsFromMetadata(metadata);
+
+    let gpuShots: ShotForGpuGeneration[];
+    let shotSource: string;
+
+    if (existingShots.length > 0) {
+      gpuShots = buildGpuShots(existingShots);
+      shotSource = 'AV Script';
+      console.log(`${LOG_PREFIX} Found ${existingShots.length} shots from AV Script metadata`);
+    } else if (expandedBeats?.length) {
+      gpuShots = buildShotsFromBeats(expandedBeats);
+      shotSource = 'expandedBeats';
+      console.log(`${LOG_PREFIX} Built ${gpuShots.length} shots from expandedBeats`);
+    } else {
+      console.warn(`${LOG_PREFIX} No shots or beats found — nothing to generate`);
+
+      // Store empty result
+      await supabase
+        .from('video_projects')
+        .update({
+          metadata: {
+            ...metadata,
+            visual_director_output: { scenes: [], generatedImages: {}, generatedVideos: {}, stats: { totalScenes: 0, totalShots: 0 } },
+            visual_director_completed: true,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', videoId);
+
+      if (taskId) {
+        await updateTaskStatus(taskId, {
+          status: 'completed',
+          current_step: 'No shots to generate',
+          progress_percent: 100,
+        });
+      }
+
+      return { success: true, videoId, stats: { totalScenes: 0, totalShots: 0 } };
+    }
+
+    // =========================================================================
+    // STEP 2: Update media generation progress
+    // =========================================================================
+    console.log(`${LOG_PREFIX} Step 2: Initialising media generation progress...`);
+
+    const imageShots = gpuShots.filter((s) => s.media_type !== 'video');
+    const videoShots = gpuShots.filter((s) => s.media_type === 'video');
+
+    const mediaProgress: MediaGenerationProgress = {
+      status: 'images',
+      started_at: new Date().toISOString(),
+      av_script_completed: true,
+      total_shots: gpuShots.length,
+      current_shot_index: 0,
+      current_phase: 'image',
+      images_completed: 0,
+      images_failed: 0,
+      edits_completed: 0,
+      edits_failed: 0,
+      edits_skipped: gpuShots.length, // We skip editing in this pipeline
+      videos_completed: 0,
+      videos_failed: 0,
+    };
+
+    await supabase
       .from('video_projects')
       .update({
         metadata: {
-          ...existingMetadata,
-          visual_director_output: visualDirectorOutput,
-          visual_director_completed: true,
+          ...metadata,
+          media_generation: mediaProgress,
         },
+        current_stage: 'media_generation',
+        status: 'processing',
         updated_at: new Date().toISOString(),
       })
       .eq('id', videoId);
 
-    if (error) {
-      console.error('[VisualDirector] Failed to store results:', error);
-      throw error;
+    if (taskId) {
+      await updateTaskStatus(taskId, {
+        status: 'running',
+        current_step: `Generating media for ${gpuShots.length} shots (${imageShots.length} images, ${videoShots.length} videos)...`,
+        progress_percent: 10,
+      });
     }
 
-    console.log(`[VisualDirector] Stored visual director output for video ${videoId}`);
-    console.log(`[VisualDirector] Workflow complete for video ${videoId}`);
-    console.log(`[VisualDirector] Stats: ${visualDirectorOutput.stats.totalScenes} scenes`);
+    // =========================================================================
+    // STEP 3: GPU batch generation (or fallback)
+    // =========================================================================
+    if (gpuEnabled) {
+      console.log(`${LOG_PREFIX} Step 3: Running GPU batch generation (${imageShots.length} images, ${videoShots.length} videos)...`);
 
-    return {
-      success: true,
-      videoId,
-      stats: visualDirectorOutput.stats,
-    };
+      // Progress callback wired to task + metadata updates
+      const onProgress = async (message: string, percent: number) => {
+        console.log(`${LOG_PREFIX} Progress: ${message} (${percent}%)`);
 
+        if (taskId) {
+          await updateTaskStatus(taskId, {
+            status: 'running',
+            current_step: message,
+            progress_percent: 10 + Math.round(percent * 0.7), // Scale 0-100 to 10-80
+          });
+        }
+      };
+
+      const gpuResult = await processGpuBatchGeneration(
+        userId,
+        videoId,
+        gpuShots,
+        aspectRatio,
+        onProgress
+      );
+
+      console.log(`${LOG_PREFIX} GPU batch complete: ${gpuResult.stats.imagesGenerated} images, ${gpuResult.stats.videosGenerated} videos`);
+      console.log(`${LOG_PREFIX} Failed: ${gpuResult.stats.imagesFailed} images, ${gpuResult.stats.videosFailed} videos`);
+
+      // =====================================================================
+      // STEP 4: Map results and store
+      // =====================================================================
+      console.log(`${LOG_PREFIX} Step 4: Storing results in metadata...`);
+
+      if (taskId) {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: 'Storing generated media...',
+          progress_percent: 85,
+        });
+      }
+
+      // Re-fetch metadata in case it was updated during generation
+      const { data: updatedVideo } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+
+      const latestMetadata = (updatedVideo?.metadata || metadata) as Record<string, unknown>;
+
+      // Build enhanced shot list if we have existing shots
+      let enhancedShots: EnhancedShot[] | undefined;
+      if (existingShots.length > 0) {
+        enhancedShots = mapResultsToEnhancedShots(existingShots, gpuResult);
+      }
+
+      // Build legacy visual director output for backwards compat
+      const generatedImages: Record<string, string> = {};
+      const generatedVideos: Record<string, string> = {};
+
+      for (const result of gpuResult.results) {
+        if (result.generation_status === 'completed') {
+          const shot = gpuShots.find((s) => s.segment_index === result.shot_index);
+          const key = `scene-${result.shot_index}`;
+          if (shot?.media_type === 'video') {
+            generatedVideos[key] = result.media_url;
+          } else {
+            generatedImages[key] = result.media_url;
+          }
+        }
+      }
+
+      // Final progress update
+      const completedProgress: MediaGenerationProgress = {
+        ...mediaProgress,
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+        current_phase: 'idle',
+        images_completed: gpuResult.stats.imagesGenerated,
+        images_failed: gpuResult.stats.imagesFailed,
+        videos_completed: gpuResult.stats.videosGenerated,
+        videos_failed: gpuResult.stats.videosFailed,
+      };
+
+      const finalMetadata = {
+        ...latestMetadata,
+        visual_director_output: {
+          scenes: existingShots.map((shot, i) => ({
+            scene_id: `scene-${i}`,
+            beat_id: `beat-${i}`,
+            content: shot.text,
+            visual_description: shot.visual_prompt || shot.summary,
+          })),
+          generatedImages,
+          generatedVideos,
+          stats: {
+            totalScenes: gpuShots.length,
+            totalShots: gpuShots.length,
+            imagesGenerated: gpuResult.stats.imagesGenerated,
+            imagesFailed: gpuResult.stats.imagesFailed,
+            videosGenerated: gpuResult.stats.videosGenerated,
+            videosFailed: gpuResult.stats.videosFailed,
+          },
+        },
+        visual_director_completed: true,
+        media_generation: completedProgress,
+        // Store enhanced shots if available
+        ...(enhancedShots ? { shot_list: enhancedShots } : {}),
+      };
+
+      const { error: storeError } = await supabase
+        .from('video_projects')
+        .update({
+          metadata: finalMetadata,
+          current_stage: 'media_generation',
+          status: 'processing',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', videoId);
+
+      if (storeError) {
+        console.error(`${LOG_PREFIX} Failed to store results:`, storeError);
+        throw storeError;
+      }
+
+      // =====================================================================
+      // STEP 5: Complete
+      // =====================================================================
+      if (taskId) {
+        await updateTaskStatus(taskId, {
+          status: 'completed',
+          current_step: 'Media generation complete',
+          progress_percent: 100,
+        });
+      }
+
+      const stats = {
+        totalScenes: gpuShots.length,
+        totalShots: gpuShots.length,
+        shotSource,
+        imagesGenerated: gpuResult.stats.imagesGenerated,
+        imagesFailed: gpuResult.stats.imagesFailed,
+        videosGenerated: gpuResult.stats.videosGenerated,
+        videosFailed: gpuResult.stats.videosFailed,
+      };
+
+      console.log(`${LOG_PREFIX} Complete for video ${videoId}`);
+      console.log(`${LOG_PREFIX} Stats:`, JSON.stringify(stats));
+
+      return { success: true, videoId, stats };
+
+    } else {
+      // GPU disabled — placeholder mode (original behavior)
+      console.log(`${LOG_PREFIX} GPU disabled, storing placeholder results`);
+
+      await supabase
+        .from('video_projects')
+        .update({
+          metadata: {
+            ...metadata,
+            visual_director_output: {
+              scenes: gpuShots.map((shot, i) => ({
+                scene_id: `scene-${i}`,
+                content: shot.visual_prompt,
+                visual_description: shot.visual_prompt,
+              })),
+              generatedImages: {},
+              generatedVideos: {},
+              stats: {
+                totalScenes: gpuShots.length,
+                totalShots: gpuShots.length,
+                imagesGenerated: 0,
+                videosGenerated: 0,
+              },
+            },
+            visual_director_completed: true,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', videoId);
+
+      if (taskId) {
+        await updateTaskStatus(taskId, {
+          status: 'completed',
+          current_step: 'Complete (GPU disabled)',
+          progress_percent: 100,
+        });
+      }
+
+      return {
+        success: true,
+        videoId,
+        stats: { totalScenes: gpuShots.length, totalShots: gpuShots.length, gpuDisabled: true },
+      };
+    }
   } catch (error) {
-    console.error(`[VisualDirector] Failed for video ${videoId}:`, error);
+    console.error(`${LOG_PREFIX} Failed for video ${videoId}:`, error);
+
+    if (taskId) {
+      await updateTaskStatus(taskId, {
+        status: 'failed',
+        current_step: 'Failed',
+        progress_percent: 0,
+        error_message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+
     throw error;
   }
 };
