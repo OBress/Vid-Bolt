@@ -15,6 +15,7 @@ import {
   gpuLtx2CreateQueue,
 } from "@/lib/queues";
 import type { AspectRatio } from "@/lib/services/gpu-api-service";
+import { getImageDimensions, getVideoDimensions } from "@/lib/services/gpu-api-service";
 
 // Placeholder image URL for testing
 const PLACEHOLDER_IMAGE_URL = "https://picsum.photos/1920/1080";
@@ -185,19 +186,26 @@ export async function POST(request: NextRequest) {
         itemIndex: index,
         prompt: item.prompt,
         aspectRatio: (item.aspectRatio as AspectRatio) || "16:9",
-        width: item.width || (item.aspectRatio === "9:16" ? 1080 : 1920),
-        height: item.height || (item.aspectRatio === "9:16" ? 1920 : 1080),
         seed: item.seed,
         r2Key: key,
         putUrl,
         publicUrl,
       };
 
+      // Resolve dimensions based on media type and aspect ratio
+      const ar = (item.aspectRatio as AspectRatio) || "16:9";
+      const isVideoType = type === "video" || type === "ltx2";
+      const dims = isVideoType ? getVideoDimensions(ar) : getImageDimensions(ar);
+      const resolvedWidth = item.width || dims.width;
+      const resolvedHeight = item.height || dims.height;
+
       try {
         switch (type) {
           case "image":
             await gpuImageCreateQueue.add(`batch-${batchId}-${index}`, {
               ...commonJobData,
+              width: resolvedWidth,
+              height: resolvedHeight,
               numInferenceSteps: item.numInferenceSteps || 8,
               lora_name: item.lora,
             });
@@ -206,6 +214,8 @@ export async function POST(request: NextRequest) {
           case "image-edit":
             await gpuImageEditQueue.add(`batch-${batchId}-${index}`, {
               ...commonJobData,
+              width: resolvedWidth,
+              height: resolvedHeight,
               sourceImageUrl: item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
               maskImageUrl: item.maskImageUrl,
             });
@@ -214,6 +224,8 @@ export async function POST(request: NextRequest) {
           case "video":
             await gpuVideoCreateQueue.add(`batch-${batchId}-${index}`, {
               ...commonJobData,
+              width: resolvedWidth,
+              height: resolvedHeight,
               startFrameUrl: item.startFrameUrl || item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
               endFrameUrl: item.endFrameUrl || item.end_image_url,
               durationSeconds: item.durationSeconds || item.duration_seconds || 5.0,
@@ -224,9 +236,11 @@ export async function POST(request: NextRequest) {
           case "ltx2":
             await gpuLtx2CreateQueue.add(`batch-${batchId}-${index}`, {
               ...commonJobData,
-              sourceImageUrl: item.startFrameUrl || item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
+              width: resolvedWidth,
+              height: resolvedHeight,
+              start_frame_url: item.startFrameUrl || item.input_image_url || item.sourceImageUrl || PLACEHOLDER_IMAGE_URL,
               negativePrompt: item.negative_prompt,
-              endImageUrl: item.endFrameUrl || item.end_image_url,
+              end_frame_url: item.endFrameUrl || item.end_image_url,
               durationSeconds: item.durationSeconds || item.duration_seconds || 5.0,
               frameRate: item.fps || item.frame_rate || 24,
               enhancePrompt: item.enhance_prompt || false,

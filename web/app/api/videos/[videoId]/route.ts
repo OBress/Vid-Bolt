@@ -113,7 +113,30 @@ export async function GET(
       }));
     }
 
-    return NextResponse.json({ video, audioChunks });
+    // Query for any active (pending/running) tasks associated with this video
+    // This enables the wizard to restore loading screens when resuming mid-generation
+    let activeTasks: Array<{ id: string; type: string; status: string; name: string }> = [];
+    try {
+      const { data: tasks } = await supabase
+        .from("tasks")
+        .select("id, type, status, name")
+        .or("status.eq.pending,status.eq.running")
+        .filter("input_data->>videoId", "eq", videoId)
+        .order("created_at", { ascending: false });
+
+      activeTasks = tasks || [];
+      if (activeTasks.length > 0) {
+        console.log(
+          `[API] Found ${activeTasks.length} active tasks for video ${videoId}:`,
+          activeTasks.map((t) => `${t.type}(${t.status})`).join(", ")
+        );
+      }
+    } catch (err) {
+      console.error("[API] Failed to query active tasks:", err);
+      // Non-fatal - continue without active task info
+    }
+
+    return NextResponse.json({ video, audioChunks, activeTasks });
   } catch (error) {
     console.error("Failed to get video:", error);
     return NextResponse.json(

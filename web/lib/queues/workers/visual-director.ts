@@ -18,6 +18,7 @@ import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared'
 import {
   processGpuBatchGeneration,
   type ShotForGpuGeneration,
+  type ItemCompleteEvent,
 } from '@/lib/av-script/gpu-batch-generation';
 import type { ShotPart1 } from './av-script';
 import type {
@@ -112,9 +113,9 @@ function buildGpuShots(shots: ShotPart1[]): ShotForGpuGeneration[] {
     visual_prompt: shot.visual_prompt || shot.summary || `Visual for segment ${shot.segment_index}`,
     duration_seconds: shot.duration_seconds || 5,
     // Video shots need a keyframe image — these get generated in the image batch first,
-    // then the batch pipeline uses them for video generation if input_image_url is provided.
+    // then the batch pipeline uses them for video generation if start_frame_url is provided.
     // For now, video shots without a pre-existing keyframe will fall back to placeholder.
-    input_image_url: undefined,
+    start_frame_url: undefined,
   }));
 }
 
@@ -131,7 +132,7 @@ function buildShotsFromBeats(
     media_type: 'motiongraphic' as const,
     visual_prompt: beat.visual_description || beat.expanded_content || `Visual for beat ${index}`,
     duration_seconds: 5,
-    input_image_url: undefined,
+    start_frame_url: undefined,
   }));
 }
 
@@ -340,12 +341,33 @@ export const visualDirectorProcessor: Processor<VisualDirectorJobData> = async (
         }
       };
 
+      // Per-item callback wired to task + metadata updates
+      const onItemComplete = async (event: ItemCompleteEvent) => {
+        const label = event.mediaType === 'image' ? 'Images' : 'Videos';
+        const message = `${label}: ${event.completed} of ${event.total} created`;
+        console.log(`${LOG_PREFIX} Item complete: ${message}`);
+
+        if (taskId) {
+          // Scale progress: images within 15-45%, videos within 55-80%
+          const phaseStart = event.mediaType === 'image' ? 15 : 55;
+          const phaseEnd = event.mediaType === 'image' ? 45 : 80;
+          const phasePercent = phaseStart + Math.round((event.completed / event.total) * (phaseEnd - phaseStart));
+
+          await updateTaskStatus(taskId, {
+            status: 'running',
+            current_step: message,
+            progress_percent: phasePercent,
+          });
+        }
+      };
+
       const gpuResult = await processGpuBatchGeneration(
         userId,
         videoId,
         gpuShots,
         aspectRatio,
-        onProgress
+        onProgress,
+        onItemComplete
       );
 
       console.log(`${LOG_PREFIX} GPU batch complete: ${gpuResult.stats.imagesGenerated} images, ${gpuResult.stats.videosGenerated} videos`);

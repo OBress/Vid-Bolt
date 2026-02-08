@@ -20,6 +20,35 @@ export type VramMode =
   | "audio_creation"
   | "all";
 
+// ============================================================================
+// RESOLUTION UTILITIES
+// ============================================================================
+
+/**
+ * Get standard image dimensions for a given aspect ratio (standalone images / motiongraphics).
+ * Uses standard HD resolutions (not constrained to 32-divisible).
+ */
+export function getImageDimensions(aspectRatio: AspectRatio): { width: number; height: number } {
+  switch (aspectRatio) {
+    case '9:16': return { width: 1080, height: 1920 };
+    case '16:9':
+    default:     return { width: 1920, height: 1080 };
+  }
+}
+
+/**
+ * Get video-compatible dimensions for a given aspect ratio (keyframe images for LTX-2).
+ * LTX-2 requires dimensions divisible by 32; standard 1080p height (1080) is NOT divisible
+ * by 32, so we round up to 1088.
+ */
+export function getVideoDimensions(aspectRatio: AspectRatio): { width: number; height: number } {
+  switch (aspectRatio) {
+    case '9:16': return { width: 1088, height: 1920 };
+    case '16:9':
+    default:     return { width: 1920, height: 1088 };
+  }
+}
+
 /** Request body for POST /api/v1/image/generate */
 export interface ImageGenerateRequest {
   job_id: string;
@@ -1476,7 +1505,7 @@ export interface BatchImageEditItem {
 /** Batch item for video generation (LTX-2, item_id required for webhook correlation) */
 export interface BatchVideoGenerateItem {
   item_id: string;  // Required for webhook correlation
-  input_image_url: string;
+  start_frame_url: string;
   prompt: string;
   negative_prompt?: string;
   duration_seconds?: number;
@@ -1484,7 +1513,7 @@ export interface BatchVideoGenerateItem {
   aspect_ratio?: AspectRatio;
   width?: number;
   height?: number;
-  end_image_url?: string;
+  end_frame_url?: string;
   seed?: number;
   enhance_prompt?: boolean;
   save_url: string;

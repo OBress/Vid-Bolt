@@ -12,7 +12,7 @@
  *   {userId}/gpu-api-test/
  */
 
-import { S3Client, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // ============================================================================
@@ -393,6 +393,32 @@ export async function generatePresignedPutUrl(
     putUrl,
     publicUrl: getPublicUrl(key),
   };
+}
+
+/**
+ * Generate a presigned GET URL for downloading a file from R2.
+ * This allows external services (like the GPU API) to download files
+ * from R2 without needing public access or credentials.
+ * 
+ * @param key - The storage key (path) of the file
+ * @param expiresInSeconds - URL expiration time (default: 1 hour)
+ * @returns Presigned GET URL
+ */
+export async function generatePresignedGetUrl(
+  key: string,
+  expiresInSeconds: number = 3600
+): Promise<string> {
+  const client = getS3Client();
+  const bucketName = getBucketName();
+
+  const command = new GetObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+  });
+
+  return getSignedUrl(client, command, {
+    expiresIn: expiresInSeconds,
+  });
 }
 
 /**

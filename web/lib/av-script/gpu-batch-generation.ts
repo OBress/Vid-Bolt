@@ -4,9 +4,10 @@
  * Handles batch-by-type GPU generation with VRAM mode switching.
  * 
  * Processing Order:
- * 1. All images (image_generation mode)
- * 2. All image edits (image_editing mode)  
- * 3. All videos (video_generation mode)
+ * 1. All keyframe images (image_generation mode)
+ *    - Standalone images for motiongraphic shots (standard HD dimensions)
+ *    - Keyframe images for video shots (32-divisible dimensions for LTX-2)
+ * 2. All videos (video_generation mode) - using keyframe images as start frames
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -15,6 +16,8 @@ import {
   callGpuBatchVideoGenerate,
   callGpuGetMode,
   callGpuSwitchMode,
+  getImageDimensions,
+  getVideoDimensions,
   type AspectRatio,
   type BatchImageGenerateItem,
   type BatchVideoGenerateItem,
@@ -22,7 +25,9 @@ import {
 import {
   generateMediaKey,
   generatePresignedPutUrl,
+  generatePresignedGetUrl,
   getPublicUrl,
+  getKeyFromUrl,
   STORAGE_PATHS,
 } from '@/lib/services/r2-storage';
 import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
@@ -36,16 +41,18 @@ const getWebhookUrl = () =>
 const getWebhookSecret = () => process.env.GPU_WEBHOOK_SECRET;
 
 // Timeout configurations based on benchmarks
-// Images: ~7s each, Edits: ~12s each, Videos: ~8x duration
+// Images: ~7-15s each with batch overhead, Videos: ~8x duration
 const TIMEOUT_CONFIG = {
-  image_generation: { baseMs: 30_000, perItemMs: 10_000 },
-  image_editing: { baseMs: 45_000, perItemMs: 15_000 },
-  video_generation: { baseMs: 60_000, perSecondMs: 10_000 },
+  image_generation: { baseMs: 60_000, perItemMs: 20_000 },
+  image_editing: { baseMs: 60_000, perItemMs: 20_000 },
+  video_generation: { baseMs: 120_000, perSecondMs: 15_000 },
 };
 
-// Mode switch timeout (max 60s)
-const MODE_SWITCH_TIMEOUT_MS = 60_000;
+// Mode switch timeout (LTX-2 loading can take ~90s+)
+const MODE_SWITCH_TIMEOUT_MS = 180_000;
 const MODE_POLL_INTERVAL_MS = 2_000;
+// Stabilization delay after mode switch completes (GPU needs a moment)
+const POST_SWITCH_DELAY_MS = 5_000;
 
 // ============================================================================
 // TYPES
@@ -57,8 +64,10 @@ export interface ShotForGpuGeneration {
   media_type: 'video' | 'motiongraphic';
   visual_prompt: string;
   duration_seconds?: number;
-  /** Input image URL for video generation (keyframe) */
-  input_image_url?: string;
+  /** Start frame image URL for video generation (keyframe) */
+  start_frame_url?: string;
+  /** Optional end frame image URL for video interpolation */
+  end_frame_url?: string;
 }
 
 export interface GpuGenerationResult {
@@ -76,6 +85,13 @@ export interface BatchGpuGenerationResult {
     videosGenerated: number;
     videosFailed: number;
   };
+}
+
+/** Fired each time a single item's webhook resolves (success or failure). */
+export interface ItemCompleteEvent {
+  completed: number;
+  total: number;
+  mediaType: 'image' | 'video';
 }
 
 // ============================================================================
@@ -154,7 +170,13 @@ async function ensureMode(targetMode: 'image_generation' | 'image_editing' | 'vi
   }
   
   // Wait for switch to complete
-  return await waitForModeReady(targetMode);
+  const ready = await waitForModeReady(targetMode);
+  if (ready) {
+    // Brief stabilization delay after mode switch
+    console.log(`[GPU-Batch] Mode switch complete, stabilizing for ${POST_SWITCH_DELAY_MS / 1000}s...`);
+    await new Promise(resolve => setTimeout(resolve, POST_SWITCH_DELAY_MS));
+  }
+  return ready;
 }
 
 /**
@@ -175,14 +197,19 @@ function getPlaceholderUrl(mediaType: string, index: number): string {
 /**
  * Process shots in batches by type with VRAM mode switching
  * 
- * Order: Images → Edits → Videos
+ * Order:
+ * 1. Generate keyframe images for ALL shots (image_generation mode)
+ *    - Motiongraphic shots: standalone images with standard HD dimensions
+ *    - Video shots: keyframe images with 32-divisible dimensions for LTX-2
+ * 2. Generate videos using keyframe images as start frames (video_generation mode)
  */
 export async function processGpuBatchGeneration(
   userId: string,
   videoId: string,
   shots: ShotForGpuGeneration[],
   aspectRatio: AspectRatio,
-  onProgress?: (message: string, percent: number) => void
+  onProgress?: (message: string, percent: number) => void,
+  onItemComplete?: (event: ItemCompleteEvent) => void
 ): Promise<BatchGpuGenerationResult> {
   const logPrefix = '[GPU-Batch]';
   const results: GpuGenerationResult[] = [];
@@ -194,67 +221,118 @@ export async function processGpuBatchGeneration(
     videosFailed: 0,
   };
 
-  // Group shots by type
-  // ShotPart1.media_type is 'video' | 'motiongraphic'
-  // - 'video' shots -> GPU video generation (requires keyframe image)
-  // - 'motiongraphic' shots -> GPU image generation for keyframe
+  // Separate shots by final output type
   const videoShots = shots.filter(s => s.media_type === 'video');
-  const imageShots = shots.filter(s => s.media_type !== 'video'); // Everything else gets image gen
-  // Motion graphics and other types get image generation for their keyframe
+  const standaloneImageShots = shots.filter(s => s.media_type !== 'video');
+  // ALL shots need keyframe images (motiongraphics as final output, videos as start frames)
+  const allShotsForImages = [...standaloneImageShots, ...videoShots];
 
-  console.log(`${logPrefix} Processing: ${imageShots.length} images, ${videoShots.length} videos`);
+  console.log(`${logPrefix} Processing: ${standaloneImageShots.length} standalone images, ${videoShots.length} videos (all ${allShotsForImages.length} shots need keyframe images)`);
 
   // =========================================================================
-  // STEP 1: Generate all images
+  // STEP 1: Generate keyframe images for ALL shots
   // =========================================================================
-  if (imageShots.length > 0) {
-    onProgress?.('Switching to image generation mode...', 10);
-    
-    const modeReady = await ensureMode('image_generation');
-    if (!modeReady) {
-      console.error(`${logPrefix} Failed to switch to image_generation mode`);
-      // Fallback all images to placeholders
-      for (const shot of imageShots) {
-        results.push({
-          shot_index: shot.segment_index,
-          media_url: getPlaceholderUrl('image', shot.segment_index),
-          generation_status: 'failed',
-          error_message: 'Failed to switch GPU mode',
-        });
-        stats.imagesFailed++;
-      }
-    } else {
-      onProgress?.(`Generating ${imageShots.length} images...`, 20);
-      const imageResults = await processImageBatch(userId, videoId, imageShots, aspectRatio);
-      results.push(...imageResults);
-      
-      stats.imagesGenerated = imageResults.filter(r => r.generation_status === 'completed').length;
-      stats.imagesFailed = imageResults.filter(r => r.generation_status === 'failed').length;
+  onProgress?.('Switching to image generation mode...', 10);
+  
+  const imageModeReady = await ensureMode('image_generation');
+  if (!imageModeReady) {
+    console.error(`${logPrefix} Failed to switch to image_generation mode`);
+    // Fallback everything to placeholders
+    for (const shot of shots) {
+      const isVideo = shot.media_type === 'video';
+      results.push({
+        shot_index: shot.segment_index,
+        media_url: getPlaceholderUrl(isVideo ? 'video' : 'image', shot.segment_index),
+        generation_status: 'failed',
+        error_message: 'Failed to switch GPU to image_generation mode',
+      });
+      if (isVideo) stats.videosFailed++;
+      else stats.imagesFailed++;
     }
+    console.log(`${logPrefix} Complete: ${stats.imagesGenerated} images, ${stats.videosGenerated} videos generated`);
+    console.log(`${logPrefix} Failed: ${stats.imagesFailed} images, ${stats.videosFailed} videos`);
+    return { results, stats };
   }
 
+  onProgress?.(`Generating ${allShotsForImages.length} keyframe images...`, 20);
+  
+  // Generate images in two sub-batches with different dimensions:
+  // - Standalone images (motiongraphics): standard HD (1920x1080)
+  // - Video keyframes: 32-divisible (1920x1088) for LTX-2 compatibility
+  // Total image count for progress tracking (standalone + keyframes)
+  const totalImageCount = allShotsForImages.length;
+  let imageItemsCompleted = 0;
+
+  // Per-item callback wrapper that accumulates across sub-batches
+  const imageItemCallback = onItemComplete
+    ? (event: ItemCompleteEvent) => {
+        imageItemsCompleted++;
+        onItemComplete({ completed: imageItemsCompleted, total: totalImageCount, mediaType: 'image' });
+      }
+    : undefined;
+
+  const standaloneResults = standaloneImageShots.length > 0 
+    ? await processImageBatch(userId, videoId, standaloneImageShots, aspectRatio, 'standalone', imageItemCallback)
+    : [];
+  const keyframeResults = videoShots.length > 0
+    ? await processImageBatch(userId, videoId, videoShots, aspectRatio, 'keyframe', imageItemCallback)
+    : [];
+  
+  // Record standalone image results directly
+  results.push(...standaloneResults);
+  stats.imagesGenerated = standaloneResults.filter(r => r.generation_status === 'completed').length;
+  stats.imagesFailed = standaloneResults.filter(r => r.generation_status === 'failed').length;
+
+  // Build a map of shot_index -> keyframe image URL for video generation
+  const keyframeMap = new Map<number, string>();
+  for (const kr of keyframeResults) {
+    if (kr.generation_status === 'completed' && kr.media_url) {
+      keyframeMap.set(kr.shot_index, kr.media_url);
+    }
+  }
+  console.log(`${logPrefix} Keyframe images generated: ${keyframeMap.size}/${videoShots.length} for video shots`);
+
   // =========================================================================
-  // STEP 2: Generate all videos (requires keyframe images first)
+  // STEP 2: Generate all videos using keyframe images as start frames
   // =========================================================================
   if (videoShots.length > 0) {
     onProgress?.('Switching to video generation mode...', 50);
     
+    // Wire keyframe URLs into video shots as presigned GET URLs
+    // The keyframe URLs from webhooks are raw R2 internal URLs that require auth.
+    // The GPU API needs to download these images, so we generate presigned GET URLs.
+    for (const shot of videoShots) {
+      const keyframeUrl = keyframeMap.get(shot.segment_index);
+      if (keyframeUrl) {
+        try {
+          const key = getKeyFromUrl(keyframeUrl);
+          const presignedGetUrl = await generatePresignedGetUrl(key);
+          shot.start_frame_url = presignedGetUrl;
+          console.log(`${logPrefix} Shot ${shot.segment_index}: Wired keyframe image as start frame (presigned GET URL)`);
+        } catch (err) {
+          console.error(`${logPrefix} Shot ${shot.segment_index}: Failed to generate presigned GET URL, using raw URL`, err);
+          shot.start_frame_url = keyframeUrl;
+        }
+      } else {
+        console.warn(`${logPrefix} Shot ${shot.segment_index}: No keyframe image available, video will be skipped`);
+      }
+    }
+    
     const modeReady = await ensureMode('video_generation');
     if (!modeReady) {
       console.error(`${logPrefix} Failed to switch to video_generation mode`);
-      // Fallback all videos to placeholders
       for (const shot of videoShots) {
         results.push({
           shot_index: shot.segment_index,
           media_url: getPlaceholderUrl('video', shot.segment_index),
           generation_status: 'failed',
-          error_message: 'Failed to switch GPU mode',
+          error_message: 'Failed to switch GPU to video_generation mode',
         });
         stats.videosFailed++;
       }
     } else {
       onProgress?.(`Generating ${videoShots.length} videos...`, 60);
-      const videoResults = await processVideoBatch(userId, videoId, videoShots, aspectRatio);
+      const videoResults = await processVideoBatch(userId, videoId, videoShots, aspectRatio, onItemComplete);
       results.push(...videoResults);
       
       stats.videosGenerated = videoResults.filter(r => r.generation_status === 'completed').length;
@@ -276,23 +354,40 @@ async function processImageBatch(
   userId: string,
   videoId: string,
   shots: ShotForGpuGeneration[],
-  aspectRatio: AspectRatio
+  aspectRatio: AspectRatio,
+  purpose: 'standalone' | 'keyframe' = 'standalone',
+  onItemComplete?: (event: ItemCompleteEvent) => void
 ): Promise<GpuGenerationResult[]> {
-  const logPrefix = '[GPU-Batch/Images]';
-  const batchId = `img-${videoId}-${uuidv4().slice(0, 8)}`;
+  const logPrefix = `[GPU-Batch/Images/${purpose}]`;
+  const batchId = `img-${purpose}-${videoId}-${uuidv4().slice(0, 8)}`;
   const webhookUrl = getWebhookUrl();
   const webhookSecret = getWebhookSecret();
   
-  console.log(`${logPrefix} Preparing batch ${batchId} with ${shots.length} items`);
+  console.log(`${logPrefix} Preparing batch ${batchId} with ${shots.length} items (${purpose})`);
 
   // Prepare batch items with presigned URLs
   const items: BatchImageGenerateItem[] = [];
   const itemIdToShot = new Map<string, ShotForGpuGeneration>();
   
+  // Select dimensions based on purpose:
+  // - standalone: standard HD (1920x1080) for final motiongraphic images
+  // - keyframe: 32-divisible (1920x1088) for LTX-2 video start frames
+  const { width, height } = purpose === 'keyframe' 
+    ? getVideoDimensions(aspectRatio) 
+    : getImageDimensions(aspectRatio);
+  
+  console.log(`${logPrefix} Using dimensions: ${width}x${height} (${purpose})`);
+
+  // Use appropriate storage path based on purpose
+  const storagePath = purpose === 'keyframe' 
+    ? STORAGE_PATHS.IMAGES.GENERATED  // Keyframes stored alongside generated images
+    : STORAGE_PATHS.IMAGES.GENERATED;
+
   for (const shot of shots) {
     const itemId = `shot-${shot.segment_index}-${uuidv4().slice(0, 8)}`;
-    const filename = `shot_${shot.segment_index}.png`;
-    const key = generateMediaKey(userId, videoId, STORAGE_PATHS.IMAGES.GENERATED, filename);
+    const suffix = purpose === 'keyframe' ? '_keyframe' : '';
+    const filename = `shot_${shot.segment_index}${suffix}.png`;
+    const key = generateMediaKey(userId, videoId, storagePath, filename);
     
     try {
       const { putUrl } = await generatePresignedPutUrl(key, 'image/png');
@@ -301,6 +396,8 @@ async function processImageBatch(
         item_id: itemId,
         prompt: shot.visual_prompt,
         aspect_ratio: aspectRatio,
+        width,
+        height,
         save_url: putUrl,
       });
       
@@ -336,7 +433,8 @@ async function processImageBatch(
 
   // Wait for all webhooks with calculated timeout
   const timeout = calculateTimeout('image_generation', items.length);
-  const results = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'image');
+  console.log(`${logPrefix} Webhook timeout: ${Math.round(timeout / 1000)}s for ${items.length} items`);
+  const results = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'image', onItemComplete);
 
   return results;
 }
@@ -349,7 +447,8 @@ async function processVideoBatch(
   userId: string,
   videoId: string,
   shots: ShotForGpuGeneration[],
-  aspectRatio: AspectRatio
+  aspectRatio: AspectRatio,
+  onItemComplete?: (event: ItemCompleteEvent) => void
 ): Promise<GpuGenerationResult[]> {
   const logPrefix = '[GPU-Batch/Videos]';
   const batchId = `vid-${videoId}-${uuidv4().slice(0, 8)}`;
@@ -365,13 +464,13 @@ async function processVideoBatch(
   const skippedShots: GpuGenerationResult[] = [];
   
   for (const shot of shots) {
-    if (!shot.input_image_url) {
-      console.warn(`${logPrefix} Shot ${shot.segment_index} has no input image, skipping video generation`);
+    if (!shot.start_frame_url) {
+      console.warn(`${logPrefix} Shot ${shot.segment_index} has no start frame, skipping video generation`);
       skippedShots.push({
         shot_index: shot.segment_index,
         media_url: getPlaceholderUrl('video', shot.segment_index),
         generation_status: 'failed',
-        error_message: 'No input image for video generation',
+        error_message: 'No start frame image for video generation',
       });
       continue;
     }
@@ -385,11 +484,12 @@ async function processVideoBatch(
       
       items.push({
         item_id: itemId,
-        input_image_url: shot.input_image_url,
+        start_frame_url: shot.start_frame_url,
         prompt: shot.visual_prompt,
         duration_seconds: shot.duration_seconds || 5,
         aspect_ratio: aspectRatio,
         save_url: putUrl,
+        ...(shot.end_frame_url ? { end_frame_url: shot.end_frame_url } : {}),
       });
       
       itemIdToShot.set(itemId, shot);
@@ -428,7 +528,7 @@ async function processVideoBatch(
   const avgDuration = shots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0) / shots.length;
   const timeout = calculateTimeout('video_generation', items.length, avgDuration);
   
-  const webhookResults = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'video');
+  const webhookResults = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'video', onItemComplete);
 
   return [...webhookResults, ...skippedShots];
 }
@@ -441,7 +541,8 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
   items: T[],
   itemIdToShot: Map<string, ShotForGpuGeneration>,
   timeoutMs: number,
-  mediaType: 'image' | 'video'
+  mediaType: 'image' | 'video',
+  onItemComplete?: (event: ItemCompleteEvent) => void
 ): Promise<GpuGenerationResult[]> {
   const logPrefix = `[GPU-Batch/Webhooks]`;
   const results: GpuGenerationResult[] = [];
@@ -493,8 +594,15 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
     }
   });
 
-  // Wait for all webhooks
-  const allResults = await Promise.all(webhookPromises);
+  // Wait for all webhooks, tracking per-item completions
+  let completedCount = 0;
+  const trackedPromises = webhookPromises.map(async (promise) => {
+    const result = await promise;
+    completedCount++;
+    onItemComplete?.({ completed: completedCount, total: items.length, mediaType });
+    return result;
+  });
+  const allResults = await Promise.all(trackedPromises);
   results.push(...allResults);
 
   return results;

@@ -278,16 +278,22 @@ export function Step5ShotCreation({
   // Sync stockMediaResults prop changes to elements state
   // This is needed because useState initializer only runs once on mount
   useEffect(() => {
-    if (!stockMediaResults || stockMediaResults.length === 0) return;
-
-    console.log(
-      "[Step5] Syncing stock media to elements:",
-      stockMediaResults.length,
-    );
-
     setElements((prevElements) => {
       // Filter out existing stock elements
       const nonStockElements = prevElements.filter((e) => e.type !== "stock");
+
+      // If stock media is null/empty, just remove all stock elements
+      if (!stockMediaResults || stockMediaResults.length === 0) {
+        if (prevElements.length !== nonStockElements.length) {
+          console.log("[Step5] Clearing stale stock elements");
+        }
+        return nonStockElements;
+      }
+
+      console.log(
+        "[Step5] Syncing stock media to elements:",
+        stockMediaResults.length,
+      );
 
       // Add updated stock media elements
       const stockElements: ElementItem[] = stockMediaResults.map((media) => ({
@@ -301,6 +307,28 @@ export function Step5ShotCreation({
       return [...nonStockElements, ...stockElements];
     });
   }, [stockMediaResults]);
+
+  // Sync assetReferenceImages prop changes to elements state
+  // Reference images are generated asynchronously by a background GPU task,
+  // so they arrive after the initial elements state is created
+  useEffect(() => {
+    if (!assetReferenceImages) return;
+
+    console.log(
+      "[Step5] Syncing asset reference images to elements:",
+      Object.keys(assetReferenceImages).length,
+      "images",
+    );
+
+    setElements((prevElements) =>
+      prevElements.map((el) => {
+        if (el.originalId && assetReferenceImages[el.originalId] && !el.image) {
+          return { ...el, image: assetReferenceImages[el.originalId] };
+        }
+        return el;
+      }),
+    );
+  }, [assetReferenceImages]);
 
   // Check if we have missing elements (outline was lost)
   const hasNoElements = elements.length === 0 && !outlineAssets;

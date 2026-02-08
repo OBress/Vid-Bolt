@@ -27,6 +27,8 @@ import {
   callGpuLtx2Interpolate,
   callGpuMusicGenerate,
   callGpuSoundEffectGenerate,
+  getImageDimensions,
+  getVideoDimensions,
 } from '@/lib/services/gpu-api-service';
 import type { AspectRatio, FPS } from '@/lib/services/gpu-api-service';
 
@@ -132,12 +134,13 @@ export const gpuImageCreateProcessor: Processor<GpuImageCreateJobData> = async (
     await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
 
     const gpuJobId = uuidv4();
+    const imgDims = getImageDimensions(aspectRatio || '16:9');
     let result = await callGpuImageGenerate({
       job_id: gpuJobId,
       prompt,
       aspect_ratio: aspectRatio || '16:9',
-      width: width || (aspectRatio === '9:16' ? 1080 : 1920),
-      height: height || (aspectRatio === '9:16' ? 1920 : 1080),
+      width: width || imgDims.width,
+      height: height || imgDims.height,
       num_inference_steps: numInferenceSteps || 20,
       seed: seed || undefined,
       lora_name: lora_name || undefined,
@@ -326,6 +329,7 @@ export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (
     await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
 
     const gpuJobId = uuidv4();
+    const vidDims = getVideoDimensions(aspectRatio || '16:9');
     let result = await callGpuLtx2Generate({
       job_id: gpuJobId,
       start_frame_url: inputImageUrl,
@@ -333,8 +337,8 @@ export const gpuVideoCreateProcessor: Processor<GpuVideoCreateJobData> = async (
       duration_seconds: durationSeconds || 4.0,
       frame_rate: fps || 24,
       aspect_ratio: aspectRatio || '16:9',
-      width: width || (aspectRatio === '9:16' ? 1080 : 1920),
-      height: height || (aspectRatio === '9:16' ? 1920 : 1080),
+      width: width || vidDims.width,
+      height: height || vidDims.height,
       seed: seed || undefined,
       end_frame_url: endFrameUrl || undefined,
       save_url: putUrl,
@@ -384,8 +388,9 @@ export interface GpuLtx2CreateJobData {
   taskId: string;
   userId: string;
   prompt: string;
-  input_image_url?: string;
-  sourceImageUrl?: string;  // Alias for input_image_url (batch jobs)
+  start_frame_url?: string;
+  input_image_url?: string;  // Legacy alias for start_frame_url
+  sourceImageUrl?: string;  // Alias for start_frame_url (batch jobs)
   negative_prompt?: string;
   negativePrompt?: string;  // Alias (batch jobs)
   duration_seconds?: number;
@@ -396,7 +401,8 @@ export interface GpuLtx2CreateJobData {
   aspectRatio?: AspectRatio;  // Alias (batch jobs)
   width?: number;
   height?: number;
-  end_image_url?: string;
+  end_frame_url?: string;
+  end_image_url?: string;  // Legacy alias for end_frame_url
   endImageUrl?: string;  // Alias (batch jobs)
   seed?: number;
   enhance_prompt?: boolean;
@@ -429,7 +435,7 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
       putUrl = urls.putUrl;
       publicUrl = urls.publicUrl;
     }
-    const inputImageUrl = job.data.input_image_url || job.data.sourceImageUrl || PLACEHOLDER_IMAGE_URL;
+    const inputImageUrl = job.data.start_frame_url || job.data.input_image_url || job.data.sourceImageUrl || PLACEHOLDER_IMAGE_URL;
 
     await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
 
@@ -438,9 +444,10 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
     const duration_seconds = job.data.duration_seconds || job.data.durationSeconds || 5.0;
     const frame_rate = job.data.frame_rate || job.data.frameRate || 24.0;
     const aspect_ratio = job.data.aspect_ratio || job.data.aspectRatio || '16:9';
-    const width = job.data.width || (aspect_ratio === '9:16' ? 1080 : 1920);
-    const height = job.data.height || (aspect_ratio === '9:16' ? 1920 : 1080);
-    const end_image_url = job.data.end_image_url || job.data.endImageUrl;
+    const vidDims = getVideoDimensions(aspect_ratio);
+    const width = job.data.width || vidDims.width;
+    const height = job.data.height || vidDims.height;
+    const end_frame_url_resolved = job.data.end_frame_url || job.data.end_image_url || job.data.endImageUrl;
     const seed = job.data.seed;
     const enhance_prompt = job.data.enhance_prompt || job.data.enhancePrompt || false;
     
@@ -454,7 +461,7 @@ export const gpuLtx2CreateProcessor: Processor<GpuLtx2CreateJobData> = async (jo
       aspect_ratio,
       width,
       height,
-      end_frame_url: end_image_url || undefined,
+      end_frame_url: end_frame_url_resolved || undefined,
       seed: seed || undefined,
       enhance_prompt,
       save_url: putUrl,

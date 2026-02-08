@@ -603,14 +603,14 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
       const { processGpuBatchGeneration } = await import('@/lib/av-script/gpu-batch-generation');
       
       // Prepare shots for GPU generation
+      // Note: start_frame_url is NOT set here — processGpuBatchGeneration
+      // generates keyframe images for all shots first, then wires the
+      // resulting URLs as start_frame_url for video shots automatically.
       const shotsForGpu: ShotForGpuGeneration[] = shots.map((shot, i) => ({
         segment_index: shot.segment_index,
         media_type: shot.media_type, // 'video' | 'motiongraphic' from ShotPart1
         visual_prompt: detailedPrompts.find(p => p.index === i)?.prompt || shot.summary,
         duration_seconds: shot.duration_seconds || 5,
-        // For video shots, they'll need a keyframe image first
-        // For now, video shots without input_image_url will fallback to placeholder
-        input_image_url: undefined, // Will be set after image generation if needed
       }));
       
       // Progress callback for UI updates

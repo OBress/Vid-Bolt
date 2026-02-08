@@ -104,7 +104,8 @@ export async function POST(request: NextRequest) {
       .from('tasks')
       .insert({
         user_id: user.id,
-        task_type: 'asset-reference-images',
+        type: 'video',
+        name: `Asset Reference Images (${assetCount} assets)`,
         status: 'pending',
         progress_percent: 0,
         current_step: 'Queued',

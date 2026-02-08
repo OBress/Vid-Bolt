@@ -409,6 +409,78 @@ export function VideoCreationWizard({
             (video.metadata as any)?.assetReferenceImages || null,
         });
 
+        // =====================================================================
+        // RESTORE IN-PROGRESS LOADING STATES FROM ACTIVE TASKS
+        // =====================================================================
+        // When resuming a video mid-generation, the API returns any active
+        // (pending/running) tasks. We map each task type to the corresponding
+        // loading flag and task ID so the wizard shows the loading screen.
+        const activeTasks = data.activeTasks || [];
+        if (activeTasks.length > 0) {
+          const loadingUpdates: Partial<WizardState> = {};
+
+          // The stockMediaTaskId stored in metadata uses generic type 'video',
+          // so we check it separately
+          const metadataStockTaskId = (video.metadata as any)?.stockMediaTaskId;
+
+          for (const task of activeTasks) {
+            switch (task.type) {
+              case "script_writing":
+                loadingUpdates.isScriptLoading = true;
+                loadingUpdates.scriptTaskId = task.id;
+                console.log(`[Wizard] Restoring active script task: ${task.id}`);
+                break;
+              case "audio":
+                // Only restore audio loading if we have no audio chunks yet
+                if (normalizedAudioChunks.length === 0) {
+                  loadingUpdates.isAudioLoading = true;
+                  loadingUpdates.audioTaskId = task.id;
+                  console.log(`[Wizard] Restoring active audio task: ${task.id}`);
+                }
+                break;
+              case "av_script_part1":
+                // Only restore if we don't already have the output
+                if (!(video.metadata as any)?.av_script_part1) {
+                  loadingUpdates.isAvScriptLoading = true;
+                  loadingUpdates.avScriptTaskId = task.id;
+                  console.log(`[Wizard] Restoring active AV Script Part 1 task: ${task.id}`);
+                }
+                break;
+              case "av_script_part2":
+                // Only restore if we don't already have generated media
+                if (!((video.metadata as any)?.generatedMedia?.length > 0)) {
+                  loadingUpdates.isMediaGenerating = true;
+                  loadingUpdates.avScriptPart2TaskId = task.id;
+                  console.log(`[Wizard] Restoring active AV Script Part 2 task: ${task.id}`);
+                }
+                break;
+              case "video":
+                // Generic 'video' type is used for both stock media and asset reference images
+                // Disambiguate using metadata-stored task ID or task name
+                if (metadataStockTaskId && task.id === metadataStockTaskId) {
+                  loadingUpdates.isStockMediaLoading = true;
+                  loadingUpdates.stockMediaTaskId = task.id;
+                  console.log(`[Wizard] Restoring active stock media task: ${task.id}`);
+                } else if (task.name?.includes("Asset Reference")) {
+                  loadingUpdates.assetImageTaskId = task.id;
+                  console.log(`[Wizard] Restoring active asset reference image task: ${task.id}`);
+                }
+                break;
+              case "outline":
+                loadingUpdates.outlineTaskId = task.id;
+                console.log(`[Wizard] Restoring active outline task: ${task.id}`);
+                break;
+            }
+          }
+
+          if (Object.keys(loadingUpdates).length > 0) {
+            console.log(
+              `[Wizard] Restored ${Object.keys(loadingUpdates).length} loading states from active tasks`,
+            );
+            setState((prev) => ({ ...prev, ...loadingUpdates }));
+          }
+        }
+
         // Set the video name in the navigation store
         setCurrentVideoName(video.name);
 
@@ -1704,7 +1776,7 @@ export function VideoCreationWizard({
         );
 
       case 5: // Shot Creation (was Step 6)
-        // Show loading screen while AV Script is being generated
+        // Phase 1: Show loading screen while AV Script is being generated
         if (
           (state.isAvScriptLoading || state.avScriptTaskId) &&
           !state.avScriptPart1Output
@@ -1772,6 +1844,78 @@ export function VideoCreationWizard({
                 });
               }}
               fallbackDuration={15000}
+            />
+          );
+        }
+
+        // Phase 2: Show loading screen while asset reference images are being generated
+        // This runs AFTER AV Script completes but GPU reference image task is still in progress
+        if (
+          state.gpuEnabled &&
+          state.assetImageTaskId &&
+          !state.assetReferenceImages
+        ) {
+          console.log("[Wizard] Step 5: Showing asset reference image loading screen");
+          return (
+            <AsyncLoadingStep
+              title="Generating Reference Images"
+              subtitle="Creating AI reference images for your assets..."
+              steps={[
+                "Preparing asset descriptions",
+                "Generating character images",
+                "Generating location images",
+                "Generating object images",
+                "Finalizing references",
+              ]}
+              taskId={state.assetImageTaskId}
+              onComplete={async (output) => {
+                console.log(
+                  "[Wizard] Asset reference images task complete:",
+                  JSON.stringify(output).slice(0, 300),
+                );
+
+                // Fetch the saved reference images from video metadata
+                if (state.videoId) {
+                  try {
+                    const videoRes = await fetch(
+                      `/api/videos/${state.videoId}`,
+                    );
+                    if (videoRes.ok) {
+                      const videoData = await videoRes.json();
+                      const refImages =
+                        (videoData.video?.metadata as any)
+                          ?.assetReferenceImages || null;
+                      if (refImages) {
+                        updateState({
+                          assetReferenceImages: refImages,
+                          assetImageTaskId: null,
+                        });
+                        console.log(
+                          `[Wizard] Loaded asset reference images: ${Object.keys(refImages).length} assets`,
+                        );
+                      } else {
+                        // Task completed but no images in metadata — clear task ID to proceed
+                        console.warn("[Wizard] Asset image task completed but no images in metadata");
+                        updateState({ assetImageTaskId: null });
+                      }
+                    }
+                  } catch (err) {
+                    console.error(
+                      "[Wizard] Failed to fetch asset reference images:",
+                      err,
+                    );
+                    updateState({ assetImageTaskId: null });
+                  }
+                } else {
+                  updateState({ assetImageTaskId: null });
+                }
+              }}
+              onError={(error) => {
+                console.error("[Wizard] Asset reference image generation failed:", error);
+                // Don't block Step 5 — just clear the task and proceed without images
+                updateState({ assetImageTaskId: null });
+              }}
+              fallbackDuration={30000}
             />
           );
         }

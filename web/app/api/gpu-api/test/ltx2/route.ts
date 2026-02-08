@@ -31,7 +31,9 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { prompt, input_image_url, negative_prompt, duration_seconds, frame_rate, aspect_ratio, width, height, end_image_url, seed, enhance_prompt } = body;
+    const { prompt, start_frame_url, input_image_url, negative_prompt, duration_seconds, frame_rate, aspect_ratio, width, height, end_frame_url, end_image_url, seed, enhance_prompt } = body;
+    const resolvedStartFrame = start_frame_url || input_image_url;
+    const resolvedEndFrame = end_frame_url || end_image_url;
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
       return NextResponse.json(
@@ -58,7 +60,7 @@ export async function POST(request: NextRequest) {
         name: `GPU Test: LTX-2 Generation`,
         status: "pending",
         steps: [],
-        input_data: { prompt, input_image_url, negative_prompt, duration_seconds, frame_rate, aspect_ratio, width, height, end_image_url, seed, enhance_prompt, testType: 'ltx2_generation' },
+        input_data: { prompt, start_frame_url: resolvedStartFrame, negative_prompt, duration_seconds, frame_rate, aspect_ratio, width, height, end_frame_url: resolvedEndFrame, seed, enhance_prompt, testType: 'ltx2_generation' },
         output_data: {},
       })
       .select()
@@ -73,14 +75,14 @@ export async function POST(request: NextRequest) {
       taskId: task.id,
       userId: user.id,
       prompt,
-      input_image_url: input_image_url || undefined,
+      start_frame_url: resolvedStartFrame || undefined,
       negative_prompt: negative_prompt || undefined,
       duration_seconds: duration_seconds || 5.0,
       frame_rate: frame_rate || 24.0,
       aspect_ratio: aspect_ratio || '16:9',
       width: width || undefined,
       height: height || undefined,
-      end_image_url: end_image_url || undefined,
+      end_frame_url: resolvedEndFrame || undefined,
       seed: seed || undefined,
       enhance_prompt: enhance_prompt || false,
     }, { jobId: task.id });
