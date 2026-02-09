@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useDevToolsMediaStore } from "@/lib/stores/devtools-media-store"; // [DEVTOOLS-MEDIA] - Remove when no longer needed
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -312,6 +313,64 @@ export function GPUApiTester({
   useEffect(() => {
     trackedJobsRef.current = trackedJobs;
   }, [trackedJobs]);
+
+  // ====================================================================
+  // [DEVTOOLS-MEDIA] START - Real-time sync to DevTools media store.
+  // Remove this entire block and the import above when no longer needed.
+  // ====================================================================
+  const addDevToolsMedia = useDevToolsMediaStore((s) => s.addMedia);
+  const syncedUrlsRef = useRef<Set<string>>(new Set());
+
+  const syncUrlToStore = (url: string, type: 'image' | 'video' | 'audio', name: string) => {
+    if (!url || syncedUrlsRef.current.has(url)) return;
+    syncedUrlsRef.current.add(url);
+    addDevToolsMedia({ type, url, name });
+  };
+
+  // Sync queue/batch jobs
+  useEffect(() => {
+    for (const job of trackedJobs.values()) {
+      if (job.status !== 'completed' || !job.result?.success) continue;
+
+      const url = job.result.imageUrl || job.result.videoUrl || job.result.audioUrl;
+      if (!url) continue;
+
+      const mediaType: 'image' | 'video' | 'audio' = job.result.imageUrl
+        ? 'image'
+        : job.result.videoUrl
+          ? 'video'
+          : 'audio';
+
+      syncUrlToStore(url, mediaType, `${job.type}-${job.id.slice(0, 8)}`);
+    }
+  }, [trackedJobs]);
+
+  // Sync individual test results (direct "Generate" buttons)
+  useEffect(() => {
+    if (imageResult?.success && imageResult.imageUrl)
+      syncUrlToStore(imageResult.imageUrl, 'image', `image-test`);
+  }, [imageResult]);
+
+  useEffect(() => {
+    if (editResult?.success && editResult.imageUrl)
+      syncUrlToStore(editResult.imageUrl, 'image', `image-edit-test`);
+  }, [editResult]);
+
+  useEffect(() => {
+    if (videoResult?.success && videoResult.videoUrl)
+      syncUrlToStore(videoResult.videoUrl, 'video', `video-test`);
+  }, [videoResult]);
+
+  useEffect(() => {
+    if (musicResult?.success && musicResult.audioUrl)
+      syncUrlToStore(musicResult.audioUrl, 'audio', `music-test`);
+  }, [musicResult]);
+
+  useEffect(() => {
+    if (sfxResult?.success && sfxResult.audioUrl)
+      syncUrlToStore(sfxResult.audioUrl, 'audio', `sfx-test`);
+  }, [sfxResult]);
+  // [DEVTOOLS-MEDIA] END
 
   // Mount effect for portal
   useEffect(() => {

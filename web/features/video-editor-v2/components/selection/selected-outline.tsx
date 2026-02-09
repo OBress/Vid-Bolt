@@ -10,6 +10,12 @@ import { useKeyframedTransform } from "../../hooks/use-keyframed-value";
 import type { PropertyKeyframes } from "../../types/keyframes";
 
 /**
+ * Module-level variable to pass the double-click position to TextLayerContent
+ * for precise caret placement. Avoids polluting the Zustand store with transient data.
+ */
+export let _lastEditClickPosition: { x: number; y: number } | null = null;
+
+/**
  * SelectionOutline is a component that renders a draggable, resizable outline around selected overlays.
  * It provides visual feedback and interaction handles for manipulating overlay elements.
  *
@@ -65,6 +71,11 @@ export const SelectionOutline: React.FC<{
 
   const isSelected = overlay.id === selectedOverlayId;
 
+  // Check if this overlay is in inline text editing mode
+  const editingOverlayId = useVideoEditorStore(s => s.editingOverlayId);
+  const setEditingOverlayId = useVideoEditorStore(s => s.setEditingOverlayId);
+  const isEditingText = editingOverlayId === overlay.id;
+
   // Use shared crop handling hook
   const handleCropChange = useCropHandling(overlay, changeOverlay);
 
@@ -72,6 +83,14 @@ export const SelectionOutline: React.FC<{
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      
+      // TEXT overlay: enter inline editing mode
+      if (overlay.type === OverlayType.TEXT) {
+        // Stash click position for caret placement (read by TextLayerContent)
+        _lastEditClickPosition = { x: e.clientX, y: e.clientY };
+        setEditingOverlayId(overlay.id);
+        return;
+      }
       
       // Only enable crop for VIDEO and IMAGE types
       if (overlay.type === OverlayType.VIDEO || overlay.type === OverlayType.IMAGE) {
@@ -89,7 +108,7 @@ export const SelectionOutline: React.FC<{
         }
       }
     },
-    [overlay, handleCropChange]
+    [overlay, handleCropChange, setEditingOverlayId]
   );
 
   const style: React.CSSProperties = useMemo(() => {
@@ -153,8 +172,14 @@ export const SelectionOutline: React.FC<{
       pointerEvents: "all",
       cursor: "move",
       transition: "box-shadow 0.15s ease", // Smooth shadow transition
+      // When editing text inline, make outline transparent to pointer events
+      // so clicks reach the contentEditable underneath
+      ...(isEditingText && {
+        pointerEvents: "none" as const,
+        cursor: "text",
+      }),
     };
-  }, [overlay, hovered, isDragging, isSelected, scaledBorder, keyframedTransform]);
+  }, [overlay, hovered, isDragging, isSelected, scaledBorder, keyframedTransform, isEditingText]);
 
   const startDragging = useCallback(
     (e: PointerEvent | React.MouseEvent) => {
@@ -254,10 +279,15 @@ export const SelectionOutline: React.FC<{
         return;
       }
 
+      // Don't start drag if we're editing text inline
+      if (isEditingText) {
+        return;
+      }
+
       handleOverlaySelect(overlay);
       startDragging(e);
     },
-    [overlay, handleOverlaySelect, startDragging]
+    [overlay, handleOverlaySelect, startDragging, isEditingText]
   );
 
   if (overlay.type === OverlayType.SOUND) {

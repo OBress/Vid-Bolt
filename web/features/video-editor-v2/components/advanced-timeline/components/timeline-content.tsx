@@ -195,7 +195,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
                            dragState?.type === 'audio-transition' ||
                            dragState?.type === 'transition-move' ||
                            dragState?.type === 'transition-resize';
-  const isNewItemDrag = dragState?.type === 'media' || dragState?.type === 'clip';
+  const isNewItemDrag = dragState?.type === 'media' || dragState?.type === 'clip' || dragState?.type === 'text-preset' || dragState?.type === 'shape-preset';
   
   const activeDragType = isClipDrag ? 'item' : 
                          isTransitionDrag ? 'transition' :
@@ -269,7 +269,11 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
     const handleGlobalDragOver = (e: DragEvent) => {
       // Check if we have an active media drag first
       const dragData = getCurrentDrag();
-      const hasActiveDrag = dragData && dragData.type === 'media';
+      const hasActiveDrag = dragData && (
+        dragData.type === 'media' || 
+        dragData.type === 'text-preset' || 
+        dragData.type === 'shape-preset'
+      );
       
       if (!hasActiveDrag) {
         // Remove cursor override if no active drag
@@ -328,7 +332,11 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
       
       // Check if we have an active media drag
       const dragData = getCurrentDrag();
-      const hasActiveDrag = dragData && dragData.type === 'media';
+      const hasActiveDrag = dragData && (
+        dragData.type === 'media' || 
+        dragData.type === 'text-preset' || 
+        dragData.type === 'shape-preset'
+      );
       
       if (!hasActiveDrag) {
         return; // Not our drag, ignore
@@ -383,7 +391,11 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
       // This is necessary because the browser doesn't fire 'drop' events outside the element
       if (isHandlingOutsideDragRef.current) {
         const dragData = getCurrentDrag();
-        if (dragData && dragData.type === 'media') {
+        if (dragData && (
+          dragData.type === 'media' || 
+          dragData.type === 'text-preset' || 
+          dragData.type === 'shape-preset'
+        )) {
           const timeline = timelineRef.current;
           if (timeline) {
             // Use the mouse position at dragend to determine drop location

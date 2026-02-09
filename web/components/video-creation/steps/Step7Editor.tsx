@@ -7,6 +7,7 @@ import type {
   AudioChunk,
   ShotEvent,
 } from "@/components/video-creation/VideoCreationWizard";
+import type { GeneratedMedia } from "@/types/video";
 
 interface Step7EditorProps {
   videoId: string;
@@ -14,6 +15,7 @@ interface Step7EditorProps {
   audioUrl?: string | null;
   audioChunks?: AudioChunk[];
   shotList?: ShotEvent[];
+  generatedMedia?: GeneratedMedia[];
   onContinue: () => void;
   onBack: () => void;
   isLocked?: boolean;
@@ -26,6 +28,7 @@ export function Step7Editor({
   audioUrl,
   audioChunks,
   shotList,
+  generatedMedia,
   onContinue,
   isLocked,
   lockedMessage,
@@ -67,6 +70,7 @@ export function Step7Editor({
           audioUrl={audioUrl}
           audioChunks={audioChunks}
           shotList={shotList}
+          generatedMedia={generatedMedia}
         />
       </div>
     </div>

@@ -74,6 +74,7 @@ import {
   Img,
   Easing,
   Series,
+  random,
 } from 'remotion';
 
 // Import ALL lucide-react icons as a namespace
@@ -97,6 +98,24 @@ import { flip } from '@remotion/transitions/flip';
 import { clockWipe } from '@remotion/transitions/clock-wipe';
 
 const { TransitionSeries, linearTiming, springTiming } = TransitionsModule;
+
+// Import d3-geo for geographic map rendering
+import {
+  geoPath,
+  geoMercator,
+  geoOrthographic,
+  geoNaturalEarth1,
+  geoEquirectangular,
+  geoGraticule,
+} from 'd3-geo';
+
+// Import pre-loaded world map data and city database
+import {
+  WorldCountries,
+  WorldLand,
+  MajorCities,
+  getCityCoords,
+} from './remotion/geo-data';
 
 // Optional packages - These are truly optional and may not be installed
 // We don't import them statically to avoid build errors
@@ -342,7 +361,7 @@ function preprocessCode(code: string): { componentBody: string; wrappedSource: s
   
   // Auto-fix common errors: bare Math function calls
   const mathFunctions = [
-    'random', 'floor', 'ceil', 'round', 'abs', 
+    'floor', 'ceil', 'round', 'abs', 
     'min', 'max', 'sin', 'cos', 'tan',
     'sqrt', 'pow', 'atan2', 'asin', 'acos'
   ];
@@ -393,6 +412,7 @@ function createComponentFromTranspiled(
       Img,
       Easing,
       Series,
+      random,
     };
 
     // Build parameter names (static list)
@@ -415,6 +435,7 @@ function createComponentFromTranspiled(
       'Img',
       'Easing',
       'Series',
+      'random',
       'useState',
       'useEffect',
       'useMemo',
@@ -425,6 +446,10 @@ function createComponentFromTranspiled(
       'makePolygon', 'makeEllipse', 'makeHeart', 'makePie',
       'TransitionSeries', 'linearTiming', 'springTiming',
       'fade', 'slide', 'wipe', 'flip', 'clockWipe',
+      // d3-geo map rendering
+      'geoPath', 'geoMercator', 'geoOrthographic', 'geoNaturalEarth1',
+      'geoEquirectangular', 'geoGraticule',
+      'WorldCountries', 'WorldLand', 'MajorCities', 'getCityCoords',
     ];
 
     // Build parameter values (matching names above)
@@ -447,6 +472,7 @@ function createComponentFromTranspiled(
       Img,
       Easing,
       Series,
+      random,
       useState,
       useEffect,
       useMemo,
@@ -476,6 +502,10 @@ function createComponentFromTranspiled(
       wipe,
       flip,
       clockWipe,
+      // d3-geo map rendering
+      geoPath, geoMercator, geoOrthographic, geoNaturalEarth1,
+      geoEquirectangular, geoGraticule,
+      WorldCountries, WorldLand, MajorCities, getCityCoords,
     ];
 
     // INJECT ALL ICONS

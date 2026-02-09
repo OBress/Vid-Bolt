@@ -33,14 +33,12 @@ export const TimelineGapOverlay: React.FC<TimelineGapOverlayProps> = ({
   const trackHeight = propTrackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
   const { editMode } = useVideoEditorStore();
   const [hoveredGap, setHoveredGap] = useState<string | null>(null);
-  
-  // Only show gaps when gap tool is active
-  if (editMode !== 'gap') {
-    return null;
-  }
 
   // Calculate gaps for all tracks
+  // NOTE: This must be above the early return to maintain consistent hook call order
   const gaps = useMemo(() => {
+    if (editMode !== 'gap') return [];
+    
     const allGaps: Gap[] = [];
     
     tracks.forEach((track, trackIndex) => {
@@ -84,7 +82,7 @@ export const TimelineGapOverlay: React.FC<TimelineGapOverlayProps> = ({
     });
     
     return allGaps;
-  }, [tracks]);
+  }, [tracks, editMode]);
 
   const handleGapClick = (gap: Gap) => {
     // Find all items on this track that come after the gap
@@ -101,6 +99,11 @@ export const TimelineGapOverlay: React.FC<TimelineGapOverlayProps> = ({
     }
     return `${seconds.toFixed(1)}s`;
   };
+
+  // Only show gaps when gap tool is active
+  if (editMode !== 'gap') {
+    return null;
+  }
 
   return (
     <>

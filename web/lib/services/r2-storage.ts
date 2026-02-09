@@ -621,6 +621,47 @@ export function isR2Configured(): boolean {
   );
 }
 
+// [DEVTOOLS-MEDIA] - List files by prefix for DevTools media browsing. Remove when no longer needed.
+/**
+ * List all files under a given prefix from R2 storage.
+ * Returns metadata for each object (key, size, lastModified).
+ * 
+ * @param prefix - The prefix (folder path) to list files from
+ * @returns Array of file metadata objects
+ */
+export async function listFilesWithPrefix(prefix: string): Promise<Array<{ key: string; size: number; lastModified: Date }>> {
+  const client = getS3Client();
+  const bucketName = getBucketName();
+  const results: Array<{ key: string; size: number; lastModified: Date }> = [];
+  let continuationToken: string | undefined;
+
+  do {
+    const listCommand = new ListObjectsV2Command({
+      Bucket: bucketName,
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    });
+
+    const listResponse = await client.send(listCommand);
+
+    if (listResponse.Contents) {
+      for (const object of listResponse.Contents) {
+        if (object.Key && object.Size && object.Size > 0) {
+          results.push({
+            key: object.Key,
+            size: object.Size,
+            lastModified: object.LastModified || new Date(),
+          });
+        }
+      }
+    }
+
+    continuationToken = listResponse.NextContinuationToken;
+  } while (continuationToken);
+
+  return results;
+}
+
 /**
  * Delete all files under a given prefix from R2 storage.
  * Used to clean up all files for a video project (e.g., {userId}/{videoId}/).

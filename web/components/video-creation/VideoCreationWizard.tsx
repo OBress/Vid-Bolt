@@ -2125,7 +2125,8 @@ export function VideoCreationWizard({
             projectId={projectId}
             audioUrl={state.audioUrl}
             audioChunks={state.audioChunks}
-            shotList={state.shotList}
+            shotList={state.avScriptPart1Output?.shots || state.shotList}
+            generatedMedia={state.generatedMedia}
             onContinue={async () => {
               if (state.videoId) {
                 try {

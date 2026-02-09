@@ -353,6 +353,7 @@ export const EditorLayout: React.FC<EditorLayoutProps> = ({
   return (
     <div 
       ref={containerRef}
+      data-editor-root
       className="h-full w-full bg-background overflow-hidden flex flex-col"
     >
       {/* Header (optional) */}

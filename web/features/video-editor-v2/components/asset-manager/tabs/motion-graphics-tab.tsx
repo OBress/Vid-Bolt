@@ -9,7 +9,7 @@
  * - Drag to timeline functionality
  */
 
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { cn } from "../../../utils/general/utils";
 import { ScrollArea } from "../../ui/scroll-area";
 import { Button } from "../../ui/button";
@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "../../ui/select";
 import { useVideoEditorStore } from "../../../stores/video-editor-store";
+import { startMediaDrag, endDrag } from "../../../stores/video-editor-store";
 import {
   MotionGraphicsTemplate,
   MotionGraphicsCategory,
@@ -33,6 +34,9 @@ import {
 import type { CompositionDefinition } from "../../../types/composition";
 import { useMotionGraphicsGeneration } from "../../../hooks/use-motion-graphics-generation";
 import { parseTaggedJSX, hasLayerTags } from "../../../utils/jsx-layer-parser";
+import { Player, PlayerRef } from "@remotion/player";
+import { DynamicCompositionWrapper } from "../../../utils/remotion/dynamic-composition";
+import { useVisualQC, type QCResult } from "../../../hooks/use-visual-qc";
 
 // Built-in templates (temporary - will be replaced with new AI generation system)
 const getBuiltInTemplates = (): MotionGraphicsTemplate[] => {
@@ -45,6 +49,7 @@ const getBuiltInTemplates = (): MotionGraphicsTemplate[] => {
       duration: 150,
       isBuiltIn: true,
       tags: ['lower third', 'name', 'title'],
+      editableProperties: [],
     },
     {
       id: 'builtin-title-card-1',
@@ -54,6 +59,7 @@ const getBuiltInTemplates = (): MotionGraphicsTemplate[] => {
       duration: 90,
       isBuiltIn: true,
       tags: ['title', 'intro'],
+      editableProperties: [],
     },
   ];
 };
@@ -85,14 +91,11 @@ import {
   RefreshCw,
   Cpu,
   ChevronDown,
+  GripVertical,
 } from "lucide-react";
-// TODO: ModelSelectorDialog not available in Vid-Bolt - needs to be ported or replaced
-// import { ModelSelectorDialog } from "@/components/settings/ModelSelector/ModelSelectorDialog";
+import { ModelSelectorDialog, getModelDisplayName } from "../components/model-selector-dialog";
 import { useAISettingsStore } from "../../../stores/ai-settings-store";
-// TODO: These hooks/services don't exist in Vid-Bolt - motion graphics AI features disabled
-// import { useUserSettings } from "@/hooks/use-settings";
-// import { openRouterModelService, type OpenRouterModel } from "@/services/OpenRouterModelService";
-type OpenRouterModel = { id: string; name: string }; // Stub type
+import { useApiKeys } from "@/hooks/use-api-keys";
 
 // Note: AISettingsDialog removed - now using ModelSelectorDialog directly in chat header
 
@@ -250,6 +253,46 @@ interface ChatMessageItemProps {
 }
 
 const ChatMessageItem: React.FC<ChatMessageItemProps> = ({ message, onUseTemplate, onSaveTemplate }) => {
+  // Drag handler for generated templates
+  const handleTemplateDragStart = useCallback((e: React.DragEvent, template: MotionGraphicsTemplate) => {
+    const fps = useVideoEditorStore.getState().fps || 30;
+    const duration = template.duration ? template.duration / fps : 5; // Convert frames to seconds
+
+    // Create property values from editable properties
+    const propertyValues = (template.editableProperties || []).reduce((acc: Record<string, any>, prop: any) => {
+      acc[prop.id] = prop.value;
+      return acc;
+    }, {} as Record<string, any>);
+
+    const dragData = {
+      isNewItem: true,
+      type: 'motion-graphics',
+      label: template.name,
+      duration,
+      data: {
+        id: template.id,
+        type: 'motion-graphics',
+        src: '',
+        name: template.name,
+        template,
+        propertyValues,
+      },
+    };
+
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+
+    // Do NOT call startMediaDrag — it sets store drag type to 'media' with newItemType: 'video',
+    // which overrides the correct 'motion-graphics' type from dataTransfer JSON.
+    // The timeline's use-media-drop hook reads dataTransfer JSON directly when no store drag is set.
+
+    console.log('[MotionGraphicsTab] Drag started for template:', template.id, template.name);
+  }, []);
+
+  const handleTemplateDragEnd = useCallback(() => {
+    // Clean up any visual drag state
+    endDrag();
+  }, []);
   const isUser = message.role === 'user';
   
   return (
@@ -293,9 +336,17 @@ const ChatMessageItem: React.FC<ChatMessageItemProps> = ({ message, onUseTemplat
 
         {/* Generated template */}
         {message.generatedTemplate && onUseTemplate && (
-          <div className="mt-2 p-2 rounded-lg border bg-card">
+          <div 
+            className="mt-2 p-2 rounded-lg border bg-card cursor-grab active:cursor-grabbing hover:border-primary/40 transition-colors group/card"
+            draggable
+            onDragStart={(e) => handleTemplateDragStart(e, message.generatedTemplate!)}
+            onDragEnd={handleTemplateDragEnd}
+          >
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium">{message.generatedTemplate.name}</span>
+              <div className="flex items-center gap-1.5">
+                <GripVertical className="h-3.5 w-3.5 text-muted-foreground/50 group-hover/card:text-muted-foreground transition-colors" />
+                <span className="text-xs font-medium">{message.generatedTemplate.name}</span>
+              </div>
               <Badge variant="outline" className="text-[9px]">
                 {MOTION_GRAPHICS_CATEGORY_NAMES[message.generatedTemplate.category]}
               </Badge>
@@ -316,8 +367,9 @@ const ChatMessageItem: React.FC<ChatMessageItemProps> = ({ message, onUseTemplat
             <div className="flex gap-2">
               <Button
                 size="sm"
+                variant="outline"
                 className="flex-1 h-7 text-xs"
-                onClick={() => onUseTemplate(message.generatedTemplate!)}
+                onClick={(e) => { e.stopPropagation(); onUseTemplate(message.generatedTemplate!); }}
               >
                 <Plus className="h-3 w-3 mr-1" />
                 Add to Timeline
@@ -327,13 +379,14 @@ const ChatMessageItem: React.FC<ChatMessageItemProps> = ({ message, onUseTemplat
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs px-2"
-                  onClick={() => onSaveTemplate(message.generatedTemplate!)}
+                  onClick={(e) => { e.stopPropagation(); onSaveTemplate(message.generatedTemplate!); }}
                   title="Save as Template"
                 >
                   <Save className="h-3 w-3" />
                 </Button>
               )}
             </div>
+            <p className="text-[10px] text-muted-foreground/60 mt-1.5 text-center">Drag to timeline or click to add</p>
           </div>
         )}
       </div>
@@ -360,21 +413,10 @@ export const MotionGraphicsTab: React.FC = () => {
   
   // Model selector state
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
-  const [modelSearchQuery, setModelSearchQuery] = useState('');
-  const [userFavorites, setUserFavorites] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('openrouter-favorite-models');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [modelNames, setModelNames] = useState<Record<string, string>>({});
 
-  // User Settings (contains API keys) - TODO: Not available in Vid-Bolt
-  // const { data: userSettings } = useUserSettings();
-  const userSettings: { openrouter_key?: string } | null = null;
-  const hasApiKey = Boolean(userSettings?.openrouter_key);
+  // API key availability check
+  const { availability: apiKeyAvailability, loading: apiKeysLoading } = useApiKeys();
+  const hasApiKey = apiKeyAvailability.openrouter_key;
   
   // AI Settings store (for model selection)
   const { selectedModelId, setSelectedModelId } = useAISettingsStore();
@@ -398,6 +440,17 @@ export const MotionGraphicsTab: React.FC = () => {
   
   // Local error state for UI display
   const [error, setError] = useState<string | null>(null);
+  
+  // Visual QC
+  const { isAnalyzing: isQCRunning, result: qcResult, captureAndAnalyze, reset: resetQC } = useVisualQC();
+  const qcPlayerRef = useRef<PlayerRef>(null);
+  const [qcCode, setQCCode] = useState<string | null>(null);
+  const [qcDurationFrames, setQCDurationFrames] = useState(150);
+  const [qcPrompt, setQCPrompt] = useState<string>('');
+  const [qcPendingAnalysis, setQCPendingAnalysis] = useState(false);
+  const qcRetryCountRef = useRef(0);
+  const pendingAutoSubmitRef = useRef(false);
+  const MAX_QC_RETRIES = 2;
   
   // Sync generation error to local state
   useEffect(() => {
@@ -500,47 +553,7 @@ export const MotionGraphicsTab: React.FC = () => {
     }
   }, [chatMessages]);
 
-  // Load model names for display - TODO: openRouterModelService not available in Vid-Bolt
-  // useEffect(() => {
-  //   const loadModelNames = async () => {
-  //     try {
-  //       const models = await openRouterModelService.getModels();
-  //       const names: Record<string, string> = {};
-  //       Object.values(models).flat().forEach((model: OpenRouterModel) => {
-  //         names[model.id] = model.name;
-  //       });
-  //       setModelNames(names);
-  //     } catch (error) {
-  //       console.error('Failed to load model names:', error);
-  //     }
-  //   };
-  //   if (hasApiKey) {
-  //     loadModelNames();
-  //   }
-  // }, [hasApiKey]);
-
-  // Get display name for selected model
-  const getModelDisplayName = useCallback((modelId: string) => {
-    if (modelNames[modelId]) {
-      // Remove provider prefix like "Anthropic: "
-      const name = modelNames[modelId];
-      return name.replace(/^(Anthropic|OpenAI|Google|xAI|Meta|Mistral):\s*/i, '');
-    }
-    // Fallback to extracting name from ID
-    const parts = modelId.split('/');
-    return parts[parts.length - 1] || modelId;
-  }, [modelNames]);
-
-  // Toggle favorite model
-  const handleToggleFavorite = useCallback((modelId: string) => {
-    setUserFavorites((prev) => {
-      const updated = prev.includes(modelId)
-        ? prev.filter((id) => id !== modelId)
-        : [...prev, modelId];
-      localStorage.setItem('openrouter-favorite-models', JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
+  // getModelDisplayName is imported from model-selector-dialog
 
   // Clear chat / start new chat
   const handleNewChat = useCallback(() => {
@@ -548,9 +561,107 @@ export const MotionGraphicsTab: React.FC = () => {
     setInputValue('');
     setError(null);
     resetGeneration();
-  }, [resetGeneration]);
+    resetQC();
+    setQCCode(null);
+    setQCPendingAnalysis(false);
+    qcRetryCountRef.current = 0;
+  }, [resetGeneration, resetQC]);
 
-  // Get canvas dimensions
+  // Auto-trigger Visual QC after generation completes and Player has rendered
+  useEffect(() => {
+    if (!qcPendingAnalysis || !qcCode || !qcPlayerRef.current) return;
+
+    // Wait for Player to compile + render the code before capturing
+    const timer = setTimeout(async () => {
+      console.log('[MotionGraphicsTab] 🔍 Starting auto Visual QC...');
+      setQCPendingAnalysis(false);
+
+      // Add QC status message to chat 
+      const qcMsgId = `qc-${Date.now()}`;
+      setChatMessages(prev => [
+        ...prev,
+        {
+          id: qcMsgId,
+          role: 'assistant' as const,
+          content: '🔍 Verifying visual output...',
+          isStreaming: true,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      const result = await captureAndAnalyze(
+        qcPlayerRef as React.RefObject<any>,
+        qcDurationFrames,
+        qcPrompt,
+        selectedModelId,
+        fps || 30
+      );
+
+      if (result) {
+        const statusIcon = result.passed ? '✅' : '❌';
+        const statusText = result.passed
+          ? `Visual QC passed: ${result.summary}`
+          : `Visual QC failed: ${result.summary}`;
+
+        setChatMessages(prev =>
+          prev.map(msg =>
+            msg.id === qcMsgId
+              ? { ...msg, content: `${statusIcon} ${statusText}`, isStreaming: false }
+              : msg
+          )
+        );
+
+        // If QC failed and we haven't exceeded retries, auto-regenerate with feedback
+        if (!result.passed && qcRetryCountRef.current < MAX_QC_RETRIES) {
+          qcRetryCountRef.current++;
+          console.log(`[MotionGraphicsTab] 🔄 QC failed, auto-regenerating (attempt ${qcRetryCountRef.current}/${MAX_QC_RETRIES})...`);
+
+          // Build feedback prompt from QC issues
+          const issuesList = result.issues.join('; ');
+          const suggestionsList = result.suggestions.join('; ');
+          const feedbackPrompt = `Fix the following visual issues: ${issuesList}. Suggestions: ${suggestionsList}`;
+
+          // Add a user message showing the auto-correction
+          setChatMessages(prev => [
+            ...prev,
+            {
+              id: `auto-fix-${Date.now()}`,
+              role: 'user' as const,
+              content: `🔄 Auto-correcting: ${feedbackPrompt}`,
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+
+          // Trigger regeneration with feedback as a follow-up
+          // Set input and mark for auto-submit on next render
+          setInputValue(feedbackPrompt);
+          pendingAutoSubmitRef.current = true;
+        } else if (result.passed) {
+          qcRetryCountRef.current = 0; // Reset on success
+        }
+      } else {
+        // QC capture failed — update message but don't block
+        setChatMessages(prev =>
+          prev.map(msg =>
+            msg.id === qcMsgId
+              ? { ...msg, content: '⚠️ Visual QC: Could not capture preview (animation may still work fine)', isStreaming: false }
+              : msg
+          )
+        );
+      }
+    }, 2000); // Wait 2s for Player to compile and render
+
+    return () => clearTimeout(timer);
+  }, [qcPendingAnalysis, qcCode, qcDurationFrames, qcPrompt, selectedModelId, captureAndAnalyze]);
+
+  // Memoize QC player inputProps to prevent re-renders
+  const qcPlayerInputProps = useMemo(() => ({
+    code: qcCode || '',
+  }), [qcCode]);
+
+  // Auto-submit feedback when pendingAutoSubmitRef is set (after QC failure)
+  // We need this as a separate effect because handleSendMessage reads inputValue state
+  const handleSendMessageRef = useRef<(() => void) | null>(null);
   const getCanvasDimensions = useCallback(() => {
     const resolutionHeights: Record<string, number> = {
       '720p': 720,
@@ -602,10 +713,9 @@ export const MotionGraphicsTab: React.FC = () => {
       },
     ]);
 
-    // Get the API key from user settings
-    const apiKey = userSettings?.openrouter_key || '';
-    
-    if (!apiKey) {
+    // API key check - the backend will fetch the key from the database
+    // We pass an empty string here; the backend endpoint retrieves it from user_api_keys
+    if (!hasApiKey) {
       setChatMessages((prev) =>
         prev.map((msg) =>
           msg.id === assistantMessageId
@@ -621,6 +731,7 @@ export const MotionGraphicsTab: React.FC = () => {
       setError('No API key configured');
       return;
     }
+    const apiKey = ''; // Backend retrieves from DB via Supabase session
 
     // Generate motion graphics using the new system
     const result = await generate(
@@ -721,7 +832,7 @@ export const MotionGraphicsTab: React.FC = () => {
             
             // Create a template from the generated code
             const generatedTemplate: MotionGraphicsTemplate = {
-              id: `generated-${Date.now()}`,
+              id: `generated-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
               name: 'AI Generated Animation',
               description: userPrompt,
               category: MotionGraphicsCategory.TEXT_ANIMATION,
@@ -730,6 +841,7 @@ export const MotionGraphicsTab: React.FC = () => {
               remotionCode: result.code,
               compositionDefinition, // Attach the composition definition
               tags: result.metadata?.skills || [],
+              editableProperties: [],
             };
 
             setChatMessages((prev) =>
@@ -744,6 +856,13 @@ export const MotionGraphicsTab: React.FC = () => {
                   : msg
               )
             );
+
+            // Trigger automatic Visual QC
+            setQCCode(result.code);
+            setQCDurationFrames(duration);
+            setQCPrompt(userPrompt);
+            setQCPendingAnalysis(true);
+            console.log('[MotionGraphicsTab] 🔍 Queuing Visual QC for generated code');
           }
         },
       }
@@ -765,6 +884,21 @@ export const MotionGraphicsTab: React.FC = () => {
     }
   };
 
+  // Keep handleSendMessage ref updated for auto-QC regeneration
+  handleSendMessageRef.current = handleSendMessage;
+
+  // Auto-submit effect: when QC failure sets pendingAutoSubmitRef, trigger send
+  useEffect(() => {
+    if (pendingAutoSubmitRef.current && inputValue.trim()) {
+      pendingAutoSubmitRef.current = false;
+      // Small delay to ensure state has settled
+      const timer = setTimeout(() => {
+        handleSendMessageRef.current?.();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [inputValue]);
+
   // Handle add template to timeline
   const handleAddToTimeline = (template: MotionGraphicsTemplate) => {
     const dimensions = getCanvasDimensions();
@@ -776,19 +910,24 @@ export const MotionGraphicsTab: React.FC = () => {
       return acc;
     }, {} as Record<string, any>);
     
+    // Place at end of existing clips on track (allows multiple adds to stack sequentially)
+    const existingClips = useVideoEditorStore.getState().clips.filter(c => c.trackId === trackId);
+    const endOfTrack = existingClips.reduce((max, clip) => Math.max(max, clip.startTime + clip.duration), 0);
+    const startTime = endOfTrack; // 0 if no clips, otherwise right after the last one
+    
     console.log('[MotionGraphicsTab] Adding motion graphics clip:', {
       type: 'motion-graphics',
       templateId: template.id,
       templateName: template.name,
       propertyCount: Object.keys(propertyValues).length,
+      startTime,
     });
     
     // Create a motion graphics clip
-    // Position at 0,0 with full canvas dimensions (top-left anchor)
     addClip({
       type: 'motion-graphics',
       sourceId: template.id,
-      startTime: 0,
+      startTime,
       duration: template.duration / fps,
       trackId,
       name: template.name,
@@ -798,7 +937,6 @@ export const MotionGraphicsTab: React.FC = () => {
         propertyValues,
         mapboxConfig: template.mapboxConfig,
       },
-      // Position at center of canvas for proper alignment
       transform: {
         x: 0,
         y: 0,
@@ -1107,16 +1245,41 @@ export const MotionGraphicsTab: React.FC = () => {
         </div>
       )}
 
-      {/* Model Selector Dialog - TODO: ModelSelectorDialog not available in Vid-Bolt */}
-      {/* <ModelSelectorDialog
+      {/* Model Selector Dialog */}
+      <ModelSelectorDialog
         open={modelDialogOpen}
         onOpenChange={setModelDialogOpen}
-        onSelectModel={setSelectedModelId}
-        searchQuery={modelSearchQuery}
-        onSearchChange={setModelSearchQuery}
-        userFavorites={userFavorites}
-        onToggleFavorite={handleToggleFavorite}
-      /> */}
+        onSelectModel={(modelId) => setSelectedModelId(modelId)}
+        selectedModelId={selectedModelId}
+      />
+
+      {/* Hidden Remotion Player for Visual QC capture */}
+      {qcCode && (
+        <div
+          style={{
+            position: 'fixed',
+            // Use clip-path instead of off-screen positioning so element keeps
+            // proper layout dimensions (offsetWidth/Height stay non-zero)
+            clipPath: 'inset(100%)',
+            width: '480px',
+            height: '270px',
+            overflow: 'hidden',
+            pointerEvents: 'none',
+          }}
+          aria-hidden="true"
+        >
+          <Player
+            ref={qcPlayerRef}
+            component={DynamicCompositionWrapper}
+            inputProps={qcPlayerInputProps}
+            durationInFrames={Math.max(1, qcDurationFrames)}
+            compositionWidth={1920}
+            compositionHeight={1080}
+            fps={fps || 30}
+            style={{ width: '480px', height: '270px' }}
+          />
+        </div>
+      )}
     </div>
   );
 };

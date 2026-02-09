@@ -241,37 +241,12 @@ export const useTimelineHandlers = ({
           videoUrl = video.src || video.url || video.videoUrl || video.file || video.hd?.url || '';
         }
         
-        let assetDimensions = getAssetDimensions(video);
-        if (!assetDimensions) {
-          if (video.width && video.height) {
-            assetDimensions = { width: video.width, height: video.height };
-          } else {
-            assetDimensions = { width: 1080, height: 1920 };
-          }
-        }
-        
-        let { width, height } = assetDimensions
-          ? calculateIntelligentAssetSize(assetDimensions, canvasDimensions)
-          : canvasDimensions;
-        
-        const maxWidth = canvasDimensions.width * 0.9;
-        const maxHeight = canvasDimensions.height * 0.9;
-        if (width > maxWidth || height > maxHeight) {
-          const scale = Math.min(maxWidth / width, maxHeight / height, 1);
-          width = Math.round(width * scale);
-          height = Math.round(height * scale);
-        }
-        
-        const centerLeft = Math.max(0, (canvasDimensions.width - width) / 2);
-        const centerTop = Math.max(0, (canvasDimensions.height - height) / 2);
-        
-        // Transform uses composition pixel coordinates (not percentages)
-        // The Layer component renders these directly as CSS pixel values
+        // Fill the entire canvas - standard NLE behavior
         const transform: ClipTransform = {
-          x: centerLeft,
-          y: centerTop,
-          width,
-          height,
+          x: 0,
+          y: 0,
+          width: canvasDimensions.width,
+          height: canvasDimensions.height,
           rotation: 0,
           opacity: 1,
           zIndex: 100,
@@ -292,6 +267,9 @@ export const useTimelineHandlers = ({
             volume: 1,
           },
           thumbnailUrl: video.thumbnail || video.thumbnailUrl,
+          styles: {
+            objectFit: 'cover',
+          },
           data: {
             src: videoUrl,
             originalUrl: videoUrl,
@@ -412,26 +390,7 @@ export const useTimelineHandlers = ({
           imageUrl = image.src || image.url || image.imageUrl || image.file || image.hd?.url || image.thumbnail || '';
         }
         
-        let assetDimensions = getAssetDimensions(image);
-        if (!assetDimensions && image.width && image.height) {
-          assetDimensions = { width: image.width, height: image.height };
-        }
-        
-        let { width, height } = assetDimensions
-          ? calculateIntelligentAssetSize(assetDimensions, canvasDimensions)
-          : canvasDimensions;
-        
-        const maxWidth = canvasDimensions.width * 0.9;
-        const maxHeight = canvasDimensions.height * 0.9;
-        if (width > maxWidth || height > maxHeight) {
-          const scale = Math.min(maxWidth / width, maxHeight / height, 1);
-          width = Math.round(width * scale);
-          height = Math.round(height * scale);
-        }
-        
-        const centerLeft = Math.max(0, (canvasDimensions.width - width) / 2);
-        const centerTop = Math.max(0, (canvasDimensions.height - height) / 2);
-        
+        // Fill the entire canvas - standard NLE behavior
         const imageClipId = addClip({
           trackId: targetTrack.id,
           startTime,
@@ -440,15 +399,18 @@ export const useTimelineHandlers = ({
           sourceId: imageUrl,
           label: image.name || image.filename || 'Image',
           transform: {
-            x: centerLeft,
-            y: centerTop,
-            width,
-            height,
+            x: 0,
+            y: 0,
+            width: canvasDimensions.width,
+            height: canvasDimensions.height,
             rotation: 0,
             opacity: 1,
             zIndex: 100,
           },
           thumbnailUrl: image.thumbnail || image.thumbnailUrl || imageUrl,
+          styles: {
+            objectFit: 'cover',
+          },
           data: {
             src: imageUrl,
             originalUrl: imageUrl,
@@ -492,6 +454,128 @@ export const useTimelineHandlers = ({
         
         // Select the newly added audio clip
         selectClips([audioClipId]);
+      } else if (itemType === 'motion-graphics' && itemData?.data) {
+        // Motion graphics drop from AI generation
+        const mgData = itemData.data;
+        const template = mgData.template;
+
+        // Use propertyValues from drag data, or derive from template
+        const propertyValues = mgData.propertyValues || 
+          (template?.editableProperties || []).reduce((acc: Record<string, any>, prop: any) => {
+            acc[prop.id] = prop.value;
+            return acc;
+          }, {} as Record<string, any>);
+
+        const mgClipId = addClip({
+          type: 'motion-graphics',
+          sourceId: template?.id || mgData.id || `mg-${Date.now()}`,
+          startTime,
+          duration,
+          trackId: targetTrack.id,
+          name: template?.name || mgData.name || 'Motion Graphic',
+          color: '#A855F7', // Purple for motion graphics
+          properties: {
+            template,
+            propertyValues,
+            mapboxConfig: template?.mapboxConfig,
+          },
+          // Match the same transform shape as handleAddToTimeline
+          transform: {
+            x: 0,
+            y: 0,
+            width: canvasDimensions.width,
+            height: canvasDimensions.height,
+            scale: 1,
+            rotation: 0,
+          },
+        });
+
+        selectClips([mgClipId]);
+        console.log('[TimelineHandlers] Added motion graphics clip:', mgClipId, template?.name);
+      } else if (itemType === 'text' && itemData?.data) {
+        // Text preset drop from assets sidebar
+        const textData = itemData.data;
+        const presetStyles = textData.presetStyles || {};
+        const content = textData.content || 'Text';
+        const fontSize = presetStyles.fontSize 
+          ? parseInt(String(presetStyles.fontSize).replace('px', ''))
+          : 48;
+
+        // Calculate intelligent text dimensions
+        const avgCharWidth = fontSize * 0.6;
+        const textWidth = content.length * avgCharWidth;
+        const lineHeight = fontSize * 1.4;
+        const maxWidth = Math.min(canvasDimensions.width * 0.8, textWidth + 40);
+        const estimatedLines = Math.ceil(textWidth / (maxWidth - 40)) || 1;
+        const totalHeight = (estimatedLines * lineHeight) + 40;
+        const finalWidth = Math.max(300, Math.min(maxWidth, canvasDimensions.width * 0.9));
+        const finalHeight = Math.max(80, Math.min(totalHeight, canvasDimensions.height * 0.5));
+
+        const textClipId = addClip({
+          trackId: targetTrack.id,
+          startTime,
+          duration,
+          type: 'text' as const,
+          sourceId: '',
+          label: textData.name || 'Text',
+          content,
+          transform: {
+            x: Math.round(canvasDimensions.width / 2 - finalWidth / 2),
+            y: Math.round(canvasDimensions.height / 2 - finalHeight / 2),
+            width: Math.round(finalWidth),
+            height: Math.round(finalHeight),
+            rotation: 0,
+            opacity: 1,
+            zIndex: 100,
+          },
+          text: {
+            text: content,
+            fontSize,
+            fontFamily: presetStyles.fontFamily || 'Inter',
+            color: presetStyles.color || '#ffffff',
+            backgroundColor: presetStyles.backgroundColor || 'transparent',
+            textAlign: (presetStyles.textAlign || 'center') as 'left' | 'center' | 'right',
+          },
+          styles: {
+            ...presetStyles,
+            fontSize: `${fontSize}px`,
+            fontFamily: presetStyles.fontFamily || 'Inter',
+          },
+        });
+
+        selectClips([textClipId]);
+        console.log('[TimelineHandlers] Added text clip from drag:', textClipId, textData.name);
+      } else if (itemType === 'shape' && itemData?.data) {
+        // Shape preset drop from assets sidebar
+        const shapeData = itemData.data;
+        const shapeStyles = shapeData.shapeStyles || {};
+        const shapeType = shapeData.shapeType || 'rectangle';
+        const shapeSize = Math.min(canvasDimensions.width, canvasDimensions.height) * 0.3;
+
+        const shapeClipId = addClip({
+          trackId: targetTrack.id,
+          startTime,
+          duration,
+          type: 'shape' as const,
+          sourceId: '',
+          label: shapeData.name || 'Shape',
+          content: shapeType,
+          transform: {
+            x: Math.round(canvasDimensions.width / 2 - shapeSize / 2),
+            y: Math.round(canvasDimensions.height / 2 - shapeSize / 2),
+            width: Math.round(shapeType === 'line' ? shapeSize * 2 : shapeSize),
+            height: Math.round(shapeType === 'line' ? 4 : shapeSize),
+            rotation: 0,
+            opacity: shapeStyles.opacity !== undefined ? shapeStyles.opacity : 1,
+            zIndex: 100,
+          },
+          styles: {
+            ...shapeStyles,
+          },
+        });
+
+        selectClips([shapeClipId]);
+        console.log('[TimelineHandlers] Added shape clip from drag:', shapeClipId, shapeType);
       }
     },
     [addClip, updateClip, getAspectRatioDimensions, videoAdaptors, imageAdaptors]

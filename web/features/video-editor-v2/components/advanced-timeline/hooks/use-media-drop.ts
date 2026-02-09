@@ -342,6 +342,12 @@ export const useMediaDrop = ({
       itemType = dragData.newItemType || 'video';
       duration = dragData.mediaDuration || (itemType === 'image' ? DEFAULT_IMAGE_DURATION : DEFAULT_VIDEO_DURATION);
       thumbnailUrl = dragData.thumbnailUrl;
+    } else if (dragData && dragData.type === 'text-preset') {
+      itemType = 'text';
+      duration = 5;
+    } else if (dragData && dragData.type === 'shape-preset') {
+      itemType = 'shape';
+      duration = 5;
     } else if (dataTransfer) {
       // Fall back to parsing dataTransfer for drag data (handles race conditions)
       try {
@@ -674,7 +680,11 @@ export const useMediaDrop = ({
     
     // Also check for video-editor-store drag state as fallback
     const storeDragData = getCurrentDrag();
-    const hasStoreDrag = storeDragData && storeDragData.type === 'media';
+    const hasStoreDrag = storeDragData && (
+      storeDragData.type === 'media' || 
+      storeDragData.type === 'text-preset' || 
+      storeDragData.type === 'shape-preset'
+    );
     
     if (!hasJsonType && !hasStoreDrag) {
       return;

@@ -143,13 +143,28 @@ export async function GET(
       try {
         const { getKeyFromUrl, getPublicUrl } = await import("@/lib/services/r2-storage");
         metadata.generatedMedia = metadata.generatedMedia.map((m: any) => {
+          // Sanitize primary media_url
           if (m.media_url && (m.media_url.includes('X-Amz-') || m.media_url.includes('r2.cloudflarestorage.com'))) {
             try {
               const key = getKeyFromUrl(m.media_url);
-              return { ...m, media_url: getPublicUrl(key) };
+              m = { ...m, media_url: getPublicUrl(key) };
             } catch {
-              return m;
+              // keep original
             }
+          }
+          // Sanitize media_items URLs (multi-image shots)
+          if (m.media_items && Array.isArray(m.media_items)) {
+            m.media_items = m.media_items.map((item: any) => {
+              if (item.media_url && (item.media_url.includes('X-Amz-') || item.media_url.includes('r2.cloudflarestorage.com'))) {
+                try {
+                  const key = getKeyFromUrl(item.media_url);
+                  return { ...item, media_url: getPublicUrl(key) };
+                } catch {
+                  return item;
+                }
+              }
+              return item;
+            });
           }
           return m;
         });

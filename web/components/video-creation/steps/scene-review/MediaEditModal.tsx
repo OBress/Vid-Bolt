@@ -26,7 +26,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { GeneratedMedia, KeyframeData } from "@/types/video";
+import type { GeneratedMedia, KeyframeData, MediaItem } from "@/types/video";
 import { KeyframeThumbnail } from "./KeyframeThumbnail";
 import { KeyframeEditPopup } from "./KeyframeEditPopup";
 import { TypeChangeConfirmDialog } from "./TypeChangeConfirmDialog";
@@ -108,6 +108,15 @@ export function MediaEditModal({
   const [isKeyframeRegenerating, setIsKeyframeRegenerating] = useState(false);
   const [availableLoras, setAvailableLoras] = useState<string[]>([]);
   
+  // Multi-image state
+  const [selectedItemIndex, setSelectedItemIndex] = useState(0);
+  const isMultiImage = !!(media?.media_items && media.media_items.length > 1);
+  const selectedItem: MediaItem | undefined = isMultiImage
+    ? media?.media_items?.[selectedItemIndex]
+    : undefined;
+  // For multi-image: use selected item's URL; for single: use primary media_url
+  const displayUrl = selectedItem?.media_url || media?.media_url;
+  
   // Session tracking for cleanup on cancel
   const [originalType, setOriginalType] = useState<string | null>(null);
   const pendingUrls = useRef<Set<string>>(new Set());
@@ -138,13 +147,14 @@ export function MediaEditModal({
       setVisualPrompt(media.visual_prompt || shot.summary || "");
       setMediaType(media.media_type || shot.media_type || "image");
       setKeyframes(media.keyframes || {});
-      // Snapshot original type for detecting changes
       setOriginalType(media.media_type || shot.media_type || "image");
+      setSelectedItemIndex(0);
     } else if (shot) {
       setVisualPrompt(shot.summary || "");
       setMediaType(shot.media_type || "image");
       setKeyframes({});
       setOriginalType(shot.media_type || "image");
+      setSelectedItemIndex(0);
     }
     // Reset pending URLs when modal opens with new shot
     pendingUrls.current = new Set();
@@ -416,21 +426,69 @@ export function MediaEditModal({
             {/* Current Media */}
             <div className="space-y-2">
               <Label className="text-neutral-400 text-xs uppercase tracking-wide">
-                Current Media
+                {isMultiImage ? `Media (${media?.media_items?.length} items)` : 'Current Media'}
               </Label>
+              
+              {/* Multi-image thumbnail strip */}
+              {isMultiImage && media?.media_items && (
+                <div className="flex gap-1.5 overflow-x-auto pb-1.5 no-scrollbar">
+                  {media.media_items.map((item, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedItemIndex(idx)}
+                      className={cn(
+                        "relative flex-shrink-0 w-16 h-12 rounded-md overflow-hidden border-2 transition-all",
+                        selectedItemIndex === idx
+                          ? "border-orange-500 ring-1 ring-orange-500/50"
+                          : "border-neutral-700 hover:border-neutral-500",
+                      )}
+                    >
+                      {item.media_url ? (
+                        <img
+                          src={item.media_url}
+                          alt={`Item ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-neutral-800 flex items-center justify-center">
+                          <Image className="w-4 h-4 text-neutral-600" />
+                        </div>
+                      )}
+                      {/* Source badge */}
+                      <span
+                        className={cn(
+                          "absolute bottom-0.5 right-0.5 text-[7px] font-bold px-1 py-px rounded",
+                          item.source === 'stock'
+                            ? "bg-blue-600/80 text-blue-100"
+                            : "bg-purple-600/80 text-purple-100",
+                        )}
+                      >
+                        {item.source === 'stock' ? 'S' : 'AI'}
+                      </span>
+                      {/* Status indicator */}
+                      {item.generation_status === 'failed' && (
+                        <div className="absolute inset-0 bg-red-900/40 flex items-center justify-center">
+                          <X className="w-3 h-3 text-red-400" />
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              
               <div className="aspect-video bg-neutral-900 rounded-lg border border-neutral-800 overflow-hidden relative flex items-center justify-center">
-                {media?.media_url ? (
-                  mediaType === "video" ? (
+                {displayUrl ? (
+                  mediaType === "video" && !isMultiImage ? (
                     <video
-                      src={media.media_url}
+                      src={displayUrl}
                       controls
                       className="w-full h-full object-contain bg-black"
-                      poster={media.thumbnail_url}
+                      poster={media?.thumbnail_url}
                     />
                   ) : (
                     <img
-                      src={media.media_url}
-                      alt={`Shot ${shot.segment_index + 1}`}
+                      src={displayUrl}
+                      alt={`Shot ${shot.segment_index + 1}${isMultiImage ? ` - Item ${selectedItemIndex + 1}` : ''}`}
                       className="w-full h-full object-cover"
                     />
                   )
@@ -449,6 +507,25 @@ export function MediaEditModal({
                 {media?.generation_status === "generating" && (
                   <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
                     <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
+                  </div>
+                )}
+                {/* Selected item info overlay for multi-image */}
+                {isMultiImage && selectedItem && (
+                  <div className="absolute bottom-0 left-0 right-0 px-2 py-1.5 bg-gradient-to-t from-black/80 to-transparent">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-neutral-300">
+                        {selectedItemIndex + 1}/{media?.media_items?.length}
+                        {' · '}
+                        {selectedItem.source === 'stock' ? 'Stock' : 'AI Generated'}
+                      </span>
+                      <span className={cn(
+                        "text-[10px] font-medium",
+                        selectedItem.generation_status === 'completed' ? 'text-emerald-400' :
+                        selectedItem.generation_status === 'failed' ? 'text-red-400' : 'text-neutral-400'
+                      )}>
+                        {selectedItem.generation_status}
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>

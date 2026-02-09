@@ -455,6 +455,10 @@ export interface GeneratedMediaItem {
   media_url?: string;
   thumbnail_url?: string;
   visual_prompt: string;
+  /** Individual media items for multi-image shots */
+  media_items?: import('@/types/video').MediaItem[];
+  /** Planned image count from AI */
+  image_count?: number;
   /** Error message if generation failed */
   error_message?: string;
   created_at?: string;
@@ -611,6 +615,8 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
         media_type: shot.media_type, // 'video' | 'motiongraphic' from ShotPart1
         visual_prompt: detailedPrompts.find(p => p.index === i)?.prompt || shot.summary,
         duration_seconds: shot.duration_seconds || 5,
+        image_count: shot.image_count,
+        stock_media_refs: shot.stock_media_refs,
       }));
       
       // Progress callback for UI updates
@@ -645,6 +651,8 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
             generation_status: gpuItem.generation_status,
             media_url: gpuItem.media_url,
             visual_prompt: detailedPrompt,
+            media_items: gpuItem.media_items,
+            image_count: shot.image_count,
             error_message: gpuItem.error_message,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -658,6 +666,7 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
           generation_status: 'failed' as const,
           media_url: getPlaceholderUrl(shot.media_type || 'image', i, Date.now()),
           visual_prompt: detailedPrompt,
+          image_count: shot.image_count,
           error_message: 'No GPU result received',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

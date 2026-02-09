@@ -602,6 +602,7 @@ export type UnifiedDragType =
   | 'audio-transition'
   | 'mask'
   | 'text-preset'
+  | 'shape-preset'
   // Transition operations (existing transitions)
   | 'transition-move'
   | 'transition-resize'
@@ -702,6 +703,10 @@ export interface UnifiedDragState {
   presetId?: string;
   /** Styles for text preset */
   presetStyles?: Record<string, unknown>;
+  /** Shape type when dragging shapes */
+  shapeType?: string;
+  /** Shape styles when dragging shapes */
+  shapeStyles?: Record<string, unknown>;
   
   // === TRANSITION DRAG SPECIFIC ===
   /** Position of transition being dragged (start/end of clip) */

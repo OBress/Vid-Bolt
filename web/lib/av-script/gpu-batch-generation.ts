@@ -68,6 +68,10 @@ export interface ShotForGpuGeneration {
   start_frame_url?: string;
   /** Optional end frame image URL for video interpolation */
   end_frame_url?: string;
+  /** Number of images for multi-image motiongraphics (default: 1) */
+  image_count?: number;
+  /** Pre-matched stock media refs for multi-image shots */
+  stock_media_refs?: Array<{ id: string; url: string; thumbnailUrl: string; description: string; similarity: number }>;
 }
 
 export interface GpuGenerationResult {
@@ -75,6 +79,8 @@ export interface GpuGenerationResult {
   media_url: string;
   generation_status: 'completed' | 'failed';
   error_message?: string;
+  /** Individual media items for multi-image shots */
+  media_items?: import('@/types/video').MediaItem[];
 }
 
 export interface BatchGpuGenerationResult {
@@ -278,9 +284,10 @@ export async function processGpuBatchGeneration(
     ? await processImageBatch(userId, videoId, videoShots, aspectRatio, 'keyframe', imageItemCallback)
     : [];
   
-  // Record standalone image results directly
-  results.push(...standaloneResults);
-  stats.imagesGenerated = standaloneResults.filter(r => r.generation_status === 'completed').length;
+  // Assemble multi-image shots: group results by shot_index and build media_items
+  const assembledResults = assembleMultiImageResults(standaloneImageShots, standaloneResults);
+  results.push(...assembledResults);
+  stats.imagesGenerated = assembledResults.filter(r => r.generation_status === 'completed').length;
   stats.imagesFailed = standaloneResults.filter(r => r.generation_status === 'failed').length;
 
   // Build a map of shot_index -> keyframe image URL for video generation
@@ -363,11 +370,23 @@ async function processImageBatch(
   const webhookUrl = getWebhookUrl();
   const webhookSecret = getWebhookSecret();
   
-  console.log(`${logPrefix} Preparing batch ${batchId} with ${shots.length} items (${purpose})`);
+  // Count total GPU items (shots with image_count > 1 expand to multiple items)
+  let totalGpuItems = 0;
+  for (const shot of shots) {
+    const imageCount = shot.image_count || 1;
+    const stockCount = shot.stock_media_refs?.length || 0;
+    const aiImagesNeeded = Math.max(1, imageCount - stockCount);
+    totalGpuItems += aiImagesNeeded;
+  }
+  
+  console.log(`${logPrefix} Preparing batch ${batchId}: ${shots.length} shots → ${totalGpuItems} GPU items (${purpose})`);
 
   // Prepare batch items with presigned URLs
   const items: BatchImageGenerateItem[] = [];
   const itemIdToShot = new Map<string, ShotForGpuGeneration>();
+  
+  // Track sub-item index for multi-image shots: item_id → sub-item index within the shot
+  const itemIdToSubIndex = new Map<string, number>();
   
   // Select dimensions based on purpose:
   // - standalone: standard HD (1920x1080) for final motiongraphic images
@@ -380,30 +399,42 @@ async function processImageBatch(
 
   // Use appropriate storage path based on purpose
   const storagePath = purpose === 'keyframe' 
-    ? STORAGE_PATHS.IMAGES.GENERATED  // Keyframes stored alongside generated images
+    ? STORAGE_PATHS.IMAGES.GENERATED
     : STORAGE_PATHS.IMAGES.GENERATED;
 
   for (const shot of shots) {
-    const itemId = `shot-${shot.segment_index}-${uuidv4().slice(0, 8)}`;
-    const suffix = purpose === 'keyframe' ? '_keyframe' : '';
-    const filename = `shot_${shot.segment_index}${suffix}.png`;
-    const key = generateMediaKey(userId, videoId, storagePath, filename);
+    const imageCount = shot.image_count || 1;
+    const stockCount = shot.stock_media_refs?.length || 0;
+    // For multi-image: AI generates (imageCount - stockCount) images, minimum 1
+    const aiImagesNeeded = Math.max(1, imageCount - stockCount);
     
-    try {
-      const { putUrl } = await generatePresignedPutUrl(key, 'image/png');
+    for (let imgIdx = 0; imgIdx < aiImagesNeeded; imgIdx++) {
+      // For multi-image, include sub-index in item ID and filename
+      const subSuffix = aiImagesNeeded > 1 ? `-img${imgIdx}` : '';
+      const itemId = `shot-${shot.segment_index}${subSuffix}-${uuidv4().slice(0, 8)}`;
+      const suffix = purpose === 'keyframe' ? '_keyframe' : '';
+      const filenameSuffix = aiImagesNeeded > 1 ? `_${imgIdx}` : '';
+      const filename = `shot_${shot.segment_index}${suffix}${filenameSuffix}.png`;
+      const key = generateMediaKey(userId, videoId, storagePath, filename);
       
-      items.push({
-        item_id: itemId,
-        prompt: shot.visual_prompt,
-        aspect_ratio: aspectRatio,
-        width,
-        height,
-        save_url: putUrl,
-      });
-      
-      itemIdToShot.set(itemId, shot);
-    } catch (error) {
-      console.error(`${logPrefix} Failed to create presigned URL for shot ${shot.segment_index}:`, error);
+      try {
+        const { putUrl } = await generatePresignedPutUrl(key, 'image/png');
+        
+        items.push({
+          item_id: itemId,
+          prompt: shot.visual_prompt,
+          aspect_ratio: aspectRatio,
+          width,
+          height,
+          save_url: putUrl,
+        });
+        
+        itemIdToShot.set(itemId, shot);
+        // Track which sub-item index this is (stock items will be added at higher indices)
+        itemIdToSubIndex.set(itemId, imgIdx);
+      } catch (error) {
+        console.error(`${logPrefix} Failed to create presigned URL for shot ${shot.segment_index} img ${imgIdx}:`, error);
+      }
     }
   }
 
@@ -429,7 +460,7 @@ async function processImageBatch(
     }));
   }
 
-  console.log(`${logPrefix} Batch ${batchId} submitted, waiting for webhooks...`);
+  console.log(`${logPrefix} Batch ${batchId} submitted (${items.length} items), waiting for webhooks...`);
 
   // Wait for all webhooks with calculated timeout
   const timeout = calculateTimeout('image_generation', items.length);
@@ -437,6 +468,94 @@ async function processImageBatch(
   const results = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'image', onItemComplete);
 
   return results;
+}
+
+// ============================================================================
+// MULTI-IMAGE RESULT ASSEMBLY
+// ============================================================================
+
+/**
+ * Assemble multi-image results: for shots with image_count > 1, group results
+ * by shot_index, include stock images, and build media_items array.
+ * Single-image shots pass through unchanged.
+ */
+function assembleMultiImageResults(
+  shots: ShotForGpuGeneration[],
+  gpuResults: GpuGenerationResult[]
+): GpuGenerationResult[] {
+  const assembled: GpuGenerationResult[] = [];
+  
+  for (const shot of shots) {
+    const imageCount = shot.image_count || 1;
+    const stockRefs = shot.stock_media_refs || [];
+    
+    // Single-image shot — pass through directly
+    if (imageCount <= 1 && stockRefs.length === 0) {
+      const result = gpuResults.find(r => r.shot_index === shot.segment_index);
+      if (result) {
+        assembled.push(result);
+      } else {
+        assembled.push({
+          shot_index: shot.segment_index,
+          media_url: getPlaceholderUrl('image', shot.segment_index),
+          generation_status: 'failed',
+          error_message: 'No GPU result for shot',
+        });
+      }
+      continue;
+    }
+    
+    // Multi-image shot — collect all GPU results for this shot
+    const shotResults = gpuResults.filter(r => r.shot_index === shot.segment_index);
+    const mediaItems: import('@/types/video').MediaItem[] = [];
+    let itemIndex = 0;
+    
+    // Add AI-generated images
+    for (const result of shotResults) {
+      mediaItems.push({
+        item_index: itemIndex++,
+        media_type: 'image',
+        media_url: result.media_url,
+        visual_prompt: shot.visual_prompt,
+        source: 'ai_generated',
+        generation_status: result.generation_status,
+        error_message: result.error_message,
+      });
+    }
+    
+    // Add stock images as pre-completed items
+    for (const stockRef of stockRefs) {
+      mediaItems.push({
+        item_index: itemIndex++,
+        media_type: 'image',
+        media_url: stockRef.url,
+        visual_prompt: stockRef.description,
+        source: 'stock',
+        stock_media_id: stockRef.id,
+        generation_status: 'completed',
+      });
+    }
+    
+    // Primary URL is first item (AI-generated takes priority)
+    const primaryUrl = mediaItems.find(m => m.media_url)?.media_url 
+      || getPlaceholderUrl('image', shot.segment_index);
+    const allCompleted = mediaItems.every(m => m.generation_status === 'completed');
+    const anyFailed = mediaItems.some(m => m.generation_status === 'failed');
+    
+    assembled.push({
+      shot_index: shot.segment_index,
+      media_url: primaryUrl,
+      generation_status: anyFailed ? 'failed' : (allCompleted ? 'completed' : 'failed'),
+      media_items: mediaItems,
+      error_message: anyFailed 
+        ? `${mediaItems.filter(m => m.generation_status === 'failed').length}/${mediaItems.length} items failed` 
+        : undefined,
+    });
+    
+    console.log(`[GPU-Batch] Shot ${shot.segment_index}: assembled ${mediaItems.length} media items (${shotResults.length} AI + ${stockRefs.length} stock)`);
+  }
+  
+  return assembled;
 }
 
 // ============================================================================

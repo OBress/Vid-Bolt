@@ -136,6 +136,29 @@ export interface KeyframeData {
 }
 
 /**
+ * Individual media item within a multi-media shot.
+ * Used when image_count > 1 (multi-image motiongraphics).
+ */
+export interface MediaItem {
+  /** Index within the shot (0-based) */
+  item_index: number;
+  /** Type of this specific item */
+  media_type: 'image' | 'video';
+  /** R2 public URL */
+  media_url?: string;
+  /** Visual prompt for this specific item */
+  visual_prompt?: string;
+  /** Source of this media item */
+  source: 'ai_generated' | 'stock';
+  /** Stock media ID if source is 'stock' */
+  stock_media_id?: string;
+  /** Generation status */
+  generation_status: 'pending' | 'generating' | 'completed' | 'failed';
+  /** Error message if generation failed */
+  error_message?: string;
+}
+
+/**
  * Generated media item for a shot (Step 6: Scene Review)
  * Tracks the generation status and result for each shot's visual media
  */
@@ -146,7 +169,7 @@ export interface GeneratedMedia {
   media_type: 'image' | 'video' | 'motiongraphic';
   /** Current generation status */
   generation_status: 'pending' | 'generating' | 'completed' | 'failed';
-  /** R2 URL for the generated media */
+  /** R2 URL for the generated media (primary/first item) */
   media_url?: string;
   /** Thumbnail URL for video/motion content */
   thumbnail_url?: string;
@@ -154,7 +177,16 @@ export interface GeneratedMedia {
   visual_prompt: string;
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // NEW: Descriptive visual intent (routing tags + natural language)
+  // Multi-image support
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  /** Individual media items for multi-image shots (only populated when image_count > 1) */
+  media_items?: MediaItem[];
+  /** Planned image count from AI (for motiongraphics with multiple images) */
+  image_count?: number;
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Descriptive visual intent (routing tags + natural language)
   // ═══════════════════════════════════════════════════════════════════════════
   
   /** AI's natural language description of the visual approach */

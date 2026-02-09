@@ -15,6 +15,8 @@ export {
   startAudioTransitionDrag,
   startMaskDrag,
   startMediaDrag,
+  startTextPresetDrag,
+  startShapePresetDrag,
   getCurrentDrag,
   endDrag,
   // Selectors

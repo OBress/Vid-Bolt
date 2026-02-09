@@ -583,7 +583,7 @@ export const useTimelineDragAndDrop = ({
               id: draggedItem.id,
               originalStartTime: draggedItem.start,
               originalDuration: draggedItem.end - draggedItem.start,
-              originalTrackId: itemTrack.id,
+              originalTrackId: tracks[draggedItemTrackIndex].id,
               type: draggedItem.type,
               label: draggedItem.label,
               mediaStartTime: draggedItem.mediaStart,

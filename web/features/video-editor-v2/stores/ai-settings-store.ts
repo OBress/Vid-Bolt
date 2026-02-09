@@ -34,8 +34,8 @@ interface AISettingsState {
 export const useAISettingsStore = create<AISettingsState>()(
   persist(
     (set) => ({
-      // Initial state - default to Claude 3.5 Sonnet
-      selectedModelId: 'anthropic/claude-3.5-sonnet',
+      // Initial state - default to Gemini 3 Flash (fast + high quality code gen)
+      selectedModelId: 'google/gemini-3-flash-preview',
       enableStreaming: true,
 
       // Actions

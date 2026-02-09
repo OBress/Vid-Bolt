@@ -53,6 +53,8 @@ import {
   AlertDialogTitle,
 } from "../../ui/alert-dialog";
 import { startMediaDrag, endDrag } from "../../../stores/video-editor-store";
+import { useDevToolsMediaStore } from "@/lib/stores/devtools-media-store"; // [DEVTOOLS-MEDIA] - Remove when no longer needed
+import { VideoThumbnailPreview } from "../../../hooks/use-video-thumbnail";
 
 // ==========================================
 // TYPES
@@ -179,6 +181,8 @@ const MediaGridItem: React.FC<MediaGridItemProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+
 
   // Handle hover-to-autoplay for videos - DISABLED during drag
   useEffect(() => {
@@ -321,24 +325,31 @@ const MediaGridItem: React.FC<MediaGridItemProps> = ({
           <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-900/50 to-blue-900/50">
             <Music2 className="h-12 w-12 text-purple-200" />
           </div>
-        ) : item.type === "video" && isHovering && !isSelectionMode ? (
-          <video
-            ref={videoRef}
-            src={item.src}
-            muted
-            loop
-            playsInline
-            poster={item.thumbnail}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              objectPosition: 'center',
-            }}
-          />
+        ) : item.type === "video" ? (
+          <>
+            {/* First-frame thumbnail (always mounted to avoid re-loading after hover) */}
+            <VideoThumbnailPreview src={item.src} />
+            {/* Hover-to-play overlay */}
+            {isHovering && !isSelectionMode && (
+              <video
+                ref={videoRef}
+                src={item.src}
+                muted
+                loop
+                playsInline
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  objectPosition: 'center',
+                  zIndex: 5,
+                }}
+              />
+            )}
+          </>
         ) : !imageError ? (
           <img
             src={thumbnailSrc}
@@ -358,13 +369,7 @@ const MediaGridItem: React.FC<MediaGridItemProps> = ({
           />
         ) : (
           <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-neutral-800">
-            {item.type === "video" ? (
-              <Film className="h-8 w-8 text-neutral-700" />
-            ) : item.type === "audio" ? (
-              <Music2 className="h-8 w-8 text-neutral-700" />
-            ) : (
-              <ImageIcon className="h-8 w-8 text-neutral-700" />
-            )}
+            <ImageIcon className="h-8 w-8 text-neutral-700" />
           </div>
         )}
 
@@ -553,14 +558,41 @@ export const MediaTab: React.FC = () => {
           duration: file.duration,
           isUserUpload: true,
           _isLocalMedia: true,
+          width: file.width,
+          height: file.height,
         };
       })
       .filter((item) => item.src); // Filter out items without a valid src
   }, [localMediaFiles]);
 
-  // Combined items - search results + local uploads
+  // ====================================================================
+  // [DEVTOOLS-MEDIA] START - DevTools media store integration.
+  // Remove this block and the import above when no longer needed.
+  // ====================================================================
+  const devToolsMediaItems = useDevToolsMediaStore((s) => s.items);
+  const fetchFromR2 = useDevToolsMediaStore((s) => s.fetchFromR2);
+
+  // Fetch all R2 media on first mount
+  useEffect(() => {
+    fetchFromR2();
+  }, [fetchFromR2]);
+
+  const devToolsAsMediaItems = useMemo<MediaItem[]>(() => {
+    return devToolsMediaItems.map((dt) => ({
+      id: dt.id,
+      type: dt.type,
+      src: dt.url,
+      thumbnail: dt.type === 'audio' ? '' : dt.url,
+      name: dt.name,
+      isAiGenerated: true,
+      isUserUpload: false,
+      width: dt.width,
+      height: dt.height,
+    }));
+  }, [devToolsMediaItems]);
+  // [DEVTOOLS-MEDIA] END
+
   const allMediaItems = useMemo(() => {
-    // Combine search results with local uploads
     const combined = [...searchResults];
 
     // Add local items if they're not duplicated
@@ -570,8 +602,16 @@ export const MediaTab: React.FC = () => {
       }
     });
 
+    // [DEVTOOLS-MEDIA] - Add devtools-generated media if not duplicated
+    devToolsAsMediaItems.forEach((dtItem) => {
+      if (!combined.find((item) => item.src === dtItem.src)) {
+        combined.push(dtItem);
+      }
+    });
+    // [DEVTOOLS-MEDIA] END
+
     return combined;
-  }, [searchResults, localMediaItems]);
+  }, [searchResults, localMediaItems, devToolsAsMediaItems]);
 
   // Filter items based on active filter
   const filteredItems = useMemo(() => {

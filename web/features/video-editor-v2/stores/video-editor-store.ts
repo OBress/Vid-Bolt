@@ -96,6 +96,10 @@ export interface VideoEditorState {
   // === SELECTION ===
   selection: SelectionState;
   
+  // === INLINE TEXT EDITING ===
+  /** Overlay ID currently being inline-edited (double-click on text) */
+  editingOverlayId: number | null;
+  
   // === DRAG STATE (UNIFIED) ===
   /** Core drag data - what is being dragged and where */
   dragState: UnifiedDragState | null;
@@ -212,6 +216,9 @@ export interface VideoEditorActions {
   removeFromSelection: (id: string) => void;
   selectTransition: (id: string | null) => void;
   clearSelection: () => void;
+  
+  // === INLINE TEXT EDITING ===
+  setEditingOverlayId: (id: number | null) => void;
   
   // === DRAG ACTIONS (UNIFIED) ===
   /** Start a new drag operation */
@@ -461,6 +468,9 @@ const initialState: VideoEditorState = {
     clipIds: [],
     transitionId: null,
   },
+  
+  // Inline text editing
+  editingOverlayId: null,
   
   // Drag state (unified)
   dragState: null,
@@ -1372,7 +1382,16 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
               clipIds: [],
               transitionId: null,
             },
+            editingOverlayId: null,
           }));
+        },
+
+        // ========================================
+        // INLINE TEXT EDITING
+        // ========================================
+
+        setEditingOverlayId: (id: number | null) => {
+          set(() => ({ editingOverlayId: id }));
         },
 
         // ========================================
@@ -2819,6 +2838,44 @@ export const startMediaDrag = (
     startTime: 0,
     currentTime: 0,
     startDuration: options?.duration ?? 5,
+    startX: 0,
+    startY: 0,
+    isValidDrop: true,
+  });
+};
+
+export const startTextPresetDrag = (
+  presetId: string,
+  presetStyles: Record<string, unknown>,
+  options?: { content?: string; name?: string }
+): string => {
+  return useVideoEditorStore.getState().startDrag({
+    type: 'text-preset',
+    newItemType: 'text',
+    presetId,
+    presetStyles,
+    startTime: 0,
+    currentTime: 0,
+    startDuration: 5,
+    startX: 0,
+    startY: 0,
+    isValidDrop: true,
+  });
+};
+
+export const startShapePresetDrag = (
+  shapeType: string,
+  shapeStyles: Record<string, unknown>,
+  options?: { name?: string }
+): string => {
+  return useVideoEditorStore.getState().startDrag({
+    type: 'shape-preset',
+    newItemType: 'effect', // maps to visual overlay track
+    shapeType,
+    shapeStyles,
+    startTime: 0,
+    currentTime: 0,
+    startDuration: 5,
     startX: 0,
     startY: 0,
     isValidDrop: true,

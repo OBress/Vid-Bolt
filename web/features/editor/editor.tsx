@@ -1,4 +1,5 @@
 "use client";
+import type { GeneratedMedia } from "@/types/video";
 import Timeline from "./timeline";
 import useStore from "./store/use-store";
 import Navbar from "./navbar";
@@ -12,7 +13,7 @@ import StateManager, {
   HISTORY_RESET,
 } from "@designcombo/state";
 import { generateId } from "@designcombo/timeline";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -113,12 +114,14 @@ const Editor = ({
   audioUrl,
   audioChunks,
   shotList,
+  generatedMedia,
 }: {
   tempId?: string;
   id?: string;
   audioUrl?: string | null;
   audioChunks?: AudioChunk[];
   shotList?: ShotEvent[];
+  generatedMedia?: GeneratedMedia[];
 }) => {
   const [projectName, setProjectName] = useState<string>("Untitled video");
   const { scene } = useSceneStore();
@@ -150,6 +153,25 @@ const Editor = ({
   // Use ref instead of state to prevent race conditions
   const visualsPlacedRef = useRef(false);
   const syncedRef = useRef(false);
+
+  // Build a shot_index → media info map from generatedMedia
+  // Rewrite R2 URLs to same-origin /r2-media/ path to avoid canvas CORS tainting
+  const mediaUrlMap = useMemo(() => {
+    const map = new Map<number, { url: string; type: 'image' | 'video' }>();
+    if (!generatedMedia) return map;
+    const r2PublicUrl = process.env.NEXT_PUBLIC_R2_PUBLIC_URL || 'https://assets.vidbolt.app';
+    for (const media of generatedMedia) {
+      if (media.generation_status === 'completed' && media.media_url) {
+        const type = media.media_type === 'video' ? 'video' : 'image';
+        // Rewrite external R2 URL to same-origin path via Next.js rewrite
+        const url = media.media_url.startsWith(r2PublicUrl)
+          ? media.media_url.replace(r2PublicUrl, '/r2-media')
+          : media.media_url;
+        map.set(media.shot_index, { url, type });
+      }
+    }
+    return map;
+  }, [generatedMedia]);
 
   // SYNC FIX: Restoration of persistent state on remount
   // This replaces the manual reset + re-dispatch logic which was causing duplicates
@@ -434,18 +456,15 @@ const Editor = ({
     const trackItems = shotList.map((shot) => {
       const id = generateId();
       const color = contentTypeColors[shot.content_type] || "#6b7280";
-      const visualType = getVisualType(shot);
 
-      // Use a simple 1x1 transparent PNG as placeholder for images
-      // and a minimal valid empty MP4 for video items
+      // Look up real generated media for this shot
+      const realMedia = mediaUrlMap.get(shot.segment_index);
+      const visualType = realMedia?.type || getVisualType(shot);
+
+      // Use real media URL if available, otherwise transparent placeholder
       const transparentPng =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-
-      // Minimal valid empty MP4 (black frame, silent)
-      const emptyMp4 =
-        "data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAAVhZGF0AF3gAAAAAAAAAAAAIiBtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAEAAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAIGdHJhawAAAFx0a2hkAAAADwAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAQAAAAAAvQAAAAEAAAAAAAEAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAQAAAAGibWRpYQAAACBtZGh0AAAAAAAAAAAAAAAAAAAAGUAAAAyAAAAAAAABLihoZGwAAAAAdmNndAAAAAAAAAAAAAAAAFZpZGVvSGFuZGxlcgAAAAF9bWluZgAAABR2bWhkAAAAAQAAAAAAAAAAAAAAJGRpbmYAAAAcYnJlZgAAAAAAAAAAdXJsIAAAAAEAAAAAAAAAbHN0YmwAAABXc3RzZAAAAAAAAAABAAAAh2F2YzEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAQABAAAAAAABAAAAAAAAAAAAAAAIAAAACAAAAAAAAAAAAAAAIGF2Y0MAQ//+AAAAAAAdYXZjQwBD//4AAO68gAAAAAEAABXgR5YAAAAJc3R0cwAAAAAAAAABAAAAAQAAABBzY3R0AAAAAAAAAAEAAAABAAAAFHN0c3oAAAAAAAAAAQAAAFAAAAAcc3RjbwAAAAAAAAABAAAAQAAAAAAAAAACAAAAA";
-
-      const source = transparentPng;
+      const source = realMedia?.url || transparentPng;
 
       const itemDetails: any = {
         src: source,
@@ -547,8 +566,8 @@ const Editor = ({
     console.log(
       `[Editor Visual DEBUG] Added ${shotList.length} visual placeholders to track ${trackId}. Total tracks now: ${allTracks.length}`
     );
-    // Add 'tracks' to dependency array to trigger re-run when Audio effect adds tracks
-  }, [shotList, timeline, tracks, audioChunks, audioUrl]);
+    // Add 'tracks' and 'mediaUrlMap' to dependency array to trigger re-run when Audio effect adds tracks
+  }, [shotList, timeline, tracks, audioChunks, audioUrl, mediaUrlMap]);
 
   useEffect(() => {
     setCompactFonts(getCompactFontData(FONTS));

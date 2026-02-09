@@ -20,6 +20,7 @@ import { useToolContext } from "../../../contexts/tool-context";
 import { ToolType } from "../../../types/tools";
 import { shapeStylePresets } from "../../../templates/shape-style-presets";
 import { scrollAndHighlightClip } from "../../../utils/timeline-helpers";
+import { startShapePresetDrag, endDrag } from "../../../stores";
 import {
   Square,
   Circle,
@@ -45,9 +46,11 @@ interface ShapePreset {
 interface PresetCardProps {
   preset: ShapePreset;
   onClick: () => void;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
 }
 
-const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick }) => {
+const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick, onDragStart, onDragEnd }) => {
   // Build inline styles for the preview shape
   const previewContainerStyles: React.CSSProperties = {
     position: 'relative',
@@ -102,6 +105,9 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick }) => {
   return (
     <button
       onClick={onClick}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className={cn(
         "w-full p-3 rounded-lg border border-border",
         "bg-muted/30 hover:bg-muted/50 transition-colors",
@@ -380,6 +386,25 @@ export const ShapesTab: React.FC = () => {
                   key={key}
                   preset={preset as ShapePreset}
                   onClick={() => handleAddShapeWithPreset(preset as ShapePreset)}
+                  onDragStart={(e) => {
+                    const sp = preset as ShapePreset;
+                    startShapePresetDrag(sp.content, sp.styles, {
+                      name: sp.name,
+                    });
+                    e.dataTransfer.setData('application/json', JSON.stringify({
+                      isNewItem: true,
+                      type: 'shape',
+                      label: sp.name || 'Shape',
+                      duration: 5,
+                      data: {
+                        shapeType: sp.content,
+                        shapeStyles: sp.styles,
+                        name: sp.name,
+                      },
+                    }));
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onDragEnd={() => endDrag()}
                 />
               ))}
             </div>

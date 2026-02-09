@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useRef, useEffect, useCallback } from "react";
 import { useCurrentFrame } from "remotion";
 import type { FontInfo } from "@remotion/google-fonts";
 import { TextOverlay } from "../../../types";
@@ -7,17 +7,115 @@ import { getAnimationKey } from "../../../adaptors/default-animation-adaptors";
 import { useLoadFontFromTextItem } from "../../text/load-font-from-text-item";
 import { Shadow } from "../../../types/shadows";
 import { Gradient, GradientType } from "../../../types/gradients";
+import { useVideoEditorStore } from "../../../stores/video-editor-store";
+import { _lastEditClickPosition } from "../../../components/selection/selected-outline";
 
-interface TextLayerContentProps {
+export interface TextLayerContentProps {
   overlay: TextOverlay;
   fontInfos?: Record<string, FontInfo>;
+  /** Whether this overlay is in inline text editing mode */
+  isEditing?: boolean;
 }
 
 export const TextLayerContent: React.FC<TextLayerContentProps> = ({
   overlay,
   fontInfos,
+  isEditing = false,
 }) => {
   const frame = useCurrentFrame();
+  const editableRef = useRef<HTMLDivElement>(null);
+  const originalContentRef = useRef<string>(overlay.content);
+
+  // Store access for persisting text changes
+  const updateClip = useVideoEditorStore(s => s.updateClip);
+  const setEditingOverlayId = useVideoEditorStore(s => s.setEditingOverlayId);
+  const clips = useVideoEditorStore(s => s.clips);
+
+  // Find the matching clip ID for this overlay
+  const clipId = useMemo(() => {
+    const found = clips.find(c => {
+      const numericId = parseInt(c.id.replace(/\D/g, ''), 10) || 0;
+      return numericId === overlay.id;
+    });
+    return found?.id ?? null;
+  }, [clips, overlay.id]);
+
+  // When entering edit mode, store original content and place cursor at click position
+  useEffect(() => {
+    if (isEditing && editableRef.current) {
+      originalContentRef.current = overlay.content;
+      editableRef.current.focus();
+
+      const selection = window.getSelection();
+      if (!selection) return;
+
+      // Try to place the caret at the exact double-click position
+      let placed = false;
+      if (_lastEditClickPosition) {
+        const { x, y } = _lastEditClickPosition;
+        // caretRangeFromPoint is widely supported (Chrome, Safari, Edge)
+        if (document.caretRangeFromPoint) {
+          const range = document.caretRangeFromPoint(x, y);
+          if (range) {
+            selection.removeAllRanges();
+            selection.addRange(range);
+            placed = true;
+          }
+        }
+      }
+
+      // Fallback: place cursor at the end of the text
+      if (!placed) {
+        const range = document.createRange();
+        range.selectNodeContents(editableRef.current);
+        range.collapse(false); // collapse to end
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+  }, [isEditing, overlay.content]);
+
+  // Commit the edited text to the store
+  const commitText = useCallback(() => {
+    if (!editableRef.current || !clipId) return;
+    const newText = editableRef.current.innerText;
+    if (newText !== originalContentRef.current) {
+      updateClip(clipId, {
+        content: newText,
+        text: { text: newText },
+      } as any);
+    }
+    setEditingOverlayId(null);
+  }, [clipId, updateClip, setEditingOverlayId]);
+
+  // Cancel editing without saving
+  const cancelEditing = useCallback(() => {
+    if (editableRef.current) {
+      editableRef.current.innerText = originalContentRef.current;
+    }
+    setEditingOverlayId(null);
+  }, [setEditingOverlayId]);
+
+  // Handle keyboard events in editing mode
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelEditing();
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      commitText();
+    }
+    // Stop propagation for all keys while editing so editor shortcuts don't fire
+    e.stopPropagation();
+  }, [commitText, cancelEditing]);
+
+  const handleBlur = useCallback(() => {
+    if (isEditing) {
+      commitText();
+    }
+  }, [isEditing, commitText]);
   
   // Get font family - handle legacy Tailwind classes for backward compatibility
   const getFontFamily = (): string => {
@@ -220,8 +318,9 @@ export const TextLayerContent: React.FC<TextLayerContentProps> = ({
     overflow: "hidden",
     boxSizing: "border-box",
     position: "relative",
-    userSelect: "none", // Prevent text selection during overlay interactions
-    WebkitUserSelect: "none", // Safari support
+    // Enable text selection when editing
+    userSelect: isEditing ? "text" : "none",
+    WebkitUserSelect: isEditing ? "text" : "none",
     ...(isExitPhase ? exitAnimation : enterAnimation),
   };
 
@@ -265,8 +364,11 @@ export const TextLayerContent: React.FC<TextLayerContentProps> = ({
     overflow: "hidden",
     textOverflow: "ellipsis",
     boxSizing: "border-box",
-    userSelect: "none", // Prevent text selection during overlay interactions
-    WebkitUserSelect: "none", // Safari support
+    // Enable text selection and editing when in edit mode
+    userSelect: isEditing ? "text" : "none",
+    WebkitUserSelect: isEditing ? "text" : "none",
+    cursor: isEditing ? "text" : "inherit",
+    outline: "none", // Remove focus outline, selection outline handles visual feedback
     ...(isExitPhase ? exitAnimation : enterAnimation),
   };
 
@@ -370,8 +472,15 @@ export const TextLayerContent: React.FC<TextLayerContentProps> = ({
 
   return (
     <div style={containerStyle}>
-      <div style={textStyle}>
-        {renderedContent}
+      <div
+        ref={editableRef}
+        style={textStyle}
+        contentEditable={isEditing}
+        suppressContentEditableWarning
+        onBlur={isEditing ? handleBlur : undefined}
+        onKeyDown={isEditing ? handleKeyDown : undefined}
+      >
+        {isEditing ? overlay.content || "Enter text..." : renderedContent}
       </div>
     </div>
   );

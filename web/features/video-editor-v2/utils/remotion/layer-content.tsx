@@ -23,6 +23,8 @@ export interface LayerContentProps {
   overlay: Overlay;
   baseUrl?: string;
   fontInfos?: Record<string, FontInfo>;
+  /** Whether this overlay is in inline text editing mode */
+  isEditing?: boolean;
 }
 
 /**
@@ -58,6 +60,7 @@ export const LayerContent: React.FC<LayerContentProps> = ({
   overlay,
   baseUrl,
   fontInfos,
+  isEditing,
 }) => {
   /**
    * Common styling applied to all layer types
@@ -79,7 +82,7 @@ export const LayerContent: React.FC<LayerContentProps> = ({
     case OverlayType.TEXT:
       return (
         <div style={{ ...commonStyle }}>
-          <TextLayerContent overlay={overlay} {...(fontInfos && { fontInfos })} />
+          <TextLayerContent overlay={overlay} isEditing={isEditing} {...(fontInfos && { fontInfos })} />
         </div>
       );
 

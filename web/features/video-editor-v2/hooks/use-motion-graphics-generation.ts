@@ -22,9 +22,13 @@ export type GenerationStage =
   | 'starting'
   | 'validating'
   | 'analyzing'
+  | 'intent_analysis'
+  | 'skill_selection'
   | 'planning'
   | 'generating' 
   | 'editing'
+  | 'visual_qc'
+  | 'regenerating'
   | 'complete' 
   | 'error';
 

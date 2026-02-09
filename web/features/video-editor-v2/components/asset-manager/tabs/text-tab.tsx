@@ -21,6 +21,7 @@ import { ToolType } from "../../../types/tools";
 import { textStylePresets } from "../../../templates/text-style-presets";
 import { scrollAndHighlightClip } from "../../../utils/timeline-helpers";
 import { usePresetFontPreloader } from "../../../hooks/use-preset-font-preloader";
+import { startTextPresetDrag, endDrag } from "../../../stores";
 import {
   Type,
   Plus,
@@ -43,9 +44,11 @@ interface TextPreset {
 interface PresetCardProps {
   preset: TextPreset;
   onClick: () => void;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
 }
 
-const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick }) => {
+const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick, onDragStart, onDragEnd }) => {
   // Build inline styles for the preview text - matching TextLayerContent exactly
   const previewStyles: React.CSSProperties = {
     fontSize: preset.styles.fontSize ? `${parseInt(String(preset.styles.fontSize)) * 0.25}px` : '12px',
@@ -107,6 +110,9 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick }) => {
   return (
     <button
       onClick={onClick}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className={cn(
         "w-full p-4 rounded-lg border border-border",
         "bg-muted/30 hover:bg-muted/50 transition-colors",
@@ -395,6 +401,26 @@ export const TextTab: React.FC = () => {
                   key={key}
                   preset={preset}
                   onClick={() => handleAddTextWithPreset(preset)}
+                  onDragStart={(e) => {
+                    startTextPresetDrag(key, preset.styles, {
+                      content: preset.preview,
+                      name: preset.name,
+                    });
+                    e.dataTransfer.setData('application/json', JSON.stringify({
+                      isNewItem: true,
+                      type: 'text',
+                      label: preset.name || 'Text',
+                      duration: 5,
+                      data: {
+                        presetId: key,
+                        presetStyles: preset.styles,
+                        content: preset.preview,
+                        name: preset.name,
+                      },
+                    }));
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onDragEnd={() => endDrag()}
                 />
               ))}
             </div>

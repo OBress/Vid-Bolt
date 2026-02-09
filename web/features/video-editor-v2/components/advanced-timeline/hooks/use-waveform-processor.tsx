@@ -120,7 +120,11 @@ export function useWaveformProcessor(
         }
       } catch (error) {
         // Don't log abort errors - they're expected during cleanup
-        if (error instanceof Error && error.name === 'AbortError') {
+        if (
+          error === 'cleanup' ||
+          (error instanceof Error && error.name === 'AbortError') ||
+          abortController.signal.aborted
+        ) {
           return;
         }
         console.error('Error processing audio waveform:', error);

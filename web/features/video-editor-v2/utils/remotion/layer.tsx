@@ -2,11 +2,12 @@ import React, { useMemo, memo } from "react";
 import { Sequence, interpolate, useCurrentFrame, Easing, useVideoConfig } from "remotion";
 import type { FontInfo } from "@remotion/google-fonts";
 
-import { Overlay, EasingPreset, EASING_BEZIER_CURVES, TransitionEasing } from "../../types";
+import { Overlay, EasingPreset, EASING_BEZIER_CURVES, TransitionEasing, OverlayType } from "../../types";
 import type { PropertyKeyframes } from "../../types/keyframes";
 import { LayerContent } from "./layer-content";
 import { useKeyframedTransform, useKeyframedNumber } from "../../hooks/use-keyframed-value";
 import { TrackMatteLayer, getTrackMatte, isTrackMatteSource } from "./components/track-matte-layer";
+import { useVideoEditorStore } from "../../stores/video-editor-store";
 
 /**
  * Custom comparison function for Layer memo
@@ -428,6 +429,10 @@ export const Layer: React.FC<{
   // Get actual fps from Remotion video config
   const { fps } = useVideoConfig();
   
+  // Check if this text overlay is being inline-edited
+  const editingOverlayId = useVideoEditorStore(s => s.editingOverlayId);
+  const isEditing = overlay.type === OverlayType.TEXT && editingOverlayId === overlay.id;
+  
   // Cast overlay to include keyframes
   const overlayWithKeyframes = overlay as OverlayWithKeyframes;
   
@@ -490,9 +495,9 @@ export const Layer: React.FC<{
       zIndex,
       // Apply keyframed opacity
       ...(opacity !== 1 && { opacity }),
-      // Always disable pointer events on the actual content layer
-      // Interaction happens through SelectionOutline component instead
-      pointerEvents: "none",
+      // Disable pointer events normally - interaction via SelectionOutline
+      // BUT enable them when inline text editing is active
+      pointerEvents: isEditing ? "auto" : "none",
       // Apply blend mode if set
       ...(mixBlendMode && mixBlendMode !== 'normal' && { mixBlendMode }),
     };
@@ -506,6 +511,7 @@ export const Layer: React.FC<{
     keyframedTransform.rotation,
     keyframedTransform.scale,
     keyframedTransform.opacity,
+    isEditing,
   ]);
 
   /**
@@ -552,7 +558,7 @@ export const Layer: React.FC<{
    */
   const renderContent = () => {
     const content = (
-      <LayerContent overlay={overlay} {...(baseUrl && { baseUrl })} {...(fontInfos && { fontInfos })} />
+      <LayerContent overlay={overlay} isEditing={isEditing} {...(baseUrl && { baseUrl })} {...(fontInfos && { fontInfos })} />
     );
 
     // If we have a valid track matte, wrap content in TrackMatteLayer

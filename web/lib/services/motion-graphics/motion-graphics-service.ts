@@ -1,0 +1,891 @@
+/**
+ * MotionGraphicsService - AI-Powered Motion Graphics Generation
+ * 
+ * Ported from gpt-story-writer-niche-sys/backend/src/services/motion-graphics/MotionGraphicsService.js
+ * 
+ * Adapted for Next.js:
+ * - Uses fetch() for OpenRouter API calls (consistent with Vid-Bolt's openrouter.ts)
+ * - SSE writes go to a WritableStreamDefaultWriter instead of Express res
+ * - TypeScript with proper types
+ * 
+ * THE PIPELINE:
+ * 1. SKILL DETECTION (keyword-based, fast — merged with validation)
+ * 2. VISION & PLANNING (conditional — skipped for simple prompts)
+ * 3. CODE GENERATION (streamed from OpenRouter)
+ * 4. CODE VALIDATION & ANALYSIS
+ * 5. SEND TO FRONTEND via SSE
+ */
+
+import { skillLoader } from './skill-loader';
+import {
+  BASE_SYSTEM_PROMPT,
+  FOLLOW_UP_SYSTEM_PROMPT,
+  VISION_PROMPT,
+  PLANNING_PROMPT,
+  buildSkillDetectionPrompt,
+  buildErrorCorrectionContext,
+} from './prompts';
+import {
+  validateCode,
+  extractAndEnsureIcons,
+  stripMarkdownFences,
+  extractComponentCode,
+} from './code-validator';
+
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
+export interface GenerationRequest {
+  prompt: string;
+  model: string;
+  currentCode?: string;
+  conversationHistory?: Array<{ role: string; content: string }>;
+  isFollowUp?: boolean;
+  errorCorrection?: {
+    error: string;
+    attemptNumber: number;
+    maxAttempts: number;
+  };
+  previouslyUsedSkills?: string[];
+}
+
+interface EditOperation {
+  description: string;
+  old_string: string;
+  new_string: string;
+  lineNumber?: number;
+}
+
+type SSEWriter = (data: Record<string, unknown>) => void;
+
+/**
+ * Call OpenRouter API (non-streaming) using fetch
+ */
+async function callOpenRouter(
+  apiKey: string,
+  model: string,
+  messages: Array<{ role: string; content: string }>,
+  options: { temperature?: number; maxTokens?: number; responseFormat?: { type: string } } = {}
+): Promise<{ content: string; finishReason: string }> {
+  const requestBody: Record<string, unknown> = {
+    model,
+    messages,
+    temperature: options.temperature ?? 0.7,
+    max_tokens: options.maxTokens ?? 8192,
+  };
+
+  if (options.responseFormat) {
+    requestBody.response_format = options.responseFormat;
+  }
+
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+      'X-Title': 'Vid-Bolt Motion Graphics',
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage: string;
+    try {
+      const errorData = JSON.parse(errorText);
+      errorMessage = errorData.error?.message || `HTTP ${response.status}`;
+    } catch {
+      errorMessage = `HTTP ${response.status}: ${errorText.substring(0, 200)}`;
+    }
+    throw new Error(`OpenRouter API error: ${errorMessage}`);
+  }
+
+  const data = await response.json();
+  const choice = data.choices?.[0];
+
+  if (!choice?.message?.content) {
+    throw new Error('Invalid response from OpenRouter API - no content');
+  }
+
+  return {
+    content: choice.message.content,
+    finishReason: choice.finish_reason || 'stop',
+  };
+}
+
+/**
+ * Call OpenRouter API with streaming, yields content chunks
+ */
+async function* streamOpenRouter(
+  apiKey: string,
+  model: string,
+  messages: Array<{ role: string; content: string }>,
+  options: { temperature?: number; maxTokens?: number } = {}
+): AsyncGenerator<string> {
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+      'X-Title': 'Vid-Bolt Motion Graphics',
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: true,
+      temperature: options.temperature ?? 0.7,
+      max_tokens: options.maxTokens ?? 32000,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenRouter streaming error: HTTP ${response.status} - ${errorText.substring(0, 200)}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body for stream');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+        const data = trimmed.slice(6);
+        if (data === '[DONE]') return;
+
+        try {
+          const parsed = JSON.parse(data);
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) yield content;
+        } catch {
+          // Skip malformed SSE chunks
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+class MotionGraphicsService {
+  private initialized = false;
+
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+    await skillLoader.initialize();
+    this.initialized = true;
+    console.log('[MotionGraphicsService] Initialized');
+  }
+
+  /**
+   * Truncate conversation history to prevent context rot.
+   * Keeps the first message (original context) + last N-1 messages.
+   */
+  private truncateHistory(
+    history: Array<{ role: string; content: string }>,
+    maxMessages: number = 4
+  ): Array<{ role: string; content: string }> {
+    if (history.length <= maxMessages) return history;
+    // Keep first message (original prompt context) + last N-1 messages
+    return [
+      history[0],
+      ...history.slice(-(maxMessages - 1)),
+    ];
+  }
+
+  /**
+   * Select a faster/cheaper model for classification tasks.
+   * Only overrides if the user selected an expensive code-generation model.
+   */
+  private getClassificationModel(requestedModel: string): string {
+    const cheapModels = [
+      'google/gemini-3-flash-preview',
+      'google/gemini-2.5-flash-preview',
+      'google/gemini-2.0-flash',
+      'meta-llama/llama-3.1-8b-instruct',
+    ];
+    // If already using a cheap model, keep it
+    if (cheapModels.some(m => requestedModel.includes(m))) return requestedModel;
+    // Default to Gemini 3 Flash for classification
+    return 'google/gemini-3-flash-preview';
+  }
+
+  /**
+   * Determine if a prompt is complex enough to warrant vision/planning.
+   * Simple prompts (e.g., "bouncy hello world") skip directly to code generation.
+   */
+  private isComplexPrompt(prompt: string): boolean {
+    const wordCount = prompt.split(/\s+/).length;
+    const hasMultipleConcepts = /\band\b|\bwith\b|\bthen\b|\bfollowed by\b|\bincluding\b|\bplus\b/i.test(prompt);
+    const hasTimingWords = /\bsequence\b|\bphase\b|\bstep\b|\bstage\b|\btimeline\b|\bscene\b|\bsection\b/i.test(prompt);
+    const hasDetailedRequest = /\bdata\b|\bchart\b|\bdashboard\b|\bmultiple\b|\bcomplex\b|\bprofessional\b|\bcorporate\b|\bintro\b|\boutro\b|\blogo\b|\binfographic\b/i.test(prompt);
+    const hasAnimationDetail = /\btransition\b|\benter\b|\bexit\b|\bfade\b|\bslide\b|\bexplode\b|\bmorph\b|\bparticle\b|\b3d\b|\brotate\b/i.test(prompt);
+
+    const isComplex = wordCount > 12 || hasMultipleConcepts || hasTimingWords || hasDetailedRequest || hasAnimationDetail;
+
+    console.log(`[MotionGraphicsService] Prompt complexity: ${isComplex ? 'COMPLEX' : 'SIMPLE'} (words=${wordCount}, concepts=${hasMultipleConcepts}, timing=${hasTimingWords}, detail=${hasDetailedRequest}, animation=${hasAnimationDetail})`);
+    return isComplex;
+  }
+
+  /**
+   * Parse JSON from AI response with robust error handling.
+   */
+  parseAIJson<T = Record<string, unknown>>(content: string, fallback: T): T {
+    try {
+      return JSON.parse(content) as T;
+    } catch {
+      // Try to extract from markdown code block
+      const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        try {
+          return JSON.parse(codeBlockMatch[1].trim()) as T;
+        } catch {
+          // Continue
+        }
+      }
+      
+      // Try to extract JSON object
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        let jsonStr = jsonMatch[0];
+        
+        // Clean common JSON issues
+        jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
+        jsonStr = jsonStr.replace(/\/\/.*$/gm, '');
+        jsonStr = jsonStr.replace(/\/\*[\s\S]*?\*\//g, '');
+        
+        try {
+          return JSON.parse(jsonStr) as T;
+        } catch {
+          // Try to repair truncated JSON
+          console.warn('[MotionGraphicsService] Attempting to repair truncated JSON...');
+          
+          let repaired = jsonStr;
+          let braceDepth = 0;
+          let bracketDepth = 0;
+          let inString = false;
+          let lastCompleteIndex = 0;
+          
+          for (let i = 0; i < repaired.length; i++) {
+            const char = repaired[i];
+            const prevChar = i > 0 ? repaired[i - 1] : '';
+            
+            if (char === '"' && prevChar !== '\\') {
+              inString = !inString;
+            }
+            
+            if (!inString) {
+              if (char === '{') braceDepth++;
+              else if (char === '}') braceDepth--;
+              else if (char === '[') bracketDepth++;
+              else if (char === ']') bracketDepth--;
+              
+              if (char === ',' || char === '}' || char === ']') {
+                lastCompleteIndex = i + 1;
+              }
+            }
+          }
+          
+          if (inString || braceDepth > 0 || bracketDepth > 0) {
+            repaired = repaired.substring(0, lastCompleteIndex).trim();
+            if (repaired.endsWith(',')) repaired = repaired.slice(0, -1);
+            
+            while (bracketDepth > 0) { repaired += ']'; bracketDepth--; }
+            while (braceDepth > 0) { repaired += '}'; braceDepth--; }
+            
+            try {
+              const fixed = JSON.parse(repaired) as T;
+              console.log('[MotionGraphicsService] ✅ Successfully repaired truncated JSON');
+              return fixed;
+            } catch (repairError) {
+              console.error('[MotionGraphicsService] Smart repair failed:', (repairError as Error).message);
+            }
+          }
+        }
+      }
+      
+      console.error('[MotionGraphicsService] ❌ Could not parse JSON from content');
+      return fallback;
+    }
+  }
+
+  /**
+   * Validate that a prompt is appropriate for motion graphics generation.
+   * Now a lightweight local check — AI validation merged into skill detection.
+   */
+  private validatePromptLocal(prompt: string): { valid: boolean; reason?: string } {
+    if (!prompt || prompt.trim().length < 3) {
+      return { valid: false, reason: 'Please describe an animation or visual content you\'d like to create.' };
+    }
+    return { valid: true };
+  }
+
+  /**
+   * Analyze the user's vision
+   */
+  async analyzeVision(apiKey: string, prompt: string, model: string): Promise<string | null> {
+    try {
+      console.log('[MotionGraphicsService] ========== STEP 1: VISION ANALYSIS ==========');
+      
+      const { content, finishReason } = await callOpenRouter(apiKey, model, [
+        { role: 'system', content: VISION_PROMPT },
+        { role: 'user', content: prompt },
+      ], {
+        temperature: 0.7,
+        maxTokens: 800,
+        responseFormat: { type: 'json_object' },
+      });
+
+      if (finishReason === 'length') {
+        console.warn('[MotionGraphicsService] ⚠️ Vision response truncated');
+      }
+
+      const visionJson = this.parseAIJson<{ description?: string }>(content, { description: undefined });
+      if (visionJson?.description) {
+        console.log('[MotionGraphicsService] Vision:', visionJson.description);
+        return visionJson.description;
+      }
+      
+      console.error('[MotionGraphicsService] ❌ Could not parse vision JSON');
+      return null;
+    } catch (error) {
+      console.error('[MotionGraphicsService] Vision analysis error:', (error as Error).message);
+      return null;
+    }
+  }
+
+  /**
+   * Create a detailed animation plan from the vision.
+   */
+  async createPlan(
+    apiKey: string,
+    vision: string,
+    originalPrompt: string,
+    model: string
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      console.log('[MotionGraphicsService] ========== STEP 2: CREATING PLAN ==========');
+      
+      const planningInput = `VISION: ${vision}\n\nORIGINAL REQUEST: ${originalPrompt}`;
+      
+      const { content, finishReason } = await callOpenRouter(apiKey, model, [
+        { role: 'system', content: PLANNING_PROMPT },
+        { role: 'user', content: planningInput },
+      ], {
+        temperature: 0.7,
+        maxTokens: 8000,
+        responseFormat: { type: 'json_object' },
+      });
+
+      if (finishReason === 'length') {
+        console.warn('[MotionGraphicsService] ⚠️ Plan response truncated');
+      }
+
+      const plan = this.parseAIJson(content, null);
+      if (plan) {
+        console.log('[MotionGraphicsService] Plan created:', (plan as Record<string, unknown>).title || 'Untitled');
+        return plan as Record<string, unknown>;
+      }
+      
+      console.error('[MotionGraphicsService] ❌ Could not parse plan JSON');
+      return null;
+    } catch (error) {
+      console.error('[MotionGraphicsService] Plan creation error:', (error as Error).message);
+      return null;
+    }
+  }
+
+  /**
+   * Format the plan into a prompt section for code generation.
+   */
+  formatPlanContext(vision: string | null, plan: Record<string, unknown>): string {
+    if (!plan) return '';
+
+    let context = `\n\n## ANIMATION SPECIFICATION\n\n`;
+    
+    if (vision) {
+      context += `### Vision\n${vision}\n\n`;
+    }
+    
+    context += `### Animation: ${plan.title || 'Motion Graphic'}\n\n`;
+
+    const elements = plan.elements as Array<Record<string, string>> | undefined;
+    if (elements && elements.length > 0) {
+      context += `### Elements\n`;
+      for (const element of elements) {
+        context += `- **${element.name}** (${element.type})\n`;
+        context += `  - Description: ${element.description}\n`;
+        if (element.initialState) {
+          context += `  - Initial State: ${element.initialState}\n`;
+        }
+      }
+      context += '\n';
+    }
+
+    const timeline = plan.timeline as Array<Record<string, unknown>> | undefined;
+    if (timeline && timeline.length > 0) {
+      context += `### Timeline\n`;
+      for (const phase of timeline) {
+        context += `\n**${phase.phase}** (frames ${phase.startFrame}-${phase.endFrame})\n`;
+        context += `${phase.description}\n`;
+        const animations = phase.animations as Array<Record<string, string>> | undefined;
+        if (animations && animations.length > 0) {
+          context += 'Animations:\n';
+          for (const anim of animations) {
+            context += `- ${anim.element}: ${anim.property} from "${anim.from}" to "${anim.to}" (${anim.easing})\n`;
+          }
+        }
+      }
+      context += '\n';
+    }
+
+    const timing = plan.timing as { totalDurationFrames?: number; fps?: number } | undefined;
+    if (timing) {
+      context += `### Timing\n`;
+      context += `- Duration: ${timing.totalDurationFrames} frames at ${timing.fps || 30}fps (${((timing.totalDurationFrames || 0) / 30).toFixed(1)}s)\n\n`;
+    }
+
+    const style = plan.style as Record<string, unknown> | undefined;
+    if (style) {
+      context += `### Visual Style\n`;
+      if (style.backgroundColor) context += `- Background: ${style.backgroundColor}\n`;
+      if (style.colorPalette) context += `- Colors: ${(style.colorPalette as string[]).join(', ')}\n`;
+      if (style.primaryFont) context += `- Font: ${style.primaryFont}\n`;
+      if (style.mood) context += `- Mood: ${style.mood}\n`;
+      context += '\n';
+    }
+
+    context += `**IMPORTANT**: Follow this specification exactly. Every element and animation is precisely defined.\n`;
+
+    return context;
+  }
+
+  /**
+   * Detect skills from keywords (fast, no API call)
+   */
+  detectSkillsFromKeywords(prompt: string): string[] {
+    const promptLower = prompt.toLowerCase();
+    const detectedSkills: string[] = [];
+    
+    const skillKeywords: Record<string, string[]> = {
+      'animations': ['animation', 'animate', 'motion', 'movement', 'entrance', 'exit'],
+      'timing': ['easing', 'bezier', 'curve', 'interpolate', 'linear'],
+      'spring-physics': ['bounce', 'spring', 'elastic', 'wobble', 'organic', 'physics', 'overshoot'],
+      'sequencing': ['sequence', 'stagger', 'delay', 'timing', 'choreograph', 'order', 'phase'],
+      'charts': ['chart', 'graph', 'bar', 'pie', 'data', 'visualization', 'statistics', 'progress', 'percentage', 'histogram', 'metric'],
+      'typography': ['title', 'headline', 'subtitle', 'caption', 'heading', 'kinetic text'],
+      'text-animations': ['typewriter', 'typing', 'word', 'letter', 'character', 'reveal', 'highlight'],
+      'messaging': ['chat', 'message', 'bubble', 'whatsapp', 'imessage', 'sms', 'conversation', 'dm'],
+      'social-media': ['instagram', 'tiktok', 'youtube', 'story', 'reel', 'vertical', 'shorts', 'social', 'post'],
+      '3d': ['3d', 'three', 'cube', 'sphere', 'rotate', 'spatial', 'dimension', 'threejs'],
+      'maps': ['map', 'mapbox', 'location', 'route', 'geography', 'travel', 'marker', 'pin', 'coordinate'],
+      'lottie': ['lottie', 'after effects', 'bodymovin', 'json animation'],
+      'images': ['image', 'photo', 'picture', 'logo', 'icon', 'graphic'],
+      'videos': ['video', 'clip', 'footage', 'embed'],
+      'audio': ['audio', 'sound', 'music', 'sfx', 'soundtrack'],
+      'gifs': ['gif', 'animated image', 'apng', 'webp animation'],
+      'shapes': ['shape', 'circle', 'rectangle', 'triangle', 'star', 'polygon', 'svg', 'vector'],
+      'transitions': ['transition', 'fade', 'slide', 'wipe', 'scene', 'crossfade', 'cut'],
+      'fonts': ['font', 'google font', 'typeface', 'typography'],
+      'compositions': ['composition', 'setup', 'dimension', 'fps', 'resolution', 'aspect ratio'],
+      'assets': ['asset', 'import', 'static', 'font', 'staticfile'],
+      'audio-visualization': ['spectrum', 'waveform', 'equalizer', 'bass', 'frequency', 'beat', 'visualiz'],
+      'measuring-text': ['overflow', 'measure', 'fit text', 'text width', 'truncat'],
+      'parameters': ['parameter', 'configurable', 'prop', 'schema', 'zod', 'input'],
+      'trimming': ['trim', 'cut', 'shorten', 'clip range'],
+      'transparent-videos': ['transparent', 'alpha', 'overlay', 'green screen', 'composit'],
+    };
+    
+    for (const [skill, keywords] of Object.entries(skillKeywords)) {
+      if (keywords.some(keyword => promptLower.includes(keyword))) {
+        detectedSkills.push(skill);
+      }
+    }
+    
+    return detectedSkills.slice(0, 5);
+  }
+
+  /**
+   * Detect skills with optional AI fallback
+   */
+  async detectSkills(apiKey: string, prompt: string, model: string): Promise<string[]> {
+    try {
+      const keywordSkills = this.detectSkillsFromKeywords(prompt);
+      
+      if (keywordSkills.length > 0) {
+        console.log('[MotionGraphicsService] Detected skills (keywords):', keywordSkills);
+        return keywordSkills;
+      }
+      
+      // AI-based detection fallback
+      const skillMetadata = skillLoader.getAllSkillMetadata();
+      if (skillMetadata.length === 0) return [];
+
+      const detectionPrompt = buildSkillDetectionPrompt(skillMetadata);
+
+      const { content } = await callOpenRouter(apiKey, this.getClassificationModel(model), [
+        { role: 'system', content: detectionPrompt + '\n\nRespond with ONLY a JSON object like: {"skills": ["skill1", "skill2"]}' },
+        { role: 'user', content: `Prompt: "${prompt}"` },
+      ], {
+        temperature: 0.1,
+        maxTokens: 200,
+      });
+
+      const result = this.parseAIJson<{ skills?: string[] }>(content, { skills: [] });
+      const detectedSkills = result.skills || [];
+      const validSkills = detectedSkills.filter(name => skillLoader.hasSkill(name));
+      
+      console.log('[MotionGraphicsService] Detected skills (AI):', validSkills);
+      return validSkills;
+    } catch (error) {
+      console.error('[MotionGraphicsService] Skill detection error:', error);
+      return this.detectSkillsFromKeywords(prompt);
+    }
+  }
+
+  /**
+   * Stream generation — the main entry point.
+   * Writes SSE events to the provided writer function.
+   */
+  async streamGeneration(
+    sendSSE: SSEWriter,
+    apiKey: string,
+    request: GenerationRequest
+  ): Promise<void> {
+    const {
+      prompt,
+      model,
+      currentCode,
+      conversationHistory = [],
+      isFollowUp = false,
+      errorCorrection,
+      previouslyUsedSkills = [],
+    } = request;
+
+    try {
+      await this.initialize();
+
+      sendSSE({ type: 'stage', stage: 'starting', message: 'Starting generation...' });
+
+      // Step 1: Local prompt validation (fast, no API call)
+      if (!isFollowUp && !errorCorrection) {
+        const validation = this.validatePromptLocal(prompt);
+        if (!validation.valid) {
+          sendSSE({
+            type: 'error',
+            error: validation.reason || 'Please describe an animation or visual content you\'d like to create.',
+            errorType: 'validation',
+          });
+          return;
+        }
+      }
+
+      // Step 2: Detect skills (keyword-based, falls back to AI with cheap model)
+      sendSSE({ type: 'stage', stage: 'analyzing', message: 'Analyzing requirements...' });
+      
+      let detectedSkills = await this.detectSkills(apiKey, prompt, model);
+      
+      // Always include spring-physics
+      if (!detectedSkills.includes('spring-physics') && skillLoader.hasSkill('spring-physics')) {
+        detectedSkills = ['spring-physics', ...detectedSkills];
+      }
+      
+      const MAX_SKILLS = 4;
+      if (detectedSkills.length > MAX_SKILLS) {
+        detectedSkills = detectedSkills.slice(0, MAX_SKILLS);
+      }
+      
+      const newSkills = detectedSkills.filter(s => !previouslyUsedSkills.includes(s));
+      
+      sendSSE({ type: 'skills', skills: detectedSkills, newSkills });
+
+      // Step 3: Vision & Planning (CONDITIONAL — only for complex prompts)
+      let planContext = '';
+      let plannedDuration: number | null = null;
+      
+      if (!isFollowUp && !errorCorrection && this.isComplexPrompt(prompt)) {
+        sendSSE({ type: 'stage', stage: 'analyzing', message: 'Understanding your vision...' });
+        const visionDescription = await this.analyzeVision(apiKey, prompt, model);
+        
+        if (visionDescription) {
+          sendSSE({ type: 'stage', stage: 'planning', message: 'Creating detailed plan...' });
+          const plan = await this.createPlan(apiKey, visionDescription, prompt, model);
+          
+          if (plan) {
+            planContext = this.formatPlanContext(visionDescription, plan);
+            const timing = plan.timing as { totalDurationFrames?: number } | undefined;
+            plannedDuration = timing?.totalDurationFrames || null;
+            
+            sendSSE({ 
+              type: 'plan', 
+              plan: {
+                title: plan.title,
+                vision: visionDescription,
+                elements: (plan.elements as unknown[])?.length || 0,
+                phases: (plan.timeline as unknown[])?.length || 0,
+                duration: plannedDuration,
+              }
+            });
+          }
+        }
+      } else if (!isFollowUp && !errorCorrection) {
+        console.log('[MotionGraphicsService] Simple prompt — skipping vision/planning');
+      }
+
+      // Step 4: Build enhanced system prompt
+      const skillContent = skillLoader.getCombinedSkillContent(newSkills);
+      let systemPrompt = BASE_SYSTEM_PROMPT;
+      
+      if (skillContent) {
+        systemPrompt += `\n\n## SKILL-SPECIFIC GUIDANCE\n\n${skillContent}`;
+      }
+      
+      if (planContext) {
+        systemPrompt += planContext;
+      }
+
+      if (errorCorrection) {
+        systemPrompt += buildErrorCorrectionContext(errorCorrection);
+      }
+
+      // Step 5: Handle follow-up edits
+      if (isFollowUp && currentCode) {
+        await this.handleFollowUpEdit(sendSSE, apiKey, {
+          prompt,
+          model,
+          currentCode,
+          conversationHistory,
+          detectedSkills,
+          errorCorrection,
+        });
+        return;
+      }
+
+      // Step 5: Stream code generation
+      console.log('[MotionGraphicsService] ========== CODE GENERATION ==========');
+      sendSSE({ type: 'stage', stage: 'generating', message: 'Generating code...' });
+
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt },
+      ];
+
+      let accumulatedCode = '';
+
+      for await (const content of streamOpenRouter(apiKey, model, messages, {
+        temperature: 0.7,
+        maxTokens: 32000,
+      })) {
+        accumulatedCode += content;
+        sendSSE({
+          type: 'code_chunk',
+          chunk: content,
+          fullCode: accumulatedCode,
+        });
+      }
+
+      // Step 6: Finalize
+      await this.finalizeGeneration(sendSSE, accumulatedCode, detectedSkills, null, plannedDuration);
+
+    } catch (error) {
+      console.error('[MotionGraphicsService] Generation error:', error);
+      sendSSE({
+        type: 'error',
+        error: (error as Error).message || 'Generation failed',
+        errorType: 'api',
+      });
+    }
+  }
+
+  /**
+   * Handle follow-up edits (targeted or full replacement)
+   */
+  private async handleFollowUpEdit(
+    sendSSE: SSEWriter,
+    apiKey: string,
+    options: {
+      prompt: string;
+      model: string;
+      currentCode: string;
+      conversationHistory: Array<{ role: string; content: string }>;
+      detectedSkills: string[];
+      errorCorrection?: GenerationRequest['errorCorrection'];
+    }
+  ): Promise<void> {
+    const { prompt, model, currentCode, conversationHistory, detectedSkills, errorCorrection } = options;
+
+    sendSSE({ type: 'stage', stage: 'editing', message: 'Analyzing edit request...' });
+
+    const contextMessages = this.truncateHistory(conversationHistory, 4);
+    let conversationContext = '';
+    if (contextMessages.length > 0) {
+      conversationContext = '\n\n## RECENT CONVERSATION:\n' +
+        contextMessages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
+    }
+
+    let editPrompt = `## CURRENT CODE:\n\`\`\`tsx\n${currentCode}\n\`\`\`\n${conversationContext}`;
+
+    if (errorCorrection) {
+      editPrompt += buildErrorCorrectionContext(errorCorrection);
+    }
+
+    editPrompt += `\n\n## USER REQUEST:\n${prompt}\n\nAnalyze the request and decide: use targeted edits (type: "edit") for small changes, or full replacement (type: "full") for major restructuring.\n\nRespond with ONLY a JSON object.`;
+
+    try {
+      const { content } = await callOpenRouter(apiKey, model, [
+        { role: 'system', content: FOLLOW_UP_SYSTEM_PROMPT + '\n\nYou MUST respond with ONLY a valid JSON object, no other text.' },
+        { role: 'user', content: editPrompt },
+      ], {
+        temperature: 0.3,
+        maxTokens: 8192,
+      });
+
+      const result = this.parseAIJson<{
+        type?: string;
+        edits?: EditOperation[];
+        code?: string;
+        summary?: string;
+      }>(content, { type: 'full', code: content, summary: 'Code updated' });
+
+      if (result.type === 'edit' && result.edits) {
+        const editResult = this.applyEdits(currentCode, result.edits);
+        
+        if (!editResult.success) {
+          sendSSE({ type: 'error', error: editResult.error, errorType: 'edit_failed' });
+          return;
+        }
+
+        sendSSE({
+          type: 'edit',
+          summary: result.summary,
+          edits: editResult.enrichedEdits,
+          editType: 'targeted',
+        });
+
+        await this.finalizeGeneration(sendSSE, editResult.result!, detectedSkills, 'targeted');
+
+      } else if (result.type === 'full' && result.code) {
+        sendSSE({ type: 'edit', summary: result.summary, editType: 'full' });
+        await this.finalizeGeneration(sendSSE, result.code, detectedSkills, 'full');
+
+      } else {
+        sendSSE({ type: 'error', error: 'Invalid response from AI - missing required fields', errorType: 'edit_failed' });
+      }
+
+    } catch (error) {
+      console.error('[MotionGraphicsService] Edit error:', error);
+      sendSSE({ type: 'error', error: (error as Error).message || 'Edit failed', errorType: 'api' });
+    }
+  }
+
+  /**
+   * Apply edit operations to code
+   */
+  private applyEdits(
+    code: string,
+    edits: EditOperation[]
+  ): { success: boolean; result?: string; error?: string; enrichedEdits?: EditOperation[] } {
+    let result = code;
+    const enrichedEdits: EditOperation[] = [];
+
+    for (let i = 0; i < edits.length; i++) {
+      const edit = edits[i];
+      const { old_string, new_string, description } = edit;
+
+      if (!result.includes(old_string)) {
+        return {
+          success: false,
+          result: code,
+          error: `Edit ${i + 1} failed: Could not find the specified text`,
+        };
+      }
+
+      const matches = result.split(old_string).length - 1;
+      if (matches > 1) {
+        return {
+          success: false,
+          result: code,
+          error: `Edit ${i + 1} failed: Found ${matches} matches. The edit target is ambiguous.`,
+        };
+      }
+
+      const lineNumber = this.getLineNumber(result, old_string);
+      result = result.replace(old_string, new_string);
+
+      enrichedEdits.push({ description, old_string, new_string, lineNumber });
+    }
+
+    return { success: true, result, enrichedEdits };
+  }
+
+  private getLineNumber(code: string, searchString: string): number {
+    const index = code.indexOf(searchString);
+    if (index === -1) return -1;
+    return code.substring(0, index).split('\n').length;
+  }
+
+  /**
+   * Finalize generation with validation and completion event
+   */
+  private async finalizeGeneration(
+    sendSSE: SSEWriter,
+    code: string,
+    detectedSkills: string[],
+    editType: string | null = null,
+    duration: number | null = null
+  ): Promise<void> {
+    let cleanedCode = stripMarkdownFences(code);
+    cleanedCode = extractComponentCode(cleanedCode);
+
+    sendSSE({ type: 'stage', stage: 'validating', message: 'Validating code...' });
+    
+    const validation = validateCode(cleanedCode);
+    
+    if (validation.fixedCode) {
+      cleanedCode = validation.fixedCode;
+    }
+
+    const iconResult = extractAndEnsureIcons(cleanedCode);
+    const usedIcons = iconResult.icons;
+    cleanedCode = iconResult.code;
+
+    sendSSE({
+      type: 'validation',
+      result: {
+        isValid: validation.isValid,
+        errors: validation.errors,
+        warnings: validation.warnings,
+      },
+    });
+
+    sendSSE({
+      type: 'complete',
+      code: cleanedCode,
+      skills: detectedSkills,
+      editType,
+      metadata: {
+        usedIcons,
+        duration,
+        corrections: validation.corrections,
+      },
+    });
+
+    sendSSE({ type: 'done' });
+  }
+}
+
+/** Singleton instance */
+export const motionGraphicsService = new MotionGraphicsService();
