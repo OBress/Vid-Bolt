@@ -130,12 +130,23 @@ export function SceneCard({
       {/* Image/Video Area */}
       <div className="relative aspect-video w-full bg-black/40">
         {hasMedia && media?.media_url ? (
-          // Show generated media
-          <img
-            src={media.media_url}
-            alt={`Shot ${shot.segment_index + 1}`}
-            className="absolute inset-0 w-full h-full object-cover"
-          />
+          // Show generated media - use <video> for video types, <img> for images
+          mediaType === "video" ? (
+            <video
+              src={media.media_url}
+              className="absolute inset-0 w-full h-full object-cover"
+              autoPlay
+              muted
+              loop
+              playsInline
+            />
+          ) : (
+            <img
+              src={media.media_url}
+              alt={`Shot ${shot.segment_index + 1}`}
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          )
         ) : (
           // Placeholder with gradient based on media type
           <div

@@ -563,15 +563,20 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
       const webhookResult = await waitForWebhookResult(item.item_id, timeoutMs);
       
       if (webhookResult.status === 'completed' && webhookResult.result?.save_url) {
-        // Get public URL from the storage key
-        const filename = `shot_${shot.segment_index}.${mediaType === 'video' ? 'mp4' : 'png'}`;
-        const storagePath = mediaType === 'video' ? STORAGE_PATHS.FOOTAGE.GENERATED : STORAGE_PATHS.IMAGES.GENERATED;
-        // Note: We use the save_url from webhook which should be the final public URL
-        // or we reconstruct it from the key
+        // Convert presigned PUT URL (upload-only) to public URL via custom domain
+        // The webhook returns the same save_url we sent (a presigned PUT URL),
+        // which is not viewable by browsers. Extract the key and build a public URL.
+        let publicUrl = webhookResult.result.save_url;
+        try {
+          const key = getKeyFromUrl(publicUrl);
+          publicUrl = getPublicUrl(key);
+        } catch (e) {
+          console.error(`[GPU-Batch/Webhooks] Failed to convert save_url to public URL for shot ${shot.segment_index}:`, e);
+        }
         
         return {
           shot_index: shot.segment_index,
-          media_url: webhookResult.result.save_url,
+          media_url: publicUrl,
           generation_status: 'completed' as const,
         };
       } else {

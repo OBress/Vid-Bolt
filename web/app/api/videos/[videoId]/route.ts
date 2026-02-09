@@ -136,6 +136,29 @@ export async function GET(
       // Non-fatal - continue without active task info
     }
 
+    // Sanitize generatedMedia URLs: convert presigned PUT URLs to public URLs
+    // This fixes existing data where media_url was stored as a presigned upload URL
+    const metadata = video.metadata as any;
+    if (metadata?.generatedMedia && Array.isArray(metadata.generatedMedia)) {
+      try {
+        const { getKeyFromUrl, getPublicUrl } = await import("@/lib/services/r2-storage");
+        metadata.generatedMedia = metadata.generatedMedia.map((m: any) => {
+          if (m.media_url && (m.media_url.includes('X-Amz-') || m.media_url.includes('r2.cloudflarestorage.com'))) {
+            try {
+              const key = getKeyFromUrl(m.media_url);
+              return { ...m, media_url: getPublicUrl(key) };
+            } catch {
+              return m;
+            }
+          }
+          return m;
+        });
+        video.metadata = metadata;
+      } catch (e) {
+        console.error("[API] Failed to sanitize generatedMedia URLs:", e);
+      }
+    }
+
     return NextResponse.json({ video, audioChunks, activeTasks });
   } catch (error) {
     console.error("Failed to get video:", error);
