@@ -491,7 +491,7 @@ class MotionGraphicsService {
       'messaging': ['chat', 'message', 'bubble', 'whatsapp', 'imessage', 'sms', 'conversation', 'dm'],
       'social-media': ['instagram', 'tiktok', 'youtube', 'story', 'reel', 'vertical', 'shorts', 'social', 'post'],
       '3d': ['3d', 'three', 'cube', 'sphere', 'rotate', 'spatial', 'dimension', 'threejs'],
-      'maps': ['map', 'mapbox', 'location', 'route', 'geography', 'travel', 'marker', 'pin', 'coordinate'],
+      'maps': ['map', 'mapbox', 'location', 'route', 'geography', 'travel', 'marker', 'pin', 'coordinate', 'd3-geo', 'globe', 'flight', 'country', 'world', 'city', 'projection'],
       'lottie': ['lottie', 'after effects', 'bodymovin', 'json animation'],
       'images': ['image', 'photo', 'picture', 'logo', 'icon', 'graphic'],
       'videos': ['video', 'clip', 'footage', 'embed'],
@@ -515,7 +515,7 @@ class MotionGraphicsService {
       }
     }
     
-    return detectedSkills.slice(0, 5);
+    return detectedSkills.slice(0, 8);
   }
 
   /**
@@ -603,7 +603,17 @@ class MotionGraphicsService {
         detectedSkills = ['spring-physics', ...detectedSkills];
       }
       
-      const MAX_SKILLS = 4;
+      // Domain-specific skills contain unique APIs the AI can't guess — prioritize them
+      // over generic enhancement skills (animations, timing, typography) that overlap with the base prompt
+      const PRIORITY_SKILLS = ['maps', 'charts', '3d', 'lottie', 'audio-visualization'];
+      const ALWAYS_INCLUDE = ['spring-physics'];
+      
+      const alwaysIncluded = detectedSkills.filter(s => ALWAYS_INCLUDE.includes(s));
+      const domainSpecific = detectedSkills.filter(s => PRIORITY_SKILLS.includes(s) && !ALWAYS_INCLUDE.includes(s));
+      const generic = detectedSkills.filter(s => !PRIORITY_SKILLS.includes(s) && !ALWAYS_INCLUDE.includes(s));
+      detectedSkills = [...alwaysIncluded, ...domainSpecific, ...generic];
+      
+      const MAX_SKILLS = 5;
       if (detectedSkills.length > MAX_SKILLS) {
         detectedSkills = detectedSkills.slice(0, MAX_SKILLS);
       }

@@ -83,7 +83,7 @@ export interface GenerationCallbacks {
   onStageChange?: (stage: GenerationStage, message?: string) => void;
   onSkillsDetected?: (skills: string[]) => void;
   onCodeUpdate?: (code: string) => void;
-  onStreamPhaseChange?: (phase: 'analyzing' | 'generating' | 'validating') => void;
+  onStreamPhaseChange?: (phase: 'analyzing' | 'generating' | 'validating' | 'editing') => void;
   onError?: (error: string, type: GenerationErrorType) => void;
   onComplete?: (result: GenerationResult) => void;
 }

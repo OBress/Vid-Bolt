@@ -35,7 +35,7 @@ import type { CompositionDefinition } from "../../../types/composition";
 import { useMotionGraphicsGeneration } from "../../../hooks/use-motion-graphics-generation";
 import { parseTaggedJSX, hasLayerTags } from "../../../utils/jsx-layer-parser";
 import { Player, PlayerRef } from "@remotion/player";
-import { DynamicCompositionWrapper } from "../../../utils/remotion/dynamic-composition";
+import { DynamicCompositionWrapper, setRuntimeErrorHandler } from "../../../utils/remotion/dynamic-composition";
 import { useVisualQC, type QCResult } from "../../../hooks/use-visual-qc";
 
 // Built-in templates (temporary - will be replaced with new AI generation system)
@@ -410,6 +410,7 @@ export const MotionGraphicsTab: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [savedTemplates, setSavedTemplates] = useState<MotionGraphicsTemplate[]>([]);
+  const [userDuration, setUserDuration] = useState<string>('auto'); // 'auto' or seconds string
   
   // Model selector state
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
@@ -449,8 +450,18 @@ export const MotionGraphicsTab: React.FC = () => {
   const [qcPrompt, setQCPrompt] = useState<string>('');
   const [qcPendingAnalysis, setQCPendingAnalysis] = useState(false);
   const qcRetryCountRef = useRef(0);
-  const pendingAutoSubmitRef = useRef(false);
-  const MAX_QC_RETRIES = 2;
+  const isSubmittingRef = useRef(false); // Synchronous guard against double-submission
+  const qcRuntimeErrorRef = useRef<string | null>(null); // Captures runtime errors from generated code
+  const MAX_QC_RETRIES = 3;
+
+  // Register runtime error handler so DynamicCompositionWrapper reports crashes
+  useEffect(() => {
+    setRuntimeErrorHandler((error: string) => {
+      console.error('[MotionGraphicsTab] Runtime error captured:', error);
+      qcRuntimeErrorRef.current = error;
+    });
+    return () => setRuntimeErrorHandler(null);
+  }, []);
   
   // Sync generation error to local state
   useEffect(() => {
@@ -568,8 +579,12 @@ export const MotionGraphicsTab: React.FC = () => {
   }, [resetGeneration, resetQC]);
 
   // Auto-trigger Visual QC after generation completes and Player has rendered
+  const qcRunningRef = useRef(false); // Synchronous guard to prevent double QC runs
   useEffect(() => {
     if (!qcPendingAnalysis || !qcCode || !qcPlayerRef.current) return;
+    // Prevent double-firing: use a synchronous ref guard
+    if (qcRunningRef.current) return;
+    qcRunningRef.current = true;
 
     // Wait for Player to compile + render the code before capturing
     const timer = setTimeout(async () => {
@@ -614,28 +629,21 @@ export const MotionGraphicsTab: React.FC = () => {
         // If QC failed and we haven't exceeded retries, auto-regenerate with feedback
         if (!result.passed && qcRetryCountRef.current < MAX_QC_RETRIES) {
           qcRetryCountRef.current++;
-          console.log(`[MotionGraphicsTab] 🔄 QC failed, auto-regenerating (attempt ${qcRetryCountRef.current}/${MAX_QC_RETRIES})...`);
+          console.log(`[MotionGraphicsTab] 🔄 QC failed, auto-correcting (attempt ${qcRetryCountRef.current}/${MAX_QC_RETRIES})...`);
 
-          // Build feedback prompt from QC issues
+          // Build feedback prompt from QC issues + any runtime error
           const issuesList = result.issues.join('; ');
           const suggestionsList = result.suggestions.join('; ');
-          const feedbackPrompt = `Fix the following visual issues: ${issuesList}. Suggestions: ${suggestionsList}`;
+          let feedbackPrompt = `Fix the following visual issues: ${issuesList}. Suggestions: ${suggestionsList}`;
 
-          // Add a user message showing the auto-correction
-          setChatMessages(prev => [
-            ...prev,
-            {
-              id: `auto-fix-${Date.now()}`,
-              role: 'user' as const,
-              content: `🔄 Auto-correcting: ${feedbackPrompt}`,
-              timestamp: new Date().toISOString(),
-            },
-          ]);
+          // If we captured a runtime error, include it — this is the most actionable info
+          if (qcRuntimeErrorRef.current) {
+            feedbackPrompt += `\n\nCRITICAL: The component threw a JavaScript runtime error: "${qcRuntimeErrorRef.current}". This is likely the root cause of the blank/broken rendering. Fix this error first.`;
+            qcRuntimeErrorRef.current = null; // Reset after use
+          }
 
-          // Trigger regeneration with feedback as a follow-up
-          // Set input and mark for auto-submit on next render
-          setInputValue(feedbackPrompt);
-          pendingAutoSubmitRef.current = true;
+          // Directly trigger auto-correction without going through the input field
+          handleAutoCorrection(feedbackPrompt);
         } else if (result.passed) {
           qcRetryCountRef.current = 0; // Reset on success
         }
@@ -649,9 +657,15 @@ export const MotionGraphicsTab: React.FC = () => {
           )
         );
       }
+
+      qcRunningRef.current = false; // Release the guard after QC completes
     }, 2000); // Wait 2s for Player to compile and render
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      qcRunningRef.current = false; // Release on cleanup
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qcPendingAnalysis, qcCode, qcDurationFrames, qcPrompt, selectedModelId, captureAndAnalyze]);
 
   // Memoize QC player inputProps to prevent re-renders
@@ -659,9 +673,7 @@ export const MotionGraphicsTab: React.FC = () => {
     code: qcCode || '',
   }), [qcCode]);
 
-  // Auto-submit feedback when pendingAutoSubmitRef is set (after QC failure)
-  // We need this as a separate effect because handleSendMessage reads inputValue state
-  const handleSendMessageRef = useRef<(() => void) | null>(null);
+
   const getCanvasDimensions = useCallback(() => {
     const resolutionHeights: Record<string, number> = {
       '720p': 720,
@@ -686,7 +698,8 @@ export const MotionGraphicsTab: React.FC = () => {
 
   // Handle send message - AI generation
   const handleSendMessage = async () => {
-    if (!inputValue.trim() || isGenerating) return;
+    if (!inputValue.trim() || isGenerating || isSubmittingRef.current) return;
+    isSubmittingRef.current = true; // Synchronous lock to prevent double-submit
 
     const userMessage: ChatMessage = {
       id: `msg-${Date.now()}`,
@@ -697,6 +710,10 @@ export const MotionGraphicsTab: React.FC = () => {
 
     setChatMessages((prev) => [...prev, userMessage]);
     const userPrompt = inputValue.trim();
+    // Prepend duration context if user specified one
+    const effectivePrompt = userDuration !== 'auto'
+      ? `[Duration: ${userDuration} seconds] ${userPrompt}`
+      : userPrompt;
     setInputValue('');
     setError(null);
 
@@ -735,7 +752,7 @@ export const MotionGraphicsTab: React.FC = () => {
 
     // Generate motion graphics using the new system
     const result = await generate(
-      userPrompt,
+      effectivePrompt,
       apiKey,
       selectedModelId,
       {
@@ -774,14 +791,17 @@ export const MotionGraphicsTab: React.FC = () => {
             // Get canvas dimensions for the composition
             const dimensions = getCanvasDimensions();
             
-            // Duration comes from AI vision planning (single source of truth)
+            // Duration: user override > AI planned > fallback
+            const userDurationFrames = userDuration !== 'auto' ? Math.round(parseFloat(userDuration) * fps) : null;
             const aiDuration = result.metadata?.duration;
-            const duration = aiDuration || (fps * 5); // Fallback only if AI didn't provide duration
+            const duration = userDurationFrames || aiDuration || (fps * 5);
             
-            if (aiDuration) {
+            if (userDurationFrames) {
+              console.log('[MotionGraphicsTab] ✅ Using user-specified duration:', userDuration, 's =', userDurationFrames, 'frames');
+            } else if (aiDuration) {
               console.log('[MotionGraphicsTab] ✅ Using AI planned duration:', aiDuration, 'frames', `(${(aiDuration / fps).toFixed(1)}s)`);
             } else {
-              console.warn('[MotionGraphicsTab] ⚠️ AI did not provide duration, using fallback:', duration, 'frames');
+              console.warn('[MotionGraphicsTab] ⚠️ No duration source, using fallback:', duration, 'frames');
             }
             
             console.log('[MotionGraphicsTab] Duration:', {
@@ -882,22 +902,150 @@ export const MotionGraphicsTab: React.FC = () => {
         )
       );
     }
+
+    isSubmittingRef.current = false;
   };
 
-  // Keep handleSendMessage ref updated for auto-QC regeneration
-  handleSendMessageRef.current = handleSendMessage;
+  // Direct auto-correction handler: bypasses input field to avoid race conditions and duplicate messages
+  const handleAutoCorrection = async (feedbackPrompt: string) => {
+    if (isGenerating) return;
 
-  // Auto-submit effect: when QC failure sets pendingAutoSubmitRef, trigger send
-  useEffect(() => {
-    if (pendingAutoSubmitRef.current && inputValue.trim()) {
-      pendingAutoSubmitRef.current = false;
-      // Small delay to ensure state has settled
-      const timer = setTimeout(() => {
-        handleSendMessageRef.current?.();
-      }, 100);
-      return () => clearTimeout(timer);
+    const autoPrompt = `🔄 Auto-correcting: ${feedbackPrompt}`;
+
+    // Add auto-correction message to chat (system-generated, not user input)
+    const autoCorrectionMsgId = `auto-correct-${Date.now()}`;
+    setChatMessages(prev => [
+      ...prev,
+      {
+        id: autoCorrectionMsgId,
+        role: 'user' as const,
+        content: autoPrompt,
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+
+    // Add assistant placeholder
+    const assistantMsgId = `auto-correct-assistant-${Date.now()}`;
+    setChatMessages(prev => [
+      ...prev,
+      {
+        id: assistantMsgId,
+        role: 'assistant' as const,
+        content: 'Fixing visual issues...',
+        timestamp: new Date().toISOString(),
+        isStreaming: true,
+      },
+    ]);
+
+    // Use edit path (isFollowUp: true) so AI applies targeted fixes to existing code
+    const result = await generate(
+      autoPrompt,
+      '', // Backend retrieves API key from DB
+      selectedModelId,
+      {
+        currentCode: generatedCode || undefined,
+        isFollowUp: true, // Targeted edit path — QC feedback applies to existing code
+      },
+      {
+        onStreamPhaseChange: (phase) => {
+          if (phase === 'editing' || phase === 'generating') {
+            setChatMessages(prev =>
+              prev.map(msg =>
+                msg.id === assistantMsgId
+                  ? { ...msg, content: 'Editing animation code based on QC feedback...' }
+                  : msg
+              )
+            );
+          }
+        },
+        onError: (error) => {
+          setChatMessages(prev =>
+            prev.map(msg =>
+              msg.id === assistantMsgId
+                ? {
+                    ...msg,
+                    content: 'Auto-correction failed. Please try adjusting manually.',
+                    isStreaming: false,
+                    error,
+                  }
+                : msg
+            )
+          );
+        },
+        onComplete: (result) => {
+          if (result.success && result.code) {
+            const dimensions = getCanvasDimensions();
+            const aiDuration = result.metadata?.duration;
+            const duration = aiDuration || (fps * 5);
+
+            const compositionDefinition: CompositionDefinition = {
+              id: `comp-${Date.now()}`,
+              name: 'AI Generated Animation',
+              duration,
+              fps,
+              width: dimensions.width,
+              height: dimensions.height,
+              backgroundColor: '#000000',
+              layers: [],
+              originalRemotionCode: result.code,
+              generatedFromJSX: true,
+              usedIcons: result.metadata?.usedIcons,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+
+            const generatedTemplate: MotionGraphicsTemplate = {
+              id: `generated-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+              name: 'AI Generated Animation',
+              description: feedbackPrompt,
+              category: MotionGraphicsCategory.TEXT_ANIMATION,
+              duration,
+              isBuiltIn: false,
+              remotionCode: result.code,
+              compositionDefinition,
+              tags: result.metadata?.skills || [],
+              editableProperties: [],
+            };
+
+            setChatMessages(prev =>
+              prev.map(msg =>
+                msg.id === assistantMsgId
+                  ? {
+                      ...msg,
+                      content: result.summary || 'Auto-correction complete! Here\'s the updated animation.',
+                      isStreaming: false,
+                      generatedTemplate,
+                    }
+                  : msg
+              )
+            );
+
+            // Trigger Visual QC on the corrected output
+            setQCCode(result.code);
+            setQCDurationFrames(duration);
+            setQCPrompt(qcPrompt); // Use original prompt for QC context
+            setQCPendingAnalysis(true);
+            console.log('[MotionGraphicsTab] 🔍 Queuing Visual QC for auto-corrected code');
+          }
+        },
+      }
+    );
+
+    if (!result.success && result.error) {
+      setChatMessages(prev =>
+        prev.map(msg =>
+          msg.id === assistantMsgId
+            ? {
+                ...msg,
+                content: result.error || 'Auto-correction failed',
+                isStreaming: false,
+                error: result.errorType,
+              }
+            : msg
+        )
+      );
     }
-  }, [inputValue]);
+  };
 
   // Handle add template to timeline
   const handleAddToTimeline = (template: MotionGraphicsTemplate) => {
@@ -1140,6 +1288,22 @@ export const MotionGraphicsTab: React.FC = () => {
                 className="flex-1 h-9 text-sm"
                 disabled={isGenerating}
               />
+              <Select value={userDuration} onValueChange={setUserDuration}>
+                <SelectTrigger className="w-[72px] h-9 text-xs shrink-0" title="Animation duration">
+                  <Clock className="h-3 w-3 mr-1 shrink-0" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto</SelectItem>
+                  <SelectItem value="3">3s</SelectItem>
+                  <SelectItem value="5">5s</SelectItem>
+                  <SelectItem value="7">7s</SelectItem>
+                  <SelectItem value="10">10s</SelectItem>
+                  <SelectItem value="15">15s</SelectItem>
+                  <SelectItem value="20">20s</SelectItem>
+                  <SelectItem value="30">30s</SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 size="sm"
                 className="h-9 px-3"
@@ -1261,8 +1425,8 @@ export const MotionGraphicsTab: React.FC = () => {
             // Use clip-path instead of off-screen positioning so element keeps
             // proper layout dimensions (offsetWidth/Height stay non-zero)
             clipPath: 'inset(100%)',
-            width: '480px',
-            height: '270px',
+            width: '672px',
+            height: '378px',
             overflow: 'hidden',
             pointerEvents: 'none',
           }}
@@ -1276,7 +1440,7 @@ export const MotionGraphicsTab: React.FC = () => {
             compositionWidth={1920}
             compositionHeight={1080}
             fps={fps || 30}
-            style={{ width: '480px', height: '270px' }}
+            style={{ width: '672px', height: '378px' }}
           />
         </div>
       )}

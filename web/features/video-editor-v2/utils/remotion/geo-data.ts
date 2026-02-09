@@ -35,6 +35,12 @@ export const WorldCountries = topojson.feature(topology, topology.objects.countr
  */
 export const WorldLand = topojson.feature(topology, topology.objects.land);
 
+// Diagnostic: verify data loaded correctly at module init
+console.log('[GeoData] ✅ World map data loaded:', {
+  countries: WorldCountries?.features?.length ?? 'MISSING',
+  land: WorldLand?.features?.length ?? 'MISSING',
+});
+
 // ============================================================
 // MAJOR CITIES DATABASE
 // ============================================================

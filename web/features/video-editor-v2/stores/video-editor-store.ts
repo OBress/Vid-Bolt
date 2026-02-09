@@ -530,7 +530,7 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
         // TRACK ACTIONS
         // ========================================
         
-        addTrack: (type, options = {}) => {
+        addTrack: (type: TrackType, options: Partial<TimelineTrack> = {}) => {
           const state = get();
           const existingTracksOfType = state.tracks.filter(t => t.type === type);
           

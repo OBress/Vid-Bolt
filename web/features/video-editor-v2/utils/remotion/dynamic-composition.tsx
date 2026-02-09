@@ -28,6 +28,8 @@ export interface DynamicCompositionProps {
   showErrorDisplay?: boolean;
   /** List of icon names used in the code (from backend analysis) */
   usedIcons?: string[];
+  /** Callback when the rendered component throws a runtime error */
+  onRuntimeError?: (error: string) => void;
 }
 
 // ============================================================
@@ -77,6 +79,54 @@ const CompilationErrorDisplay: React.FC<CompilationErrorDisplayProps> = ({ error
 };
 
 // ============================================================
+// RUNTIME ERROR BOUNDARY
+// ============================================================
+
+interface RuntimeErrorBoundaryProps {
+  children: React.ReactNode;
+  onError?: (error: string) => void;
+  showErrorDisplay?: boolean;
+}
+
+interface RuntimeErrorBoundaryState {
+  error: string | null;
+}
+
+/**
+ * Catches runtime errors thrown during React render of AI-generated code.
+ * Without this, a crash in the generated component silently unmounts it → blank white screen.
+ */
+class RuntimeErrorBoundary extends React.Component<RuntimeErrorBoundaryProps, RuntimeErrorBoundaryState> {
+  state: RuntimeErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): RuntimeErrorBoundaryState {
+    return { error: error.message };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('[DynamicComposition] Runtime error in generated code:', error.message);
+    this.props.onError?.(error.message);
+  }
+
+  componentDidUpdate(prevProps: RuntimeErrorBoundaryProps) {
+    // Reset error state when children change (new code compiled)
+    if (prevProps.children !== this.props.children && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      if (this.props.showErrorDisplay !== false) {
+        return <CompilationErrorDisplay error={`Runtime Error: ${this.state.error}`} />;
+      }
+      return null;
+    }
+    return this.props.children;
+  }
+}
+
+// ============================================================
 // LOADING DISPLAY COMPONENT
 // ============================================================
 
@@ -122,6 +172,7 @@ export const DynamicComposition: React.FC<DynamicCompositionProps> = ({
   onCompilationResult,
   showErrorDisplay = true,
   usedIcons,
+  onRuntimeError,
 }) => {
   const [handle] = useState(() => delayRender('Compiling code...'));
   const [Component, setComponent] = useState<React.ComponentType | null>(null);
@@ -189,7 +240,14 @@ export const DynamicComposition: React.FC<DynamicCompositionProps> = ({
     return null;
   }
 
-  return <Component />;
+  return (
+    <RuntimeErrorBoundary
+      onError={onRuntimeError}
+      showErrorDisplay={showErrorDisplay}
+    >
+      <Component />
+    </RuntimeErrorBoundary>
+  );
 };
 
 // ============================================================
@@ -206,10 +264,27 @@ export interface DynamicCompositionWrapperProps {
   code?: string;
 }
 
+// Module-level runtime error handler — Remotion inputProps can't serialize functions,
+// so external code registers a handler via setRuntimeErrorHandler() instead.
+let _runtimeErrorHandler: ((error: string) => void) | null = null;
+
+/**
+ * Register a callback for runtime errors from DynamicCompositionWrapper.
+ * Call with `null` to unregister.
+ */
+export function setRuntimeErrorHandler(handler: ((error: string) => void) | null) {
+  _runtimeErrorHandler = handler;
+}
+
 export const DynamicCompositionWrapper: React.FC<DynamicCompositionWrapperProps> = ({
   code = '',
 }) => {
-  return <DynamicComposition code={code} />;
+  return (
+    <DynamicComposition
+      code={code}
+      onRuntimeError={_runtimeErrorHandler || undefined}
+    />
+  );
 };
 
 // ============================================================

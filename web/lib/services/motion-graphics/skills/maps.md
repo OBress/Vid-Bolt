@@ -6,7 +6,34 @@ tags: maps, geography, location, route, travel, coordinates, d3-geo, world map
 
 # Geographic Map Animations with d3-geo
 
+> **⚠️ CRITICAL: NEVER draw hardcoded SVG shapes for maps!**
+> You have REAL GeoJSON world map data injected into scope. Drawing crude SVG rectangles or polygons
+> to represent countries/continents looks absolutely terrible and is STRICTLY FORBIDDEN.
+> ALWAYS use `WorldCountries` or `WorldLand` with `geoPath()` and a d3-geo projection.
+
 You have access to accurate world map data and d3-geo projection functions. **Do NOT use Mapbox or hardcoded pixel coordinates.** Use the injected geo utilities for accurate lat/lng-based maps.
+
+### Highlighting Individual Countries
+
+To highlight specific countries (e.g., Brazil, Ethiopia), filter `WorldCountries.features` by name:
+
+```tsx
+const highlightedCountries = ["Brazil", "Colombia", "Ethiopia"];
+const isHighlighted = (feature) =>
+  highlightedCountries.includes(feature.properties.name);
+
+{
+  WorldCountries.features.map((feature, i) => (
+    <path
+      key={i}
+      d={path(feature) || ""}
+      fill={isHighlighted(feature) ? "#FFB020" : "#1a2744"}
+      stroke="#2a3f66"
+      strokeWidth={0.5}
+    />
+  ));
+}
+```
 
 ## Available Imports (already in scope)
 

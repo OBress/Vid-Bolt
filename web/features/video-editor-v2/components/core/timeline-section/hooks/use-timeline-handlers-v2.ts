@@ -381,7 +381,7 @@ export const useTimelineHandlers = ({
         else if (image._source) {
           const adaptor = imageAdaptors.find((a) => a.name === image._source);
           if (adaptor) {
-            imageUrl = adaptor.getImageUrl(image, "hd") || "";
+            imageUrl = adaptor.getImageUrl(image, "large") || "";
           }
         }
         

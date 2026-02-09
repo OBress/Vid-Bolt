@@ -14,6 +14,7 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import { cn } from "../../utils/general/utils";
 import { useEditorContext } from "../../contexts/editor-context";
 import { useToolContext } from "../../contexts/tool-context";
+import { useVideoEditorStore } from "../../stores/video-editor-store";
 
 import { AssetManager } from "../asset-manager/asset-manager";
 import { InspectorPanel } from "../inspector/inspector-panel";
@@ -237,7 +238,8 @@ export const EditorLayout: React.FC<EditorLayoutProps> = ({
   header,
   enableMobileLayout = false,
 }) => {
-  const { playerRef, setSelectedOverlayId, isInitialLoadComplete } = useEditorContext();
+  const { playerRef, isInitialLoadComplete } = useEditorContext();
+  const selectClips = useVideoEditorStore(s => s.selectClips);
   const { currentCursor } = useToolContext();
   
   const [isMobile, setIsMobile] = useState(false);
@@ -315,7 +317,7 @@ export const EditorLayout: React.FC<EditorLayoutProps> = ({
   // Deselect handler
   const handleCanvasBackgroundClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) {
-      setSelectedOverlayId(null);
+      selectClips([]);
     }
   };
 

@@ -460,11 +460,11 @@ function imageToMediaItem(
   image: StandardImage & { _source?: string; _sourceDisplayName?: string }
 ): MediaItem {
   return {
-    id: image.id,
+    id: String(image.id),
     type: "image",
-    src: image.src,
-    thumbnail: image.thumbnailUrl || image.src,
-    name: image.description || image.alt || `Image ${image.id}`,
+    src: image.src.original,
+    thumbnail: image.thumbnail || image.src.small || image.src.original,
+    name: image.alt || `Image ${image.id}`,
     width: image.width,
     height: image.height,
     isAiGenerated: false, // TODO: Track AI-generated source
@@ -478,11 +478,11 @@ function videoToMediaItem(
   video: StandardVideo & { _source?: string; _sourceDisplayName?: string }
 ): MediaItem {
   return {
-    id: video.id,
+    id: String(video.id),
     type: "video",
-    src: video.src,
-    thumbnail: video.thumbnailUrl || "",
-    name: video.description || `Video ${video.id}`,
+    src: video.videoFiles?.[0]?.url || "",
+    thumbnail: video.thumbnail || "",
+    name: `Video ${video.id}`,
     duration: video.duration,
     width: video.width,
     height: video.height,

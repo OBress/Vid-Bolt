@@ -27,7 +27,7 @@ interface RenderItem {
  * @property {() => void} handleRender - Function to trigger a new render
  */
 interface RenderControlsProps {
-  state: any;
+  state?: any;
   handleRender: () => void;
 }
 

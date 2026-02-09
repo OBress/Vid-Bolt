@@ -73,7 +73,7 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick, onDragStart, o
   // Apply text shadows (matching TextLayerContent)
   if (preset.styles.textShadows && preset.styles.textShadows.length > 0) {
     const shadows = preset.styles.textShadows
-      .map(s => `${s.offsetX * 0.25}px ${s.offsetY * 0.25}px ${s.blur * 0.25}px ${s.color}`)
+      .map((s: { offsetX: number; offsetY: number; blur: number; color: string }) => `${s.offsetX * 0.25}px ${s.offsetY * 0.25}px ${s.blur * 0.25}px ${s.color}`)
       .join(', ');
     if (shadows) {
       previewStyles.textShadow = shadows;
@@ -93,7 +93,7 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick, onDragStart, o
   // Apply text gradient (matching TextLayerContent)
   if (preset.styles.textGradient) {
     const gradient = preset.styles.textGradient;
-    const stops = gradient.stops.map(s => `${s.color} ${s.offset}%`).join(', ');
+    const stops = gradient.stops.map((s: { color: string; offset: number }) => `${s.color} ${s.offset}%`).join(', ');
     
     if (gradient.type === 'radial') {
       previewStyles.background = `radial-gradient(circle, ${stops})`;

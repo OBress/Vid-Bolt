@@ -84,10 +84,10 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick, onDragStart, o
   if (preset.styles.gradientConfig) {
     const gradient = preset.styles.gradientConfig;
     if (gradient.type === 'linear') {
-      const gradientStops = gradient.stops.map(s => `${s.color} ${s.offset}%`).join(', ');
+      const gradientStops = gradient.stops.map((s: { color: string; offset: number }) => `${s.color} ${s.offset}%`).join(', ');
       shapeStyles.background = `linear-gradient(${gradient.angle}deg, ${gradientStops})`;
     } else if (gradient.type === 'radial') {
-      const gradientStops = gradient.stops.map(s => `${s.color} ${s.offset}%`).join(', ');
+      const gradientStops = gradient.stops.map((s: { color: string; offset: number }) => `${s.color} ${s.offset}%`).join(', ');
       shapeStyles.background = `radial-gradient(circle, ${gradientStops})`;
     }
   }
@@ -95,7 +95,7 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick, onDragStart, o
   // Add shadows if present (simplified for preview)
   if (preset.styles.shadows && preset.styles.shadows.length > 0) {
     const shadows = preset.styles.shadows
-      .map(s => `${s.offsetX * 0.5}px ${s.offsetY * 0.5}px ${s.blur * 0.5}px ${s.color}`)
+      .map((s: { offsetX: number; offsetY: number; blur: number; color: string }) => `${s.offsetX * 0.5}px ${s.offsetY * 0.5}px ${s.blur * 0.5}px ${s.color}`)
       .join(', ');
     if (shadows) {
       shapeStyles.boxShadow = shadows;

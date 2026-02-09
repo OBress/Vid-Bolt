@@ -20,16 +20,49 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 // VISION QC PROMPT
 // ============================================================
 
-const VISUAL_QC_PROMPT = `You are a motion graphics quality inspector for Remotion animations.
+const VISUAL_QC_PROMPT = `You are a strict motion graphics quality inspector for Remotion animations.
 
 Given screenshots of a generated animation at key frames, determine if the output PASSES or FAILS against the user's original request.
 
-A result PASSES if ALL of the following are true:
-1. **INTENT MATCH**: The animation matches what the user asked for — all requested elements are present.
-2. **NO VISUAL BUGS**: No text overflow, misalignment, blank/empty frames, broken layouts, overlapping elements, cut-off text, or invisible elements (e.g. white text on white background).
-3. **ANIMATION EXISTS**: The frames show different visual states — if all frames look identical, there is no animation.
+## EVALUATION CHECKLIST
 
-A result FAILS if ANY of the above are not met.
+### 1. ELEMENT COMPLETENESS (Critical)
+Cross-reference the user's prompt against the screenshots. Every element, visual feature, or data point requested MUST be visually present. Examples:
+- If user asked for a "world map with country outlines" → country shapes must be visible, not just dots
+- If user asked for "chart with 5 bars" → all 5 bars must appear
+- If user asked for "text that says X" → that exact text must be readable
+- Missing any requested element = FAIL
+
+### 2. COMPILATION / RENDER FAILURE (Critical)
+- If ALL frames are completely blank, solid color, or show only a background with no content → FAIL (likely a compilation error)
+- If frames show error messages or raw code → FAIL
+- A single frame being blank is acceptable (may be a transition), but most frames should have content
+
+### 3. VISUAL BUGS (Important)
+- Text overflow, cut-off text, or text extending beyond boundaries
+- Elements overlapping incorrectly (e.g., labels hidden behind shapes, text behind images)
+- Elements positioned outside the visible canvas (partially or fully)
+- Invisible elements (white on white, black on black, zero opacity)
+- Misaligned or broken layouts
+
+### 4. LAYERING & Z-ORDER (Important)
+- Labels and text should appear ABOVE backgrounds and shapes, never hidden behind them
+- Interactive elements (markers, dots, icons) should be visible above map/chart backgrounds
+- If elements appear to be "underneath" other elements when they shouldn't be → FAIL
+
+### 5. ANIMATION EXISTS
+- The frames should show different visual states across time
+- If all frames look completely identical with no motion or transitions → FAIL (no animation)
+
+## VERDICT
+- PASS only if ALL above criteria are met
+- FAIL if ANY criterion is violated
+
+## THOROUGHNESS (CRITICAL)
+- List EVERY issue you can find, not just the most obvious one. The developer needs to fix ALL problems in a single pass.
+- For each issue, be extremely specific: name the exact element, describe what's wrong, and where it appears.
+- For each suggestion, give a concrete code-level fix — don't just say "fix it", say exactly how (e.g., "Change geoNaturalEarth1().fitSize([width, height], WorldLand) so the map fills the canvas").
+- If the animation is mostly blank, diagnose WHY: is it a runtime error? Wrong projection? Elements positioned off-screen? Zero opacity?
 
 You MUST respond with ONLY a valid JSON object in this exact format:
 {
@@ -41,8 +74,8 @@ You MUST respond with ONLY a valid JSON object in this exact format:
 
 Rules:
 - "passed": true if the output is acceptable, false if it needs to be regenerated
-- "issues": list of specific problems found (empty array if passed)
-- "suggestions": actionable code-level fixes the AI could implement (empty array if passed)
+- "issues": list of ALL specific problems found (empty array if passed). Be exhaustive — list every missing element, every visual bug.
+- "suggestions": actionable code-level fixes for EVERY issue (empty array if passed). Reference specific variables, functions, or components.
 - "summary": single concise sentence explaining the verdict`;
 
 // ============================================================
@@ -128,7 +161,7 @@ export async function POST(request: NextRequest) {
       type: 'image_url' as const,
       image_url: {
         url: screenshot, // base64 data URL
-        detail: 'low' as const, // Low detail to save tokens
+        detail: 'high' as const, // High detail for thorough visual analysis
       },
     }));
 
@@ -162,7 +195,7 @@ export async function POST(request: NextRequest) {
         model: visionModel,
         messages,
         temperature: 0.3, // Low temperature for consistent evaluation
-        max_tokens: 500,
+        max_tokens: 1000, // Enough for exhaustive issue lists
         response_format: { type: 'json_object' },
       }),
     });

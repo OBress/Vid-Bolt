@@ -74,7 +74,7 @@ export function EditorHeader({
    * - renderMedia: Function to handle media rendering/export
    * - renderState: Current render state (separate from editor state)
    */
-  const { renderMedia, renderState, saveProject } = useEditorContext();
+  const { renderMedia, saveProject } = useEditorContext();
 
   // Get theme configuration from context if available
   const themeConfig = useThemeConfig();
@@ -162,7 +162,6 @@ export function EditorHeader({
       {/* Render controls */}
       <RenderControls
         handleRender={renderMedia}
-        state={renderState}
       />
 
       {/* Fullscreen toggle */}

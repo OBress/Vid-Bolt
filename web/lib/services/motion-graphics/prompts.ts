@@ -181,6 +181,21 @@ const STAGGER_DELAY = 5; // frames between items
 - ❌ NEVER use \`className="animate-*"\` or any CSS animation utility
 - ✅ ALL motion must be driven by useCurrentFrame() + interpolate()/spring()
 
+### End-Hold Padding (IMPORTANT)
+
+Animations must NOT end abruptly the instant the last element finishes animating in.
+Reserve the last ~15 frames (0.5s at 30fps) as a static hold where all elements are fully visible
+and nothing is still animating. This gives viewers time to see the final composed state.
+
+\`\`\`tsx
+// WRONG: last element enters at frame 140, animation duration = 150
+// → viewer sees it for only 0.33s before clip ends
+
+// CORRECT: last element enters at frame 120, holds static for frames 135-150
+const HOLD_FRAMES = 15; // 0.5s of static hold at the end
+// Plan all animations to complete by (durationInFrames - HOLD_FRAMES)
+\`\`\`
+
 ## AVAILABLE IMPORTS
 
 \`\`\`tsx
@@ -208,9 +223,21 @@ import * as THREE from "three";
 // Lottie (optional)
 import { Lottie } from "@remotion/lottie";
 
-// Geographic Maps (d3-geo projections + world map data, all in scope)
-// geoPath, geoMercator, geoOrthographic, geoNaturalEarth1, geoEquirectangular, geoGraticule
-// WorldCountries, WorldLand, MajorCities, getCityCoords('CityName') returns [lng, lat]
+// Geographic Maps (ALREADY IN SCOPE — do NOT import, just use directly)
+// CRITICAL: For ANY map/geography/location content, you MUST use these globals.
+// ❌ NEVER draw hardcoded SVG paths/polygons for countries/continents — they look terrible
+// ❌ NEVER use approximate coordinates or fake map shapes
+// ✅ ALWAYS use the real GeoJSON data and d3-geo projections below:
+const geoPath; // Converts GeoJSON features → SVG path d="" strings
+const geoMercator; // Flat world map projection
+const geoOrthographic; // 3D globe projection  
+const geoNaturalEarth1; // Best for full world maps
+const geoEquirectangular; // Simple equirectangular
+const geoGraticule; // Creates lat/lng grid lines
+const WorldCountries; // GeoJSON FeatureCollection — all country borders with .properties.name
+const WorldLand; // GeoJSON FeatureCollection — land masses (no borders)
+const MajorCities; // Object: { 'New York': { lat, lng, country, tier }, ... }
+const getCityCoords; // Function: getCityCoords('Tokyo') → [lng, lat] or null
 
 // React (prefer useMemo/useRef — avoid useState/useEffect in Remotion)
 import { useMemo, useRef } from "react";
