@@ -171,7 +171,8 @@ const getCompositionDimensions = () => {
  */
 const ensureVideoTrack = (): string => {
   const state = useVideoEditorStore.getState();
-  const videoTrack = state.tracks.find(t => t.type === 'video');
+  const allTracks = Object.values(state.tracks);
+  const videoTrack = allTracks.find(t => t.type === 'video');
   
   if (videoTrack) {
     return videoTrack.id;

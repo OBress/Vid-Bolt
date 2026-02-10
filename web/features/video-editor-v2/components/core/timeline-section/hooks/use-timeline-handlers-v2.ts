@@ -140,7 +140,7 @@ export const useTimelineHandlers = ({
     
     // Re-link the duplicated items to each other
     idMapping.forEach((newId, oldId) => {
-      const originalClip = useVideoEditorStore.getState().clips.find(c => c.id === oldId);
+      const originalClip = useVideoEditorStore.getState().clips[oldId];
       if (originalClip?.linkedClipId && idMapping.has(originalClip.linkedClipId)) {
         const newLinkedId = idMapping.get(originalClip.linkedClipId);
         updateClip(newId, { linkedClipId: newLinkedId });
@@ -161,7 +161,7 @@ export const useTimelineHandlers = ({
     const linkedIds = getLinkedClipIds(itemId);
     linkedIds.forEach(linkedId => {
       if (linkedId !== itemId) {
-        const linkedClip = (useVideoEditorStore.getState().clips || []).find(c => c.id === linkedId);
+        const linkedClip = useVideoEditorStore.getState().clips[linkedId];
         if (linkedClip) {
           moveClip(linkedId, linkedClip.trackId, newStart);
         }
@@ -201,10 +201,11 @@ export const useTimelineHandlers = ({
         data?: any;
       }
     ) => {
-      const tracks = useVideoEditorStore.getState().tracks || [];
+      const tracksRecord = useVideoEditorStore.getState().tracks || {};
+      const tracksArr = Object.values(tracksRecord);
       
       // Sort tracks the same way they're displayed: video tracks first, then audio
-      const sortedTracks = [...tracks].sort((a, b) => {
+      const sortedTracks = [...tracksArr].sort((a, b) => {
         if (a.type === 'video' && b.type === 'audio') return -1;
         if (a.type === 'audio' && b.type === 'video') return 1;
         return a.order - b.order;
@@ -323,7 +324,7 @@ export const useTimelineHandlers = ({
           }
           
           // Re-fetch tracks after creation
-          const updatedTracks = useVideoEditorStore.getState().tracks;
+          const updatedTracks = Object.values(useVideoEditorStore.getState().tracks);
           const updatedAudioTracks = updatedTracks.filter(t => t.type === 'audio').sort((a, b) => a.order - b.order);
           audioTrack = updatedAudioTracks[correspondingAudioIndex];
         } else if (audioTrack.locked) {

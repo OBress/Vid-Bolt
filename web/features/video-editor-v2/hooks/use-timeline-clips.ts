@@ -10,8 +10,8 @@
 import { useCallback, useMemo } from "react";
 import { 
   useVideoEditorStore, 
-  selectClips,
-  selectTracks,
+  selectClipsArray,
+  selectTracksArray,
   selectSelectedClipIds,
   selectSelectedClipId,
   selectSelectedClip,
@@ -34,8 +34,8 @@ import type {
  */
 export const useTimelineClips = () => {
   // Get state from store via selectors
-  const clips = useVideoEditorStore(selectClips);
-  const tracks = useVideoEditorStore(selectTracks);
+  const clips = useVideoEditorStore(selectClipsArray);
+  const tracks = useVideoEditorStore(selectTracksArray);
   const selectedClipIds = useVideoEditorStore(selectSelectedClipIds);
   const selectedClipId = useVideoEditorStore(selectSelectedClipId);
   const selectedClip = useVideoEditorStore(selectSelectedClip);

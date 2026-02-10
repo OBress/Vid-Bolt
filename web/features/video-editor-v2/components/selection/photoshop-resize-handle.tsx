@@ -165,8 +165,7 @@ export const PhotoshopResizeHandle: React.FC<{
       e.preventDefault();
       if (e.button !== 0) return;
 
-      // Save to history before starting resize
-      useVideoEditorStore.getState().saveToHistory();
+      // Zundo auto-tracks state changes, no manual saveToHistory needed
 
       const initialX = e.clientX;
       const initialY = e.clientY;

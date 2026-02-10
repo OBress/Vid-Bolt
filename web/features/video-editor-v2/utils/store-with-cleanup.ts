@@ -80,11 +80,11 @@ export function deleteClipsWithCleanup(clipIds: string[]): void {
  */
 export function setClipsWithCleanup(newClips: TimelineClip[]): void {
   const store = useVideoEditorStore.getState();
-  const currentClips = store.clips;
+  const currentClipsArr = Object.values(store.clips) as TimelineClip[];
   const newClipIds = new Set(newClips.map(c => c.id));
   
   // Find clips that will be removed
-  const removedClipIds = currentClips
+  const removedClipIds = currentClipsArr
     .filter(c => !newClipIds.has(c.id))
     .map(c => c.id);
   

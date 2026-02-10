@@ -11,17 +11,21 @@ tags: gif, animation, animated, apng, avif, webp
 Use `<AnimatedImage>` to display a GIF, APNG, AVIF or WebP synchronized with Remotion's timeline:
 
 ```tsx
-import { AnimatedImage, staticFile } from 'remotion';
-
 export const MyComposition = () => {
-  return <AnimatedImage src={staticFile('animation.gif')} width={500} height={500} />;
+  return (
+    <AnimatedImage src={staticFile("animation.gif")} width={500} height={500} />
+  );
 };
 ```
 
 Remote URLs are also supported (must have CORS enabled):
 
 ```tsx
-<AnimatedImage src="https://example.com/animation.gif" width={500} height={500} />
+<AnimatedImage
+  src="https://example.com/animation.gif"
+  width={500}
+  height={500}
+/>
 ```
 
 ## Sizing and Fit
@@ -63,25 +67,20 @@ Control how the image fills its container:
 
 ```tsx
 <AnimatedImage
-  src={staticFile('animation.gif')}
+  src={staticFile("animation.gif")}
   width={500}
   height={500}
   style={{
     borderRadius: 20,
-    position: 'absolute',
+    position: "absolute",
     top: 100,
     left: 50,
   }}
 />
 ```
 
-## Alternative: @remotion/gif
+## Rules
 
-If `<AnimatedImage>` doesn't work (only Chrome/Firefox), use `<Gif>`:
-
-```tsx
-import { Gif } from '@remotion/gif';
-import { staticFile } from 'remotion';
-
-<Gif src={staticFile('animation.gif')} width={500} height={500} />
-```
+- `AnimatedImage` and `staticFile` are available in scope — do NOT import them
+- Remote URLs must have CORS enabled
+- Only works in Chrome and Firefox (uses ImageDecoder Web API)

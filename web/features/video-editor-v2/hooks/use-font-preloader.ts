@@ -7,12 +7,12 @@ import { loadFontFromTextItem } from '../utils/text/load-font-from-text-item';
  * or when clips change.
  */
 export const useFontPreloader = () => {
-  const timelineClips = useVideoEditorStore(state => state.clips);
+  const timelineClips = useVideoEditorStore(state => Object.values(state.clips)) as import('../types/timeline-v2').TimelineClip[];
   const loadedFontsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     // Extract all text clips
-    const textClips = timelineClips.filter(clip => clip.type === 'text');
+    const textClips = timelineClips.filter((clip: any) => clip.type === 'text');
     
     if (textClips.length === 0) {
       return;

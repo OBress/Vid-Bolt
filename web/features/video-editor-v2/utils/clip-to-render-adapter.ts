@@ -502,8 +502,10 @@ export function buildRenderState(
 export function useRenderState(): RenderState {
   const { useVideoEditorStore } = require('../stores/video-editor-store');
   
-  const clips = useVideoEditorStore((state: any) => state.clips) || [];
-  const tracks = useVideoEditorStore((state: any) => state.tracks) || [];
+  const clipsRecord = useVideoEditorStore((state: any) => state.clips) || {};
+  const tracksRecord = useVideoEditorStore((state: any) => state.tracks) || {};
+  const clips = Array.isArray(clipsRecord) ? clipsRecord : Object.values(clipsRecord) as TimelineClip[];
+  const tracks = Array.isArray(tracksRecord) ? tracksRecord : Object.values(tracksRecord) as TimelineTrack[];
   const transitions = useVideoEditorStore((state: any) => state.transitions) || {};
   const fps = useVideoEditorStore((state: any) => state.fps) || 30;
   const aspectRatio = useVideoEditorStore((state: any) => state.aspectRatio) || '16:9';
@@ -608,8 +610,10 @@ export function buildRenderClipState(
 export function useRenderClipState(): RenderClipState {
   const { useVideoEditorStore } = require('../stores/video-editor-store');
   
-  const clips = useVideoEditorStore((state: any) => state.clips) || [];
-  const tracks = useVideoEditorStore((state: any) => state.tracks) || [];
+  const clipsRecord = useVideoEditorStore((state: any) => state.clips) || {};
+  const tracksRecord = useVideoEditorStore((state: any) => state.tracks) || {};
+  const clips = Array.isArray(clipsRecord) ? clipsRecord : Object.values(clipsRecord) as TimelineClip[];
+  const tracks = Array.isArray(tracksRecord) ? tracksRecord : Object.values(tracksRecord) as TimelineTrack[];
   const transitions = useVideoEditorStore((state: any) => state.transitions) || {};
   const fps = useVideoEditorStore((state: any) => state.fps) || 30;
   const aspectRatio = useVideoEditorStore((state: any) => state.aspectRatio) || '16:9';

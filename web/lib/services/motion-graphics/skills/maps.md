@@ -13,6 +13,8 @@ tags: maps, geography, location, route, travel, coordinates, d3-geo, world map
 
 You have access to accurate world map data and d3-geo projection functions. **Do NOT use Mapbox or hardcoded pixel coordinates.** Use the injected geo utilities for accurate lat/lng-based maps.
 
+> **NOTE:** Async geo data loaders (e.g., `loadCities()`, `getSubNationalData()`, `loadRivers()`) require `useState` + `useEffect`. This is the **correct exception** to the general "no useState/useEffect" rule — geo data must be loaded asynchronously.
+
 ### Highlighting Individual Countries
 
 To highlight specific countries (e.g., Brazil, Ethiopia), filter `WorldCountries.features` by name:

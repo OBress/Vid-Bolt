@@ -11,7 +11,7 @@ tags: spring, bounce, easing, interpolation, timing, curves
 Basic linear interpolation using the `interpolate` function:
 
 ```tsx
-import { interpolate } from 'remotion';
+import { interpolate } from "remotion";
 
 // Going from 0 to 1 over 100 frames
 const opacity = interpolate(frame, [0, 100], [0, 1]);
@@ -21,8 +21,8 @@ Always clamp values to prevent extrapolation issues:
 
 ```tsx
 const opacity = interpolate(frame, [0, 100], [0, 1], {
-  extrapolateRight: 'clamp',
-  extrapolateLeft: 'clamp',
+  extrapolateRight: "clamp",
+  extrapolateLeft: "clamp",
 });
 ```
 
@@ -31,7 +31,7 @@ const opacity = interpolate(frame, [0, 100], [0, 1], {
 Spring animations have more natural, organic motion. They go from 0 to 1 over time.
 
 ```tsx
-import { spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { spring, useCurrentFrame, useVideoConfig } from "remotion";
 
 const frame = useCurrentFrame();
 const { fps } = useVideoConfig();
@@ -76,7 +76,7 @@ const entrance = spring({
 ### Spring with Duration
 
 ```tsx
-const spring = spring({
+const springValue = spring({
   frame,
   fps,
   durationInFrames: 40,
@@ -96,27 +96,31 @@ const rotation = interpolate(springProgress, [0, 1], [0, 360]);
 // Map to position
 const translateY = interpolate(springProgress, [0, 1], [50, 0]);
 
-<div style={{ transform: `translateY(${translateY}px) rotate(${rotation}deg)` }} />
+<div
+  style={{ transform: `translateY(${translateY}px) rotate(${rotation}deg)` }}
+/>;
 ```
 
 ## Easing Functions
 
 ```tsx
-import { interpolate, Easing } from 'remotion';
+import { interpolate, Easing } from "remotion";
 
 const value = interpolate(frame, [0, 100], [0, 1], {
   easing: Easing.inOut(Easing.quad),
-  extrapolateLeft: 'clamp',
-  extrapolateRight: 'clamp',
+  extrapolateLeft: "clamp",
+  extrapolateRight: "clamp",
 });
 ```
 
 Convexities:
+
 - `Easing.in` - starts slow, accelerates
 - `Easing.out` - starts fast, slows down
 - `Easing.inOut` - slow start and end
 
 Curves (most linear to most curved):
+
 - `Easing.quad`
 - `Easing.sin`
 - `Easing.exp`
@@ -125,5 +129,5 @@ Curves (most linear to most curved):
 Cubic bezier:
 
 ```tsx
-easing: Easing.bezier(0.8, 0.22, 0.96, 0.65)
+easing: Easing.bezier(0.8, 0.22, 0.96, 0.65);
 ```

@@ -75,6 +75,10 @@ import {
   Easing,
   Series,
   random,
+  AnimatedImage,
+  delayRender,
+  continueRender,
+  cancelRender,
 } from 'remotion';
 
 // Import ALL lucide-react icons as a namespace
@@ -451,6 +455,10 @@ function createComponentFromTranspiled(
       'Easing',
       'Series',
       'random',
+      'AnimatedImage',
+      'delayRender',
+      'continueRender',
+      'cancelRender',
       'useState',
       'useEffect',
       'useMemo',
@@ -493,6 +501,10 @@ function createComponentFromTranspiled(
       Easing,
       Series,
       random,
+      AnimatedImage,
+      delayRender,
+      continueRender,
+      cancelRender,
       useState,
       useEffect,
       useMemo,

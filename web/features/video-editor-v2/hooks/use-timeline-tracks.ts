@@ -11,10 +11,10 @@
 import { useCallback, useMemo } from "react";
 import { 
   useVideoEditorStore, 
-  selectTracks,
+  selectTracksArray,
   selectVideoTracks,
   selectAudioTracks,
-  selectClips,
+  selectClipsArray,
 } from "../stores/video-editor-store";
 import type { TimelineTrack, TimelineClip, TrackType } from "../types/timeline-v2";
 
@@ -23,10 +23,10 @@ import type { TimelineTrack, TimelineClip, TrackType } from "../types/timeline-v
  */
 export const useTrackManagement = () => {
   // Get state from store
-  const tracks = useVideoEditorStore(selectTracks);
+  const tracks = useVideoEditorStore(selectTracksArray);
   const videoTracks = useVideoEditorStore(selectVideoTracks);
   const audioTracks = useVideoEditorStore(selectAudioTracks);
-  const clips = useVideoEditorStore(selectClips);
+  const clips = useVideoEditorStore(selectClipsArray);
   
   // Get actions from store
   const {

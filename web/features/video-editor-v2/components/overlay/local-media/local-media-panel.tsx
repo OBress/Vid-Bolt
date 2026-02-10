@@ -50,8 +50,8 @@ const getCompositionDimensions = () => {
 const ensureTracks = () => {
   const state = useVideoEditorStore.getState();
   
-  let videoTrackId = state.tracks.find(t => t.type === 'video')?.id;
-  let audioTrackId = state.tracks.find(t => t.type === 'audio')?.id;
+  let videoTrackId = Object.values(state.tracks).find(t => t.type === 'video')?.id;
+  let audioTrackId = Object.values(state.tracks).find(t => t.type === 'audio')?.id;
   
   if (!videoTrackId) {
     videoTrackId = state.addTrack('video');
@@ -182,11 +182,12 @@ export const LocalMediaPanel: React.FC = () => {
     } else if (file.type === "image") {
       // Use a percentage of composition duration for smart image length when there are existing clips,
       // otherwise default to DEFAULT_IMAGE_DURATION_FRAMES converted to seconds
-      const totalDuration = clips.length > 0 
-        ? Math.max(...clips.map(c => c.startTime + c.duration))
+      const clipsArr = Object.values(clips) as import('../../../types/timeline-v2').TimelineClip[];
+      const totalDuration = clipsArr.length > 0 
+        ? Math.max(...clipsArr.map(c => c.startTime + c.duration))
         : 0;
       
-      const smartDuration = clips.length > 0 
+      const smartDuration = clipsArr.length > 0 
         ? (totalDuration * IMAGE_DURATION_PERCENTAGE)
         : (DEFAULT_IMAGE_DURATION_FRAMES / fps);
       

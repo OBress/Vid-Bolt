@@ -1,7 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { useCurrentScale } from "remotion";
 import { Overlay } from "../../types";
-import { useVideoEditorStore } from "../../stores/video-editor-store";
 
 /**
  * PhotoshopRotateHandle - Invisible rotation zones outside corners
@@ -81,8 +80,7 @@ export const PhotoshopRotateZone: React.FC<{
       e.preventDefault();
       if (e.button !== 0) return;
 
-      // Save to history before starting rotation
-      useVideoEditorStore.getState().saveToHistory();
+      // Zundo auto-tracks state changes, no manual saveToHistory needed
 
       setIsRotating(true);
 

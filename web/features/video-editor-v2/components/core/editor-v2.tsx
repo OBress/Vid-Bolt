@@ -70,8 +70,8 @@ export const EditorV2: React.FC<EditorV2Props> = ({
   const handleCompositionSave = useCallback((compositionData: CompositionDefinition) => {
     if (!sourceClipId) return;
 
-    // Get the original clip from the clips array
-    const clip = clips.find(c => c.id === sourceClipId);
+    // Get the original clip from the clips Record
+    const clip = clips[sourceClipId];
     if (!clip || clip.type !== 'motion-graphics') return;
 
     // Validate the composition

@@ -12,7 +12,8 @@ import { TimelineResizeHandle } from './components';
 import { OverlayType } from '../../../types';
 import { createEffect, EffectType } from '../../../types/effects';
 import { FPS } from '../../../constants';
-import { useVideoEditorStore } from '../../../stores/video-editor-store';
+import { useVideoEditorStore, selectTracksArray, selectClipsArray } from '../../../stores/video-editor-store';
+import type { TimelineClip as TimelineClipV2, TimelineTrack as TimelineTrackV2 } from '../../../types/timeline-v2';
 import { useCompositionEditorStore } from '../../../stores/composition-editor-store';
 import { useShallow } from 'zustand/react/shallow';
 import { clipsToOverlaysWithTracks } from '../../../utils/clip-to-render-adapter';
@@ -60,8 +61,8 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
     resolution,
   } = useVideoEditorStore(
     useShallow(state => ({
-      timelineV2Tracks: state.tracks || [],
-      timelineV2Clips: state.clips || [],
+      timelineV2Tracks: selectTracksArray(state) as TimelineTrackV2[],
+      timelineV2Clips: selectClipsArray(state) as TimelineClipV2[],
       fps: state.fps || 30,
       isPlaying: state.playback?.isPlaying || false,
       currentFrame: Math.round((state.playback?.currentTime || 0) * (state.fps || 30)),

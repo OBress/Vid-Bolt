@@ -56,7 +56,7 @@ await loadFont({
   url: staticFile("MyFont-Regular.woff2"),
 });
 
-<div style={{ fontFamily: "MyFont" }}>Hello World</div>
+<div style={{ fontFamily: "MyFont" }}>Hello World</div>;
 ```
 
 ### Loading Multiple Weights
@@ -81,23 +81,23 @@ await Promise.all([
 For most animations, use the Inter font which is widely available:
 
 ```tsx
-<div style={{ fontFamily: 'Inter, sans-serif' }}>
-  Your text here
-</div>
+<div style={{ fontFamily: "Inter, sans-serif" }}>Your text here</div>
 ```
 
 ## Common Font Combinations
 
+> **Each font must be loaded** via `@remotion/google-fonts` before using in `fontFamily`. Simply naming the font without loading it will fall back to browser defaults.
+
 ```tsx
 // Modern/Clean
-fontFamily: 'Inter, sans-serif'
+fontFamily: "Inter, sans-serif";
 
 // Bold Headlines
-fontFamily: 'Montserrat, sans-serif'
+fontFamily: "Montserrat, sans-serif";
 
 // Elegant/Serif
-fontFamily: 'Playfair Display, serif'
+fontFamily: "Playfair Display, serif";
 
 // Technical/Mono
-fontFamily: 'JetBrains Mono, monospace'
+fontFamily: "JetBrains Mono, monospace";
 ```

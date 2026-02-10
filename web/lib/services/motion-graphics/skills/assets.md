@@ -11,17 +11,16 @@ keywords: [asset, import, static, font, image, video, staticFile]
 Use `staticFile()` from "remotion" to reference files in the `public/` directory:
 
 ```tsx
-import { staticFile, Img, Video, Audio } from "remotion";
+import { staticFile, Img } from "remotion";
+import { Video, Audio } from "@remotion/media";
 
 // Images
 <Img src={staticFile("logo.png")} />;
 
-// Video (import from @remotion/media)
-import { Video } from "@remotion/media";
+// Video
 <Video src={staticFile("background.mp4")} />;
 
-// Audio (import from @remotion/media)
-import { Audio } from "@remotion/media";
+// Audio
 <Audio src={staticFile("music.mp3")} />;
 ```
 

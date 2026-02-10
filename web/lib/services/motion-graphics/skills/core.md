@@ -16,23 +16,23 @@ export const MyAnimation = () => {
    * Brief description of what this animation does
    * and its visual style/purpose.
    */
-  
+
   // 1. Hooks first
   const frame = useCurrentFrame();
   const { fps, width, height, durationInFrames } = useVideoConfig();
-  
+
   // 2. Constants (UPPER_SNAKE_CASE, inside component)
   const COLOR_PRIMARY = "#3B82F6";
   const COLOR_BACKGROUND = "#0F172A";
   const FADE_DURATION = 20;
   const PADDING = 40;
-  
+
   // 3. Calculations and animations
   const fadeIn = interpolate(frame, [0, FADE_DURATION], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
   });
-  
+
   // 4. Return JSX
   return (
     <AbsoluteFill style={{ backgroundColor: COLOR_BACKGROUND }}>
@@ -50,7 +50,7 @@ export const MyAnimation = () => {
 const scale = spring({
   frame,
   fps,
-  config: { damping: 18, stiffness: 80 }
+  config: { damping: 18, stiffness: 80 },
 });
 ```
 
@@ -58,23 +58,25 @@ const scale = spring({
 
 ```tsx
 const progress = interpolate(frame, [0, 60], [0, 1], {
-  extrapolateLeft: 'clamp',
-  extrapolateRight: 'clamp',
+  extrapolateLeft: "clamp",
+  extrapolateRight: "clamp",
 });
 ```
 
 ## Always Clamp Interpolations
 
 **Incorrect:**
+
 ```tsx
 const opacity = interpolate(frame, [0, 30], [0, 1]);
 ```
 
 **Correct:**
+
 ```tsx
 const opacity = interpolate(frame, [0, 30], [0, 1], {
-  extrapolateLeft: 'clamp',
-  extrapolateRight: 'clamp',
+  extrapolateLeft: "clamp",
+  extrapolateRight: "clamp",
 });
 ```
 
@@ -83,23 +85,21 @@ const opacity = interpolate(frame, [0, 30], [0, 1], {
 Animate multiple elements with consistent delays:
 
 ```tsx
-const ITEMS = ['A', 'B', 'C', 'D'];
+const ITEMS = ["A", "B", "C", "D"];
 const STAGGER_DELAY = 5; // frames between items
 
-{ITEMS.map((item, i) => {
-  const delay = i * STAGGER_DELAY;
-  const progress = spring({
-    frame: frame - delay,
-    fps,
-    config: { damping: 15, stiffness: 100 }
+{
+  ITEMS.map((item, i) => {
+    const delay = i * STAGGER_DELAY;
+    const progress = spring({
+      frame: frame - delay,
+      fps,
+      config: { damping: 15, stiffness: 100 },
+    });
+
+    return <div style={{ opacity: Math.max(0, progress) }}>{item}</div>;
   });
-  
-  return (
-    <div style={{ opacity: Math.max(0, progress) }}>
-      {item}
-    </div>
-  );
-})}
+}
 ```
 
 ## Layout Pattern
@@ -124,18 +124,20 @@ Standard pattern for elements appearing:
 const entranceProgress = spring({
   frame,
   fps,
-  config: { damping: 18, stiffness: 80 }
+  config: { damping: 18, stiffness: 80 },
 });
 
 const opacity = entranceProgress;
 const translateY = interpolate(entranceProgress, [0, 1], [30, 0]);
 
-<div style={{
-  opacity,
-  transform: `translateY(${translateY}px)`,
-}}>
+<div
+  style={{
+    opacity,
+    transform: `translateY(${translateY}px)`,
+  }}
+>
   Content
-</div>
+</div>;
 ```
 
 ## Color Interpolation
@@ -143,12 +145,12 @@ const translateY = interpolate(entranceProgress, [0, 1], [30, 0]);
 For smooth color transitions:
 
 ```tsx
-import { interpolateColors } from 'remotion';
+import { interpolateColors } from "remotion";
 
 const backgroundColor = interpolateColors(
   frame,
   [0, 60],
-  ['#3B82F6', '#8B5CF6']
+  ["#3B82F6", "#8B5CF6"],
 );
 ```
 
@@ -171,6 +173,7 @@ const midpoint = durationInFrames / 2;
 ## Reserved Names - NEVER Use as Variables
 
 These names shadow imports and will cause errors:
+
 - `spring`
 - `interpolate`
 - `interpolateColors`
@@ -186,3 +189,12 @@ These names shadow imports and will cause errors:
 - Keep colors minimal (2-4 max)
 - Always set backgroundColor on AbsoluteFill from frame 0
 - Use consistent spacing (multiples of 8px)
+
+## End-Hold Padding
+
+Animations must NOT end abruptly. Reserve the last ~15 frames (0.5s at 30fps) as a static hold where all elements are fully visible and nothing is still animating.
+
+```tsx
+const HOLD_FRAMES = 15;
+// Plan all animations to complete by (durationInFrames - HOLD_FRAMES)
+```

@@ -51,7 +51,7 @@ const getCompositionDimensions = () => {
  */
 const ensureVideoTrack = () => {
   const state = useVideoEditorStore.getState();
-  let trackId = state.tracks.find(t => t.type === 'video')?.id;
+  let trackId = Object.values(state.tracks).find(t => t.type === 'video')?.id;
   if (!trackId) {
     trackId = state.addTrack('video');
   }
@@ -92,7 +92,7 @@ export const ImageOverlayPanel: React.FC = () => {
   const selectedClip = useVideoEditorStore(s => {
     const ids = s.selection?.clipIds;
     if (!ids || ids.length !== 1) return null;
-    const clip = s.clips.find(c => c.id === ids[0]);
+    const clip = s.clips[ids[0]];
     return clip?.type === 'image' ? clip : null;
   }) as TimelineClip | null;
   
@@ -140,7 +140,7 @@ export const ImageOverlayPanel: React.FC = () => {
         sourceId: imageSrc,
         thumbnailUrl: image.src['medium'] || image.src['small'] || imageSrc,
         data: {
-          ...clips.find(c => c.id === clipId)?.data,
+          ...(clips as Record<string, TimelineClip>)[clipId]?.data,
           src: imageSrc,
           originalUrl: imageSrc,
         },
@@ -180,11 +180,12 @@ export const ImageOverlayPanel: React.FC = () => {
 
       // Use a percentage of composition duration for smart image length when there are existing clips,
       // otherwise default to DEFAULT_IMAGE_DURATION_FRAMES converted to seconds
-      const totalDuration = clips.length > 0 
-        ? Math.max(...clips.map(c => c.startTime + c.duration))
+      const clipsArr = Object.values(clips) as TimelineClip[];
+      const totalDuration = clipsArr.length > 0 
+        ? Math.max(...clipsArr.map(c => c.startTime + c.duration))
         : 0;
       
-      const smartDuration = clips.length > 0
+      const smartDuration = clipsArr.length > 0
         ? (totalDuration * IMAGE_DURATION_PERCENTAGE)
         : (DEFAULT_IMAGE_DURATION_FRAMES / fps);
 

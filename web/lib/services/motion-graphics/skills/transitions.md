@@ -19,64 +19,69 @@ import { slide } from "@remotion/transitions/slide";
   <TransitionSeries.Sequence durationInFrames={60}>
     <Scene1 />
   </TransitionSeries.Sequence>
-  
+
   <TransitionSeries.Transition
     timing={linearTiming({ durationInFrames: 15 })}
     presentation={fade()}
   />
-  
+
   <TransitionSeries.Sequence durationInFrames={60}>
     <Scene2 />
   </TransitionSeries.Sequence>
-</TransitionSeries>
+</TransitionSeries>;
 ```
 
 ## Available Transition Effects
 
 ### Fade
+
 ```tsx
 import { fade } from "@remotion/transitions/fade";
 <TransitionSeries.Transition
   timing={linearTiming({ durationInFrames: 20 })}
   presentation={fade()}
-/>
+/>;
 ```
 
 ### Slide
+
 ```tsx
 import { slide } from "@remotion/transitions/slide";
 <TransitionSeries.Transition
   timing={linearTiming({ durationInFrames: 20 })}
-  presentation={slide({ direction: 'from-left' })}
-/>
+  presentation={slide({ direction: "from-left" })}
+/>;
 // Directions: 'from-left', 'from-right', 'from-top', 'from-bottom'
 ```
 
 ### Wipe
+
 ```tsx
 import { wipe } from "@remotion/transitions/wipe";
 <TransitionSeries.Transition
   timing={linearTiming({ durationInFrames: 20 })}
-  presentation={wipe({ direction: 'from-left' })}
-/>
+  presentation={wipe({ direction: "from-left" })}
+/>;
 ```
 
 ### Flip
+
 ```tsx
 import { flip } from "@remotion/transitions/flip";
 <TransitionSeries.Transition
   timing={linearTiming({ durationInFrames: 20 })}
-  presentation={flip({ direction: 'from-left' })}
-/>
+  presentation={flip({ direction: "from-left" })}
+/>;
 ```
 
 ### Clock Wipe
+
 ```tsx
 import { clockWipe } from "@remotion/transitions/clock-wipe";
 <TransitionSeries.Transition
   timing={linearTiming({ durationInFrames: 30 })}
   presentation={clockWipe()}
-/>
+/>;
 ```
 
 ## Spring Timing
@@ -88,10 +93,10 @@ import { springTiming } from "@remotion/transitions";
 
 <TransitionSeries.Transition
   timing={springTiming({
-    config: { damping: 200, stiffness: 100 }
+    config: { damping: 200, stiffness: 100 },
   })}
-  presentation={slide({ direction: 'from-bottom' })}
-/>
+  presentation={slide({ direction: "from-bottom" })}
+/>;
 ```
 
 ## Manual Crossfade
@@ -106,14 +111,14 @@ const scene1Opacity = interpolate(
   frame,
   [SCENE_1_END - TRANSITION_DURATION, SCENE_1_END],
   [1, 0],
-  { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+  { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
 );
 
 const scene2Opacity = interpolate(
   frame,
   [SCENE_1_END - TRANSITION_DURATION, SCENE_1_END],
   [0, 1],
-  { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+  { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
 );
 
 <AbsoluteFill>
@@ -123,7 +128,7 @@ const scene2Opacity = interpolate(
   <AbsoluteFill style={{ opacity: scene2Opacity }}>
     <Scene2 />
   </AbsoluteFill>
-</AbsoluteFill>
+</AbsoluteFill>;
 ```
 
 ## Zoom Transition
@@ -133,20 +138,36 @@ Zoom into scene 1, zoom out into scene 2.
 ```tsx
 const MIDPOINT = 60;
 
-const scale = frame < MIDPOINT
-  ? interpolate(frame, [MIDPOINT - 20, MIDPOINT], [1, 3])
-  : interpolate(frame, [MIDPOINT, MIDPOINT + 20], [3, 1]);
+const scale =
+  frame < MIDPOINT
+    ? interpolate(frame, [MIDPOINT - 20, MIDPOINT], [1, 3], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      })
+    : interpolate(frame, [MIDPOINT, MIDPOINT + 20], [3, 1], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      });
 
-const opacity = frame < MIDPOINT
-  ? interpolate(frame, [MIDPOINT - 10, MIDPOINT], [1, 0])
-  : interpolate(frame, [MIDPOINT, MIDPOINT + 10], [0, 1]);
+const opacity =
+  frame < MIDPOINT
+    ? interpolate(frame, [MIDPOINT - 10, MIDPOINT], [1, 0], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      })
+    : interpolate(frame, [MIDPOINT, MIDPOINT + 10], [0, 1], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      });
 
-<AbsoluteFill style={{
-  transform: `scale(${scale})`,
-  opacity,
-}}>
+<AbsoluteFill
+  style={{
+    transform: `scale(${scale})`,
+    opacity,
+  }}
+>
   {frame < MIDPOINT ? <Scene1 /> : <Scene2 />}
-</AbsoluteFill>
+</AbsoluteFill>;
 ```
 
 ## Slide with Scale

@@ -11,16 +11,18 @@ Lottie is a format for vector animations exported from After Effects.
 ## Basic Usage
 
 ```tsx
-import { Lottie, LottieAnimationData } from '@remotion/lottie';
-import { useEffect, useState } from 'react';
-import { cancelRender, continueRender, delayRender } from 'remotion';
+// NOTE: Lottie, delayRender, continueRender, cancelRender, useState, useEffect
+// are all available in scope — do NOT import them.
+// useState/useEffect are the CORRECT pattern here for async Lottie data loading
+// (this is the one exception to the general "no useState/useEffect" rule).
 
 export const MyAnimation = () => {
-  const [handle] = useState(() => delayRender('Loading Lottie animation'));
-  const [animationData, setAnimationData] = useState<LottieAnimationData | null>(null);
+  const [handle] = useState(() => delayRender("Loading Lottie animation"));
+  const [animationData, setAnimationData] =
+    useState<LottieAnimationData | null>(null);
 
   useEffect(() => {
-    fetch('https://assets4.lottiefiles.com/packages/lf20_zyquagfl.json')
+    fetch("https://assets4.lottiefiles.com/packages/lf20_zyquagfl.json")
       .then((data) => data.json())
       .then((json) => {
         setAnimationData(json);
@@ -55,10 +57,10 @@ Always use `delayRender()` and `continueRender()` when loading Lottie data:
   style={{
     width: 400,
     height: 400,
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
   }}
 />
 ```
@@ -78,7 +80,7 @@ const progress = frame / durationInFrames;
   animationData={animationData}
   playbackRate={1}
   // You can also control specific segments
-/>
+/>;
 ```
 
 ## Local Lottie Files
@@ -86,9 +88,7 @@ const progress = frame / durationInFrames;
 For local files, place them in `public/` and use `staticFile()`:
 
 ```tsx
-import { staticFile } from 'remotion';
-
-fetch(staticFile('animation.json'))
+fetch(staticFile("animation.json"))
   .then((data) => data.json())
   .then((json) => {
     setAnimationData(json);

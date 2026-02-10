@@ -2,7 +2,6 @@ import React, { useCallback } from "react";
 import { useCurrentScale } from "remotion";
 import { ClipOverlay, ImageOverlay } from "../../types";
 import { generateClipPath, getEffectiveCropDimensions } from "../../utils/crop-utils";
-import { useVideoEditorStore } from "../../stores/video-editor-store";
 
 // Generic type for overlays that support cropping
 type CroppableOverlay = ClipOverlay | ImageOverlay;
@@ -68,8 +67,7 @@ export const CropOverlay: React.FC<{
         e.preventDefault(); // Prevent text selection during drag
         if (e.button !== 0) return;
 
-        // Save to history before starting crop
-        useVideoEditorStore.getState().saveToHistory();
+        // Zundo auto-tracks state changes, no manual saveToHistory needed
 
         const initialX = e.clientX;
         const initialY = e.clientY;

@@ -17,10 +17,12 @@ import {
   computeLinkGroup,
   shallow,
   getClipTransitionsPure,
+  selectTracksArray,
+  selectClipsArray,
   type TrackWithClips,
 } from '../../../stores/video-editor-store';
 import { useShallow } from 'zustand/react/shallow';
-import type { TimelineClip } from '../../../types/timeline-v2';
+import type { TimelineClip, TimelineTrack } from '../../../types/timeline-v2';
 import type { TimelineItem } from '../types';
 
 interface UseTimelineTracksProps {
@@ -65,8 +67,8 @@ export function useTimelineTracks({
   onSelectedClipsChange,
 }: UseTimelineTracksProps = {}): UseTimelineTracksReturn {
   // Get raw store data for handlers (shallow comparison for stable references)
-  const storeTracks = useVideoEditorStore(useShallow(state => state.tracks));
-  const storeClips = useVideoEditorStore(useShallow(state => state.clips));
+  const storeTracks = useVideoEditorStore(useShallow(selectTracksArray));
+  const storeClips = useVideoEditorStore(useShallow(selectClipsArray));
   const storeTransitions = useVideoEditorStore(state => state.transitions);
   
   // Helper to get transition entities for a clip using canonical pure function
@@ -232,7 +234,8 @@ export function useTimelineTracks({
 
   const handleCloseGap = useCallback((trackId: string, gapStart: number) => {
     const { updateClip } = getActions();
-    const trackClips = storeClips
+    const allClips = storeClips;
+    const trackClips = allClips
       .filter(c => c.trackId === trackId)
       .sort((a, b) => a.startTime - b.startTime);
 
@@ -268,7 +271,7 @@ export function useTimelineTracks({
     let trackId = itemData.preferredTrackId;
     if (!trackId) {
       const trackType = itemData.type === 'audio' ? 'audio' : 'video';
-      const existingTrack = storeTracks.find(t => t.type === trackType && !t.locked);
+      const existingTrack = storeTracks.find((t: TimelineTrack) => t.type === trackType && !t.locked);
       trackId = existingTrack?.id || addTrack(trackType);
     }
 

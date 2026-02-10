@@ -43,7 +43,7 @@ const getCompositionDimensions = () => {
  */
 const ensureVideoTrack = () => {
   const state = useVideoEditorStore.getState();
-  let trackId = state.tracks.find(t => t.type === 'video')?.id;
+  let trackId = Object.values(state.tracks).find(t => t.type === 'video')?.id;
   if (!trackId) {
     trackId = state.addTrack('video');
   }
@@ -90,7 +90,7 @@ export const VideoOverlayPanel: React.FC = () => {
   const selectedClip = useVideoEditorStore(s => {
     const ids = s.selection?.clipIds;
     if (!ids || ids.length !== 1) return null;
-    const clip = s.clips.find(c => c.id === ids[0]);
+    const clip = s.clips[ids[0]];
     return clip?.type === 'video' ? clip : null;
   }) as TimelineClip | null;
   
@@ -160,7 +160,7 @@ export const VideoOverlayPanel: React.FC = () => {
             volume: 0, // Video clip has no volume
           },
           data: {
-            ...clips.find(c => c.id === clipId)?.data,
+            ...(clips as Record<string, TimelineClip>)[clipId]?.data,
             src: videoUrl,
             originalUrl: videoUrl,
             width: video.width,

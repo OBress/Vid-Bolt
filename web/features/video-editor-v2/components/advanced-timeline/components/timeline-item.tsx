@@ -1572,7 +1572,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
               : itemSnapshot.originalDuration + deltaDuration;
             
             // Calculate track row indices for vertical offset
-            const tracks = useVideoEditorStore.getState().tracks;
+            const tracks = Object.values(useVideoEditorStore.getState().tracks);
             
             // For linked items (not the primary item), keep them on their original track
             const isPrimaryItem = item.id === dragState.clipId;

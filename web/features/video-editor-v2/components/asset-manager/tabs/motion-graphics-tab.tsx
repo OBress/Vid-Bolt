@@ -564,8 +564,9 @@ export const MotionGraphicsTab: React.FC = () => {
 
   // Get first available video track
   const getVideoTrackId = useCallback(() => {
-    const videoTrack = tracks.find(t => t.type === 'video' && !t.locked);
-    return videoTrack?.id || tracks[0]?.id || 'video-track-1';
+    const allTracks = Object.values(tracks);
+    const videoTrack = allTracks.find(t => t.type === 'video' && !t.locked);
+    return videoTrack?.id || allTracks[0]?.id || 'video-track-1';
   }, [tracks]);
 
   // Get templates
@@ -1142,7 +1143,7 @@ export const MotionGraphicsTab: React.FC = () => {
     }, {} as Record<string, any>);
     
     // Place at end of existing clips on track (allows multiple adds to stack sequentially)
-    const existingClips = useVideoEditorStore.getState().clips.filter(c => c.trackId === trackId);
+    const existingClips = Object.values(useVideoEditorStore.getState().clips).filter(c => c.trackId === trackId);
     const endOfTrack = existingClips.reduce((max, clip) => Math.max(max, clip.startTime + clip.duration), 0);
     const startTime = endOfTrack; // 0 if no clips, otherwise right after the last one
     

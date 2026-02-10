@@ -24,8 +24,8 @@
 import { useCallback, useMemo } from "react";
 import { 
   useVideoEditorStore, 
-  selectTracks,
-  selectClips,
+  selectTracksArray,
+  selectClipsArray,
   selectTransitions,
   selectSelectedClipIds,
   selectSelectedClipId,
@@ -164,10 +164,10 @@ export interface UseTimelineReturn {
  */
 export const useTimeline = (): UseTimelineReturn => {
   // Get state from store
-  const tracks = useVideoEditorStore(selectTracks);
+  const tracks = useVideoEditorStore(selectTracksArray);
   const videoTracks = useVideoEditorStore(selectVideoTracks);
   const audioTracks = useVideoEditorStore(selectAudioTracks);
-  const clips = useVideoEditorStore(selectClips);
+  const clips = useVideoEditorStore(selectClipsArray);
   const transitions = useVideoEditorStore(selectTransitions);
   const selectedClipIds = useVideoEditorStore(selectSelectedClipIds);
   const selectedClipId = useVideoEditorStore(selectSelectedClipId);

@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState, useRef, useCallback } from "react"
 import { Player, PlayerRef } from "@remotion/player";
 import { Main } from "../../utils/remotion/main";
 import { useEditorContext } from "../../contexts/editor-context";
-import { useVideoEditorStore } from "../../stores/video-editor-store";
+import { useVideoEditorStore, selectClipsArray, selectTracksArray } from "../../stores/video-editor-store";
+import type { TimelineClip, TimelineTrack } from "../../types/timeline-v2";
 import { clipsToOverlaysWithTracks } from "../../utils/clip-to-render-adapter";
 import { MaskManipulationOverlay } from "./mask-manipulation-overlay";
 import { ShapeManipulationOverlay } from "./shape-manipulation-overlay";
@@ -40,8 +41,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const { playerRef: contextPlayerRef, fps: contextFps, isScrubbingRef } = useEditorContext();
   
   // Get state directly from the unified store
-  const timelineClips = useVideoEditorStore(state => state.clips) || [];
-  const timelineTracks = useVideoEditorStore(state => state.tracks) || [];
+  const timelineClips = useVideoEditorStore(selectClipsArray) as TimelineClip[];
+  const timelineTracks = useVideoEditorStore(selectTracksArray) as TimelineTrack[];
   const transitions = useVideoEditorStore(state => state.transitions) || {};
   const selectedClipIds = useVideoEditorStore(state => state.selection?.clipIds) || [];
   const aspectRatio = useVideoEditorStore(state => state.aspectRatio) || '16:9';
@@ -53,8 +54,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const showAlignmentGuides = useVideoEditorStore(state => state.showAlignmentGuides) ?? true;
   const backgroundColor = useVideoEditorStore(state => state.backgroundColor) || '#000000';
   const durationInFrames = useVideoEditorStore(state => {
-    if (!state.clips || state.clips.length === 0) return 900; // default 30 seconds at 30fps
-    const maxEndTime = Math.max(...state.clips.map(c => c.startTime + c.duration));
+    const clipsArr = Object.values(state.clips) as TimelineClip[];
+    if (clipsArr.length === 0) return 900; // default 30 seconds at 30fps
+    const maxEndTime = Math.max(...clipsArr.map(c => c.startTime + c.duration));
     return Math.ceil(maxEndTime * (state.fps || 30));
   });
   
@@ -228,10 +230,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     
     // Get current clips from store (avoids making this callback depend on timelineClips)
-    const currentClips = useVideoEditorStore.getState().clips || [];
+    const currentClips = Object.values(useVideoEditorStore.getState().clips) as TimelineClip[];
     
     // Find the clip that corresponds to this numeric overlay ID
-    const matchingClip = currentClips.find(clip => {
+    const matchingClip = currentClips.find((clip: TimelineClip) => {
       const numericId = parseInt(clip.id.replace(/\D/g, ''), 10) || 0;
       return numericId === overlayId;
     });
@@ -255,11 +257,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const changeOverlay = useCallback((overlayId: number, updater: (overlay: any) => any) => {
     // Get current state from store
     const store = useVideoEditorStore.getState();
-    const currentClips = store.clips || [];
+    const currentClips = Object.values(store.clips) as TimelineClip[];
     const currentTime = store.playback?.currentTime ?? 0;
     
     // Find the clip that corresponds to this numeric overlay ID
-    const matchingClip = currentClips.find(clip => {
+    const matchingClip = currentClips.find((clip: TimelineClip) => {
       const numericId = parseInt(clip.id.replace(/\D/g, ''), 10) || 0;
       return numericId === overlayId;
     });

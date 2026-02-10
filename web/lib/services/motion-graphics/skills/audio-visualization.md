@@ -15,6 +15,7 @@ import {
   useVideoConfig,
   AbsoluteFill,
   interpolate,
+  random,
 } from "remotion";
 import { Audio } from "@remotion/media";
 import {
@@ -32,7 +33,6 @@ export const SpectrumBars = () => {
   const { fps } = useVideoConfig();
 
   // Simulate audio data with deterministic values
-  import { random } from "remotion";
 
   const BAR_COUNT = 32;
   const bars = Array.from({ length: BAR_COUNT }, (_, i) => {

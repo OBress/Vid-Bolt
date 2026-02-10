@@ -183,9 +183,7 @@ export const SelectionOutline: React.FC<{
 
   const startDragging = useCallback(
     (e: PointerEvent | React.MouseEvent) => {
-      // Save to history before starting drag
-      useVideoEditorStore.getState().saveToHistory();
-      
+      // Zundo auto-tracks state changes, no manual saveToHistory needed
       const initialX = e.clientX;
       const initialY = e.clientY;
       const startLeft = overlay.left;

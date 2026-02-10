@@ -1,7 +1,8 @@
 /**
- * InspectorPanel - Properties panel for selected clips
+ * InspectorPanel - V2 Unified Inspector
  * 
- * Professional video editor-style inspector with tabbed interface:
+ * Clean, professional inspector panel that works directly with timeline clips.
+ * Supports single and multi-select editing with linked item tabs.
  * - Properties Tab: Transform (position, scale, rotation)
  * - Style Tab: Type-specific appearance and styling
  * - Effects Tab: Visual effects, filters, blend modes
@@ -338,8 +339,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const { fps: contextFps } = useEditorContext();
   
   // Get state directly from the unified store
-  const timelineClips = useVideoEditorStore(state => state.clips) || [];
-  const timelineTracks = useVideoEditorStore(state => state.tracks) || [];
+  const timelineClips = useVideoEditorStore(state => Object.values(state.clips)) as TimelineClip[];
+  const timelineTracks = useVideoEditorStore(state => Object.values(state.tracks)) as any[];
   const transitions = useVideoEditorStore(state => state.transitions) || {};
   const selectedClipIds = useVideoEditorStore(state => state.selection?.clipIds) || [];
   const storeFps = useVideoEditorStore(state => state.fps);
@@ -610,7 +611,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       
       // Update all linked clips
       linkedClipIds.forEach(linkedId => {
-        const linkedClip = timelineClips.find(c => c.id === linkedId);
+        const linkedClip = timelineClips.find((c: TimelineClip) => c.id === linkedId);
         if (linkedClip) {
           const originalDuration = linkedClip.media?.mediaDuration || linkedClip.duration;
           const newDuration = originalDuration / newSpeed;

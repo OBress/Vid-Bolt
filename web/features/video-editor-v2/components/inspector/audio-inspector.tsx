@@ -252,7 +252,7 @@ const PresetButtons: React.FC<{
 // ==========================================
 
 const VolumeTab: React.FC<{ clipId: string }> = ({ clipId }) => {
-  const clip = useVideoEditorStore(state => state.clips.find(c => c.id === clipId));
+  const clip = useVideoEditorStore(state => state.clips[clipId]);
   const updateClip = useVideoEditorStore(state => state.updateClip);
   const getLinkedClipIds = useVideoEditorStore(state => state.getLinkedClipIds);
   const clips = useVideoEditorStore(state => state.clips);
@@ -284,7 +284,7 @@ const VolumeTab: React.FC<{ clipId: string }> = ({ clipId }) => {
     
     // Update speed and duration for all linked clips
     linkedClipIds.forEach(id => {
-      const targetClip = clips.find(c => c.id === id);
+      const targetClip = clips[id];
       if (targetClip) {
         const originalDuration = targetClip.media?.mediaDuration || targetClip.duration;
         const newDuration = originalDuration / value;
@@ -305,7 +305,7 @@ const VolumeTab: React.FC<{ clipId: string }> = ({ clipId }) => {
     
     // Update pitch for all linked clips
     linkedClipIds.forEach(id => {
-      const targetClip = clips.find(c => c.id === id);
+      const targetClip = clips[id];
       if (targetClip) {
         updateClip(id, {
           media: { ...targetClip.media, pitch: value } as any,
@@ -673,7 +673,7 @@ const EQGraph: React.FC<{
 // Hook for tracking processing status
 const useProcessingStatus = (clipId: string) => {
   const [status, setStatus] = useState<'idle' | 'processing' | 'ready'>('idle');
-  const clip = useVideoEditorStore(state => state.clips.find(c => c.id === clipId));
+  const clip = useVideoEditorStore(state => state.clips[clipId]);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastEffectsHashRef = useRef<string>('');
   
@@ -750,7 +750,7 @@ const useProcessingStatus = (clipId: string) => {
 };
 
 const EQTab: React.FC<{ clipId: string }> = ({ clipId }) => {
-  const clip = useVideoEditorStore(state => state.clips.find(c => c.id === clipId));
+  const clip = useVideoEditorStore(state => state.clips[clipId]);
   const updateClip = useVideoEditorStore(state => state.updateClip);
   const [selectedBand, setSelectedBand] = useState<number | null>(null);
   const [selectedPreset, setSelectedPreset] = useState<string>('');
@@ -777,7 +777,7 @@ const EQTab: React.FC<{ clipId: string }> = ({ clipId }) => {
     
     // Verify it was added
     setTimeout(() => {
-      const updatedClip = useVideoEditorStore.getState().clips.find(c => c.id === clipId);
+      const updatedClip = useVideoEditorStore.getState().clips[clipId];
       console.log('[EQTab] Clip after update:', updatedClip?.audioEffects);
     }, 100);
   };
@@ -1113,7 +1113,7 @@ interface EffectCardProps {
 }
 
 const EffectCard: React.FC<EffectCardProps> = ({ clipId, title, icon, iconColor, effectType, description, children }) => {
-  const clip = useVideoEditorStore(state => state.clips.find(c => c.id === clipId));
+  const clip = useVideoEditorStore(state => state.clips[clipId]);
   const updateClip = useVideoEditorStore(state => state.updateClip);
   const [isExpanded, setIsExpanded] = useState(false);
 

@@ -1,27 +1,26 @@
 /**
  * useTimelineHistory - V2 Undo/Redo Hook
  * 
- * Provides undo/redo capabilities using the video-editor-store's
- * built-in history management.
+ * Provides undo/redo capabilities powered by zundo temporal middleware.
+ * History is auto-tracked — no manual saveToHistory/saveSnapshot needed.
  */
 
 import { useCallback, useEffect } from 'react';
 import { useVideoEditorStore } from '../../../stores/video-editor-store';
 
 export function useTimelineHistory(updatePresentHistoryRef?: React.MutableRefObject<(() => void) | undefined>) {
-  // Get store actions directly
+  // Get thin wrapper actions from the main store (they delegate to temporal store)
   const undo = useVideoEditorStore(state => state.undo);
   const redo = useVideoEditorStore(state => state.redo);
   const canUndo = useVideoEditorStore(state => state.canUndo);
   const canRedo = useVideoEditorStore(state => state.canRedo);
-  const saveToHistory = useVideoEditorStore(state => state.saveToHistory);
 
-  // Wrapper for manual snapshots
+  // saveSnapshot is now a no-op — zundo tracks all set() calls automatically
   const saveSnapshot = useCallback(() => {
-    saveToHistory();
-  }, [saveToHistory]);
+    // No-op: zundo temporal middleware auto-records state changes
+  }, []);
 
-  // Update the present history ref if provided
+  // Update the present history ref if provided (backward compat)
   useEffect(() => {
     if (updatePresentHistoryRef) {
       updatePresentHistoryRef.current = saveSnapshot;

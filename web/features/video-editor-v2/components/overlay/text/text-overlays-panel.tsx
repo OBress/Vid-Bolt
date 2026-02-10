@@ -22,7 +22,7 @@ export const TextOverlaysPanel: React.FC = () => {
   const selectedClip = useVideoEditorStore(s => {
     const ids = s.selection?.clipIds;
     if (!ids || ids.length !== 1) return null;
-    const clip = s.clips.find(c => c.id === ids[0]);
+    const clip = s.clips[ids[0]];
     return clip?.type === 'text' ? clip : null;
   }) as TimelineClip | null;
 

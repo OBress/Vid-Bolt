@@ -25,7 +25,7 @@ import { Sequence } from "remotion";
   <Sequence from={60}>
     <MainContent />
   </Sequence>
-</AbsoluteFill>
+</AbsoluteFill>;
 ```
 
 ## Stagger Pattern
@@ -33,18 +33,20 @@ import { Sequence } from "remotion";
 Animate multiple items with consistent delays.
 
 ```tsx
-const ITEMS = ['First', 'Second', 'Third', 'Fourth'];
+const ITEMS = ["First", "Second", "Third", "Fourth"];
 const STAGGER_FRAMES = 8;
 
-{ITEMS.map((item, index) => {
-  const startFrame = index * STAGGER_FRAMES;
-  
-  return (
-    <Sequence from={startFrame} key={item}>
-      <AnimatedItem text={item} />
-    </Sequence>
-  );
-})}
+{
+  ITEMS.map((item, index) => {
+    const startFrame = index * STAGGER_FRAMES;
+
+    return (
+      <Sequence from={startFrame} key={item}>
+        <AnimatedItem text={item} />
+      </Sequence>
+    );
+  });
+}
 ```
 
 ## Calculated Delays
@@ -53,27 +55,25 @@ Calculate delays based on item properties.
 
 ```tsx
 const ITEMS = [
-  { text: 'A', column: 0, row: 0 },
-  { text: 'B', column: 1, row: 0 },
-  { text: 'C', column: 0, row: 1 },
-  { text: 'D', column: 1, row: 1 },
+  { text: "A", column: 0, row: 0 },
+  { text: "B", column: 1, row: 0 },
+  { text: "C", column: 0, row: 1 },
+  { text: "D", column: 1, row: 1 },
 ];
 
 // Diagonal wave pattern
-{ITEMS.map((item, i) => {
-  const delay = (item.column + item.row) * 5;
-  const progress = spring({
-    frame: frame - delay,
-    fps,
-    config: { damping: 15, stiffness: 100 }
+{
+  ITEMS.map((item, i) => {
+    const delay = (item.column + item.row) * 5;
+    const progress = spring({
+      frame: frame - delay,
+      fps,
+      config: { damping: 15, stiffness: 100 },
+    });
+
+    return <div style={{ opacity: Math.max(0, progress) }}>{item.text}</div>;
   });
-  
-  return (
-    <div style={{ opacity: Math.max(0, progress) }}>
-      {item.text}
-    </div>
-  );
-})}
+}
 ```
 
 ## Reverse Stagger (Exit Animation)
@@ -83,24 +83,22 @@ const EXIT_START = 90;
 const ITEMS_COUNT = 4;
 const STAGGER = 5;
 
-{ITEMS.map((item, i) => {
-  // Reverse order: last item exits first
-  const exitDelay = (ITEMS_COUNT - 1 - i) * STAGGER;
-  const exitFrame = EXIT_START + exitDelay;
-  
-  const exitProgress = interpolate(
-    frame,
-    [exitFrame, exitFrame + 15],
-    [1, 0],
-    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
-  );
-  
-  return (
-    <div style={{ opacity: exitProgress }}>
-      {item}
-    </div>
-  );
-})}
+{
+  ITEMS.map((item, i) => {
+    // Reverse order: last item exits first
+    const exitDelay = (ITEMS_COUNT - 1 - i) * STAGGER;
+    const exitFrame = EXIT_START + exitDelay;
+
+    const exitProgress = interpolate(
+      frame,
+      [exitFrame, exitFrame + 15],
+      [1, 0],
+      { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+    );
+
+    return <div style={{ opacity: exitProgress }}>{item}</div>;
+  });
+}
 ```
 
 ## Phase-Based Animation
@@ -113,23 +111,32 @@ const PHASE_2_END = 90;
 const PHASE_3_END = 120;
 
 // Determine current phase
-const phase = frame < PHASE_1_END ? 1
-  : frame < PHASE_2_END ? 2
-  : frame < PHASE_3_END ? 3
-  : 4;
+const phase =
+  frame < PHASE_1_END
+    ? 1
+    : frame < PHASE_2_END
+      ? 2
+      : frame < PHASE_3_END
+        ? 3
+        : 4;
 
 // Local frame within phase
-const phaseFrame = phase === 1 ? frame
-  : phase === 2 ? frame - PHASE_1_END
-  : phase === 3 ? frame - PHASE_2_END
-  : frame - PHASE_3_END;
+const phaseFrame =
+  phase === 1
+    ? frame
+    : phase === 2
+      ? frame - PHASE_1_END
+      : phase === 3
+        ? frame - PHASE_2_END
+        : frame - PHASE_3_END;
 
 // Animate based on phase
-const scale = phase === 1
-  ? spring({ frame: phaseFrame, fps, config: { damping: 15 } })
-  : phase === 3
-    ? interpolate(phaseFrame, [0, 15], [1, 0])
-    : 1;
+const scale =
+  phase === 1
+    ? spring({ frame: phaseFrame, fps, config: { damping: 15 } })
+    : phase === 3
+      ? interpolate(phaseFrame, [0, 15], [1, 0])
+      : 1;
 ```
 
 ## Entrance → Hold → Exit Pattern
@@ -145,47 +152,64 @@ const TOTAL = ENTRANCE_DURATION + HOLD_DURATION + EXIT_DURATION;
 const entranceEnd = ENTRANCE_DURATION;
 const exitStart = ENTRANCE_DURATION + HOLD_DURATION;
 
-const opacity = frame < entranceEnd
-  ? interpolate(frame, [0, entranceEnd], [0, 1])
-  : frame < exitStart
-    ? 1
-    : interpolate(frame, [exitStart, TOTAL], [1, 0], {
-        extrapolateRight: 'clamp'
-      });
+const opacity =
+  frame < entranceEnd
+    ? interpolate(frame, [0, entranceEnd], [0, 1], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      })
+    : frame < exitStart
+      ? 1
+      : interpolate(frame, [exitStart, TOTAL], [1, 0], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        });
 
-const translateY = frame < entranceEnd
-  ? interpolate(frame, [0, entranceEnd], [30, 0])
-  : frame < exitStart
-    ? 0
-    : interpolate(frame, [exitStart, TOTAL], [0, -30], {
-        extrapolateRight: 'clamp'
-      });
+const translateY =
+  frame < entranceEnd
+    ? interpolate(frame, [0, entranceEnd], [30, 0], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      })
+    : frame < exitStart
+      ? 0
+      : interpolate(frame, [exitStart, TOTAL], [0, -30], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        });
 ```
 
 ## Parallel vs Sequential
 
 ### Parallel (all start together)
+
 ```tsx
-{ITEMS.map((item, i) => (
-  <AnimatedItem key={i} startFrame={0} />
-))}
+{
+  ITEMS.map((item, i) => <AnimatedItem key={i} startFrame={0} />);
+}
 ```
 
 ### Sequential (one after another)
+
 ```tsx
-{ITEMS.map((item, i) => (
-  <AnimatedItem key={i} startFrame={i * ITEM_DURATION} />
-))}
+{
+  ITEMS.map((item, i) => (
+    <AnimatedItem key={i} startFrame={i * ITEM_DURATION} />
+  ));
+}
 ```
 
 ### Overlapping (start before previous ends)
+
 ```tsx
 const ITEM_DURATION = 30;
 const OVERLAP = 10;
 
-{ITEMS.map((item, i) => (
-  <AnimatedItem key={i} startFrame={i * (ITEM_DURATION - OVERLAP)} />
-))}
+{
+  ITEMS.map((item, i) => (
+    <AnimatedItem key={i} startFrame={i * (ITEM_DURATION - OVERLAP)} />
+  ));
+}
 ```
 
 ## Series Component
@@ -205,7 +229,7 @@ import { Series } from "remotion";
   <Series.Sequence durationInFrames={30}>
     <Outro />
   </Series.Sequence>
-</Series>
+</Series>;
 ```
 
 ## Loop-Based Timing
@@ -218,7 +242,5 @@ const loopFrame = frame % LOOP_DURATION;
 const loopProgress = loopFrame / LOOP_DURATION;
 
 // Ping-pong (0→1→0)
-const pingPong = loopProgress < 0.5
-  ? loopProgress * 2
-  : 2 - loopProgress * 2;
+const pingPong = loopProgress < 0.5 ? loopProgress * 2 : 2 - loopProgress * 2;
 ```

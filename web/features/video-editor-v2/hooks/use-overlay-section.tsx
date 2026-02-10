@@ -36,12 +36,12 @@ export const useOverlaySelection = () => {
       // Get fresh state from store to find matching clip
       try {
         const store = useVideoEditorStore.getState();
-        const clips = store.clips || [];
+        const clips = Object.values(store.clips || {});
         const selectClips = store.selectClips;
         
         // Find the clip that corresponds to this numeric overlay ID
         // The adapter converts clip IDs like "clip-1768620046955-qcri1o2" to numeric "1768620046955"
-        const matchingClip = clips.find(clip => {
+        const matchingClip = clips.find((clip: any) => {
           const numericId = parseInt(clip.id.replace(/\D/g, ''), 10) || 0;
           return numericId === overlay.id;
         });

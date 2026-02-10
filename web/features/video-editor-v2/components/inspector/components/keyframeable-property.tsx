@@ -186,7 +186,7 @@ export const KeyframeableProperty: React.FC<KeyframeablePropertyProps> = ({
     if (prevKeyframeTime === null) return;
     
     // Get the clip to find its start time
-    const clip = clips.find(c => c.id === clipId);
+    const clip = clips[clipId];
     if (!clip) return;
     
     // Set current time to previous keyframe (convert to global time)
@@ -198,7 +198,7 @@ export const KeyframeableProperty: React.FC<KeyframeablePropertyProps> = ({
     if (nextKeyframeTime === null) return;
     
     // Get the clip to find its start time
-    const clip = clips.find(c => c.id === clipId);
+    const clip = clips[clipId];
     if (!clip) return;
     
     // Set current time to next keyframe (convert to global time)

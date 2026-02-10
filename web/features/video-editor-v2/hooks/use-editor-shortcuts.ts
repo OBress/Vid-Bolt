@@ -68,7 +68,7 @@ export function useEditorShortcuts() {
     // Get selected clip for keyframe operations
     const selectedClipId = selection?.clipIds?.[0];
     const selectedClip = selectedClipId 
-      ? clips.find(c => c.id === selectedClipId) 
+      ? clips[selectedClipId] 
       : null;
     
     // K = Add keyframe at current time (for selected property or all animated)

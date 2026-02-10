@@ -33,7 +33,7 @@ export const TextLayerContent: React.FC<TextLayerContentProps> = ({
 
   // Find the matching clip ID for this overlay
   const clipId = useMemo(() => {
-    const found = clips.find(c => {
+    const found = Object.values(clips).find((c: any) => {
       const numericId = parseInt(c.id.replace(/\D/g, ''), 10) || 0;
       return numericId === overlay.id;
     });

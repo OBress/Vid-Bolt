@@ -123,7 +123,7 @@ const KeyframeDiamond: React.FC<KeyframeDiamondProps> = ({
       selectKeyframes(clipId, propertyPath, [keyframe.id]);
       
       // PREMIERE PRO BEHAVIOR: Move playhead to selected keyframe on single selection
-      const clip = useVideoEditorStore.getState().clips.find(c => c.id === clipId);
+      const clip = useVideoEditorStore.getState().clips[clipId];
       if (clip) {
         setCurrentTime(clip.startTime + keyframe.time);
       }
@@ -153,7 +153,7 @@ const KeyframeDiamond: React.FC<KeyframeDiamondProps> = ({
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     // Jump to this keyframe time
-    const clip = useVideoEditorStore.getState().clips.find(c => c.id === clipId);
+    const clip = useVideoEditorStore.getState().clips[clipId];
     if (clip) {
       setCurrentTime(clip.startTime + keyframe.time);
     }

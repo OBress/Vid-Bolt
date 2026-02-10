@@ -36,7 +36,7 @@ const getCompositionDimensions = () => {
  */
 const ensureVideoTrack = () => {
   const state = useVideoEditorStore.getState();
-  let trackId = state.tracks.find(t => t.type === 'video')?.id;
+  let trackId = Object.values(state.tracks).find(t => t.type === 'video')?.id;
   if (!trackId) {
     trackId = state.addTrack('video');
   }

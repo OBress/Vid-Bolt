@@ -35,6 +35,7 @@ import { MaskAddPanel } from "./mask-add-panel";
 import { GradientMaskControls } from "./gradient-mask-controls";
 import { useVideoEditorStore } from "../../../stores/video-editor-store";
 import { clipToOverlay } from "../../../utils/clip-to-render-adapter";
+import type { TimelineClip } from "../../../types/timeline-v2";
 import { useEditorContext } from "../../../contexts/editor-context";
 import { Button } from "../../ui/button";
 import { Slider } from "../../ui/slider";
@@ -1254,9 +1255,9 @@ export const MasksSection: React.FC<MasksSectionProps> = ({
   onUpdate,
 }) => {
   // Get clips from store and convert to overlays for track matte source selection
-  const clips = useVideoEditorStore(state => state.clips) || [];
+  const clips = useVideoEditorStore(state => Object.values(state.clips)) as TimelineClip[];
   const fps = useVideoEditorStore(state => state.fps) || 30;
-  const overlays = clips.map(clip => clipToOverlay(clip, fps));
+  const overlays = clips.map((clip: TimelineClip) => clipToOverlay(clip, fps));
   
   // Get composition dimensions to calculate the overlay's pixel aspect ratio
   const aspectRatioString = useVideoEditorStore(state => state.aspectRatio) || '16:9';

@@ -238,9 +238,36 @@ const WorldCountries; // GeoJSON FeatureCollection — all country borders with 
 const WorldLand; // GeoJSON FeatureCollection — land masses (no borders)
 const MajorCities; // Object: { 'New York': { lat, lng, country, tier }, ... }
 const getCityCoords; // Function: getCityCoords('Tokyo') → [lng, lat] or null
+const getCityInfo; // Function: getCityInfo('Tokyo') → { lat, lng, country, tier } or null
+const loadCities; // Async: await loadCities() → loads city database
+const getSubNationalData; // Async: await getSubNationalData('US') → GeoJSON states/provinces
+const SUPPORTED_SUBNATIONAL_COUNTRIES; // Array of country codes with subnational data
+
+// Geo Layer Loaders (async — load in useEffect, pair with useState)
+const loadRivers; // Async: loads major river geometries
+const loadLakes; // Async: loads lake geometries
+const loadOceans; // Async: loads ocean geometries
+const loadAirports; // Async: loads airport locations
+const loadPorts; // Async: loads port locations
+const loadUrbanAreas; // Async: loads urban area boundaries
+const loadTimezones; // Async: loads timezone boundaries
+const loadCoastlines; // Async: loads coastline geometries
+const loadGeographicLines; // Async: loads geographic line features
+const loadGlaciated; // Async: loads glaciated area boundaries
+const loadReefs; // Async: loads reef geometries
+
+// Animated Images (ALREADY IN SCOPE — do NOT import)
+const AnimatedImage; // Displays GIF, APNG, AVIF, or WebP synced to timeline
+
+// Async rendering helpers (ALREADY IN SCOPE — do NOT import)
+const delayRender; // Pause rendering until async data loads
+const continueRender; // Resume rendering after async data loads
+const cancelRender; // Cancel rendering on error
 
 // React (prefer useMemo/useRef — avoid useState/useEffect in Remotion)
-import { useMemo, useRef } from "react";
+// EXCEPTION: useState + useEffect ARE correct for async data loading
+// (geo layers, Lottie animations) — always pair with delayRender/continueRender
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 \`\`\`
 
 ## LUCIDE ICONS

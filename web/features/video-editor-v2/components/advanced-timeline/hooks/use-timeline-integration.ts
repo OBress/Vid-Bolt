@@ -37,7 +37,7 @@ export function useTimelineIntegration(_props?: UseTimelineIntegrationProps) {
   // Clean up when a track is deleted
   const handleTrackDeleted = useCallback((trackId: string) => {
     // Find clips on this track and clean up their transitions
-    const trackClips = clips.filter(c => c.trackId === trackId);
+    const trackClips = Object.values(clips).filter(c => c.trackId === trackId);
     trackClips.forEach(clip => {
       handleItemDeleted(clip.id);
     });
