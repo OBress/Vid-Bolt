@@ -174,4 +174,4 @@ export function useRenderPreview(options: UseRenderPreviewOptions = {}): UseRend
 // UTILITY EXPORTS
 // ==========================================
 
-export { RenderPreviewResult, RenderPreviewOptions, RenderComparison } from '../utils/render-preview';
+export type { RenderPreviewResult, RenderPreviewOptions, RenderComparison } from '../utils/render-preview';

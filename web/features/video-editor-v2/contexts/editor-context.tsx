@@ -57,6 +57,40 @@ export interface EditorCallbacks {
 
 export interface EditorContextProps extends EditorConfig, EditorCallbacks {
   isInitialLoadComplete: boolean;
+  // Overlay management (consumed by use-react-video-editor)
+  overlays: any[];
+  selectedOverlayId: number | null;
+  setSelectedOverlayId: (id: number | null) => void;
+  addOverlay: (overlay: any) => void;
+  deleteOverlay: (overlayId: number) => void;
+  changeOverlay: (overlayId: number, updater: (overlay: any) => any) => void;
+  updateOverlayStyles: (overlayId: number, styles: any) => void;
+  duplicateOverlay: (overlayId: number) => void;
+  splitOverlay: (overlayId: number, splitFrame: number) => void;
+  resetOverlays: () => void;
+  setOverlays: (overlays: any[]) => void;
+  // Playback state
+  isPlaying: boolean;
+  currentFrame: number;
+  playbackRate: number;
+  setPlaybackRate: (rate: number) => void;
+  // Duration
+  durationInFrames: number;
+  durationInSeconds: number;
+  // Aspect ratio
+  aspectRatio: string;
+  setAspectRatio: (ratio: string) => void;
+  playerDimensions: { width: number; height: number };
+  // Track height settings
+  trackHeight?: number;
+  setTrackHeight?: (height: number) => void;
+  timelineItemHeight?: number;
+  setTimelineItemHeight?: (height: number) => void;
+  // Background & alignment
+  backgroundColor?: string;
+  setBackgroundColor?: (color: string) => void;
+  showAlignmentGuides?: boolean;
+  setShowAlignmentGuides?: (show: boolean) => void;
 }
 
 // ============================================================

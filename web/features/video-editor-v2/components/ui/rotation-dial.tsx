@@ -220,7 +220,7 @@ export const RotationDial = React.forwardRef<HTMLDivElement, RotationDialProps>(
 
     // Generate tick marks
     const tickMarks = React.useMemo(() => {
-      const ticks = [];
+      const ticks: React.ReactNode[] = [];
       const majorAngles = [0, 90, 180, 270];
       const tickLength = 4;
       const majorTickLength = 6;

@@ -139,7 +139,7 @@ export const AISettingsDialog: React.FC<AISettingsDialogProps> = ({ trigger }) =
 
   // User settings (contains the OpenRouter API key) - TODO: Not available in Vid-Bolt
   // const { data: userSettings, isLoading: isLoadingSettings } = useUserSettings();
-  const userSettings: { openrouter_key?: string } | null = null;
+  const userSettings: any = null;
   const isLoadingSettings = false;
   const hasApiKey = Boolean(userSettings?.openrouter_key);
 

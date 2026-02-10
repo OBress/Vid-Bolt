@@ -156,6 +156,31 @@ const EFFECT_CONFIGS: Record<EffectType, {
     accentColor: "text-fuchsia-400",
     previewGradient: "from-fuchsia-500/30 to-fuchsia-600/10"
   },
+  [EffectType.COLOR_CORRECTION]: {
+    icon: Palette,
+    accentColor: "text-teal-400",
+    previewGradient: "from-teal-500/30 to-teal-600/10"
+  },
+  [EffectType.BRIGHTNESS]: {
+    icon: Sun,
+    accentColor: "text-yellow-300",
+    previewGradient: "from-yellow-400/30 to-yellow-500/10"
+  },
+  [EffectType.CONTRAST]: {
+    icon: Blend,
+    accentColor: "text-indigo-400",
+    previewGradient: "from-indigo-500/30 to-indigo-600/10"
+  },
+  [EffectType.SATURATION]: {
+    icon: Palette,
+    accentColor: "text-rose-400",
+    previewGradient: "from-rose-500/30 to-rose-600/10"
+  },
+  [EffectType.HUE]: {
+    icon: RefreshCw,
+    accentColor: "text-purple-400",
+    previewGradient: "from-purple-500/30 to-purple-600/10"
+  },
 };
 
 // ==========================================

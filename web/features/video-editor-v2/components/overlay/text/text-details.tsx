@@ -122,13 +122,13 @@ export const TextDetails: React.FC<TextDetailsProps> = ({
         <UnifiedTabs
           settingsContent={
             <TextSettingsPanel
-              localOverlay={clipAsOverlay}
+              localOverlay={clipAsOverlay as any}
               handleStyleChange={handleStyleChange}
             />
           }
           styleContent={
             <TextStylePanel
-              localOverlay={clipAsOverlay}
+              localOverlay={clipAsOverlay as any}
               handleInputChange={handleInputChange}
               handleStyleChange={handleStyleChange}
               onPositionChange={handlePositionChange}

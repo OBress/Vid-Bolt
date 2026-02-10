@@ -86,7 +86,7 @@ export const SoundLayerContent: React.FC<SoundLayerContentProps> = ({
     const processedSrc = cache.getCachedAudio(`sound-${overlay.id}`, audioSrc, overlay.audioEffects!);
     const isProcessing = cache.isProcessing(`sound-${overlay.id}`, audioSrc, overlay.audioEffects!);
     
-    audioSrc = processedSrc;
+    audioSrc = processedSrc || audioSrc;
   }
 
   // Check if track is muted

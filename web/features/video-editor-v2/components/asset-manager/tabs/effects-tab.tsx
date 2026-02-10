@@ -648,13 +648,13 @@ const EffectCard: React.FC<EffectCardProps> = ({ item, onSelect, compact = false
         let dragId: string;
         
         if (item.type === 'audioTransition') {
-          dragId = startAudioTransitionDrag(item.value as AudioTransitionType, 1);
+          dragId = (startAudioTransitionDrag as any)(item.value as AudioTransitionType, 1);
         } else if (item.type === 'videoEffect') {
-          dragId = startEffectDrag(item.value as EffectType, item.name);
+          dragId = (startEffectDrag as any)(item.value as EffectType, item.name);
         } else if (item.type === 'mask') {
-          dragId = startMaskDrag(item.value as ShapeMaskType, item.name);
+          dragId = (startMaskDrag as any)(item.value as ShapeMaskType, item.name);
         } else {
-          dragId = startEffectDrag(item.value as EffectType, item.name);
+          dragId = (startEffectDrag as any)(item.value as EffectType, item.name);
         }
         
         e.dataTransfer.setData('text/x-video-effect', dragId);

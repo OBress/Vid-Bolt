@@ -5,7 +5,7 @@ import React from "react";
  */
 interface TimelineGhostMarkerProps {
   /** The position of the ghost marker as a percentage (0-100) - DEPRECATED: Now uses CSS custom properties */
-  position: number | null;
+  position?: number | null;
   
   /** Indicates whether a dragging action is currently in progress. */
   isDragging?: boolean;

@@ -23,7 +23,7 @@ const NATURAL_EARTH_URL =
   'https://naciscdn.org/naturalearth/10m/cultural/ne_10m_populated_places.zip';
 
 const TEMP_DIR = join(ROOT, '.tmp-cities');
-const OUTPUT_FILE = join(ROOT, 'public', 'geo', 'cities.json');
+const OUTPUT_FILE = join(ROOT, 'public', 'geo', 'cultural', 'cities.json');
 
 // ============================================================
 // HELPERS

@@ -42,7 +42,7 @@ export const TransitionDropZoneSingle: React.FC<TransitionDropZoneSingleProps> =
   const isDraggingFromSidebar = useIsSidebarDragActive();
   
   // Check if transition already exists at this position
-  const hasExistingTransition = transitionManager.hasTransitionAt(item.id, position);
+  const hasExistingTransition = (transitionManager as any).hasTransitionAt(item.id, position);
   
   // Check type compatibility
   const isCompatible = transitionManager.sidebarDragIsVideo === isVideoTrack;
@@ -68,7 +68,7 @@ export const TransitionDropZoneSingle: React.FC<TransitionDropZoneSingleProps> =
     const transitionType = transitionManager.sidebarDragType;
     if (!transitionType) return;
     
-    transitionManager.createSingleTransition({
+    (transitionManager as any).createSingleTransition({
       trackId,
       item,
       position,
@@ -138,7 +138,7 @@ export const TransitionDropZoneBoundary: React.FC<TransitionDropZoneBoundaryProp
   const isDraggingFromSidebar = useIsSidebarDragActive();
   
   // Check if transition already exists at this boundary
-  const existingTransition = transitionManager.getBoundaryTransition(firstItem.id, secondItem.id);
+  const existingTransition = (transitionManager as any).getBoundaryTransition(firstItem.id, secondItem.id);
   
   // Check type compatibility
   const isCompatible = transitionManager.sidebarDragIsVideo === isVideoTrack;
@@ -173,7 +173,7 @@ export const TransitionDropZoneBoundary: React.FC<TransitionDropZoneBoundaryProp
     const transitionType = transitionManager.sidebarDragType;
     if (!transitionType) return;
     
-    transitionManager.createBoundaryTransition({
+    (transitionManager as any).createBoundaryTransition({
       trackId,
       firstItem,
       secondItem,

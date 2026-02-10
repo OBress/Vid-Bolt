@@ -1141,7 +1141,7 @@ const EffectCard: React.FC<EffectCardProps> = ({ clipId, title, icon, iconColor,
 
   const handleUpdate = (updates: Partial<AudioEffect>) => {
     if (effect) {
-      updateClip(clipId, { audioEffects: (clip.audioEffects || []).map(e => e.id === effect.id ? { ...e, ...updates } : e) });
+      updateClip(clipId, { audioEffects: (clip.audioEffects || []).map(e => e.id === effect.id ? { ...e, ...updates } as any : e) });
     }
   };
 

@@ -302,7 +302,7 @@ const WaveformDisplay: React.FC<WaveformDisplayProps> = ({ overlay }) => {
   // Generate a simple waveform visualization
   // In a real implementation, this would be based on actual audio data
   const waveformBars = useMemo(() => {
-    const bars = [];
+    const bars: number[] = [];
     const numBars = 60;
     
     // Generate pseudo-random but consistent heights based on overlay id

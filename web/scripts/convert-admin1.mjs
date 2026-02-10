@@ -32,7 +32,7 @@ const ROOT = join(__dirname, '..');
 const NATURAL_EARTH_URL = 
   'https://naciscdn.org/naturalearth/10m/cultural/ne_10m_admin_1_states_provinces.zip';
 
-const OUTPUT_DIR = join(ROOT, 'public', 'geo');
+const OUTPUT_DIR = join(ROOT, 'public', 'geo', 'countries');
 const TEMP_DIR = join(ROOT, '.tmp-geo');
 
 // Process ALL countries found in the Natural Earth dataset (no filter).

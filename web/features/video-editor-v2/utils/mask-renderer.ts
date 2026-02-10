@@ -285,7 +285,7 @@ export function generateMaskStyles(masks: Mask[] | undefined): MaskStyles {
       // Apply feather as filter blur on the mask edges
       // Note: CSS clip-path doesn't support feathering directly
       // We'd need SVG filters for true feathering
-      if (shapeMask.feather > 0) {
+      if ((shapeMask.feather ?? 0) > 0) {
         // This applies blur to the entire element, not just edges
         // True feathering would need SVG mask with feGaussianBlur
       }
@@ -424,7 +424,7 @@ function generateFeatherFilter(id: string, feather: number, mode: FeatherMode): 
  * This function uses objectBoundingBox which doesn't work well with blur filters
  */
 export function generateSvgMask(mask: ShapeMask, id: string): string {
-  const { feather, featherMode, inverted, opacity } = mask;
+  const { feather = 0, featherMode, inverted, opacity } = mask;
   
   const shapeElement = generateSvgShapeElement(mask);
   if (!shapeElement) return '';
@@ -836,7 +836,7 @@ export function getMaskReference(id: string): string {
  */
 export function generateMaskCSS(mask: ShapeMask, id: string): React.CSSProperties {
   // For masks with feathering, we need to use SVG masks
-  if (mask.feather > 0 || mask.inverted) {
+  if ((mask.feather ?? 0) > 0 || mask.inverted) {
     return {
       mask: `url(#${id})`,
       WebkitMask: `url(#${id})`,

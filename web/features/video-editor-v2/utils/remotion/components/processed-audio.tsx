@@ -286,7 +286,7 @@ export const ProcessedAudio: React.FC<ProcessedAudioProps> = ({
  * Hook to get audio levels for visualization
  */
 export function useAudioLevels(clipId: string) {
-  const rafRef = useRef<number>();
+  const rafRef = useRef<number | undefined>(undefined);
   const [levels, setLevels] = React.useState({ rms: -60, peak: -60, clipping: false });
   
   useEffect(() => {
@@ -317,7 +317,7 @@ export function useAudioLevels(clipId: string) {
  * Hook to get frequency data for EQ visualization
  */
 export function useFrequencyData(clipId: string, fftSize: number = 256) {
-  const rafRef = useRef<number>();
+  const rafRef = useRef<number | undefined>(undefined);
   const [frequencyData, setFrequencyData] = React.useState<Uint8Array>(new Uint8Array(fftSize / 2));
   
   useEffect(() => {

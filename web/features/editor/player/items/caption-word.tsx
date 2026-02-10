@@ -208,7 +208,7 @@ export const CaptionWord: React.FC<CaptionWordProps> = ({
 
   // Transform style helper
   const getTransformStyle = () => {
-    const transforms = [];
+    const transforms: string[] = [];
     if (animationState.translateX !== 0 || animationState.translateY !== 0) {
       transforms.push(
         `translate(${animationState.translateX}px, ${animationState.translateY}px)`

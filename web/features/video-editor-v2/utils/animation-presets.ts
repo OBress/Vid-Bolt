@@ -12,7 +12,7 @@
  * 3. The preset will generate appropriate keyframes
  */
 
-import type { PropertyKeyframes, Keyframe, KeyframeInterpolation } from '../types/keyframes';
+import type { PropertyKeyframes, Keyframe, KeyframeInterpolation, InterpolationType } from '../types/keyframes';
 import { generateKeyframeId } from '../types/keyframes';
 import { framesToSeconds } from './time-conversion';
 
@@ -56,7 +56,7 @@ export interface PresetOptions {
   /** Whether to reverse the animation (e.g., for exit) */
   reverse?: boolean;
   /** Custom easing */
-  easing?: KeyframeInterpolation;
+  easing?: InterpolationType;
   /** Property-specific overrides */
   propertyOverrides?: Record<string, any>;
 }
@@ -71,13 +71,13 @@ export interface PresetOptions {
 function createKeyframe(
   time: number,
   value: number,
-  interpolation: KeyframeInterpolation = 'ease-out'
+  interpolationType: InterpolationType = 'ease-out'
 ): Keyframe {
   return {
     id: generateKeyframeId(),
     time,
     value,
-    interpolation,
+    interpolation: { type: interpolationType },
   };
 }
 

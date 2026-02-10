@@ -157,6 +157,7 @@ function mapResultsToEnhancedShots(
       start_seconds: shot.start_seconds,
       end_seconds: shot.end_seconds,
       duration_seconds: shot.duration_seconds,
+      content_type: (shot as any).content_type || 'concept',
       text: shot.text,
       visual_prompt: shot.visual_prompt || shot.summary,
 

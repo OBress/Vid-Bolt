@@ -67,7 +67,7 @@ export const ReactVideoEditorV2: React.FC<ReactVideoEditorV2Props> = ({
       {...providerProps}
       onSaving={handleSaving}
       onSaved={handleSaved}
-      playerRef={playerRef}
+      playerRef={playerRef as any}
     >
       {isPlayerOnly ? (
         // Player-only mode: Simple fullscreen video player

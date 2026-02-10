@@ -339,7 +339,7 @@ class EffectWorkerManager {
             this.worker!.onmessage = originalHandler;
             resolve(true);
           } else {
-            originalHandler?.call(this.worker, e);
+            originalHandler?.call(this.worker!, e);
           }
         };
         

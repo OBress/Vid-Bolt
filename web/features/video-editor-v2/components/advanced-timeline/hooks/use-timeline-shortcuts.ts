@@ -26,6 +26,9 @@ interface UseTimelineShortcutsProps {
   // Delete props
   onDeleteSelectedItems?: () => void; // Delete selected items
   hasSelectedItems?: boolean; // Whether there are items selected
+  // Transition delete props
+  onDeleteSelectedTransition?: () => void; // Delete selected transition
+  hasSelectedTransition?: boolean; // Whether a transition is selected
 }
 
 /**
@@ -76,6 +79,8 @@ export const useTimelineShortcuts = ({
   canUnlink = false,
   onDeleteSelectedItems,
   hasSelectedItems = false,
+  onDeleteSelectedTransition,
+  hasSelectedTransition = false,
 }: UseTimelineShortcutsProps) => {
   // Helper to check if we should ignore the keypress (user is typing)
   const shouldIgnoreKeypress = (e: KeyboardEvent): boolean => {
@@ -295,12 +300,14 @@ export const useTimelineShortcuts = ({
     }
   });
 
-  // Delete selected items (Delete or Backspace key)
+  // Delete selected items or transitions (Delete or Backspace key)
   useHotkeys("Delete, Backspace", (e) => {
     if (shouldIgnoreKeypress(e)) return;
     e.preventDefault();
     if (hasSelectedItems && onDeleteSelectedItems) {
       onDeleteSelectedItems();
+    } else if (hasSelectedTransition && onDeleteSelectedTransition) {
+      onDeleteSelectedTransition();
     }
   });
 }; 

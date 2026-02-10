@@ -76,8 +76,13 @@ const statusConfig: Record<
 
 const stageLabels: Record<VideoStage, string> = {
   idea: "Idea",
+  outline: "Outline",
+  stock: "Stock Media",
   script: "Script",
   audio: "Audio",
+  media: "Media",
+  shot_planning: "Shot Planning",
+  shot_creation: "Shot Creation",
   video: "Video",
   export: "Export",
   completed: "Complete",

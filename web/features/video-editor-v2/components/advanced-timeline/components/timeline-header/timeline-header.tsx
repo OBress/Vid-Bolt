@@ -22,7 +22,7 @@ const ButtonGroup: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 // Tooltip component that renders in a portal (matches ToolsPanel style)
 // With boundary detection to keep tooltip within viewport
 const HeaderTooltip: React.FC<{
-  buttonRef: React.RefObject<HTMLButtonElement>;
+  buttonRef: React.RefObject<HTMLButtonElement | null>;
   show: boolean;
   label: string;
   shortcut?: string;
@@ -137,8 +137,8 @@ const RightControls: React.FC<RightControlsProps> = ({
   const [showCollapseTooltip, setShowCollapseTooltip] = useState(false);
   const compactButtonRef = useRef<HTMLButtonElement>(null);
   const collapseButtonRef = useRef<HTMLButtonElement>(null);
-  const compactHoverRef = useRef<ReturnType<typeof setTimeout>>();
-  const collapseHoverRef = useRef<ReturnType<typeof setTimeout>>();
+  const compactHoverRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const collapseHoverRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const handleCompactEnter = () => {
     compactHoverRef.current = setTimeout(() => setShowCompactTooltip(true), 200);

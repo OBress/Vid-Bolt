@@ -250,7 +250,7 @@ const LayerRenderer = React.memo<LayerRendererProps>(({
       const propertyKeyframes = layer.keyframes?.find(pk => pk.propertyPath === propertyPath && pk.enabled);
       
       if (propertyKeyframes && propertyKeyframes.keyframes.length > 0) {
-        const interpolatedValue = getInterpolatedValue(propertyKeyframes, currentTime, transform[key]);
+        const interpolatedValue = getInterpolatedValue(propertyKeyframes, currentTime, transform[key] as number);
         if (typeof interpolatedValue === 'number') {
           animated[key] = interpolatedValue;
         }

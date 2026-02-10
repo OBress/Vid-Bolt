@@ -40,7 +40,7 @@ export async function POST(
     console.log(`[API] Triggering image gen for video ${videoId}. Found ${shotsToGenerate.length} images to generate out of ${shotList.length} shots.`);
 
     // Queue image generation jobs for each shot
-    const jobs = [];
+    const jobs: any[] = [];
     for (const shot of shotsToGenerate) {
       const job = await gpuImageCreateQueue.add('shot-image', {
         taskId: shot.shot_id || crypto.randomUUID(),
@@ -48,7 +48,7 @@ export async function POST(
         prompt: shot.visual_prompt,
         aspectRatio: '16:9',
       });
-      jobs.push(job.id);
+      jobs.push((job as any).id);
     }
 
     return NextResponse.json({ 

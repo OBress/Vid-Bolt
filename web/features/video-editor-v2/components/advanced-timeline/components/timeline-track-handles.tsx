@@ -5,7 +5,7 @@ import { GripVertical, Trash2, Eye, EyeOff, Lock, Unlock, Volume2, VolumeX, Plus
 
 interface TimelineTrackHandlesProps {
   tracks: TimelineTrackType[];
-  onTrackReorder?: (fromIndex: number, toIndex: number) => void;
+  onTrackReorder?: (...args: any[]) => void;
   onTrackDelete?: (trackId: string) => void;
   onToggleLock?: (trackId: string) => void;
   onToggleVisibility?: (trackId: string) => void;

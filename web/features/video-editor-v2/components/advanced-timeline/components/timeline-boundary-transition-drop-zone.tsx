@@ -140,7 +140,7 @@ export const TimelineBoundaryTransitionDropZone: React.FC<TimelineBoundaryTransi
       isAudio: isAudioTransition,
       duration: transitionDuration,
       offset: initialOffset,
-    });
+    } as any);
     
     console.log('[BoundaryDropZone] Transition added:', result);
     

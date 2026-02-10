@@ -6,7 +6,8 @@
  */
 
 import { useCallback } from 'react';
-import { useVideoEditorStore, shallow } from '../../../stores/video-editor-store';
+import { useVideoEditorStore } from '../../../stores/video-editor-store';
+import { useShallow } from 'zustand/react/shallow';
 
 // Props interface maintained for backwards compatibility
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -14,13 +15,14 @@ interface UseTimelineIntegrationProps {
   tracks?: unknown;
   onTracksChange?: unknown;
   selectedItemIds?: string[];
+  onSelectedItemsChange?: (itemIds: string[]) => void;
 }
 
 export function useTimelineIntegration(_props?: UseTimelineIntegrationProps) {
   // Get store state and actions
   const transitions = useVideoEditorStore(state => state.transitions);
   const removeTransition = useVideoEditorStore(state => state.removeTransition);
-  const clips = useVideoEditorStore(state => state.clips, shallow);
+  const clips = useVideoEditorStore(useShallow(state => state.clips));
 
   // Clean up transitions when a clip/item is deleted
   const handleItemDeleted = useCallback((clipId: string) => {

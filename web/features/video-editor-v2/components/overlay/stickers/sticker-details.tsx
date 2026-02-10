@@ -71,7 +71,7 @@ export const StickerDetails: React.FC<StickerDetailsProps> = ({
       <UnifiedTabs
         settingsContent={
           <StickerSettingsPanel
-            localOverlay={clipAsOverlay}
+            localOverlay={clipAsOverlay as any}
             handleStyleChange={handleStyleChange}
           />
         }

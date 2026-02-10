@@ -325,7 +325,7 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
       });
       
       selectClip(itemId);
-      setActivePanel('inspector');
+      setActivePanel('inspector' as any);
       setIsOpen(true);
     }
   }, [timelineV2Clips, updateClip, selectClip, setActivePanel, setIsOpen]);
@@ -440,7 +440,7 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
       >
         <Timeline
           ref={timelineRef}
-          tracks={timelineTracks}
+          tracks={timelineTracks as any}
           totalDuration={durationInFrames / (fps || FPS)}
           currentFrame={currentFrame}
           fps={fps || FPS}
@@ -454,11 +454,10 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
           onSplitItems={handleSplitItems}
           selectedItemIds={selectedClipIds}
           onTracksChange={handleTracksChange}
-          onNewItemDrop={handleNewItemDrop}
+          onNewItemDrop={handleNewItemDrop as any}
           showZoomControls={true}
           showTimelineGuidelines={true}
           enableTrackDrag={true}
-          enableMagneticTrack={true}
           enableTrackDelete={true}
           showPlaybackControls={true}
           isPlaying={isPlaying}
@@ -476,12 +475,11 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
           onResolutionChange={setResolution as any}
           showAspectRatioControls={true}
           onCollapseChange={handleCollapseChange}
-          overlays={overlays}
           isCompact={isCompact}
           onToggleCompact={toggleCompactMode}
           trackHeight={currentTrackHeight}
           trackItemHeight={compactTrackItemHeight}
-          onEffectDrop={handleEffectDrop}
+          onEffectDrop={handleEffectDrop as any}
           onOpenCompositionEditor={handleOpenCompositionEditor}
         />
       </div>

@@ -326,22 +326,22 @@ const renderBuiltInComponent = (
   
   switch (category) {
     case MotionGraphicsCategory.LOWER_THIRD:
-      return <LowerThirdModern {...baseProps} {...props} />;
+      return <LowerThirdModern {...baseProps} {...props as any} />;
       
     case MotionGraphicsCategory.TITLE_CARD:
-      return <TitleCardCentered {...baseProps} {...props} />;
+      return <TitleCardCentered {...baseProps} {...props as any} />;
       
     case MotionGraphicsCategory.CALL_TO_ACTION:
       if (id.includes('social') || id.includes('follow')) {
-        return <SocialMediaCTA {...baseProps} {...props} />;
+        return <SocialMediaCTA {...baseProps} {...props as any} />;
       }
-      return <SubscribeCTA {...baseProps} {...props} />;
+      return <SubscribeCTA {...baseProps} {...props as any} />;
       
     case MotionGraphicsCategory.COUNTDOWN:
-      return <CountdownTimer {...baseProps} {...props} />;
+      return <CountdownTimer {...baseProps} {...props as any} />;
       
     case MotionGraphicsCategory.SOCIAL_MEDIA:
-      return <SocialMediaCTA {...baseProps} {...props} />;
+      return <SocialMediaCTA {...baseProps} {...props as any} />;
       
     default:
       return null;

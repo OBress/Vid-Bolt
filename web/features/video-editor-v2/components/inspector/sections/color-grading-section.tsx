@@ -595,7 +595,7 @@ export const ColorGradingSection: React.FC<ColorGradingSectionProps> = ({ overla
   // Get current color grading values with defaults
   const colorGrading: ColorGradingValues = {
     ...DEFAULT_COLOR_GRADING,
-    ...((overlay as VisualOverlay).styles?.colorGrading || {}),
+    ...((overlay as any).styles?.colorGrading || {}),
   };
 
   // Update handler
@@ -646,5 +646,6 @@ export const ColorGradingSection: React.FC<ColorGradingSectionProps> = ({ overla
 };
 
 // Exports
-export { ColorGradingValues, CurvePoint, DEFAULT_COLOR_GRADING };
+export type { ColorGradingValues, CurvePoint };
+export { DEFAULT_COLOR_GRADING };
 export default ColorGradingSection;

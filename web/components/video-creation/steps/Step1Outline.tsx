@@ -1197,7 +1197,7 @@ export function Step1Outline({
                 <div className="p-3 bg-neutral-800/50 rounded-lg">
                   <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Demographics</div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries(selectedAsset.data.physicalCharacteristics.demographics).map(([key, value]) => (
+                    {(Object.entries(selectedAsset.data.physicalCharacteristics.demographics) as [string, any][]).map(([key, value]) => (
                       value && (
                         <div key={key}>
                           <span className="text-neutral-500 capitalize">{key}: </span>
@@ -1214,7 +1214,7 @@ export function Step1Outline({
                 <div className="p-3 bg-neutral-800/50 rounded-lg">
                   <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Body Structure</div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries(selectedAsset.data.physicalCharacteristics.bodyStructure).map(([key, value]) => (
+                    {(Object.entries(selectedAsset.data.physicalCharacteristics.bodyStructure) as [string, any][]).map(([key, value]) => (
                       value && (
                         <div key={key}>
                           <span className="text-neutral-500 capitalize">{key}: </span>
@@ -1231,7 +1231,7 @@ export function Step1Outline({
                 <div className="p-3 bg-neutral-800/50 rounded-lg">
                   <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Face Features</div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries(selectedAsset.data.physicalCharacteristics.faceFeatures).map(([key, value]) => (
+                    {(Object.entries(selectedAsset.data.physicalCharacteristics.faceFeatures) as [string, any][]).map(([key, value]) => (
                       value && (
                         <div key={key}>
                           <span className="text-neutral-500 capitalize">{key}: </span>
@@ -1248,7 +1248,7 @@ export function Step1Outline({
                 <div className="p-3 bg-neutral-800/50 rounded-lg">
                   <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Hair</div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries(selectedAsset.data.physicalCharacteristics.hair).map(([key, value]) => (
+                    {(Object.entries(selectedAsset.data.physicalCharacteristics.hair) as [string, any][]).map(([key, value]) => (
                       value && (
                         <div key={key}>
                           <span className="text-neutral-500 capitalize">{key}: </span>
@@ -1265,7 +1265,7 @@ export function Step1Outline({
                 <div className="p-3 bg-neutral-800/50 rounded-lg">
                   <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Expressions</div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries(selectedAsset.data.expressions).map(([key, value]) => (
+                    {(Object.entries(selectedAsset.data.expressions) as [string, any][]).map(([key, value]) => (
                       value && (
                         <div key={key}>
                           <span className="text-neutral-500 capitalize">{key}: </span>
@@ -1319,7 +1319,7 @@ export function Step1Outline({
                 <div className="p-3 bg-neutral-800/50 rounded-lg">
                   <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Structural Details</div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries(selectedAsset.data.structuralDetails).map(([key, value]) => (
+                    {(Object.entries(selectedAsset.data.structuralDetails) as [string, any][]).map(([key, value]) => (
                       value && !Array.isArray(value) && (
                         <div key={key}>
                           <span className="text-neutral-500 capitalize">{key}: </span>
@@ -1342,7 +1342,7 @@ export function Step1Outline({
                 <div className="p-3 bg-neutral-800/50 rounded-lg">
                   <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Environment</div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries(selectedAsset.data.environmentalDetails).map(([key, value]) => (
+                    {(Object.entries(selectedAsset.data.environmentalDetails) as [string, any][]).map(([key, value]) => (
                       value && (
                         <div key={key}>
                           <span className="text-neutral-500 capitalize">{key}: </span>
@@ -1359,7 +1359,7 @@ export function Step1Outline({
                 <div className="p-3 bg-neutral-800/50 rounded-lg">
                   <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Lighting</div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries(selectedAsset.data.lighting).map(([key, value]) => (
+                    {(Object.entries(selectedAsset.data.lighting) as [string, any][]).map(([key, value]) => (
                       value && (
                         <div key={key}>
                           <span className="text-neutral-500 capitalize">{key}: </span>
@@ -1405,7 +1405,7 @@ export function Step1Outline({
                 <div className="p-3 bg-neutral-800/50 rounded-lg">
                   <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Physical Description</div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries((selectedAsset.data as any).physicalDescription).map(([key, value]) => (
+                    {(Object.entries((selectedAsset.data as any).physicalDescription) as [string, any][]).map(([key, value]) => (
                       value && !Array.isArray(value) && (
                         <div key={key}>
                           <span className="text-neutral-500 capitalize">{key}: </span>
@@ -1422,7 +1422,7 @@ export function Step1Outline({
                 <div className="p-3 bg-neutral-800/50 rounded-lg">
                   <div className="text-xs text-neutral-400 uppercase tracking-wider mb-2">Interaction Notes</div>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries((selectedAsset.data as any).interactionNotes).map(([key, value]) => (
+                    {(Object.entries((selectedAsset.data as any).interactionNotes) as [string, any][]).map(([key, value]) => (
                       value && (
                         <div key={key}>
                           <span className="text-neutral-500 capitalize">{key}: </span>

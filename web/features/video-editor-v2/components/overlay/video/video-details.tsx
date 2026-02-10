@@ -62,7 +62,7 @@ export const VideoDetails: React.FC<VideoDetailsProps> = ({
     updateClip(clip.id, {
       duration: newDuration,
       media: {
-        ...clip.media,
+        ...(clip.media as any),
       speed,
       },
     });
@@ -121,7 +121,7 @@ export const VideoDetails: React.FC<VideoDetailsProps> = ({
     speed: clip.media?.speed || 1,
     styles: clip.styles || {},
     data: clip.data,
-  };
+  } as any;
 
   return (
     <div className="space-y-2">

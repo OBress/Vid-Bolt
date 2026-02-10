@@ -14,7 +14,7 @@ import {
   useTimelineLinks,
   useVirtualScroll,
 } from './hooks';
-import { TimelineProps, TimelineRef } from './types';
+import { TimelineProps, TimelineRef, TimelineItem } from './types';
 import { clearTimelineMarkerPosition } from './utils';
 import { ZOOM_CONSTRAINTS, TIMELINE_CONSTANTS } from './constants';
 import { useVideoEditorStore, selectDragType } from '../../stores/video-editor-store';
@@ -289,7 +289,7 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     redo: internalRedo,
     canUndo: internalCanUndo,
     canRedo: internalCanRedo,
-  } = useTimelineHistory(tracks, setTracks, onTracksChange, updatePresentHistoryRef);
+  } = useTimelineHistory(updatePresentHistoryRef);
 
   // Use parent undo/redo props if provided, otherwise use internal timeline history
   const undo = parentOnUndo || internalUndo;
@@ -327,6 +327,9 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     linkGroups,
   } = useTimelineLinks(tracks, setTracks);
 
+  // Reactive subscription for selected transition (needed for keyboard deletion)
+  const storeSelectedTransitionId = useVideoEditorStore(state => state.selection.transitionId);
+
   // Setup keyboard shortcuts with enhanced navigation
   useTimelineShortcuts({
     handlePlayPause,
@@ -353,6 +356,15 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     // Delete props
     onDeleteSelectedItems: () => handleCombinedItemsDelete(selectedItemIds),
     hasSelectedItems: selectedItemIds.length > 0,
+    // Transition delete props
+    onDeleteSelectedTransition: () => {
+      const state = useVideoEditorStore.getState();
+      const transitionId = state.selection.transitionId;
+      if (transitionId) {
+        state.removeTransition(transitionId); // Also clears selection internally
+      }
+    },
+    hasSelectedTransition: !!storeSelectedTransitionId,
   });
 
   // Manage transitions - use setTracks to update internal state, which triggers effect to call onTracksChange
@@ -484,7 +496,7 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     const currentTimeInSeconds = currentFrame / fps;
     
     // Find the selected item across all tracks
-    let selectedItem = null;
+    let selectedItem: TimelineItem | null = null;
     for (const track of tracks) {
       const item = track.items.find(item => item.id === selectedItemId);
       if (item) {
@@ -706,9 +718,9 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
         canRedo={canRedo}
         onUndo={undo}
         onRedo={redo}
-        aspectRatio={aspectRatio}
+        aspectRatio={aspectRatio as any}
         onAspectRatioChange={onAspectRatioChange}
-        resolution={resolution}
+        resolution={resolution as any}
         onResolutionChange={onResolutionChange}
         showAspectRatioControls={showAspectRatioControls}
         isCompact={isCompact}
@@ -783,7 +795,7 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
             isContextMenuOpen={isContextMenuOpen}
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
-            onInsertTrackAt={handleInsertTrackAt}
+            onInsertTrackAt={handleInsertTrackAt as any}
             onInsertMultipleTracksAt={handleInsertMultipleTracksAt}
             onCreateTracksWithItems={handleCreateTracksWithItems}
             showTimelineGuidelines={showTimelineGuidelines}

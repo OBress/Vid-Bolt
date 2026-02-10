@@ -23,13 +23,13 @@ export const usePresetFontPreloader = () => {
     const fontConfigs = new Map<string, {
       fontFamily: string;
       fontWeight: string;
-      fontStyle: string;
+      fontStyle: 'normal' | 'italic';
     }>();
 
     TEXT_STYLE_PRESETS.forEach(preset => {
       const fontFamily = preset.styles.fontFamily || 'Inter';
       const fontWeight = preset.styles.fontWeight || '400';
-      const fontStyle = preset.styles.fontStyle || 'normal';
+      const fontStyle = (preset.styles.fontStyle || 'normal') as 'normal' | 'italic';
       
       const fontKey = `${fontFamily}-${fontWeight}-${fontStyle}`;
       

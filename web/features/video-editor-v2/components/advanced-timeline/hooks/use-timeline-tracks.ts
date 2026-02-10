@@ -19,13 +19,18 @@ import {
   getClipTransitionsPure,
   type TrackWithClips,
 } from '../../../stores/video-editor-store';
+import { useShallow } from 'zustand/react/shallow';
 import type { TimelineClip } from '../../../types/timeline-v2';
 import type { TimelineItem } from '../types';
 
 interface UseTimelineTracksProps {
+  initialTracks?: TrackWithClips[];
+  autoRemoveEmptyTracks?: boolean;
   onTracksChange?: (tracks: TrackWithClips[]) => void;
   selectedClipIds?: string[];
+  selectedItemIds?: string[];
   onSelectedClipsChange?: (clipIds: string[]) => void;
+  onSelectedItemsChange?: (itemIds: string[]) => void;
 }
 
 interface UseTimelineTracksReturn {
@@ -60,8 +65,8 @@ export function useTimelineTracks({
   onSelectedClipsChange,
 }: UseTimelineTracksProps = {}): UseTimelineTracksReturn {
   // Get raw store data for handlers (shallow comparison for stable references)
-  const storeTracks = useVideoEditorStore(state => state.tracks, shallow);
-  const storeClips = useVideoEditorStore(state => state.clips, shallow);
+  const storeTracks = useVideoEditorStore(useShallow(state => state.tracks));
+  const storeClips = useVideoEditorStore(useShallow(state => state.clips));
   const storeTransitions = useVideoEditorStore(state => state.transitions);
   
   // Helper to get transition entities for a clip using canonical pure function

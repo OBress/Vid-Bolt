@@ -672,7 +672,7 @@ export default function ControlItemHorizontal() {
           initial="hidden"
           animate="visible"
           exit="exit"
-          variants={drawerVariants}
+          variants={drawerVariants as any}
         >
           <motion.div
             ref={drawerRef}

@@ -44,7 +44,7 @@ const SoundWaveIn = ({
           extrapolateRight: "clamp"
         });
 
-  const trails = [];
+  const trails: React.ReactNode[] = [];
   for (let i = trailCount; i > 0; i--) {
     // Cada trail está más atrás en el tiempo
     const trailFrame = Math.max(frame - i * 2, 0);
@@ -91,8 +91,8 @@ const SoundWaveIn = ({
     <div
       style={{
         display: "flex",
-        width: details.width,
-        height: details.height,
+        width: (details as any).width,
+        height: (details as any).height,
         transform: `scale(${baseScale})`,
         position: "relative"
       }}

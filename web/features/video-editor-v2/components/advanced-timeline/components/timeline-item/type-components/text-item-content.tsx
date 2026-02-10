@@ -29,8 +29,8 @@ export const TextItemContent: React.FC<TextItemContentProps> = ({
   if (data?.text) {
     if (typeof data.text === 'string') {
       textToDisplay = data.text;
-    } else if (typeof data.text === 'object' && data.text.text) {
-      textToDisplay = data.text.text;
+    } else if (typeof data.text === 'object' && (data.text as any).text) {
+      textToDisplay = (data.text as any).text;
     }
   }
 

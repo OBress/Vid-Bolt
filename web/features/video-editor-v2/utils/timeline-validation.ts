@@ -56,6 +56,7 @@ export const CLIP_TYPE_TO_TRACK_TYPE: Record<ClipType, TrackType> = {
   'motion-graphics': 'video',
   // Audio items → Audio tracks  
   'audio': 'audio',
+  'sound': 'audio',
 };
 
 /**

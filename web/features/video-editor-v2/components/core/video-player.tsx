@@ -20,7 +20,7 @@ import type { PropertyKeyframes } from "../../types/keyframes";
  * @property {boolean} [isPlayerOnly] - Whether to render in player-only mode (no editor UI)
  */
 export interface VideoPlayerProps {
-  playerRef?: React.RefObject<PlayerRef>;
+  playerRef?: React.RefObject<PlayerRef | null>;
   className?: string;
   style?: React.CSSProperties;
   isPlayerOnly?: boolean;
@@ -269,7 +269,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
     
-    // Get the current overlay (convert clip to overlay format)
+    const { id: _clipId, ...clipRest } = matchingClip;
     const currentOverlay = {
       id: overlayId,
       left: matchingClip.transform?.x ?? 0,
@@ -278,7 +278,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       height: matchingClip.transform?.height ?? 100,
       rotation: matchingClip.transform?.rotation ?? 0,
       scale: (matchingClip.transform as any)?.scale ?? 1,
-      ...matchingClip,
+      ...clipRest,
     };
     
     // Call the updater function to get the new values
@@ -711,7 +711,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 fps={PLAYER_CONFIG.fps}
                 playbackRate={playbackRate}
                 acknowledgeRemotionLicense={true}
-                inputProps={editorInputProps}
+                inputProps={editorInputProps as any}
                 errorFallback={() => <></>}
                 overflowVisible
               />
@@ -771,7 +771,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               durationInFrames={PLAYER_CONFIG.durationInFrames}
               fps={PLAYER_CONFIG.fps}
               playbackRate={playbackRate}
-              inputProps={playerOnlyInputProps}
+              inputProps={playerOnlyInputProps as any}
               errorFallback={() => <></>}
               overflowVisible
             />

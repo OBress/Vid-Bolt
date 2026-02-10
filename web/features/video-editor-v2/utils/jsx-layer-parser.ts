@@ -8,7 +8,7 @@
 
 import type {
   CompositionLayer,
-  LayerType,
+  // LayerType removed - not exported from composition
   TextLayerProperties,
   ShapeLayerProperties,
   SolidLayerProperties,
@@ -25,7 +25,7 @@ import { framesToSeconds } from './time-conversion';
 
 interface LayerMetadata {
   id: string;
-  type: LayerType;
+  type: string;
   name: string;
   startFrame: number;
   endFrame: number;
@@ -386,7 +386,7 @@ function buildLayer(
     locked: false,
     solo: false,
     zIndex: index,
-  };
+  } as any;
   
   // Build transform
   const transform: LayerTransform = {
@@ -427,7 +427,7 @@ function buildLayer(
         width: styles.width ?? 100,
         height: styles.height ?? 100,
         cornerRadius: styles.borderRadius ?? 0,
-      } as ShapeLayerProperties;
+      } as any as ShapeLayerProperties;
       break;
       
     case 'solid':

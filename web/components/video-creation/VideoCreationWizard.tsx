@@ -491,7 +491,7 @@ export function VideoCreationWizard({
         // HOTFIX: If we are in Step 2 (Audio) but find 0 chunks, it means the previous generation failed silently.
         // Instead of trying to use the AsyncLoadingStep (which is getting stuck or invisible),
         // we force the Error UI immediately so the user can regenerate.
-        let initialError = null;
+        let initialError: string | null = null;
         if (targetStep === 2 && normalizedAudioChunks.length === 0) {
           initialError = "Audio data missing. Please regenerate.";
           // Also clear the junk task ID so we don't pollute the next attempt

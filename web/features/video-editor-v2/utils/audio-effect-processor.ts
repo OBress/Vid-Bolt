@@ -623,7 +623,7 @@ function createDistortion(
   const outputGain = context.createGain();
   
   // Set distortion curve
-  waveshaper.curve = makeDistortionCurve(effect.drive, effect.distortionType);
+  waveshaper.curve = makeDistortionCurve(effect.drive, effect.distortionType) as any;
   waveshaper.oversample = '4x';
   
   // Configure tone filter
@@ -646,7 +646,7 @@ function createDistortion(
     nodes: [inputGain, waveshaper, toneFilter, outputGain],
     update: (newEffect: AudioEffect) => {
       const dist = newEffect as DistortionEffect;
-      waveshaper.curve = makeDistortionCurve(dist.drive, dist.distortionType);
+      waveshaper.curve = makeDistortionCurve(dist.drive, dist.distortionType) as any;
       toneFilter.gain.value = dist.tone * 0.12;
       outputGain.gain.value = Math.pow(10, dist.output / 20);
     },
@@ -764,10 +764,10 @@ export function createEffectNode(
     case AET.STEREO_ENHANCER:
       return createStereoEnhancer(context, effect as StereoEnhancerEffect);
     default:
-      console.warn('[createEffectNode] Unknown type, using passthrough:', effect.type);
+      console.warn('[createEffectNode] Unknown type, using passthrough:', (effect as any).type);
       const passthrough = context.createGain();
       return {
-        type: effect.type,
+        type: (effect as any).type,
         inputNode: passthrough,
         outputNode: passthrough,
         nodes: [passthrough],

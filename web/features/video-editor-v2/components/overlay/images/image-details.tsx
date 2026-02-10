@@ -90,7 +90,7 @@ export const ImageDetails: React.FC<ImageDetailsProps> = ({
     content: clip.sourceId,
     styles: clip.styles || {},
     data: clip.data,
-  };
+  } as any;
 
   return (
     <div className="space-y-4">

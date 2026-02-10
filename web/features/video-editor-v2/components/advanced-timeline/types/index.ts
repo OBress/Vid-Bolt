@@ -38,14 +38,17 @@ export type {
   UnifiedDragType,
   DragVisualState,
   ClipDragSnapshot,
-  DragData,
-  DragInfoState,
-  TransitionDragState,
   GhostElementData,
   CommittedDragPosition,
-  DraggedClipSnapshot,
-  ActiveDragType,
 } from '../../../types/timeline-v2';
+
+// Compatibility aliases for renamed types
+import type { UnifiedDragState, ClipDragSnapshot, UnifiedDragType } from '../../../types/timeline-v2';
+export type DragData = UnifiedDragState;
+export type DragInfoState = UnifiedDragState;
+export type TransitionDragState = UnifiedDragState;
+export type DraggedClipSnapshot = ClipDragSnapshot;
+export type ActiveDragType = UnifiedDragType;
 
 // Re-export transition types from main types
 export type {
@@ -95,7 +98,7 @@ export enum TrackItemType {
 /**
  * Type guard to check if a clip type belongs on a video track
  */
-export const isVideoTrackItem = (type?: string): boolean => {
+export const isVideoTrackItem = (type?: string | null): boolean => {
   if (!type) return true;
   return [
     TrackItemType.VIDEO,
@@ -112,7 +115,7 @@ export const isVideoTrackItem = (type?: string): boolean => {
 /**
  * Type guard to check if a clip type belongs on an audio track
  */
-export const isAudioTrackItem = (type?: string): boolean => {
+export const isAudioTrackItem = (type?: string | null): boolean => {
   return type === TrackItemType.AUDIO;
 };
 
@@ -158,19 +161,15 @@ export interface TimelineContentProps {
   onItemMove?: (itemId: string, newStart: number, newEnd: number, newTrackId: string) => void;
   onItemResize?: (itemId: string, newStart: number, newEnd: number) => void;
   onNewItemDrop?: (params: any) => void;
-  timelineRef?: React.RefObject<HTMLDivElement>;
+  timelineRef?: React.RefObject<HTMLDivElement | null>;
   ghostMarkerPosition?: number | null;
+  isDragging?: boolean;
   isContextMenuOpen?: boolean;
-  onMouseMove?: (e: React.MouseEvent) => void;
+  onMouseMove?: (e: React.MouseEvent<any>) => void;
   onMouseLeave?: () => void;
-  onInsertTrackAt?: (index: number, type: string) => void;
-  onInsertMultipleTracksAt?: (index: number, trackDefinitions: Array<{ type: string }>) => void;
-  onCreateTracksWithItems?: (params: {
-    videoTrack: { type: string };
-    audioTrack: { type: string };
-    videoItem: TimelineItem;
-    audioItem: TimelineItem;
-  }) => void;
+  onInsertTrackAt?: (index: number, type?: 'video' | 'audio') => any;
+  onInsertMultipleTracksAt?: (index: number, trackDefinitions: any) => any;
+  onCreateTracksWithItems?: (params: any) => void;
   showTimelineGuidelines?: boolean;
   onContextMenuOpenChange?: (open: boolean) => void;
   splittingEnabled?: boolean;
@@ -181,21 +180,21 @@ export interface TimelineContentProps {
   isDraggingTransition?: boolean;
   draggingTransitionIsVideo?: boolean | null;
   selectedTransition?: any;
-  onTransitionDrop?: (params: any) => void;
-  onBoundaryTransitionDrop?: (params: any) => void;
-  onTransitionSelect?: (params: any) => void;
+  onTransitionDrop?: (...args: any[]) => void;
+  onBoundaryTransitionDrop?: (...args: any[]) => void;
+  onTransitionSelect?: (...args: any[]) => void;
   onTransitionDeselect?: () => void;
-  onTransitionTimesChange?: (transitionId: string, startTime: number, endTime: number) => void;
-  onTransitionRemove?: (transitionId: string) => void;
+  onTransitionTimesChange?: (...args: any[]) => void;
+  onTransitionRemove?: (...args: any[]) => void;
   onZoomToRange?: (startTime: number, endTime: number) => void;
   // Link props
-  canLinkItems?: (itemId1: string, itemId2: string) => boolean;
-  areItemsLinked?: (itemId1: string, itemId2: string) => boolean;
+  canLinkItems?: (...args: any[]) => boolean;
+  areItemsLinked?: (...args: any[]) => boolean;
   isItemLinked?: (itemId: string) => boolean;
   getLinkGroupSize?: (itemId: string) => number;
   getLinkedItemIds?: (itemId: string) => string[];
-  onLinkItems?: (itemIds: string[]) => void;
-  onUnlinkItems?: (itemId: string) => void;
+  onLinkItems?: (...args: any[]) => void;
+  onUnlinkItems?: (...args: any[]) => void;
   // Effect drop
   onEffectDrop?: (params: any) => void;
   // Composition editor

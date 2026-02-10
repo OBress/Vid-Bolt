@@ -198,6 +198,8 @@ export interface AnimatablePropertyMetadata {
   path: string;
   /** Display name */
   name: string;
+  /** Short label for compact display */
+  label?: string;
   /** Property category */
   category: 'transform' | 'opacity' | 'effects' | 'masks' | 'style' | 'media' | 'audio';
   /** Value type */

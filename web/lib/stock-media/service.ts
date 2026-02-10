@@ -219,7 +219,7 @@ export class StockMediaService {
     } else if (mediaType === 'video') {
       const vid = classification as VideoClassification;
       metadata.subjects = vid.subjects;
-      metadata.transcription = vid.transcription;
+      metadata.transcription = (vid as any).transcription;
       metadata.sceneTypes = vid.sceneTypes;
       metadata.actions = vid.actions;
       metadata.pacing = vid.pacing;

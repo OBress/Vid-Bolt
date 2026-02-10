@@ -823,8 +823,8 @@ const ExpandedPropertyTracks: React.FC<ExpandedPropertyTracksProps> = ({
             selectedKeyframeIds={selectedKeyframeIds}
             onSelectKeyframe={onSelectKeyframe}
             onDragKeyframe={onDragKeyframe}
-            onDeleteKeyframe={onDeleteKeyframe}
-            onSetKeyframeEasing={onSetKeyframeEasing}
+            onDeleteKeyframe={onDeleteKeyframe as any}
+            onSetKeyframeEasing={onSetKeyframeEasing as any}
           />
         </div>
       );

@@ -232,6 +232,8 @@ type BaseStyles = {
   opacity?: number;
   zIndex?: number;
   transform?: string;
+  colorGrading?: any;
+  mixBlendMode?: string;
 };
 
 // Base animation type
@@ -513,6 +515,18 @@ export type Overlay =
   | ShapeOverlay
   | ClipOverlay
   | SoundOverlay
+  | CaptionOverlay
+  | StickerOverlay
+  | MotionGraphicsOverlay;
+
+/**
+ * Visual overlay union type — all overlays except sound that have visual/style properties
+ */
+export type VisualOverlay =
+  | TextOverlay
+  | ImageOverlay
+  | ShapeOverlay
+  | ClipOverlay
   | CaptionOverlay
   | StickerOverlay
   | MotionGraphicsOverlay;

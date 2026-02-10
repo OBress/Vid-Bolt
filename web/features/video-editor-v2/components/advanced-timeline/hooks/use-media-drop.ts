@@ -55,7 +55,7 @@ export interface SnapIndicator {
 }
 
 interface UseMediaDropProps {
-  timelineRef: React.RefObject<HTMLDivElement>;
+  timelineRef: React.RefObject<HTMLDivElement | null>;
   totalDuration: number;
   tracks: TrackWithClips[];
   trackHeight?: number;
@@ -1036,7 +1036,7 @@ export const useMediaDrop = ({
     }
     
     // Place the item
-    onDrop(
+    onDrop?.(
       dropState.itemType || 'video',
       targetTrackIndex,
       dropState.startTime,

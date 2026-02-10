@@ -38,7 +38,7 @@ export const PositionSettings: React.FC<PositionSettingsProps> = ({
   overlayHeight,
   onPositionChange,
 }) => {
-  const { getAspectRatioDimensions } = useEditorContext();
+  const { getAspectRatioDimensions } = useEditorContext() as any;
 
   const handlePositionPreset = (preset: PositionPreset) => {
     const canvasDimensions = getAspectRatioDimensions();

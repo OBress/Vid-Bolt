@@ -237,7 +237,7 @@ export const useTimelineClips = () => {
   /**
    * Select multiple clips
    */
-  const selectClips = useCallback((clipIds: string[]) => {
+  const selectMultipleClips = useCallback((clipIds: string[]) => {
     storeSelectClips(clipIds);
   }, [storeSelectClips]);
 
@@ -407,7 +407,7 @@ export const useTimelineClips = () => {
     
     // Selection
     selectClip,
-    selectClips,
+    selectClips: selectMultipleClips,
     toggleClipSelection,
     addToSelection,
     removeFromSelection,

@@ -218,7 +218,7 @@ export const VideoOverlayPanel: React.FC = () => {
           duration,
           type: 'video',
           sourceId: videoUrl,
-          label: video.title || 'Video',
+          label: (video as any).title || 'Video',
           transform: {
             x: centerLeft,
             y: centerTop,

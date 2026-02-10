@@ -40,7 +40,9 @@ const HighlightedPre = React.memo(
 
       const loadTokens = async () => {
         try {
-          const { getHighlighter, bundledLanguages } = await import("shiki");
+          const shiki = await import("shiki") as any;
+          const getHighlighter = shiki.getHighlighter ?? shiki.default?.getHighlighter;
+          const bundledLanguages = shiki.bundledLanguages ?? shiki.default?.bundledLanguages ?? {};
 
           // Check if language is supported
           if (!language || !(language in bundledLanguages)) {
@@ -59,7 +61,7 @@ const HighlightedPre = React.memo(
               light: "min-dark",
               dark: "min-dark"
             }
-          });
+          } as any);
 
           if (mounted) {
             setTokens(result.tokens);

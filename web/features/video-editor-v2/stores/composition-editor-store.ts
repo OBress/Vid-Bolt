@@ -1599,7 +1599,7 @@ export const useCompositionEditorStore = create<CompositionEditorStore>()(
         }));
         
         // Save to history
-        get().saveToHistory();
+        (get() as any).saveToHistory();
       } else {
         // Store the JSX code directly without parsing
         // For backwards compatibility with non-tagged JSX

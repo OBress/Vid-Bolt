@@ -95,9 +95,9 @@ export async function loadProjectState(projectId: string): Promise<ProjectState 
       researchData: state.research_data || {},
       scriptData: state.script_data || {},
       voiceData: state.voice_data || {},
-      timelineData: state.timeline_data || {},
+      timelineData: (state.timeline_data || {}) as any,
       exportSettings: state.export_settings || {},
-      editorPreferences: state.editor_preferences || {},
+      editorPreferences: (state.editor_preferences || {}) as any,
       createdAt: state.created_at,
       updatedAt: state.updated_at,
     };

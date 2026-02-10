@@ -341,7 +341,7 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
               (selectedTransition?.itemId === secondClipId && selectedTransition?.position === 'start')
             }
             onSelect={() => onTransitionSelect?.(firstClipId, 'end')}
-            onDeselect={onTransitionDeselect}
+            onDeselect={onTransitionDeselect!}
             onTimesChange={(newStartTime, newEndTime) => {
               // Update the transition with new times
               updateTransition(transition.id, { startTime: newStartTime, endTime: newEndTime });
@@ -359,11 +359,6 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
           firstItem={pair.firstItem}
           secondItem={pair.secondItem}
           totalDuration={totalDuration}
-          isDraggingTransition={isDraggingTransition}
-          draggingTransitionIsVideo={draggingTransitionIsVideo}
-          onTransitionDrop={(firstItemId, secondItemId, transitionType, isVideo, duration, initialOffset) => {
-            onBoundaryTransitionDrop?.(firstItemId, secondItemId, transitionType, isVideo, duration, initialOffset);
-          }}
           isVideoTrack={track.type === 'video'}
           hasExistingTransition={pair.hasExistingTransition}
         />

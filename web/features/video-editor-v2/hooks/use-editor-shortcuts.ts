@@ -125,8 +125,10 @@ export function useEditorShortcuts() {
           keyframeSelection.keyframeIds
         );
         clearKeyframeSelection();
+        return;
       }
-      return;
+      // Don't return here - let other handlers (timeline shortcuts) handle
+      // deletion of clips/transitions when no keyframes are selected
     }
     
     // Escape = Clear keyframe selection

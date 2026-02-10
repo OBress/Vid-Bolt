@@ -24,13 +24,13 @@ export const useFontPreloader = () => {
     const fontConfigs = new Map<string, {
       fontFamily: string;
       fontWeight: string;
-      fontStyle: string;
+      fontStyle: 'normal' | 'italic';
     }>();
 
     textClips.forEach(clip => {
       const fontFamily = clip.styles?.fontFamily || clip.text?.fontFamily || 'Inter';
       const fontWeight = clip.styles?.fontWeight || '400';
-      const fontStyle = clip.styles?.fontStyle || 'normal';
+      const fontStyle = (clip.styles?.fontStyle || 'normal') as 'normal' | 'italic';
       
       // Create a unique key for this font config
       const fontKey = `${fontFamily}-${fontWeight}-${fontStyle}`;

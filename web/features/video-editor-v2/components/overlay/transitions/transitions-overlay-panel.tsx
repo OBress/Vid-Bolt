@@ -166,8 +166,8 @@ const TransitionCard: React.FC<TransitionCardProps> = ({
   return (
     <motion.div
       draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
+      onDragStart={handleDragStart as any}
+      onDragEnd={handleDragEnd as any}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       whileHover={{ scale: 1.02 }}

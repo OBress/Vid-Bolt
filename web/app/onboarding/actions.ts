@@ -32,7 +32,7 @@ export async function checkUsernameUnique(username: string) {
     return { unique: true };
   }
   
-  return { unique: false, error: error?.message };
+  return { unique: false, error: (error as any)?.message };
 }
 
 /**

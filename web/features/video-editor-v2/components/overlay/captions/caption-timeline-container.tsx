@@ -5,8 +5,8 @@ import { CaptionItem } from "./caption-item";
 interface CaptionTimelineContainerProps {
   localOverlay: CaptionOverlay;
   currentMs: number;
-  containerRef: React.RefObject<HTMLDivElement>;
-  activeCaptionRef: React.RefObject<HTMLDivElement>;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  activeCaptionRef: React.RefObject<HTMLDivElement | null>;
   timingErrors: {[key: number]: string};
   getInputValue: (index: number, field: 'startMs' | 'endMs') => string;
   onInputChange: (index: number, field: 'startMs' | 'endMs', value: string) => void;

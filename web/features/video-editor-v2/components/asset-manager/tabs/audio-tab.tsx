@@ -347,7 +347,7 @@ function audioToItem(
     type: "music", // Default to music, could be determined by source/metadata
     name: audio.title || `Audio ${audio.id}`,
     artist: audio.artist,
-    src: audio.src,
+    src: (audio as any).src || (audio as any).url || '',
     duration: audio.duration || 0,
     _source: audio._source,
     _sourceDisplayName: audio._sourceDisplayName,

@@ -243,7 +243,7 @@ export const BezierCurveEditor = React.forwardRef<HTMLDivElement, BezierCurveEdi
 
     // Generate grid lines
     const gridLines = React.useMemo(() => {
-      const lines = [];
+      const lines: React.ReactNode[] = [];
       
       // Vertical lines
       for (let i = 0; i <= 4; i++) {

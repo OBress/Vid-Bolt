@@ -604,8 +604,8 @@ const MAX_METRICS = 50;
 /**
  * Record performance metrics for comparison
  */
-export function recordWebGLPerformance(metrics: PerformanceMetrics): void {
-  metrics.push(metrics);
+export function recordWebGLPerformance(metric: PerformanceMetrics): void {
+  metrics.push(metric);
   if (metrics.length > MAX_METRICS) {
     metrics.shift();
   }

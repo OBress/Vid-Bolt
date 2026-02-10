@@ -405,6 +405,9 @@ export interface CompositionLayer {
   
   /** Layer color (for organization in timeline) */
   color?: string;
+  
+  /** Generic properties bag for layer-specific settings */
+  properties?: Record<string, any>;
 }
 
 /**

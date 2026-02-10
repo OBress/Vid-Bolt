@@ -490,7 +490,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   }
 
   // Handler to update clip properties (converts overlay format back to clip format)
-  const handleChangeOverlay = useCallback((id: number, updater: (prev: Overlay) => Overlay) => {
+  const handleChangeOverlay = useCallback((id: number, updater: (prev: Overlay) => any) => {
     // Find the clip by numeric ID (converted from overlay)
     // The overlay ID is created by: parseInt(clip.id.replace(/\D/g, ''), 10)
     // So we need to use the same logic to match
@@ -617,11 +617,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           
           updateClip(linkedId, {
             media: {
-              ...linkedClip.media,
+              ...(linkedClip.media as any),
               speed: newSpeed,
             },
             duration: newDuration,
-          });
+          } as any);
         }
       });
       
@@ -1012,7 +1012,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               {activeOverlay && activeOverlay.type !== OverlayType.SOUND ? (
                 <ColorGradingSection
                   overlay={activeOverlay}
-                    onUpdate={(updates) => handleChangeOverlay(activeOverlay.id, (prev) => ({ ...prev, ...updates }))}
+                    onUpdate={(updates) => handleChangeOverlay(activeOverlay.id, (prev) => ({ ...prev, ...updates } as any))}
                 />
               ) : activeOverlay && activeOverlay.type === OverlayType.SOUND ? (
                 <div className="flex flex-col items-center justify-center py-8 text-center">

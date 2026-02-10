@@ -228,7 +228,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
     tracks,
     onItemMove,
     onItemResize,
-    timelineRef,
+    timelineRef: timelineRef!,
     onInsertTrackAt,
     onInsertMultipleTracksAt,
     onCreateTracksWithItems,
@@ -249,13 +249,13 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
     processDragAtPosition,
     processDropAtPosition,
   } = useMediaDrop({
-    timelineRef,
+    timelineRef: timelineRef!,
     totalDuration: scrollableDuration,
     tracks,
     trackHeight,
     onDrop: onNewItemDrop,
     onInsertTrack: onInsertTrackAt ? (index, trackType) => {
-      const newTrackId = onInsertTrackAt(index, trackType);
+      const newTrackId = onInsertTrackAt(index, trackType as any);
       return newTrackId;
     } : undefined,
   });
@@ -282,7 +282,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
       }
       
       // Check if inside timeline
-      const timeline = timelineRef.current;
+      const timeline = timelineRef?.current;
       if (!timeline) {
         document.body.style.removeProperty('cursor');
         return;
@@ -343,7 +343,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
       }
       
       // Check if inside timeline
-      const timeline = timelineRef.current;
+      const timeline = timelineRef?.current;
       if (!timeline) {
         // No timeline ref - fallback to last valid position
         const lastValid = getLastValidDrop();
@@ -396,7 +396,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
           dragData.type === 'text-preset' || 
           dragData.type === 'shape-preset'
         )) {
-          const timeline = timelineRef.current;
+          const timeline = timelineRef?.current;
           if (timeline) {
             // Use the mouse position at dragend to determine drop location
             const rect = timeline.getBoundingClientRect();
@@ -434,7 +434,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
     handleMarqueeMouseMove,
     handleMarqueeMouseUp,
   } = useMarqueeSelection({
-    timelineRef,
+    timelineRef: timelineRef!,
     tracks,
     totalDuration: scrollableDuration, // Use scrollable duration for stable positioning
     selectedItemIds,
@@ -983,7 +983,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
               totalDuration={scrollableDuration}
               isDragging={isDragging}
               draggedItemId={draggedItem?.id}
-              currentDragPosition={currentDragPosition}
+              currentDragPosition={currentDragPosition as any}
             />
           )}
 

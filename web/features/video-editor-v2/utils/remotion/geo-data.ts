@@ -74,7 +74,7 @@ export async function loadCities(): Promise<Record<string, CityInfo>> {
 
   citiesLoadPromise = (async () => {
     try {
-      const resp = await fetch('/geo/cities.json');
+      const resp = await fetch('/geo/cultural/cities.json');
       if (!resp.ok) {
         console.warn('[GeoData] Failed to fetch cities:', resp.status);
         return {};
@@ -207,7 +207,7 @@ export async function getSubNationalData(
   }
 
   try {
-    const resp = await fetch(`/geo/${code}.json`);
+    const resp = await fetch(`/geo/countries/${code}.json`);
     if (!resp.ok) {
       console.warn(`[GeoData] Failed to fetch sub-national data for ${code}: ${resp.status}`);
       return null;
@@ -299,57 +299,57 @@ async function loadGeoLayer<T>(
 
 /** Load major world rivers (1,473 features). */
 export function loadRivers(): Promise<GeoJSON.FeatureCollection | null> {
-  return loadGeoLayer('rivers', 'rivers.json');
+  return loadGeoLayer('rivers', 'physical/rivers.json');
 }
 
 /** Load major world lakes (1,355 features). */
 export function loadLakes(): Promise<GeoJSON.FeatureCollection | null> {
-  return loadGeoLayer('lakes', 'lakes.json');
+  return loadGeoLayer('lakes', 'physical/lakes.json');
 }
 
 /** Load ocean polygons (2 features — Atlantic/Pacific macro regions). */
 export function loadOceans(): Promise<GeoJSON.FeatureCollection | null> {
-  return loadGeoLayer('oceans', 'oceans.json');
+  return loadGeoLayer('oceans', 'physical/oceans.json');
 }
 
 /** Load major world airports (893 entries with IATA codes). */
 export function loadAirports(): Promise<Record<string, AirportInfo> | null> {
-  return loadGeoLayer('airports', 'airports.json');
+  return loadGeoLayer('airports', 'cultural/airports.json');
 }
 
 /** Load major world ports (1,081 entries). */
 export function loadPorts(): Promise<Record<string, PortInfo> | null> {
-  return loadGeoLayer('ports', 'ports.json');
+  return loadGeoLayer('ports', 'cultural/ports.json');
 }
 
 // --- Phase 2: Thematic layers ---
 
 /** Load urban/built-up areas (11,878 features). */
 export function loadUrbanAreas(): Promise<GeoJSON.FeatureCollection | null> {
-  return loadGeoLayer('urban-areas', 'urban-areas.json');
+  return loadGeoLayer('urban-areas', 'cultural/urban-areas.json');
 }
 
 /** Load world time zone boundaries (120 features). */
 export function loadTimezones(): Promise<GeoJSON.FeatureCollection | null> {
-  return loadGeoLayer('timezones', 'timezones.json');
+  return loadGeoLayer('timezones', 'cultural/timezones.json');
 }
 
 /** Load detailed coastlines (4,133 features). */
 export function loadCoastlines(): Promise<GeoJSON.FeatureCollection | null> {
-  return loadGeoLayer('coastlines', 'coastlines.json');
+  return loadGeoLayer('coastlines', 'physical/coastlines.json');
 }
 
 /** Load geographic reference lines — equator, tropics, arctic/antarctic circles, dateline (6 features). */
 export function loadGeographicLines(): Promise<GeoJSON.FeatureCollection | null> {
-  return loadGeoLayer('geographic-lines', 'geographic-lines.json');
+  return loadGeoLayer('geographic-lines', 'physical/geographic-lines.json');
 }
 
 /** Load glaciated areas — ice sheets and glaciers (1,886 features). */
 export function loadGlaciated(): Promise<GeoJSON.FeatureCollection | null> {
-  return loadGeoLayer('glaciated', 'glaciated.json');
+  return loadGeoLayer('glaciated', 'physical/glaciated.json');
 }
 
 /** Load coral reefs (1,043 features). */
 export function loadReefs(): Promise<GeoJSON.FeatureCollection | null> {
-  return loadGeoLayer('reefs', 'reefs.json');
+  return loadGeoLayer('reefs', 'physical/reefs.json');
 }

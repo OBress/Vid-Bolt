@@ -272,7 +272,7 @@ export const DEFAULT_EQ_BAND: Omit<EQBand, 'id'> = {
   enabled: true,
 };
 
-export const DEFAULT_AUDIO_EFFECT_VALUES: Record<AudioEffectType, Omit<AudioEffect, 'id' | 'order'>> = {
+export const DEFAULT_AUDIO_EFFECT_VALUES: Record<AudioEffectType, Omit<BaseAudioEffect, 'id' | 'order'> & Record<string, any>> = {
   [AudioEffectType.PARAMETRIC_EQ]: {
     type: AudioEffectType.PARAMETRIC_EQ,
     enabled: true,

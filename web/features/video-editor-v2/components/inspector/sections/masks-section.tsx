@@ -109,8 +109,9 @@ interface MasksSectionProps {
 }
 
 // Extended overlay type with masks
-interface OverlayWithMasks extends Overlay {
+interface OverlayWithMasks {
   masks?: Mask[];
+  [key: string]: any;
 }
 
 // ==========================================
@@ -326,10 +327,7 @@ const MaskItem: React.FC<MaskItemProps> = ({
           <div className="bg-neutral-900/50 border border-neutral-700/50 rounded-lg p-3">
             <EdgeFeatherSelector
               value={mask.edgeFeather || DEFAULT_EDGE_FEATHER}
-              onChange={(edgeFeather) => onUpdate({ edgeFeather })}
-              shapeMode={
-                shapeMask?.shapeType === ShapeMaskType.ELLIPSE ? 'ellipse' : 'rectangle'
-              }
+              onChange={(edgeFeather: any) => onUpdate({ edgeFeather } as any)}
             />
           </div>
 

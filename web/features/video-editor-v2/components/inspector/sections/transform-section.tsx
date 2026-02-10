@@ -411,10 +411,10 @@ export const TransformSection: React.FC<TransformSectionProps> = ({
     // Apply alignment to each overlay individually
     alignmentUpdates.forEach(({ id, updates }) => {
       if (onUpdateIndividual) {
-        onUpdateIndividual(id, (prev) => ({
+        onUpdateIndividual(id, ((prev: any) => ({
           ...prev,
           ...updates,
-        }));
+        })) as any);
       }
     });
   }, [selectedOverlays, onUpdateIndividual, getAspectRatioDimensions]);

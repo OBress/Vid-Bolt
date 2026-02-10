@@ -34,6 +34,13 @@ export enum EffectType {
   GRAYSCALE = 'grayscale',
   SEPIA = 'sepia',
   INVERT = 'invert',
+
+  // Color correction effects
+  COLOR_CORRECTION = 'colorCorrection',
+  BRIGHTNESS = 'brightness',
+  CONTRAST = 'contrast',
+  SATURATION = 'saturation',
+  HUE = 'hue',
 }
 
 // ==========================================
@@ -211,7 +218,7 @@ export type Effect =
 // EFFECT DEFAULTS
 // ==========================================
 
-export const DEFAULT_EFFECT_VALUES: Record<EffectType, Omit<Effect, 'id' | 'order'>> = {
+export const DEFAULT_EFFECT_VALUES: Record<EffectType, Omit<BaseEffect, 'id' | 'order'> & Record<string, any>> = {
   // Built-in effects
   [EffectType.MOTION]: {
     type: EffectType.MOTION,
@@ -291,6 +298,32 @@ export const DEFAULT_EFFECT_VALUES: Record<EffectType, Omit<Effect, 'id' | 'orde
     type: EffectType.INVERT,
     enabled: true,
     amount: 0,
+  },
+  [EffectType.COLOR_CORRECTION]: {
+    type: EffectType.COLOR_CORRECTION,
+    enabled: true,
+    temperature: 0,
+    tint: 0,
+  },
+  [EffectType.BRIGHTNESS]: {
+    type: EffectType.BRIGHTNESS,
+    enabled: true,
+    amount: 0,
+  },
+  [EffectType.CONTRAST]: {
+    type: EffectType.CONTRAST,
+    enabled: true,
+    amount: 0,
+  },
+  [EffectType.SATURATION]: {
+    type: EffectType.SATURATION,
+    enabled: true,
+    amount: 0,
+  },
+  [EffectType.HUE]: {
+    type: EffectType.HUE,
+    enabled: true,
+    rotation: 0,
   },
 };
 
@@ -391,6 +424,41 @@ export const EFFECT_METADATA: Record<EffectType, EffectMetadata> = {
     icon: 'RefreshCw',
     category: 'adjustment',
   },
+  [EffectType.COLOR_CORRECTION]: {
+    type: EffectType.COLOR_CORRECTION,
+    name: 'Color Correction',
+    description: 'Adjust color temperature and tint',
+    icon: 'Palette',
+    category: 'color',
+  },
+  [EffectType.BRIGHTNESS]: {
+    type: EffectType.BRIGHTNESS,
+    name: 'Brightness',
+    description: 'Adjust image brightness',
+    icon: 'Sun',
+    category: 'adjustment',
+  },
+  [EffectType.CONTRAST]: {
+    type: EffectType.CONTRAST,
+    name: 'Contrast',
+    description: 'Adjust image contrast',
+    icon: 'Contrast',
+    category: 'adjustment',
+  },
+  [EffectType.SATURATION]: {
+    type: EffectType.SATURATION,
+    name: 'Saturation',
+    description: 'Adjust color saturation',
+    icon: 'Droplets',
+    category: 'adjustment',
+  },
+  [EffectType.HUE]: {
+    type: EffectType.HUE,
+    name: 'Hue Rotate',
+    description: 'Rotate the color spectrum',
+    icon: 'Rainbow',
+    category: 'adjustment',
+  },
 };
 
 // ==========================================
@@ -408,7 +476,7 @@ export function createEffect(type: EffectType, order: number): Effect {
     order,
     expanded: false,
     masks: [],
-  } as Effect;
+  } as unknown as Effect;
 }
 
 /**

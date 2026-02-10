@@ -104,7 +104,7 @@ export const CaptionSettings: React.FC<CaptionSettingsProps> = ({
               msOverflowStyle: 'none'
             }}>
               <CaptionTimeline
-                localOverlay={clipAsOverlay}
+                localOverlay={clipAsOverlay as any}
                 setLocalOverlay={handleOverlayChange}
                 currentMs={currentMs}
               />
@@ -122,7 +122,7 @@ export const CaptionSettings: React.FC<CaptionSettingsProps> = ({
               msOverflowStyle: 'none'
             }}>
               <CaptionStylePanel
-                localOverlay={clipAsOverlay}
+                localOverlay={clipAsOverlay as any}
                 setLocalOverlay={handleOverlayChange}
               />
             </div>

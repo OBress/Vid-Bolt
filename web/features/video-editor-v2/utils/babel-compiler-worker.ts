@@ -214,7 +214,7 @@ class BabelWorkerManager {
             console.log('[BabelWorker] Worker ready');
             resolve(true);
           } else {
-            originalHandler?.call(this.worker, e);
+            originalHandler?.call(this.worker!, e);
           }
         };
         

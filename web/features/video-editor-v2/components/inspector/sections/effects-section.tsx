@@ -84,9 +84,52 @@ interface EffectsSectionProps {
   onUpdate: (updates: Partial<Overlay>) => void;
 }
 
-interface OverlayWithEffects extends Overlay {
+type OverlayWithEffects = Overlay & {
   effects?: Effect[];
-}
+};
+
+// ==========================================
+// MISSING EFFECT TYPE STUBS
+// (Used by color grading config components below)
+// ==========================================
+
+type CurvePoint = { x: number; y: number };
+
+type LevelsEffect = Effect & {
+  channel: 'rgb' | 'red' | 'green' | 'blue';
+  inputBlack: number;
+  inputWhite: number;
+  gamma: number;
+  outputBlack: number;
+  outputWhite: number;
+};
+
+type CurvesEffect = Effect & {
+  activeChannel: 'rgb' | 'red' | 'green' | 'blue';
+  rgb: CurvePoint[];
+  red: CurvePoint[];
+  green: CurvePoint[];
+  blue: CurvePoint[];
+  [key: string]: any;
+};
+
+type ColorWheelValue = {
+  hue: number;
+  saturation: number;
+  luminance: number;
+};
+
+type ColorWheelsEffect = Effect & {
+  lift: ColorWheelValue;
+  gamma: ColorWheelValue;
+  gain: ColorWheelValue;
+  globalSaturation: number;
+};
+
+type WhiteBalanceEffect = Effect & {
+  temperature: number;
+  tint: number;
+};
 
 // ==========================================
 // EFFECT CONFIG COMPONENTS

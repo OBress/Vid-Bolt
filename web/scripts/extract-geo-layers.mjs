@@ -36,7 +36,7 @@ const DATASETS = {
   rivers: {
     phase: 1,
     url: `${NE_BASE}/10m/physical/ne_10m_rivers_lake_centerlines.zip`,
-    output: 'rivers.json',
+    output: 'physical/rivers.json',
     type: 'geojson',           // output as GeoJSON FeatureCollection
     simplify: true,
     description: 'Major world rivers and lake centerlines',
@@ -45,7 +45,7 @@ const DATASETS = {
   lakes: {
     phase: 1,
     url: `${NE_BASE}/10m/physical/ne_10m_lakes.zip`,
-    output: 'lakes.json',
+    output: 'physical/lakes.json',
     type: 'geojson',
     simplify: true,
     description: 'Major world lakes',
@@ -54,7 +54,7 @@ const DATASETS = {
   oceans: {
     phase: 1,
     url: `${NE_BASE}/110m/physical/ne_110m_ocean.zip`,
-    output: 'oceans.json',
+    output: 'physical/oceans.json',
     type: 'geojson',
     simplify: false,           // already small at 110m scale
     description: 'Ocean polygons',
@@ -63,7 +63,7 @@ const DATASETS = {
   airports: {
     phase: 1,
     url: `${NE_BASE}/10m/cultural/ne_10m_airports.zip`,
-    output: 'airports.json',
+    output: 'cultural/airports.json',
     type: 'points',            // Record<name, {lat, lng, ...}>
     description: 'Major world airports',
     pointFields: {
@@ -74,7 +74,7 @@ const DATASETS = {
   ports: {
     phase: 1,
     url: `${NE_BASE}/10m/cultural/ne_10m_ports.zip`,
-    output: 'ports.json',
+    output: 'cultural/ports.json',
     type: 'points',
     description: 'Major world ports',
     pointFields: {
@@ -87,7 +87,7 @@ const DATASETS = {
   'urban-areas': {
     phase: 2,
     url: `${NE_BASE}/10m/cultural/ne_10m_urban_areas.zip`,
-    output: 'urban-areas.json',
+    output: 'cultural/urban-areas.json',
     type: 'geojson',
     simplify: true,
     description: 'Urban/built-up areas',
@@ -96,7 +96,7 @@ const DATASETS = {
   timezones: {
     phase: 2,
     url: `${NE_BASE}/10m/cultural/ne_10m_time_zones.zip`,
-    output: 'timezones.json',
+    output: 'cultural/timezones.json',
     type: 'geojson',
     simplify: true,
     description: 'World time zone boundaries',
@@ -105,7 +105,7 @@ const DATASETS = {
   coastlines: {
     phase: 2,
     url: `${NE_BASE}/10m/physical/ne_10m_coastline.zip`,
-    output: 'coastlines.json',
+    output: 'physical/coastlines.json',
     type: 'geojson',
     simplify: true,
     description: 'Detailed coastlines',
@@ -114,7 +114,7 @@ const DATASETS = {
   'geographic-lines': {
     phase: 2,
     url: `${NE_BASE}/110m/physical/ne_110m_geographic_lines.zip`,
-    output: 'geographic-lines.json',
+    output: 'physical/geographic-lines.json',
     type: 'geojson',
     simplify: false,
     description: 'Equator, tropics, arctic/antarctic circles, dateline',
@@ -123,7 +123,7 @@ const DATASETS = {
   glaciated: {
     phase: 2,
     url: `${NE_BASE}/10m/physical/ne_10m_glaciated_areas.zip`,
-    output: 'glaciated.json',
+    output: 'physical/glaciated.json',
     type: 'geojson',
     simplify: true,
     description: 'Glaciated areas (ice sheets, glaciers)',
@@ -132,7 +132,7 @@ const DATASETS = {
   reefs: {
     phase: 2,
     url: `${NE_BASE}/10m/physical/ne_10m_reefs.zip`,
-    output: 'reefs.json',
+    output: 'physical/reefs.json',
     type: 'geojson',
     simplify: false,
     description: 'Coral reefs',
@@ -344,6 +344,8 @@ async function main() {
 
   mkdirSync(TEMP_DIR, { recursive: true });
   mkdirSync(OUTPUT_DIR, { recursive: true });
+  mkdirSync(join(OUTPUT_DIR, 'physical'), { recursive: true });
+  mkdirSync(join(OUTPUT_DIR, 'cultural'), { recursive: true });
 
   // Determine which datasets to process
   let selectedNames;

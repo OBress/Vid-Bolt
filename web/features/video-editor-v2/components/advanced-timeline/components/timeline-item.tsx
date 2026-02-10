@@ -618,8 +618,8 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     return Math.min((overlap / duration) * 100, 50); // Cap at 50%
   };
   
-  const inTransitionPercent = calculateTransitionOverlap(item.inTransition, 'in', inTransitionPreview);
-  const outTransitionPercent = calculateTransitionOverlap(item.outTransition, 'out', outTransitionPreview);
+  const inTransitionPercent = calculateTransitionOverlap(item.inTransition, 'in', inTransitionPreview as any);
+  const outTransitionPercent = calculateTransitionOverlap(item.outTransition, 'out', outTransitionPreview as any);
   
   // Determine if resize handles should be visible (matches TimelineItemResizeHandles logic)
   const shouldShowHandles = isHovering || isSelected || isLinkedItemSelected;
@@ -677,7 +677,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     const newDuration = myCommittedPosition.duration;
     displayWidth = (newDuration / totalDuration) * 100;
     
-    const startOffset = myCommittedPosition.start - item.start;
+    const startOffset = (myCommittedPosition.start ?? item.start) - item.start;
     const offsetAsParentPercent = (startOffset / totalDuration) * 100;
     transformX = displayWidth > 0 ? (offsetAsParentPercent / displayWidth) * 100 : 0;
     
@@ -695,7 +695,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     if (hasCommittedPosition && myCommittedPosition) {
       // Check if item.start now matches the committed position (data has updated)
       const tolerance = 0.001; // Very small tolerance for floating point
-      const positionMatches = Math.abs(item.start - myCommittedPosition.start) < tolerance;
+      const positionMatches = Math.abs(item.start - (myCommittedPosition.start ?? item.start)) < tolerance;
       
       if (positionMatches) {
         // Data has updated to match committed position, clear it

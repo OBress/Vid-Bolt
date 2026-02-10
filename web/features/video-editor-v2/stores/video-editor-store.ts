@@ -36,6 +36,7 @@
 import { create } from 'zustand';
 import { subscribeWithSelector, persist } from 'zustand/middleware';
 import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import type {
   TimelineTrack,
   TimelineClip,
@@ -730,6 +731,7 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
                 id: generateId('track'),
                 name: `${trackType === 'video' ? 'Video' : 'Audio'} ${newTrackNumber}`,
                 type: trackType,
+                order: existingTracksOfType.length,
                 height: trackType === 'video' ? 80 : 60,
                 locked: false,
                 visible: true,
@@ -739,8 +741,8 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
                 updatedAt: now,
               };
               
-              targetTrackId = newTrackToAdd.id;
-              console.log('[VideoEditorStore] addClip: Will create new track:', newTrackToAdd.id, 'for clip');
+              targetTrackId = newTrackToAdd!.id;
+              console.log('[VideoEditorStore] addClip: Will create new track:', newTrackToAdd!.id, 'for clip');
             }
           }
           
@@ -2471,7 +2473,7 @@ export const selectClipsWithLinkGroups = (state: VideoEditorStore) =>
  * Hook: Get clips for a track with shallow comparison
  */
 export const useClipsByTrackId = (trackId: string) =>
-  useVideoEditorStore(selectClipsByTrackId(trackId), shallow);
+  useVideoEditorStore(useShallow(selectClipsByTrackId(trackId)));
 
 // === DENORMALIZED VIEW SELECTOR ===
 
@@ -2500,6 +2502,7 @@ export interface TimelineItem {
   mediaStart?: number;
   mediaDuration?: number;
   mediaSrcDuration?: number;
+  mediaEnd?: number;
   speed?: number;
   linkGroup?: string;
   linkedItemId?: string;
@@ -2580,7 +2583,7 @@ export const selectTracksWithClips = (state: VideoEditorStore): TrackWithClips[]
  * Hook: Get tracks with embedded clips using shallow comparison
  */
 export const useTracksWithClips = () => 
-  useVideoEditorStore(selectTracksWithClips, shallow);
+  useVideoEditorStore(useShallow(selectTracksWithClips));
 
 // ============================================================
 // ACTION SELECTOR (for stable references)
@@ -2733,26 +2736,26 @@ export const createClipSelector = (clipId: string) => (state: VideoEditorStore) 
  * Only triggers re-render when actual clip IDs change
  */
 export const useClipIds = () => 
-  useVideoEditorStore(selectClipIds, shallow);
+  useVideoEditorStore(useShallow(selectClipIds));
 
 /**
  * Hook for using track IDs with shallow comparison
  */
 export const useTrackIds = () =>
-  useVideoEditorStore(selectTrackIds, shallow);
+  useVideoEditorStore(useShallow(selectTrackIds));
 
 /**
  * Hook for using selected clip IDs with shallow comparison
  */
 export const useSelectedClipIds = () =>
-  useVideoEditorStore(selectSelectedClipIds, shallow);
+  useVideoEditorStore(useShallow(selectSelectedClipIds));
 
 /**
  * Hook for using clip positions with shallow comparison
  * Useful for timeline item rendering where only position matters
  */
 export const useClipPositions = () =>
-  useVideoEditorStore(selectClipPositions, shallow);
+  useVideoEditorStore(useShallow(selectClipPositions));
 
 // ============================================================
 // CONVENIENCE HOOKS

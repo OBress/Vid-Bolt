@@ -41,9 +41,9 @@ export async function GET(
     metadata_keys: Object.keys(video.metadata || {}),
     metadata_audio_chunks: (video.metadata as any)?.audio_chunks,
     audio_task_id: video.audio_task_id,
-    task_status: task?.status,
-    task_output_keys: Object.keys(task?.output_data || {}),
-    task_output_tts_chunks: (task?.output_data as any)?.tts_chunks,
+    task_status: (task as any)?.status,
+    task_output_keys: Object.keys((task as any)?.output_data || {}),
+    task_output_tts_chunks: ((task as any)?.output_data as any)?.tts_chunks,
     full_video: video,
     full_task: task
   });

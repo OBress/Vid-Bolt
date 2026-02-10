@@ -221,7 +221,6 @@ export function timelineClipToRenderClip(
     greenscreen: clip.greenscreen,
     keyframes: clip.keyframes,
     styles: clip.styles,
-    content: clip.content,
     thumbnailUrl: clip.thumbnailUrl,
     color: clip.color,
     data: clip.data,

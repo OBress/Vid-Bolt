@@ -67,7 +67,7 @@ function getPropertyColor(propertyPath: string): string {
 
 function getPropertyShortName(propertyPath: string): string {
   const prop = STANDARD_ANIMATABLE_PROPERTIES.find(p => p.path === propertyPath);
-  if (prop) return prop.label.charAt(0);
+  if (prop) return (prop.label ?? '?').charAt(0);
   return '?';
 }
 

@@ -22,24 +22,22 @@ export const getAnimations = (
   animationLoop?: Animation | Animation[] | null;
   animationTimed?: Animation | Animation[] | null;
 } => {
-  let animationIn = null;
-  let animationOut = null;
-  let animationLoop = null;
-  let animationTimed = null;
+  let animationIn: Animation[] | null = null;
+  let animationOut: Animation[] | null = null;
+  let animationLoop: Animation[] | null = null;
+  let animationTimed: Animation[] | null = null;
   if (animation?.in) {
     animationIn = [];
     animation.in.composition.forEach((comp) => {
       if (animation.in.name.includes("slide")) {
-        animationIn.push(getSlideAnimation(animation.in.name, comp, item));
+        animationIn!.push(getSlideAnimation(animation.in.name, comp, item)! as any);
       } else {
-        animationIn.push({
+        animationIn!.push({
           property: comp.property,
           from: comp.from,
           to: comp.to,
           durationInFrames: comp.durationInFrames,
-          ease: Easing[comp.easing as keyof typeof Easing] as (
-            t: number
-          ) => number
+          ease: Easing[comp.easing as keyof typeof Easing] as any
         });
       }
     });
@@ -48,16 +46,14 @@ export const getAnimations = (
     animationOut = [];
     animation.out.composition.forEach((comp) => {
       if (animation.out.name.includes("slide")) {
-        animationOut.push(getSlideAnimation(animation.out.name, comp, item));
+        animationOut!.push(getSlideAnimation(animation.out.name, comp, item)! as any);
       } else {
-        animationOut.push({
+        animationOut!.push({
           property: comp.property,
           from: comp.from,
           to: comp.to,
           durationInFrames: comp.durationInFrames,
-          ease: Easing[comp.easing as keyof typeof Easing] as (
-            t: number
-          ) => number
+          ease: Easing[comp.easing as keyof typeof Easing] as any
         });
       }
     });

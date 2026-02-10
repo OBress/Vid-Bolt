@@ -36,11 +36,10 @@ class AudioEffectsCache {
    */
   private getEffectsHash(effects: AudioEffect[]): string {
     const enabledEffects = effects.filter(e => e.enabled);
-    return JSON.stringify(enabledEffects.map(e => ({
-      type: e.type,
-      ...e,
-      id: undefined, // Exclude ID from hash
-    })));
+    return JSON.stringify(enabledEffects.map(e => {
+      const { id, ...rest } = e;
+      return rest;
+    }));
   }
   
   /**

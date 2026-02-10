@@ -35,7 +35,7 @@ const CloseGapIcon: React.FC<{ className?: string }> = ({ className }) => (
 // Tooltip component that renders in a portal
 // With boundary detection to keep tooltip within viewport
 const ToolTooltip: React.FC<{
-  buttonRef: React.RefObject<HTMLButtonElement>;
+  buttonRef: React.RefObject<HTMLButtonElement | null>;
   show: boolean;
   label: string;
   shortcut: string;
@@ -130,7 +130,7 @@ const ToolButton: React.FC<{
 }> = ({ tool, isActive, onClick }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const Icon = tool.icon;
 
   const handleMouseEnter = () => {
@@ -192,7 +192,7 @@ export const ToolsPanel: React.FC<ToolsPanelProps> = ({ className }) => {
   const { editMode, setEditMode, snappingEnabled, toggleSnapping } = useVideoEditorStore();
   const [showSnapTooltip, setShowSnapTooltip] = useState(false);
   const snapButtonRef = useRef<HTMLButtonElement>(null);
-  const snapHoverRef = useRef<ReturnType<typeof setTimeout>>();
+  const snapHoverRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const handleSnapEnter = () => {
     snapHoverRef.current = setTimeout(() => setShowSnapTooltip(true), 200);

@@ -6,7 +6,7 @@ import { ZOOM_CONSTRAINTS } from "../../constants";
 // Tooltip component that renders in a portal (matches ToolsPanel style)
 // With boundary detection to keep tooltip within viewport
 const ZoomTooltip: React.FC<{
-  buttonRef: React.RefObject<HTMLButtonElement>;
+  buttonRef: React.RefObject<HTMLButtonElement | null>;
   show: boolean;
   label: string;
   shortcut?: string;
@@ -98,7 +98,7 @@ export const ZoomControls: React.FC<ZoomControlsProps> = ({
 }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   
   const handleMouseEnter = () => {
     hoverTimeoutRef.current = setTimeout(() => setShowTooltip(true), 200);

@@ -10,12 +10,65 @@ import {
   type CommittedDragPosition,
 } from '../../../stores/video-editor-store';
 
+/** Check if an item type is compatible with a track type */
+const canItemGoOnTrack = (itemType: string, trackType: string): boolean => {
+  const audioTypes = ['audio', 'sound'];
+  const videoTypes = ['video', 'image', 'text', 'shape', 'motion-graphics', 'gif'];
+  if (trackType === 'audio') return audioTypes.includes(itemType);
+  if (trackType === 'video') return videoTypes.includes(itemType) || !audioTypes.includes(itemType);
+  return true;
+};
+
+/** Calculate ripple edit preview - pushes subsequent items when resizing */
+const calculateRippleEditPreview = (
+  items: TimelineItem[],
+  resizedItemId: string,
+  newStart: number,
+  newEnd: number
+): Array<{ id: string; start: number; end: number; duration: number }> => {
+  const sorted = [...items].sort((a, b) => a.start - b.start);
+  const result: Array<{ id: string; start: number; end: number; duration: number }> = [];
+  let offset = 0;
+  for (const item of sorted) {
+    if (item.id === resizedItemId) {
+      result.push({ id: item.id, start: newStart, end: newEnd, duration: newEnd - newStart });
+      offset = newEnd - item.end;
+    } else {
+      const s = item.start + offset;
+      const e = item.end + offset;
+      result.push({ id: item.id, start: s, end: e, duration: e - s });
+    }
+  }
+  return result;
+};
+
+/** Push items during resize to prevent overlap */
+const pushItemsDuringResize = (
+  items: TimelineItem[],
+  resizedItemId: string,
+  newStart: number,
+  newEnd: number
+): { actualStart: number; actualEnd: number; items: TimelineItem[] } => {
+  const sorted = [...items].sort((a, b) => a.start - b.start);
+  const result: TimelineItem[] = [];
+  let offset = 0;
+  for (const item of sorted) {
+    if (item.id === resizedItemId) {
+      result.push({ ...item, start: newStart, end: newEnd });
+      offset = newEnd - item.end;
+    } else {
+      result.push({ ...item, start: item.start + offset, end: item.end + offset });
+    }
+  }
+  return { actualStart: newStart, actualEnd: newEnd, items: result };
+};
+
 interface UseTimelineDragAndDropProps {
   totalDuration: number; // Total timeline duration in seconds
   tracks: TrackWithClips[];
   onItemMove?: (itemId: string, newStart: number, newEnd: number, newTrackId: string) => void;
   onItemResize?: (itemId: string, newStart: number, newEnd: number) => void;
-  timelineRef: React.RefObject<HTMLDivElement>;
+  timelineRef: React.RefObject<HTMLDivElement | null>;
   onInsertTrackAt?: (index: number, trackType?: 'video' | 'audio', moveItem?: { itemId: string; newStart: number; newEnd: number }) => string;
   onInsertMultipleTracksAt?: (index: number, count: number) => string[];
   onCreateTracksWithItems?: (
@@ -584,7 +637,7 @@ export const useTimelineDragAndDrop = ({
               originalStartTime: draggedItem.start,
               originalDuration: draggedItem.end - draggedItem.start,
               originalTrackId: tracks[draggedItemTrackIndex].id,
-              type: draggedItem.type,
+              type: draggedItem.type as any,
               label: draggedItem.label,
               mediaStartTime: draggedItem.mediaStart,
               mediaDuration: draggedItem.mediaSrcDuration,

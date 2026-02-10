@@ -6,7 +6,7 @@ import { calculateMousePosition } from '../utils';
  * Uses CSS custom properties for ghost marker positioning to avoid React re-renders
  */
 export const useTimelineInteractions = (
-  timelineRef: React.RefObject<HTMLDivElement>,
+  timelineRef: React.RefObject<HTMLDivElement | null>,
   zoomScale: number = 1
 ) => {
   // Keep only essential React state that actually needs to trigger re-renders

@@ -54,7 +54,7 @@ export interface TimelineTrack {
   order: number;
   
   /** Track group (for separating video/audio sections) */
-  group: TrackGroup;
+  group?: TrackGroup;
   
   // === METADATA ===
   /** Whether track is locked (prevents editing) */
@@ -78,8 +78,17 @@ export interface TimelineTrack {
   /** Track height multiplier (optional, for custom heights) */
   heightMultiplier?: number;
   
+  /** Track height in pixels (optional, used by some UI components) */
+  height?: number;
+  
   /** Whether track is targeted for new content */
   targeted?: boolean;
+  
+  /** Creation timestamp */
+  createdAt?: number;
+  
+  /** Update timestamp */
+  updatedAt?: number;
 }
 
 // ============================================================
@@ -94,6 +103,7 @@ export type ClipType =
   | 'caption'
   | 'shape' 
   | 'sticker'
+  | 'sound'
   | 'motion-graphics';
 
 /**
@@ -130,10 +140,10 @@ export interface ClipTransform {
  */
 export interface MediaClipProperties {
   /** Media start time (trim offset) */
-  mediaStartTime: number;
+  mediaStartTime?: number;
   
   /** Original media duration */
-  mediaDuration: number;
+  mediaDuration?: number;
   
   /** Playback speed multiplier */
   speed: number;
@@ -143,6 +153,9 @@ export interface MediaClipProperties {
   
   /** Volume (0-1) for audio/video */
   volume?: number;
+  
+  /** Media source URL */
+  src?: string;
 }
 
 /**
@@ -169,6 +182,9 @@ export interface TextClipProperties {
   
   /** Additional styles */
   styles?: Record<string, any>;
+  
+  /** Text content (alias for text field, used in some rendering paths) */
+  content?: string;
 }
 
 /**
@@ -249,6 +265,10 @@ export interface TimelineClip {
   // === VISUAL STYLE ===
   // Note: opacity is stored in transform.opacity (canonical location)
   // Note: volume is stored in media.volume (canonical location)
+  /** Backward-compat: direct opacity value */
+  opacity?: number;
+  /** Backward-compat: direct volume value */
+  volume?: number;
   
   /** Visual styles (filters, blend modes, etc.) */
   styles?: Record<string, any>;
@@ -558,6 +578,15 @@ export interface TransitionEntity {
    */
   position: 'in' | 'out' | 'between';
   
+  /** Optional effect configuration */
+  effect?: any;
+  
+  /** Transition mode (e.g. 'wipe', 'dissolve') */
+  mode?: string;
+  
+  /** Duration in seconds (derived: endTime - startTime, but also settable) */
+  duration?: number;
+  
   createdAt: number;
   updatedAt: number;
 }
@@ -786,6 +815,12 @@ export interface CommittedDragPosition {
   trackId: string;
   originalStartTime: number;
   originalTrackId?: string;
+  /** Drag start position (alias for startTime, used by some UI components) */
+  start?: number;
+  /** Row index in the timeline grid */
+  row?: number;
+  /** Original row index before the drag */
+  originalRow?: number;
 }
 
 // ============================================================

@@ -350,7 +350,7 @@ export const TextLayerContent: React.FC<TextLayerContentProps> = ({
 
   // Build text style with advanced features
   const textStyle: React.CSSProperties = {
-    ...restStyles,
+    ...(restStyles as any),
     animation: undefined,
     fontSize: `${fontSize}px`, // Always use our calculated fontSize
     fontFamily: fontFamily, // Use original font name, not loadedFontFamily

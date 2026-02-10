@@ -131,7 +131,7 @@ export function useProjectSync(
 
     try {
       const result = await saveProjectState(projectId, {
-        timelineData: payload.timelineData,
+        timelineData: payload.timelineData as any,
         editorPreferences: {
           aspectRatio: payload.aspectRatio,
           resolution: payload.resolution,

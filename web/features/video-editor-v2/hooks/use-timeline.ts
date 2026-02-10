@@ -212,7 +212,7 @@ export const useTimeline = (): UseTimelineReturn => {
   }, []);
   
   const trimClip = useCallback((clipId: string, newStart: number, newDuration: number, trimType?: 'start' | 'end' | 'both') => {
-    actions.trimClip(clipId, newStart, newDuration, trimType);
+    actions.trimClip(clipId, newStart, newDuration);
   }, []);
   
   const linkClips = useCallback((clipId1: string, clipId2: string) => {
@@ -295,7 +295,7 @@ export const useTimeline = (): UseTimelineReturn => {
     actions.selectClip(id);
   }, []);
   
-  const selectClips = useCallback((ids: string[]) => {
+  const selectMultipleClips = useCallback((ids: string[]) => {
     actions.selectClips(ids);
   }, []);
   
@@ -351,7 +351,7 @@ export const useTimeline = (): UseTimelineReturn => {
     deleteClips,
     moveClip,
     duplicateClip,
-    splitClip,
+    splitClip: splitClip as UseTimelineReturn['splitClip'],
     trimClip,
     linkClips,
     unlinkClips,
@@ -375,7 +375,7 @@ export const useTimeline = (): UseTimelineReturn => {
     
     // Selection
     selectClip,
-    selectClips,
+    selectClips: selectMultipleClips,
     addToSelection,
     removeFromSelection,
     clearSelection,

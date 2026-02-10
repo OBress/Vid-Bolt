@@ -239,21 +239,21 @@ export const CompositionInspector: React.FC<CompositionInspectorProps> = ({
                   {selectedLayer.type === 'text' && selectedLayer.layerProperties?.type === 'text' && (
                     <TextLayerSection
                       properties={selectedLayer.layerProperties.properties || {}}
-                      onUpdate={(updates) => updateLayerProperties(selectedLayer.id, updates)}
+                      onUpdate={(updates) => updateLayerProperties(selectedLayer.id, updates as any)}
                     />
                   )}
 
                   {selectedLayer.type === 'shape' && selectedLayer.layerProperties?.type === 'shape' && (
                     <ShapeLayerSection
                       properties={selectedLayer.layerProperties.properties || {}}
-                      onUpdate={(updates) => updateLayerProperties(selectedLayer.id, updates)}
+                      onUpdate={(updates) => updateLayerProperties(selectedLayer.id, updates as any)}
                     />
                   )}
 
                   {selectedLayer.type === 'solid' && selectedLayer.layerProperties?.type === 'solid' && (
                     <SolidLayerSection
                       properties={selectedLayer.layerProperties.properties || {}}
-                      onUpdate={(updates) => updateLayerProperties(selectedLayer.id, updates)}
+                      onUpdate={(updates) => updateLayerProperties(selectedLayer.id, updates as any)}
                     />
                   )}
 

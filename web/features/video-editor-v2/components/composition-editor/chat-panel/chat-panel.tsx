@@ -151,7 +151,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
   const { selectedModelId } = useAISettingsStore();
   // TODO: useUserSettings not available in Vid-Bolt
   // const { data: userSettings } = useUserSettings();
-  const userSettings: { openrouter_key?: string } | null = null;
+  const userSettings: any = null;
   const hasApiKey = Boolean(userSettings?.openrouter_key);
 
   // Generation hook
@@ -193,7 +193,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     const newMessage: ExtendedChatMessage = {
       ...message,
       id: crypto.randomUUID(),
-      timestamp: Date.now(),
+      timestamp: Date.now() as any,
     };
     setChatMessages(prev => [...prev, newMessage]);
     return newMessage.id;

@@ -11,6 +11,7 @@
 import React, { useRef, useCallback, useState, useMemo, useEffect } from 'react';
 import type { CompositionLayer } from '../../../../types/composition';
 import type { PropertyKeyframes, Keyframe } from '../../../../types/keyframes';
+import { cn } from '../../../../utils/general/utils';
 
 interface GraphEditorProps {
   layer: CompositionLayer | null;

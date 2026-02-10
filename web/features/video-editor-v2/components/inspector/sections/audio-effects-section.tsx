@@ -925,7 +925,7 @@ export const AudioEffectsSection: React.FC<AudioEffectsSectionProps> = ({
   // Update effect
   const handleUpdateEffect = useCallback((effectId: string, updates: Partial<AudioEffect>) => {
     onUpdate(audioEffects.map(e => 
-      e.id === effectId ? { ...e, ...updates } : e
+      e.id === effectId ? { ...e, ...updates } as any : e
     ));
   }, [audioEffects, onUpdate]);
   

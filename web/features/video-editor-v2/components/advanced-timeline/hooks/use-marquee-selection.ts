@@ -3,7 +3,7 @@ import { TrackWithClips } from '../types';
 import { TIMELINE_CONSTANTS } from '../constants';
 
 interface UseMarqueeSelectionProps {
-  timelineRef: React.RefObject<HTMLDivElement>;
+  timelineRef: React.RefObject<HTMLDivElement | null>;
   tracks: TrackWithClips[];
   totalDuration: number;
   selectedItemIds: string[];

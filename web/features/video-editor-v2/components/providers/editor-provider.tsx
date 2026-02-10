@@ -39,7 +39,7 @@ interface EditorProviderProps {
   fps?: number;
   
   // Player Configuration
-  playerRef?: React.RefObject<PlayerRef>;
+  playerRef?: React.RefObject<PlayerRef | null>;
   
   // API Configuration
   baseUrl?: string;
@@ -182,7 +182,7 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
     play, 
     pause, 
     seekTo 
-  } = useVideoPlayer(fps, externalPlayerRef);
+  } = useVideoPlayer(fps, externalPlayerRef as any);
   
   const playerRef = externalPlayerRef || internalPlayerRef;
   
@@ -216,8 +216,8 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
       // TODO: Implement Supabase save
       console.log('[EditorProvider] Saving project:', {
         projectId,
-        tracks: state.timelineTracks.length,
-        clips: state.timelineClips.length,
+        tracks: state.tracks.length,
+        clips: state.clips.length,
       });
       
       state.markSaved();
@@ -281,7 +281,7 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
   };
 
   return (
-    <EditorContextProvider value={contextValue}>
+    <EditorContextProvider value={contextValue as any}>
       {children}
     </EditorContextProvider>
   );
