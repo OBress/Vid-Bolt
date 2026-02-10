@@ -50,11 +50,142 @@ geoPath;
 // Grid lines
 geoGraticule; // Creates lat/lng grid lines (every 10° by default)
 
-// Pre-loaded data
+// Pre-loaded data (synchronous)
 WorldCountries; // GeoJSON FeatureCollection — all country borders
 WorldLand; // GeoJSON FeatureCollection — land masses (no borders)
-MajorCities; // Object: { 'New York': { lat, lng, country, tier }, ... }
-getCityCoords; // Function: getCityCoords('Tokyo') → [139.65, 35.68] or null
+
+// City database (async, lazy-loaded from /geo/cities.json — 7,270 cities)
+loadCities; // Async: loadCities() → Promise<Record<string, CityInfo>> — loads and caches all cities
+getCityCoords; // Sync after loadCities: getCityCoords('Tokyo') → [139.65, 35.68] or null
+getCityInfo; // Sync after loadCities: getCityInfo('Tokyo') → { lat, lng, country, tier } or null
+
+// Sub-national data (states/provinces) — async, lazy-loaded
+getSubNationalData; // Async: getSubNationalData('US') → Promise<FeatureCollection | null>
+SUPPORTED_SUBNATIONAL_COUNTRIES; // Set<string> of ISO2 codes — 240 countries with sub-national data
+
+// Geographic layers — all async, lazy-loaded from /geo/*.json
+loadRivers; // Async: → Promise<FeatureCollection | null> — 1,473 river features with name, scalerank
+loadLakes; // Async: → Promise<FeatureCollection | null> — 1,355 lake features with name, scalerank
+loadOceans; // Async: → Promise<FeatureCollection | null> — ocean polygons
+loadAirports; // Async: → Promise<Record<name, {lat, lng, iata_code, type}>> — 893 airports
+loadPorts; // Async: → Promise<Record<name, {lat, lng, scalerank}>> — 1,081 ports
+loadUrbanAreas; // Async: → Promise<FeatureCollection | null> — 11,878 urban area polygons
+loadTimezones; // Async: → Promise<FeatureCollection | null> — 120 time zone boundaries
+loadCoastlines; // Async: → Promise<FeatureCollection | null> — 4,133 detailed coastline features
+loadGeographicLines; // Async: → Promise<FeatureCollection | null> — equator, tropics, arctic circles, dateline
+loadGlaciated; // Async: → Promise<FeatureCollection | null> — 1,886 ice sheet/glacier features
+loadReefs; // Async: → Promise<FeatureCollection | null> — 1,043 coral reef features
+```
+
+## Sub-National Maps (States & Provinces)
+
+You can render **state/province boundaries** for **240 countries** worldwide. Data is loaded lazily — use `useState` + `useEffect` to load it.
+
+Any valid ISO 3166-1 alpha-2 country code is supported (US, GB, FR, BR, IN, CN, JP, AU, DE, RU, etc.).
+
+### US States Map with Highlights
+
+```tsx
+const { width, height } = useVideoConfig();
+const frame = useCurrentFrame();
+const [states, setStates] = useState(null);
+
+useEffect(() => {
+  getSubNationalData("US").then(setStates);
+}, []);
+
+if (!states) return <AbsoluteFill style={{ backgroundColor: "#0a1628" }} />;
+
+const projection = geoMercator()
+  .center([-98, 39])
+  .scale(600)
+  .translate([width / 2, height / 2]);
+const path = geoPath(projection);
+
+const highlighted = ["California", "Texas", "New York"];
+const isHighlighted = (f) => highlighted.includes(f.properties.name);
+
+return (
+  <AbsoluteFill style={{ backgroundColor: "#0a1628" }}>
+    <svg width={width} height={height}>
+      {states.features.map((feature, i) => {
+        const hl = isHighlighted(feature);
+        const delay = hl ? i * 3 : 0;
+        const opacity = hl
+          ? spring({ frame: frame - delay, fps: 30, config: { damping: 15 } })
+          : 1;
+        return (
+          <path
+            key={i}
+            d={path(feature) || ""}
+            fill={hl ? "#FFB020" : "#1a2744"}
+            stroke="#2a3f66"
+            strokeWidth={0.5}
+            opacity={Math.max(0, opacity)}
+          />
+        );
+      })}
+    </svg>
+  </AbsoluteFill>
+);
+```
+
+### India States Map (Zoomed)
+
+```tsx
+const { width, height } = useVideoConfig();
+const [regions, setRegions] = useState(null);
+
+useEffect(() => {
+  getSubNationalData("IN").then(setRegions);
+}, []);
+
+if (!regions) return <AbsoluteFill style={{ backgroundColor: "#0a1628" }} />;
+
+const projection = geoMercator()
+  .center([82, 22])
+  .scale(800)
+  .translate([width / 2, height / 2]);
+const path = geoPath(projection);
+
+const highlighted = ["Maharashtra", "Karnataka"];
+
+return (
+  <AbsoluteFill style={{ backgroundColor: "#0a1628" }}>
+    <svg width={width} height={height}>
+      {regions.features.map((feature, i) => (
+        <path
+          key={i}
+          d={path(feature) || ""}
+          fill={
+            highlighted.includes(feature.properties.name)
+              ? "#22c55e"
+              : "#1e293b"
+          }
+          stroke="#334155"
+          strokeWidth={0.5}
+        />
+      ))}
+    </svg>
+  </AbsoluteFill>
+);
+```
+
+### Loading Any Supported Country
+
+```tsx
+// Pattern for any supported country:
+const [data, setData] = useState(null);
+useEffect(() => {
+  getSubNationalData("BR").then(setData); // Brazil, or any ISO2 code
+}, []);
+
+// Check if a country ISO code is supported:
+if (SUPPORTED_SUBNATIONAL_COUNTRIES.has("BR")) {
+  /* supported */
+}
+
+// Each feature has: feature.properties.name (state/province name)
 ```
 
 ## Basic World Map
@@ -295,6 +426,6 @@ const vehicleY = interpolate(
 3. **Call `.fitSize([width, height], WorldLand)`** on projection to auto-scale the map to the composition
 4. **Use `geoPath(projection)`** to generate SVG path `d` attributes from GeoJSON features
 5. **`projection([lng, lat])`** converts coordinates to `[x, y]` pixels — note **longitude first**
-6. **All data is pre-loaded** — no fetch/async needed. WorldCountries, WorldLand, MajorCities are constants
+6. **City data requires `loadCities()` first** — call it in `useEffect`, then use `getCityCoords()` / `getCityInfo()` synchronously after loading
 7. **Do NOT import d3-geo or topojson** — everything is already in scope
 8. **Render maps as `<svg>`** elements, not `<canvas>` — SVG plays well with Remotion's DOM rendering

@@ -491,7 +491,7 @@ class MotionGraphicsService {
       'messaging': ['chat', 'message', 'bubble', 'whatsapp', 'imessage', 'sms', 'conversation', 'dm'],
       'social-media': ['instagram', 'tiktok', 'youtube', 'story', 'reel', 'vertical', 'shorts', 'social', 'post'],
       '3d': ['3d', 'three', 'cube', 'sphere', 'rotate', 'spatial', 'dimension', 'threejs'],
-      'maps': ['map', 'mapbox', 'location', 'route', 'geography', 'travel', 'marker', 'pin', 'coordinate', 'd3-geo', 'globe', 'flight', 'country', 'world', 'city', 'projection'],
+      'maps': ['map', 'mapbox', 'location', 'route', 'geography', 'travel', 'marker', 'pin', 'coordinate', 'd3-geo', 'globe', 'flight', 'country', 'world', 'city', 'projection', 'state', 'province', 'region', 'county', 'district', 'territory', 'prefecture'],
       'lottie': ['lottie', 'after effects', 'bodymovin', 'json animation'],
       'images': ['image', 'photo', 'picture', 'logo', 'icon', 'graphic'],
       'videos': ['video', 'clip', 'footage', 'embed'],
@@ -774,6 +774,36 @@ class MotionGraphicsService {
         const editResult = this.applyEdits(currentCode, result.edits);
         
         if (!editResult.success) {
+          // Fallback: re-request as full replacement instead of erroring out
+          console.warn(`[MotionGraphicsService] Targeted edit failed: ${editResult.error}. Falling back to full replacement.`);
+          sendSSE({ type: 'stage', stage: 'editing', message: 'Retrying with full replacement...' });
+
+          try {
+            const fallbackPrompt = `## CURRENT CODE:\n\`\`\`tsx\n${currentCode}\n\`\`\`\n\n## USER REQUEST:\n${prompt}\n\nThe targeted edit approach failed. You MUST provide a full replacement.\n\nRespond with ONLY a JSON object: { "type": "full", "summary": "...", "code": "...full replacement code..." }`;
+
+            const { content: fallbackContent } = await callOpenRouter(apiKey, model, [
+              { role: 'system', content: FOLLOW_UP_SYSTEM_PROMPT + '\n\nYou MUST respond with type: "full" and provide the complete replacement code. Do NOT use type: "edit".' },
+              { role: 'user', content: fallbackPrompt },
+            ], {
+              temperature: 0.3,
+              maxTokens: 16384,
+            });
+
+            const fallbackResult = this.parseAIJson<{
+              type?: string;
+              code?: string;
+              summary?: string;
+            }>(fallbackContent, { type: 'full', code: fallbackContent, summary: 'Full replacement after edit failure' });
+
+            if (fallbackResult.code) {
+              sendSSE({ type: 'edit', summary: fallbackResult.summary || 'Applied fix via full replacement', editType: 'full' });
+              await this.finalizeGeneration(sendSSE, fallbackResult.code, detectedSkills, 'full');
+              return;
+            }
+          } catch (fallbackError) {
+            console.error('[MotionGraphicsService] Full replacement fallback also failed:', fallbackError);
+          }
+
           sendSSE({ type: 'error', error: editResult.error, errorType: 'edit_failed' });
           return;
         }
@@ -815,30 +845,100 @@ class MotionGraphicsService {
       const edit = edits[i];
       const { old_string, new_string, description } = edit;
 
-      if (!result.includes(old_string)) {
-        return {
-          success: false,
-          result: code,
-          error: `Edit ${i + 1} failed: Could not find the specified text`,
-        };
+      // Strategy 1: Exact match
+      if (result.includes(old_string)) {
+        const matches = result.split(old_string).length - 1;
+        if (matches > 1) {
+          return {
+            success: false,
+            result: code,
+            error: `Edit ${i + 1} failed: Found ${matches} matches. The edit target is ambiguous.`,
+          };
+        }
+
+        const lineNumber = this.getLineNumber(result, old_string);
+        result = result.replace(old_string, new_string);
+        enrichedEdits.push({ description, old_string, new_string, lineNumber });
+        continue;
       }
 
-      const matches = result.split(old_string).length - 1;
-      if (matches > 1) {
-        return {
-          success: false,
-          result: code,
-          error: `Edit ${i + 1} failed: Found ${matches} matches. The edit target is ambiguous.`,
-        };
+      // Strategy 2: Whitespace-normalized fuzzy match
+      const fuzzyResult = this.fuzzyFindAndReplace(result, old_string, new_string);
+      if (fuzzyResult) {
+        console.log(`[MotionGraphicsService] Edit ${i + 1}: exact match failed, fuzzy match succeeded`);
+        const lineNumber = this.getLineNumber(result, fuzzyResult.matchedOriginal);
+        result = fuzzyResult.result;
+        enrichedEdits.push({ description: `${description} (fuzzy matched)`, old_string: fuzzyResult.matchedOriginal, new_string, lineNumber });
+        continue;
       }
 
-      const lineNumber = this.getLineNumber(result, old_string);
-      result = result.replace(old_string, new_string);
-
-      enrichedEdits.push({ description, old_string, new_string, lineNumber });
+      // Both strategies failed
+      return {
+        success: false,
+        result: code,
+        error: `Edit ${i + 1} failed: Could not find the specified text (exact and fuzzy match both failed)`,
+      };
     }
 
     return { success: true, result, enrichedEdits };
+  }
+
+  /**
+   * Fuzzy find-and-replace: normalizes whitespace in both the haystack and needle,
+   * finds the match in normalized space, maps back to original positions, and replaces.
+   */
+  private fuzzyFindAndReplace(
+    code: string,
+    oldString: string,
+    newString: string
+  ): { result: string; matchedOriginal: string } | null {
+    // Build a mapping from normalized-index → original-index
+    // Normalization: collapse all runs of whitespace (spaces, tabs, newlines) to a single space, then trim
+    const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+    const normalizedOld = normalize(oldString);
+    if (!normalizedOld) return null;
+
+    // Build normalized version of code with index mapping
+    const normalizedChars: string[] = [];
+    const indexMap: number[] = []; // normalizedChars[i] came from code[indexMap[i]]
+    let prevWasSpace = false;
+
+    for (let i = 0; i < code.length; i++) {
+      const ch = code[i];
+      if (/\s/.test(ch)) {
+        if (!prevWasSpace && normalizedChars.length > 0) {
+          normalizedChars.push(' ');
+          indexMap.push(i);
+        }
+        prevWasSpace = true;
+      } else {
+        normalizedChars.push(ch);
+        indexMap.push(i);
+        prevWasSpace = false;
+      }
+    }
+
+    const normalizedCode = normalizedChars.join('');
+    const matchIndex = normalizedCode.indexOf(normalizedOld);
+    if (matchIndex === -1) return null;
+
+    // Check for ambiguity
+    const secondMatch = normalizedCode.indexOf(normalizedOld, matchIndex + normalizedOld.length);
+    if (secondMatch !== -1) return null; // Ambiguous — multiple matches
+
+    // Map back to original code positions
+    const originalStart = indexMap[matchIndex];
+    const normalizedEnd = matchIndex + normalizedOld.length - 1;
+    const originalEnd = indexMap[normalizedEnd];
+
+    // Extract the original text that was matched (preserving original whitespace)
+    const matchedOriginal = code.substring(originalStart, originalEnd + 1);
+
+    // Replace in original code
+    const result = code.substring(0, originalStart) + newString + code.substring(originalEnd + 1);
+
+    return { result, matchedOriginal };
   }
 
   private getLineNumber(code: string, searchString: string): number {

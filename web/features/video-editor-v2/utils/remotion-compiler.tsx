@@ -113,8 +113,23 @@ import {
 import {
   WorldCountries,
   WorldLand,
-  MajorCities,
+  loadCities,
   getCityCoords,
+  getCityInfo,
+  getSubNationalData,
+  SUPPORTED_SUBNATIONAL_COUNTRIES,
+  // Geo layers
+  loadRivers,
+  loadLakes,
+  loadOceans,
+  loadAirports,
+  loadPorts,
+  loadUrbanAreas,
+  loadTimezones,
+  loadCoastlines,
+  loadGeographicLines,
+  loadGlaciated,
+  loadReefs,
 } from './remotion/geo-data';
 
 // Optional packages - These are truly optional and may not be installed
@@ -449,7 +464,12 @@ function createComponentFromTranspiled(
       // d3-geo map rendering
       'geoPath', 'geoMercator', 'geoOrthographic', 'geoNaturalEarth1',
       'geoEquirectangular', 'geoGraticule',
-      'WorldCountries', 'WorldLand', 'MajorCities', 'getCityCoords',
+      'WorldCountries', 'WorldLand', 'loadCities', 'getCityCoords', 'getCityInfo',
+      'getSubNationalData', 'SUPPORTED_SUBNATIONAL_COUNTRIES',
+      // Geo layers
+      'loadRivers', 'loadLakes', 'loadOceans', 'loadAirports', 'loadPorts',
+      'loadUrbanAreas', 'loadTimezones', 'loadCoastlines', 'loadGeographicLines',
+      'loadGlaciated', 'loadReefs',
     ];
 
     // Build parameter values (matching names above)
@@ -505,7 +525,12 @@ function createComponentFromTranspiled(
       // d3-geo map rendering
       geoPath, geoMercator, geoOrthographic, geoNaturalEarth1,
       geoEquirectangular, geoGraticule,
-      WorldCountries, WorldLand, MajorCities, getCityCoords,
+      WorldCountries, WorldLand, loadCities, getCityCoords, getCityInfo,
+      getSubNationalData, SUPPORTED_SUBNATIONAL_COUNTRIES,
+      // Geo layers
+      loadRivers, loadLakes, loadOceans, loadAirports, loadPorts,
+      loadUrbanAreas, loadTimezones, loadCoastlines, loadGeographicLines,
+      loadGlaciated, loadReefs,
     ];
 
     // INJECT ALL ICONS

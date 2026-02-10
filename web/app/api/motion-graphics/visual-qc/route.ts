@@ -22,7 +22,11 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 const VISUAL_QC_PROMPT = `You are a strict motion graphics quality inspector for Remotion animations.
 
-Given screenshots of a generated animation at key frames, determine if the output PASSES or FAILS against the user's original request.
+Given screenshots of a generated animation at key frames AND the source code that produced them, determine if the output PASSES or FAILS against the user's original request.
+
+You MUST cross-reference what you SEE in the screenshots with the ACTUAL CODE to identify exactly which code elements are causing issues.
+
+Note: The source code may be truncated for length — do NOT treat truncated code as a render failure. Judge by what you see in the screenshots.
 
 ## EVALUATION CHECKLIST
 
@@ -54,29 +58,46 @@ Cross-reference the user's prompt against the screenshots. Every element, visual
 - The frames should show different visual states across time
 - If all frames look completely identical with no motion or transitions → FAIL (no animation)
 
+## ELEMENT IDENTIFICATION (CRITICAL)
+
+When reporting issues, you MUST identify the SPECIFIC code element causing each problem:
+- Reference elements by their variable name, constant name, or JSX component name from the source code
+- For example: "TITLE_TEXT", "mapGroup", "barChart", "particles array", "<Circle /> at index 3"
+- Look at the code's constants, variable names, and JSX structure to find the exact element
+- If you can't identify the exact variable, describe the element precisely (e.g., "the blue circle in the top-right")
+
 ## VERDICT
 - PASS only if ALL above criteria are met
 - FAIL if ANY criterion is violated
 
 ## THOROUGHNESS (CRITICAL)
 - List EVERY issue you can find, not just the most obvious one. The developer needs to fix ALL problems in a single pass.
-- For each issue, be extremely specific: name the exact element, describe what's wrong, and where it appears.
-- For each suggestion, give a concrete code-level fix — don't just say "fix it", say exactly how (e.g., "Change geoNaturalEarth1().fitSize([width, height], WorldLand) so the map fills the canvas").
+- For each issue, identify the EXACT code element (by variable/constant/component name) and describe what's wrong.
+- For each suggestion, give a concrete code-level fix referencing the specific variable or JSX element.
 - If the animation is mostly blank, diagnose WHY: is it a runtime error? Wrong projection? Elements positioned off-screen? Zero opacity?
 
 You MUST respond with ONLY a valid JSON object in this exact format:
 {
   "passed": true,
-  "issues": [],
-  "suggestions": [],
-  "summary": "Animation matches the request with no visual issues"
+  "elementIssues": [
+    {
+      "elementId": "variable/constant/component name from the code",
+      "elementDescription": "What this element represents visually",
+      "issue": "What is wrong with this element",
+      "severity": "critical|major|minor",
+      "suggestedFix": "Specific code change to fix this element"
+    }
+  ],
+  "generalIssues": ["Non-element-specific problems like missing animation"],
+  "summary": "Single concise sentence explaining the verdict"
 }
 
 Rules:
 - "passed": true if the output is acceptable, false if it needs to be regenerated
-- "issues": list of ALL specific problems found (empty array if passed). Be exhaustive — list every missing element, every visual bug.
-- "suggestions": actionable code-level fixes for EVERY issue (empty array if passed). Reference specific variables, functions, or components.
-- "summary": single concise sentence explaining the verdict`;
+- "elementIssues": array of objects, each identifying a specific code element and what's wrong. Be exhaustive.
+- "generalIssues": problems that don't map to a specific element (e.g., "no animation detected")
+- "summary": single concise sentence explaining the verdict
+- If passed is true, both issue arrays should be empty`;
 
 // ============================================================
 // HANDLER
@@ -140,10 +161,11 @@ export async function POST(request: NextRequest) {
 
     // 3. Parse request body
     const body = await request.json();
-    const { screenshots, prompt, model } = body as {
+    const { screenshots, prompt, model, code } = body as {
       screenshots: string[];
       prompt: string;
       model: string;
+      code?: string;
     };
 
     if (!screenshots?.length || !prompt || !model) {
@@ -175,7 +197,7 @@ export async function POST(request: NextRequest) {
         content: [
           {
             type: 'text' as const,
-            text: `Original user request: "${prompt}"\n\nHere are ${screenshots.length} screenshots from the generated animation (frames: start, middle, end). Evaluate the quality:`,
+            text: `Original user request: "${prompt}"\n\n${code ? `Source code that generated this animation:\n\`\`\`tsx\n${code.substring(0, 6000)}\n\`\`\`\n\nCross-reference the screenshots below with the source code above. Identify issues by referencing specific variable names, constants, or JSX elements from the code.\n\n` : ''}Here are ${screenshots.length} screenshots from the generated animation (frames at 0.5s intervals). Evaluate the quality:`,
           },
           ...imageContent,
         ],
@@ -195,7 +217,7 @@ export async function POST(request: NextRequest) {
         model: visionModel,
         messages,
         temperature: 0.3, // Low temperature for consistent evaluation
-        max_tokens: 1000, // Enough for exhaustive issue lists
+        max_tokens: 2000, // Increased for element-specific detail
         response_format: { type: 'json_object' },
       }),
     });
@@ -241,11 +263,25 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Ensure required fields exist
+    // Ensure required fields exist — normalize both new and legacy formats
+    const elementIssues = Array.isArray(qcResult?.elementIssues) ? qcResult.elementIssues : [];
+    const generalIssues = Array.isArray(qcResult?.generalIssues) ? qcResult.generalIssues : [];
+
+    // Legacy fallback: if model returned old-format issues/suggestions, convert them
+    const legacyIssues = Array.isArray(qcResult?.issues) ? qcResult.issues : [];
+    const legacySuggestions = Array.isArray(qcResult?.suggestions) ? qcResult.suggestions : [];
+
+    // If no elementIssues but has legacy issues, keep them as generalIssues
+    const mergedGeneralIssues = generalIssues.length > 0 ? generalIssues
+      : (elementIssues.length === 0 && legacyIssues.length > 0) ? legacyIssues
+      : generalIssues;
+
     const result = {
       passed: qcResult?.passed === true,
-      issues: Array.isArray(qcResult?.issues) ? qcResult.issues : [],
-      suggestions: Array.isArray(qcResult?.suggestions) ? qcResult.suggestions : [],
+      issues: legacyIssues,       // Keep for backward compat
+      suggestions: legacySuggestions, // Keep for backward compat
+      elementIssues,
+      generalIssues: mergedGeneralIssues,
       summary: qcResult?.summary || 'Analysis complete',
     };
 

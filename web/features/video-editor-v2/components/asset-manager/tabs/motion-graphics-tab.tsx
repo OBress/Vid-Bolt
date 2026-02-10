@@ -37,6 +37,7 @@ import { parseTaggedJSX, hasLayerTags } from "../../../utils/jsx-layer-parser";
 import { Player, PlayerRef } from "@remotion/player";
 import { DynamicCompositionWrapper, setRuntimeErrorHandler } from "../../../utils/remotion/dynamic-composition";
 import { useVisualQC, type QCResult } from "../../../hooks/use-visual-qc";
+import { useGifExport } from "../../../hooks/use-gif-export";
 
 // Built-in templates (temporary - will be replaced with new AI generation system)
 const getBuiltInTemplates = (): MotionGraphicsTemplate[] => {
@@ -250,9 +251,12 @@ interface ChatMessageItemProps {
   message: ChatMessage;
   onUseTemplate?: (template: MotionGraphicsTemplate) => void;
   onSaveTemplate?: (template: MotionGraphicsTemplate) => void;
+  onExportGif?: (template: MotionGraphicsTemplate) => void;
+  isExportingGif?: boolean;
+  gifExportProgress?: number;
 }
 
-const ChatMessageItem: React.FC<ChatMessageItemProps> = ({ message, onUseTemplate, onSaveTemplate }) => {
+const ChatMessageItem: React.FC<ChatMessageItemProps> = ({ message, onUseTemplate, onSaveTemplate, onExportGif, isExportingGif, gifExportProgress }) => {
   // Drag handler for generated templates
   const handleTemplateDragStart = useCallback((e: React.DragEvent, template: MotionGraphicsTemplate) => {
     const fps = useVideoEditorStore.getState().fps || 30;
@@ -385,7 +389,37 @@ const ChatMessageItem: React.FC<ChatMessageItemProps> = ({ message, onUseTemplat
                   <Save className="h-3 w-3" />
                 </Button>
               )}
+              {onExportGif && message.generatedTemplate?.remotionCode && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs px-2"
+                  onClick={(e) => { e.stopPropagation(); onExportGif(message.generatedTemplate!); }}
+                  title="Export as GIF"
+                  disabled={isExportingGif}
+                >
+                  {isExportingGif ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Download className="h-3 w-3" />
+                  )}
+                </Button>
+              )}
             </div>
+            {isExportingGif && gifExportProgress !== undefined && gifExportProgress > 0 && (
+              <div className="mt-1.5">
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-0.5">
+                  <span>Exporting GIF...</span>
+                  <span>{gifExportProgress}%</span>
+                </div>
+                <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all duration-300"
+                    style={{ width: `${gifExportProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
             <p className="text-[10px] text-muted-foreground/60 mt-1.5 text-center">Drag to timeline or click to add</p>
           </div>
         )}
@@ -444,6 +478,7 @@ export const MotionGraphicsTab: React.FC = () => {
   
   // Visual QC
   const { isAnalyzing: isQCRunning, result: qcResult, captureAndAnalyze, reset: resetQC } = useVisualQC();
+  const { isExporting: isExportingGif, progress: gifExportProgress, error: gifExportError, exportGif, cancel: cancelGifExport } = useGifExport();
   const qcPlayerRef = useRef<PlayerRef>(null);
   const [qcCode, setQCCode] = useState<string | null>(null);
   const [qcDurationFrames, setQCDurationFrames] = useState(150);
@@ -609,7 +644,8 @@ export const MotionGraphicsTab: React.FC = () => {
         qcDurationFrames,
         qcPrompt,
         selectedModelId,
-        fps || 30
+        fps || 30,
+        qcCode || undefined
       );
 
       if (result) {
@@ -618,10 +654,21 @@ export const MotionGraphicsTab: React.FC = () => {
           ? `Visual QC passed: ${result.summary}`
           : `Visual QC failed: ${result.summary}`;
 
+        // Build detailed status text with element-specific issues if available
+        let detailText = '';
+        if (!result.passed && result.elementIssues?.length > 0) {
+          detailText = '\n\nElement issues found:\n' + result.elementIssues.map(ei =>
+            `• [${ei.severity.toUpperCase()}] "${ei.elementId}" (${ei.elementDescription}): ${ei.issue}`
+          ).join('\n');
+        }
+        if (!result.passed && result.generalIssues?.length > 0) {
+          detailText += '\n\nGeneral issues:\n' + result.generalIssues.map(gi => `• ${gi}`).join('\n');
+        }
+
         setChatMessages(prev =>
           prev.map(msg =>
             msg.id === qcMsgId
-              ? { ...msg, content: `${statusIcon} ${statusText}`, isStreaming: false }
+              ? { ...msg, content: `${statusIcon} ${statusText}${detailText}`, isStreaming: false }
               : msg
           )
         );
@@ -631,19 +678,30 @@ export const MotionGraphicsTab: React.FC = () => {
           qcRetryCountRef.current++;
           console.log(`[MotionGraphicsTab] 🔄 QC failed, auto-correcting (attempt ${qcRetryCountRef.current}/${MAX_QC_RETRIES})...`);
 
-          // Build feedback prompt from QC issues + any runtime error
-          const issuesList = result.issues.join('; ');
-          const suggestionsList = result.suggestions.join('; ');
-          let feedbackPrompt = `Fix the following visual issues: ${issuesList}. Suggestions: ${suggestionsList}`;
+          // Build element-specific feedback prompt from QC results
+          const elementFeedback = result.elementIssues?.length > 0
+            ? result.elementIssues.map(ei =>
+                `[${ei.severity.toUpperCase()}] Element "${ei.elementId}" (${ei.elementDescription}): ${ei.issue}. Fix: ${ei.suggestedFix}`
+              ).join('\n')
+            : '';
+          const generalFeedback = result.generalIssues?.length > 0
+            ? result.generalIssues.join('; ')
+            : result.issues.join('; ');
+          const suggestionsFallback = result.suggestions.length > 0 ? ` Suggestions: ${result.suggestions.join('; ')}` : '';
 
-          // If we captured a runtime error, include it — this is the most actionable info
-          if (qcRuntimeErrorRef.current) {
-            feedbackPrompt += `\n\nCRITICAL: The component threw a JavaScript runtime error: "${qcRuntimeErrorRef.current}". This is likely the root cause of the blank/broken rendering. Fix this error first.`;
+          let feedbackPrompt = elementFeedback
+            ? `Fix these specific element issues:\n${elementFeedback}${generalFeedback ? `\n\nGeneral issues: ${generalFeedback}` : ''}`
+            : `Fix the following visual issues: ${generalFeedback}.${suggestionsFallback}`;
+
+          // If we captured a runtime error, scrap everything and regenerate from scratch
+          const hasRuntimeError = !!qcRuntimeErrorRef.current;
+          if (hasRuntimeError) {
+            feedbackPrompt += `\n\nCRITICAL: The component threw a JavaScript runtime error: "${qcRuntimeErrorRef.current}". The previous code is fundamentally broken. Regenerate the entire animation from scratch, avoiding this error.`;
             qcRuntimeErrorRef.current = null; // Reset after use
           }
 
-          // Directly trigger auto-correction without going through the input field
-          handleAutoCorrection(feedbackPrompt);
+          // Full regeneration on runtime errors, targeted edit otherwise
+          handleAutoCorrection(feedbackPrompt, hasRuntimeError);
         } else if (result.passed) {
           qcRetryCountRef.current = 0; // Reset on success
         }
@@ -907,10 +965,12 @@ export const MotionGraphicsTab: React.FC = () => {
   };
 
   // Direct auto-correction handler: bypasses input field to avoid race conditions and duplicate messages
-  const handleAutoCorrection = async (feedbackPrompt: string) => {
+  // When forceFullRegeneration=true, discards broken code and starts fresh (used for runtime errors)
+  const handleAutoCorrection = async (feedbackPrompt: string, forceFullRegeneration: boolean = false) => {
     if (isGenerating) return;
 
-    const autoPrompt = `🔄 Auto-correcting: ${feedbackPrompt}`;
+    const modeLabel = forceFullRegeneration ? '🔄 Regenerating from scratch' : '🔄 Auto-correcting';
+    const autoPrompt = `${modeLabel}: ${feedbackPrompt}`;
 
     // Add auto-correction message to chat (system-generated, not user input)
     const autoCorrectionMsgId = `auto-correct-${Date.now()}`;
@@ -931,20 +991,21 @@ export const MotionGraphicsTab: React.FC = () => {
       {
         id: assistantMsgId,
         role: 'assistant' as const,
-        content: 'Fixing visual issues...',
+        content: forceFullRegeneration ? 'Regenerating animation from scratch...' : 'Fixing visual issues...',
         timestamp: new Date().toISOString(),
         isStreaming: true,
       },
     ]);
 
-    // Use edit path (isFollowUp: true) so AI applies targeted fixes to existing code
+    // Runtime errors → full regeneration (no existing code, fresh start)
+    // Visual issues → targeted edit (preserve existing code, apply fixes)
     const result = await generate(
       autoPrompt,
       '', // Backend retrieves API key from DB
       selectedModelId,
       {
-        currentCode: generatedCode || undefined,
-        isFollowUp: true, // Targeted edit path — QC feedback applies to existing code
+        currentCode: forceFullRegeneration ? undefined : (generatedCode || undefined),
+        isFollowUp: !forceFullRegeneration,
       },
       {
         onStreamPhaseChange: (phase) => {
@@ -1046,6 +1107,28 @@ export const MotionGraphicsTab: React.FC = () => {
       );
     }
   };
+
+  // Handle export GIF
+  const handleExportGif = useCallback((template: MotionGraphicsTemplate) => {
+    if (!template.remotionCode || !qcPlayerRef.current) {
+      console.warn('[MotionGraphicsTab] Cannot export GIF: no code or player ref');
+      return;
+    }
+
+    // Set the QC player to show the template's code so we can capture from it
+    const duration = template.duration || (fps * 5);
+    setQCCode(template.remotionCode);
+    setQCDurationFrames(duration);
+
+    // Wait for the player to compile the new code, then start export
+    setTimeout(() => {
+      const safeName = (template.name || 'motion-graphic')
+        .replace(/[^a-zA-Z0-9-_ ]/g, '')
+        .replace(/\s+/g, '-')
+        .toLowerCase();
+      exportGif(qcPlayerRef, duration, fps || 30, safeName);
+    }, 2500); // Allow time for Babel compilation + first render
+  }, [fps, exportGif]);
 
   // Handle add template to timeline
   const handleAddToTimeline = (template: MotionGraphicsTemplate) => {
@@ -1231,6 +1314,9 @@ export const MotionGraphicsTab: React.FC = () => {
                     message={message}
                     onUseTemplate={handleAddToTimeline}
                     onSaveTemplate={saveTemplate}
+                    onExportGif={handleExportGif}
+                    isExportingGif={isExportingGif}
+                    gifExportProgress={gifExportProgress}
                   />
                 ))
               )}
@@ -1293,7 +1379,7 @@ export const MotionGraphicsTab: React.FC = () => {
                   <Clock className="h-3 w-3 mr-1 shrink-0" />
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent side="top" className="z-[200]">
                   <SelectItem value="auto">Auto</SelectItem>
                   <SelectItem value="3">3s</SelectItem>
                   <SelectItem value="5">5s</SelectItem>
@@ -1417,7 +1503,7 @@ export const MotionGraphicsTab: React.FC = () => {
         selectedModelId={selectedModelId}
       />
 
-      {/* Hidden Remotion Player for Visual QC capture */}
+      {/* Hidden Remotion Player for Visual QC capture & GIF export */}
       {qcCode && (
         <div
           style={{
@@ -1425,8 +1511,8 @@ export const MotionGraphicsTab: React.FC = () => {
             // Use clip-path instead of off-screen positioning so element keeps
             // proper layout dimensions (offsetWidth/Height stay non-zero)
             clipPath: 'inset(100%)',
-            width: '672px',
-            height: '378px',
+            width: '1280px',
+            height: '720px',
             overflow: 'hidden',
             pointerEvents: 'none',
           }}
@@ -1437,10 +1523,10 @@ export const MotionGraphicsTab: React.FC = () => {
             component={DynamicCompositionWrapper}
             inputProps={qcPlayerInputProps}
             durationInFrames={Math.max(1, qcDurationFrames)}
-            compositionWidth={1920}
-            compositionHeight={1080}
+            compositionWidth={1280}
+            compositionHeight={720}
             fps={fps || 30}
-            style={{ width: '672px', height: '378px' }}
+            style={{ width: '1280px', height: '720px' }}
           />
         </div>
       )}

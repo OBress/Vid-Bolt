@@ -42,137 +42,314 @@ console.log('[GeoData] ✅ World map data loaded:', {
 });
 
 // ============================================================
-// MAJOR CITIES DATABASE
+// MAJOR CITIES DATABASE (LAZY-LOADED)
 // ============================================================
 
 export interface CityInfo {
   lat: number;
   lng: number;
   country: string;
-  /** Population tier: 'mega' (10M+), 'major' (3M+), 'large' (1M+), 'notable' */
-  tier: 'mega' | 'major' | 'large' | 'notable';
+  /** Population tier: 'mega' (5M+), 'major' (1M+), 'large' (500K+), 'medium' (100K+), 'small' */
+  tier: 'mega' | 'major' | 'large' | 'medium' | 'small';
 }
 
 /**
- * Curated database of ~100 major world cities with accurate lat/lng.
- * The AI can reference any city by name to get coordinates.
+ * In-memory cache for the city database.
+ * Loaded lazily from /geo/cities.json on first access.
  */
-export const MajorCities: Record<string, CityInfo> = {
-  // === NORTH AMERICA ===
-  'New York': { lat: 40.7128, lng: -74.0060, country: 'US', tier: 'mega' },
-  'Los Angeles': { lat: 34.0522, lng: -118.2437, country: 'US', tier: 'mega' },
-  'Chicago': { lat: 41.8781, lng: -87.6298, country: 'US', tier: 'major' },
-  'Houston': { lat: 29.7604, lng: -95.3698, country: 'US', tier: 'major' },
-  'Phoenix': { lat: 33.4484, lng: -112.0740, country: 'US', tier: 'major' },
-  'San Francisco': { lat: 37.7749, lng: -122.4194, country: 'US', tier: 'large' },
-  'Miami': { lat: 25.7617, lng: -80.1918, country: 'US', tier: 'large' },
-  'Seattle': { lat: 47.6062, lng: -122.3321, country: 'US', tier: 'large' },
-  'Boston': { lat: 42.3601, lng: -71.0589, country: 'US', tier: 'large' },
-  'Washington DC': { lat: 38.9072, lng: -77.0369, country: 'US', tier: 'large' },
-  'Atlanta': { lat: 33.7490, lng: -84.3880, country: 'US', tier: 'large' },
-  'Denver': { lat: 39.7392, lng: -104.9903, country: 'US', tier: 'large' },
-  'Las Vegas': { lat: 36.1699, lng: -115.1398, country: 'US', tier: 'large' },
-  'Dallas': { lat: 32.7767, lng: -96.7970, country: 'US', tier: 'large' },
-  'Toronto': { lat: 43.6532, lng: -79.3832, country: 'CA', tier: 'major' },
-  'Vancouver': { lat: 49.2827, lng: -123.1207, country: 'CA', tier: 'large' },
-  'Montreal': { lat: 45.5017, lng: -73.5673, country: 'CA', tier: 'large' },
-  'Mexico City': { lat: 19.4326, lng: -99.1332, country: 'MX', tier: 'mega' },
+let citiesCache: Record<string, CityInfo> | null = null;
+let citiesLoadPromise: Promise<Record<string, CityInfo>> | null = null;
 
-  // === SOUTH AMERICA ===
-  'São Paulo': { lat: -23.5505, lng: -46.6333, country: 'BR', tier: 'mega' },
-  'Rio de Janeiro': { lat: -22.9068, lng: -43.1729, country: 'BR', tier: 'major' },
-  'Buenos Aires': { lat: -34.6037, lng: -58.3816, country: 'AR', tier: 'mega' },
-  'Lima': { lat: -12.0464, lng: -77.0428, country: 'PE', tier: 'mega' },
-  'Bogotá': { lat: 4.7110, lng: -74.0721, country: 'CO', tier: 'mega' },
-  'Santiago': { lat: -33.4489, lng: -70.6693, country: 'CL', tier: 'major' },
+/**
+ * Load the full city database (7,270 cities from Natural Earth).
+ * Data is fetched from /geo/cities.json on first call, then cached in memory.
+ * 
+ * @returns Record of city name to CityInfo
+ */
+export async function loadCities(): Promise<Record<string, CityInfo>> {
+  if (citiesCache) return citiesCache;
 
-  // === EUROPE ===
-  'London': { lat: 51.5074, lng: -0.1278, country: 'GB', tier: 'mega' },
-  'Paris': { lat: 48.8566, lng: 2.3522, country: 'FR', tier: 'mega' },
-  'Berlin': { lat: 52.5200, lng: 13.4050, country: 'DE', tier: 'major' },
-  'Madrid': { lat: 40.4168, lng: -3.7038, country: 'ES', tier: 'major' },
-  'Rome': { lat: 41.9028, lng: 12.4964, country: 'IT', tier: 'major' },
-  'Amsterdam': { lat: 52.3676, lng: 4.9041, country: 'NL', tier: 'large' },
-  'Barcelona': { lat: 41.3851, lng: 2.1734, country: 'ES', tier: 'large' },
-  'Munich': { lat: 48.1351, lng: 11.5820, country: 'DE', tier: 'large' },
-  'Vienna': { lat: 48.2082, lng: 16.3738, country: 'AT', tier: 'large' },
-  'Prague': { lat: 50.0755, lng: 14.4378, country: 'CZ', tier: 'large' },
-  'Stockholm': { lat: 59.3293, lng: 18.0686, country: 'SE', tier: 'large' },
-  'Copenhagen': { lat: 55.6761, lng: 12.5683, country: 'DK', tier: 'large' },
-  'Dublin': { lat: 53.3498, lng: -6.2603, country: 'IE', tier: 'large' },
-  'Zurich': { lat: 47.3769, lng: 8.5417, country: 'CH', tier: 'large' },
-  'Brussels': { lat: 50.8503, lng: 4.3517, country: 'BE', tier: 'large' },
-  'Lisbon': { lat: 38.7223, lng: -9.1393, country: 'PT', tier: 'large' },
-  'Athens': { lat: 37.9838, lng: 23.7275, country: 'GR', tier: 'major' },
-  'Warsaw': { lat: 52.2297, lng: 21.0122, country: 'PL', tier: 'large' },
-  'Oslo': { lat: 59.9139, lng: 10.7522, country: 'NO', tier: 'large' },
-  'Helsinki': { lat: 60.1699, lng: 24.9384, country: 'FI', tier: 'large' },
-  'Moscow': { lat: 55.7558, lng: 37.6173, country: 'RU', tier: 'mega' },
-  'Istanbul': { lat: 41.0082, lng: 28.9784, country: 'TR', tier: 'mega' },
+  // Deduplicate concurrent calls
+  if (citiesLoadPromise) return citiesLoadPromise;
 
-  // === MIDDLE EAST ===
-  'Dubai': { lat: 25.2048, lng: 55.2708, country: 'AE', tier: 'major' },
-  'Abu Dhabi': { lat: 24.4539, lng: 54.3773, country: 'AE', tier: 'large' },
-  'Riyadh': { lat: 24.7136, lng: 46.6753, country: 'SA', tier: 'major' },
-  'Tel Aviv': { lat: 32.0853, lng: 34.7818, country: 'IL', tier: 'large' },
-  'Doha': { lat: 25.2854, lng: 51.5310, country: 'QA', tier: 'large' },
+  citiesLoadPromise = (async () => {
+    try {
+      const resp = await fetch('/geo/cities.json');
+      if (!resp.ok) {
+        console.warn('[GeoData] Failed to fetch cities:', resp.status);
+        return {};
+      }
+      const data = await resp.json();
+      citiesCache = data;
+      console.log(`[GeoData] ✅ Loaded ${Object.keys(data).length} cities`);
+      return data;
+    } catch (err) {
+      console.error('[GeoData] Error loading cities:', err);
+      return {};
+    } finally {
+      citiesLoadPromise = null;
+    }
+  })();
 
-  // === AFRICA ===
-  'Cairo': { lat: 30.0444, lng: 31.2357, country: 'EG', tier: 'mega' },
-  'Lagos': { lat: 6.5244, lng: 3.3792, country: 'NG', tier: 'mega' },
-  'Johannesburg': { lat: -26.2041, lng: 28.0473, country: 'ZA', tier: 'major' },
-  'Cape Town': { lat: -33.9249, lng: 18.4241, country: 'ZA', tier: 'major' },
-  'Nairobi': { lat: -1.2921, lng: 36.8219, country: 'KE', tier: 'major' },
-  'Casablanca': { lat: 33.5731, lng: -7.5898, country: 'MA', tier: 'major' },
-  'Accra': { lat: 5.6037, lng: -0.1870, country: 'GH', tier: 'large' },
-  'Addis Ababa': { lat: 8.9806, lng: 38.7578, country: 'ET', tier: 'major' },
-
-  // === SOUTH ASIA ===
-  'Mumbai': { lat: 19.0760, lng: 72.8777, country: 'IN', tier: 'mega' },
-  'Delhi': { lat: 28.7041, lng: 77.1025, country: 'IN', tier: 'mega' },
-  'Bangalore': { lat: 12.9716, lng: 77.5946, country: 'IN', tier: 'mega' },
-  'Kolkata': { lat: 22.5726, lng: 88.3639, country: 'IN', tier: 'mega' },
-  'Chennai': { lat: 13.0827, lng: 80.2707, country: 'IN', tier: 'major' },
-
-  // === EAST ASIA ===
-  'Tokyo': { lat: 35.6762, lng: 139.6503, country: 'JP', tier: 'mega' },
-  'Osaka': { lat: 34.6937, lng: 135.5023, country: 'JP', tier: 'major' },
-  'Beijing': { lat: 39.9042, lng: 116.4074, country: 'CN', tier: 'mega' },
-  'Shanghai': { lat: 31.2304, lng: 121.4737, country: 'CN', tier: 'mega' },
-  'Hong Kong': { lat: 22.3193, lng: 114.1694, country: 'HK', tier: 'major' },
-  'Shenzhen': { lat: 22.5431, lng: 114.0579, country: 'CN', tier: 'mega' },
-  'Guangzhou': { lat: 23.1291, lng: 113.2644, country: 'CN', tier: 'mega' },
-  'Seoul': { lat: 37.5665, lng: 126.9780, country: 'KR', tier: 'mega' },
-  'Taipei': { lat: 25.0330, lng: 121.5654, country: 'TW', tier: 'major' },
-
-  // === SOUTHEAST ASIA ===
-  'Singapore': { lat: 1.3521, lng: 103.8198, country: 'SG', tier: 'major' },
-  'Bangkok': { lat: 13.7563, lng: 100.5018, country: 'TH', tier: 'mega' },
-  'Jakarta': { lat: -6.2088, lng: 106.8456, country: 'ID', tier: 'mega' },
-  'Manila': { lat: 14.5995, lng: 120.9842, country: 'PH', tier: 'mega' },
-  'Ho Chi Minh City': { lat: 10.8231, lng: 106.6297, country: 'VN', tier: 'mega' },
-  'Kuala Lumpur': { lat: 3.1390, lng: 101.6869, country: 'MY', tier: 'major' },
-  'Hanoi': { lat: 21.0278, lng: 105.8342, country: 'VN', tier: 'major' },
-
-  // === OCEANIA ===
-  'Sydney': { lat: -33.8688, lng: 151.2093, country: 'AU', tier: 'major' },
-  'Melbourne': { lat: -37.8136, lng: 144.9631, country: 'AU', tier: 'major' },
-  'Auckland': { lat: -36.8485, lng: 174.7633, country: 'NZ', tier: 'large' },
-};
+  return citiesLoadPromise;
+}
 
 /**
  * Get a city's coordinates. Case-insensitive lookup.
- * Returns null if the city isn't in the database.
+ * Requires cities to be loaded first via loadCities().
+ * Returns null if the city isn't in the database or cities haven't been loaded.
+ *
+ * @param name - City name (e.g., 'Tokyo', 'New York')
+ * @returns [lng, lat] tuple for d3-geo, or null
  */
 export function getCityCoords(name: string): [number, number] | null {
+  if (!citiesCache) {
+    console.warn('[GeoData] Cities not loaded yet. Call loadCities() first.');
+    return null;
+  }
+
   // Direct match first
-  const city = MajorCities[name];
+  const city = citiesCache[name];
   if (city) return [city.lng, city.lat]; // d3-geo uses [lng, lat] order
 
   // Case-insensitive fallback
   const lower = name.toLowerCase();
-  for (const [key, val] of Object.entries(MajorCities)) {
+  for (const [key, val] of Object.entries(citiesCache)) {
     if (key.toLowerCase() === lower) return [val.lng, val.lat];
   }
   return null;
+}
+
+/**
+ * Convenience: get the full CityInfo object for a city (case-insensitive).
+ * Requires cities to be loaded first via loadCities().
+ */
+export function getCityInfo(name: string): CityInfo | null {
+  if (!citiesCache) return null;
+
+  const city = citiesCache[name];
+  if (city) return city;
+
+  const lower = name.toLowerCase();
+  for (const [key, val] of Object.entries(citiesCache)) {
+    if (key.toLowerCase() === lower) return val;
+  }
+  return null;
+}
+
+// ============================================================
+// SUB-NATIONAL BOUNDARY DATA (LAZY-LOADED)
+// ============================================================
+
+/**
+ * All countries with sub-national (state/province) boundary data available.
+ * Generated from Natural Earth Admin 1 dataset (240 countries).
+ * Data is lazy-loaded from /geo/{ISO2}.json on first request.
+ */
+export const SUPPORTED_SUBNATIONAL_COUNTRIES = new Set([
+  'AD', 'AE', 'AF', 'AG', 'AI', 'AL', 'AM', 'AO', 'AQ', 'AR', 'AS', 'AT', 'AU', 'AW', 'AX', 'AZ',
+  'BA', 'BB', 'BD', 'BE', 'BF', 'BG', 'BH', 'BI', 'BJ', 'BL', 'BM', 'BN', 'BO', 'BR', 'BS', 'BT', 'BW', 'BY', 'BZ',
+  'CA', 'CD', 'CF', 'CG', 'CH', 'CI', 'CK', 'CL', 'CM', 'CN', 'CO', 'CR', 'CU', 'CV', 'CW', 'CY', 'CZ',
+  'DE', 'DJ', 'DK', 'DM', 'DO', 'DZ',
+  'EC', 'EE', 'EG', 'EH', 'ER', 'ES', 'ET',
+  'FI', 'FJ', 'FK', 'FM', 'FO', 'FR',
+  'GA', 'GB', 'GD', 'GE', 'GG', 'GH', 'GI', 'GL', 'GM', 'GN', 'GQ', 'GR', 'GS', 'GT', 'GU', 'GW', 'GY',
+  'HK', 'HM', 'HN', 'HR', 'HT', 'HU',
+  'ID', 'IE', 'IL', 'IM', 'IN', 'IO', 'IQ', 'IR', 'IS', 'IT',
+  'JE', 'JM', 'JO', 'JP',
+  'KE', 'KG', 'KH', 'KI', 'KM', 'KN', 'KP', 'KR', 'KW', 'KY', 'KZ',
+  'LA', 'LB', 'LC', 'LI', 'LK', 'LR', 'LS', 'LT', 'LU', 'LV', 'LY',
+  'MA', 'MC', 'MD', 'ME', 'MF', 'MG', 'MH', 'MK', 'ML', 'MM', 'MN', 'MO', 'MP', 'MR', 'MS', 'MT', 'MU', 'MV', 'MW', 'MX', 'MY', 'MZ',
+  'NA', 'NC', 'NE', 'NF', 'NG', 'NI', 'NL', 'NO', 'NP', 'NR', 'NU', 'NZ',
+  'OM',
+  'PA', 'PE', 'PF', 'PG', 'PH', 'PK', 'PL', 'PM', 'PN', 'PR', 'PS', 'PT', 'PW', 'PY',
+  'QA',
+  'RO', 'RS', 'RU', 'RW',
+  'SA', 'SB', 'SC', 'SD', 'SE', 'SG', 'SH', 'SI', 'SK', 'SL', 'SM', 'SN', 'SO', 'SR', 'SS', 'ST', 'SV', 'SX', 'SY', 'SZ',
+  'TC', 'TD', 'TF', 'TG', 'TH', 'TJ', 'TK', 'TL', 'TM', 'TN', 'TO', 'TR', 'TT', 'TV', 'TW', 'TZ',
+  'UA', 'UG', 'UM', 'US', 'UY', 'UZ',
+  'VA', 'VC', 'VE', 'VG', 'VI', 'VN', 'VU',
+  'WF', 'WS',
+  'XK',
+  'YE',
+  'ZA', 'ZM', 'ZW',
+]);
+
+/**
+ * In-memory cache for loaded sub-national data.
+ * Each entry is a GeoJSON FeatureCollection with state/province boundaries.
+ */
+const subNationalCache = new Map<string, GeoJSON.FeatureCollection>();
+
+/**
+ * Load sub-national (state/province) boundary data for a country.
+ * 
+ * Data is fetched from /geo/{countryCode}.json on first call, then cached.
+ * Supports 240 countries from the Natural Earth Admin 1 dataset.
+ * Each feature has properties: { name, name_en, code, type }.
+ * 
+ * @param countryCode - ISO 3166-1 alpha-2 code (e.g., 'US', 'BR', 'IN')
+ * @returns GeoJSON FeatureCollection with state/province polygons, or null if unsupported
+ */
+export async function getSubNationalData(
+  countryCode: string
+): Promise<GeoJSON.FeatureCollection | null> {
+  const code = countryCode.toUpperCase();
+
+  // Return from cache if already loaded
+  const cached = subNationalCache.get(code);
+  if (cached) return cached;
+
+  // Check if this country is supported
+  if (!SUPPORTED_SUBNATIONAL_COUNTRIES.has(code)) {
+    console.warn(`[GeoData] Sub-national data not available for: ${code}`);
+    return null;
+  }
+
+  try {
+    const resp = await fetch(`/geo/${code}.json`);
+    if (!resp.ok) {
+      console.warn(`[GeoData] Failed to fetch sub-national data for ${code}: ${resp.status}`);
+      return null;
+    }
+    const topoData = await resp.json();
+    const fc = topojson.feature(
+      topoData as any,
+      (topoData as any).objects.admin1
+    ) as unknown as GeoJSON.FeatureCollection;
+    subNationalCache.set(code, fc);
+    console.log(`[GeoData] ✅ Loaded sub-national data for ${code}: ${fc.features.length} regions`);
+    return fc;
+  } catch (err) {
+    console.error(`[GeoData] Error loading sub-national data for ${code}:`, err);
+    return null;
+  }
+}
+
+// ============================================================
+// ADDITIONAL GEO LAYERS (LAZY-LOADED)
+// ============================================================
+
+/**
+ * Airport information from Natural Earth.
+ */
+export interface AirportInfo {
+  lat: number;
+  lng: number;
+  iata_code?: string | null;
+  type?: string | null;
+  scalerank?: number;
+}
+
+/**
+ * Port information from Natural Earth.
+ */
+export interface PortInfo {
+  lat: number;
+  lng: number;
+  scalerank?: number;
+  featurecla?: string | null;
+}
+
+// Generic geo layer cache
+const geoLayerCache = new Map<string, any>();
+const geoLayerPromises = new Map<string, Promise<any>>();
+
+/**
+ * Generic loader for GeoJSON layers stored in /geo/.
+ * Fetches, caches, and returns the data.
+ */
+async function loadGeoLayer<T>(
+  name: string,
+  filename: string,
+): Promise<T | null> {
+  // Return from cache
+  const cached = geoLayerCache.get(name);
+  if (cached) return cached as T;
+
+  // Deduplicate concurrent calls
+  const existing = geoLayerPromises.get(name);
+  if (existing) return existing as Promise<T | null>;
+
+  const promise = (async (): Promise<T | null> => {
+    try {
+      const resp = await fetch(`/geo/${filename}`);
+      if (!resp.ok) {
+        console.warn(`[GeoData] Failed to fetch ${name}: ${resp.status}`);
+        return null;
+      }
+      const data = await resp.json();
+      geoLayerCache.set(name, data);
+      const count = data.features?.length ?? Object.keys(data).length;
+      console.log(`[GeoData] ✅ Loaded ${name}: ${count} items`);
+      return data as T;
+    } catch (err) {
+      console.error(`[GeoData] Error loading ${name}:`, err);
+      return null;
+    } finally {
+      geoLayerPromises.delete(name);
+    }
+  })();
+
+  geoLayerPromises.set(name, promise);
+  return promise;
+}
+
+// --- Phase 1: High-value layers ---
+
+/** Load major world rivers (1,473 features). */
+export function loadRivers(): Promise<GeoJSON.FeatureCollection | null> {
+  return loadGeoLayer('rivers', 'rivers.json');
+}
+
+/** Load major world lakes (1,355 features). */
+export function loadLakes(): Promise<GeoJSON.FeatureCollection | null> {
+  return loadGeoLayer('lakes', 'lakes.json');
+}
+
+/** Load ocean polygons (2 features — Atlantic/Pacific macro regions). */
+export function loadOceans(): Promise<GeoJSON.FeatureCollection | null> {
+  return loadGeoLayer('oceans', 'oceans.json');
+}
+
+/** Load major world airports (893 entries with IATA codes). */
+export function loadAirports(): Promise<Record<string, AirportInfo> | null> {
+  return loadGeoLayer('airports', 'airports.json');
+}
+
+/** Load major world ports (1,081 entries). */
+export function loadPorts(): Promise<Record<string, PortInfo> | null> {
+  return loadGeoLayer('ports', 'ports.json');
+}
+
+// --- Phase 2: Thematic layers ---
+
+/** Load urban/built-up areas (11,878 features). */
+export function loadUrbanAreas(): Promise<GeoJSON.FeatureCollection | null> {
+  return loadGeoLayer('urban-areas', 'urban-areas.json');
+}
+
+/** Load world time zone boundaries (120 features). */
+export function loadTimezones(): Promise<GeoJSON.FeatureCollection | null> {
+  return loadGeoLayer('timezones', 'timezones.json');
+}
+
+/** Load detailed coastlines (4,133 features). */
+export function loadCoastlines(): Promise<GeoJSON.FeatureCollection | null> {
+  return loadGeoLayer('coastlines', 'coastlines.json');
+}
+
+/** Load geographic reference lines — equator, tropics, arctic/antarctic circles, dateline (6 features). */
+export function loadGeographicLines(): Promise<GeoJSON.FeatureCollection | null> {
+  return loadGeoLayer('geographic-lines', 'geographic-lines.json');
+}
+
+/** Load glaciated areas — ice sheets and glaciers (1,886 features). */
+export function loadGlaciated(): Promise<GeoJSON.FeatureCollection | null> {
+  return loadGeoLayer('glaciated', 'glaciated.json');
+}
+
+/** Load coral reefs (1,043 features). */
+export function loadReefs(): Promise<GeoJSON.FeatureCollection | null> {
+  return loadGeoLayer('reefs', 'reefs.json');
 }

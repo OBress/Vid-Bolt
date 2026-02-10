@@ -13,17 +13,27 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
-import { toPng } from 'html-to-image';
+import { toJpeg } from 'html-to-image';
 
 // ============================================================
 // TYPES
 // ============================================================
 
+export interface QCElementIssue {
+  elementId: string;          // Variable name, JSX tag, or constant from the code
+  elementDescription: string; // What this element is (e.g. 'the world map SVG group')
+  issue: string;              // What's wrong with it
+  severity: 'critical' | 'major' | 'minor';
+  suggestedFix: string;       // Specific code-level fix for this element
+}
+
 export interface QCResult {
   passed: boolean;
-  issues: string[];     // List of problems found
-  suggestions: string[]; // Improvement suggestions  
-  summary: string;      // One-line summary
+  issues: string[];              // Legacy flat list of problems (backward compat)
+  suggestions: string[];         // Legacy flat suggestions (backward compat)
+  elementIssues: QCElementIssue[]; // Element-specific issues with code references
+  generalIssues: string[];       // Non-element-specific problems
+  summary: string;               // One-line summary
 }
 
 export interface UseVisualQCReturn {
@@ -35,7 +45,8 @@ export interface UseVisualQCReturn {
     durationInFrames: number,
     originalPrompt: string,
     model: string,
-    fps?: number
+    fps?: number,
+    code?: string
   ) => Promise<QCResult | null>;
   reset: () => void;
 }
@@ -57,8 +68,8 @@ function waitForRender(delayMs: number = 200): Promise<void> {
 
 /**
  * Capture a screenshot from the Remotion Player at the current frame.
- * Uses html-to-image (toPng) for accurate DOM-to-image conversion.
- * Falls back to canvas/video capture if available.
+ * Uses html-to-image (toJpeg) for QC — lower quality is fine for AI analysis
+ * and keeps the payload well under Next.js body size limits.
  */
 async function capturePlayerFrame(playerContainer: HTMLElement | null): Promise<string | null> {
   if (!playerContainer) {
@@ -79,7 +90,14 @@ async function capturePlayerFrame(playerContainer: HTMLElement | null): Promise<
   if (canvas instanceof HTMLCanvasElement && canvas.width > 0) {
     try {
       console.log('[VisualQC] Using canvas capture');
-      return canvas.toDataURL('image/png', 0.8);
+      const offscreen = document.createElement('canvas');
+      offscreen.width = canvas.width;
+      offscreen.height = canvas.height;
+      const ctx = offscreen.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(canvas, 0, 0, offscreen.width, offscreen.height);
+        return offscreen.toDataURL('image/jpeg', 0.8);
+      }
     } catch (e) {
       console.warn('[VisualQC] Canvas toDataURL failed (CORS?):', e);
     }
@@ -95,8 +113,8 @@ async function capturePlayerFrame(playerContainer: HTMLElement | null): Promise<
       offscreen.height = video.videoHeight;
       const ctx = offscreen.getContext('2d');
       if (ctx) {
-        ctx.drawImage(video, 0, 0);
-        return offscreen.toDataURL('image/png', 0.8);
+        ctx.drawImage(video, 0, 0, offscreen.width, offscreen.height);
+        return offscreen.toDataURL('image/jpeg', 0.8);
       }
     } catch (e) {
       console.warn('[VisualQC] Video capture failed:', e);
@@ -104,17 +122,16 @@ async function capturePlayerFrame(playerContainer: HTMLElement | null): Promise<
   }
 
   // Strategy 3: html-to-image DOM capture (handles Remotion's DOM rendering)
-  // This is the primary path for motion graphics which render as styled divs
   try {
     const targetWidth = playerContainer.offsetWidth || 1920;
     const targetHeight = playerContainer.offsetHeight || 1080;
     console.log(`[VisualQC] Using html-to-image capture (${targetWidth}x${targetHeight})`);
     
-    const dataUrl = await toPng(playerContainer, {
+    const dataUrl = await toJpeg(playerContainer, {
       width: targetWidth,
       height: targetHeight,
       quality: 0.8,
-      pixelRatio: 1, // 1x is sufficient for QC — saves memory and compute
+      pixelRatio: 1, // Full resolution for accurate QC analysis
       skipAutoScale: true,
       cacheBust: true,
     });
@@ -221,7 +238,8 @@ export function useVisualQC(): UseVisualQCReturn {
     durationInFrames: number,
     originalPrompt: string,
     model: string,
-    fps: number = 30
+    fps: number = 30,
+    code?: string
   ): Promise<QCResult | null> => {
     setIsAnalyzing(true);
     setResult(null);
@@ -251,6 +269,7 @@ export function useVisualQC(): UseVisualQCReturn {
           screenshots,
           prompt: originalPrompt,
           model,
+          ...(code ? { code } : {}),
         }),
         signal: abortControllerRef.current.signal,
       });
