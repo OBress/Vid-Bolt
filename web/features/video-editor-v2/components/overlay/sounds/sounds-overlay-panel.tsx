@@ -2,7 +2,7 @@ import React from "react";
 import { AlertCircle } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 
-import { useVideoEditorStore } from "../../../stores/video-editor-store";
+import { useVideoEditorStore, getTypedState } from "../../../stores/video-editor-store";
 import type { TimelineClip } from "../../../types/timeline-v2";
 import { useMediaAdaptors } from "../../../contexts/media-adaptor-context";
 import { SoundDetails } from "./sound-details";
@@ -14,7 +14,7 @@ import { getSrcDuration } from "../../../hooks/use-src-duration";
  * Ensure audio track exists
  */
 const ensureAudioTrack = () => {
-  const state = useVideoEditorStore.getState();
+  const state = getTypedState();
   let trackId = Object.values(state.tracks).find(t => t.type === 'audio')?.id;
   if (!trackId) {
     trackId = state.addTrack('audio');

@@ -10,7 +10,7 @@ import { useTimelineDragAndDrop } from '../hooks/use-timeline-drag-and-drop';
 import { useMediaDrop } from '../hooks/use-media-drop';
 import { useMarqueeSelection } from '../hooks/use-marquee-selection';
 import { useTimelineZoomSelection } from '../hooks/use-timeline-zoom-selection';
-import { useVideoEditorStore, getCurrentDrag, endDrag } from '../../../stores/video-editor-store';
+import { useVideoEditorStore, selectDragState, selectDragVisuals, getCurrentDrag, endDrag } from '../../../stores/video-editor-store';
 import { TIMELINE_CONSTANTS, VIRTUAL_SCROLL_CONSTANTS } from '../constants';
 
 /**
@@ -167,11 +167,9 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
     onZoomToRange,
   });
 
-  // Get state from unified video editor store (using new unified drag state)
-  const {
-    dragState,
-    dragVisuals,
-  } = useVideoEditorStore();
+  // Get state from unified video editor store using individual selectors (performance optimized)
+  const dragState = useVideoEditorStore(selectDragState);
+  const dragVisuals = useVideoEditorStore(selectDragVisuals);
   
   // Extract visual state
   const ghostElements = dragVisuals?.ghostElements ?? null;
@@ -864,7 +862,10 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
           onTouchMove={enhancedTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          <div className="timeline-tracks-container">
+          <div className="timeline-tracks-container" style={{
+            contentVisibility: 'auto',
+            containIntrinsicSize: 'auto 500px',
+          }}>
             {/* Spacer to match "Add Video Track" button height in track handles */}
             <div className="h-7 bg-neutral-900 border-b border-neutral-700" />
             
@@ -918,10 +919,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
                   zoomScale={zoomScale}
                   isDragging={isDragging}
                   draggedItemId={draggedItem?.id}
-                  ghostElements={ghostElements?.filter(g => {
-                    // Filter ghost elements for this track
-                    return true; // For now, pass all through - filtering can be added later
-                  })}
+                  ghostElements={ghostElements ?? undefined}
                   isValidDrop={isValidDrop}
                   newItemDragData={newItemDragState?.itemData}
                   onContextMenuOpenChange={onContextMenuOpenChange}

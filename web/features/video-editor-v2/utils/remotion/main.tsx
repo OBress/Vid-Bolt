@@ -1,5 +1,5 @@
-import React, { useCallback } from "react";
-import { AbsoluteFill } from "remotion";
+import React, { useCallback, useMemo } from "react";
+import { AbsoluteFill, useCurrentFrame } from "remotion";
 import type { FontInfo } from "@remotion/google-fonts";
 
 import { Overlay } from "../../types";
@@ -54,6 +54,8 @@ const outer: React.CSSProperties = {
 const layerContainer: React.CSSProperties = {
   overflow: "hidden",
   maxWidth: "3000px",
+  // PERF: Isolate overlay rendering from the rest of the UI
+  contain: "layout style",
 };
 
 /**
@@ -95,6 +97,19 @@ export const Main: React.FC<MainProps> = ({
     [setSelectedOverlayId]
   );
 
+  // Virtualize overlays — only render those visible at the current frame
+  // Uses a 30-frame premount buffer (matching Layer's Sequence premountFor={30})
+  const frame = useCurrentFrame();
+  const PREMOUNT_BUFFER = 30;
+  const visibleOverlays = useMemo(() => {
+    return overlays.filter((overlay) => {
+      if ((overlay as any).hidden) return false;
+      const start = overlay.from - PREMOUNT_BUFFER;
+      const end = overlay.from + overlay.durationInFrames;
+      return frame >= start && frame < end;
+    });
+  }, [overlays, frame]);
+
   return (
     <AbsoluteFill
       style={{
@@ -104,17 +119,13 @@ export const Main: React.FC<MainProps> = ({
       onPointerDown={onPointerDown}
     >
       <AbsoluteFill style={layerContainer}>
-        {/* Render each overlay as a Layer - transitions handled via TransitionWrapper */}
-        {overlays.map((overlay) => {
-          // Skip hidden overlays (track visibility is off)
-          if ((overlay as any).hidden) {
-            return null;
-          }
+        {/* Only render overlays visible at current frame (virtualized) */}
+        {visibleOverlays.map((overlay) => {
           return (
             <Layer
               key={overlay.id}
               overlay={overlay}
-              allOverlays={overlays}
+              allOverlays={visibleOverlays}
               {...(baseUrl && { baseUrl })}
               {...(fontInfos && { fontInfos })}
             />
@@ -123,7 +134,7 @@ export const Main: React.FC<MainProps> = ({
       </AbsoluteFill>
       <SortedOutlines
         selectedOverlayId={selectedOverlayId}
-        overlays={overlays}
+        overlays={visibleOverlays}
         changeOverlay={changeOverlay}
         alignmentGuides={alignmentGuides}
       />

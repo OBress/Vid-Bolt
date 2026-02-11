@@ -1,7 +1,7 @@
 // hooks/use-overlay-selection.tsx
 import { useCallback } from "react";
 import { useEditorSidebar } from "../contexts/sidebar-context";
-import { useVideoEditorStore } from "../stores/video-editor-store";
+import { useVideoEditorStore, getTypedState } from "../stores/video-editor-store";
 import { Overlay, OverlayType } from "../types";
 
 /**
@@ -35,7 +35,7 @@ export const useOverlaySelection = () => {
       // Update selection in the unified store
       // Get fresh state from store to find matching clip
       try {
-        const store = useVideoEditorStore.getState();
+        const store = getTypedState();
         const clips = Object.values(store.clips || {});
         const selectClips = store.selectClips;
         

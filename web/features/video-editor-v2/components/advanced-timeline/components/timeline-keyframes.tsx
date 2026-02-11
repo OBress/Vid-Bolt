@@ -20,7 +20,7 @@
 
 import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import { cn } from '../../../utils/general/utils';
-import { useVideoEditorStore } from '../../../stores/video-editor-store';
+import { useVideoEditorStore, useVideoEditorActions, selectKeyframeSelection } from '../../../stores/video-editor-store';
 import type { PropertyKeyframes, Keyframe } from '../../../types/keyframes';
 import { STANDARD_ANIMATABLE_PROPERTIES } from '../../../types/keyframes';
 import {
@@ -110,7 +110,7 @@ const KeyframeDiamond: React.FC<KeyframeDiamondProps> = ({
     selectKeyframes,
     addKeyframesToSelection,
     setCurrentTime,
-  } = useVideoEditorStore();
+  } = useVideoEditorActions();
   
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -278,7 +278,7 @@ export const TimelineKeyframes: React.FC<TimelineKeyframesProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(width);
   
-  const { keyframeSelection } = useVideoEditorStore();
+  const keyframeSelection = useVideoEditorStore(selectKeyframeSelection);
   
   // Update container width on resize
   useEffect(() => {

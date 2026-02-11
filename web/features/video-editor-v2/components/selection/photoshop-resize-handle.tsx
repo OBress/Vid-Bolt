@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useEffect, useState } from "react";
+import React, { useCallback, useMemo } from "react";
 import { useCurrentScale } from "remotion";
 import { Overlay, OverlayType } from "../../types";
 import { useAlignmentGuides } from "../../hooks/use-alignment-guides";
@@ -19,10 +19,8 @@ export type HandleType =
 const HANDLE_SIZE = 10;
 const HANDLE_BORDER = 2;
 
-interface ModifierKeys {
-  shift: boolean;
-  alt: boolean;
-}
+// PERF: Modifier keys (Shift/Alt) are read directly from PointerEvent.shiftKey/altKey
+// in the pointermove handler. No need for separate state tracking.
 
 /**
  * Get cursor style based on handle type and rotation
@@ -64,30 +62,9 @@ export const PhotoshopResizeHandle: React.FC<{
   allOverlays: Overlay[];
 }> = ({ type, setOverlay, overlay, alignmentGuides, allOverlays }) => {
   const scale = useCurrentScale();
-  const [modifiers, setModifiers] = useState<ModifierKeys>({ shift: false, alt: false });
-  
   // Scale handle size for zoom
   const size = Math.max(6, Math.round(HANDLE_SIZE / scale));
   const borderSize = Math.max(1, HANDLE_BORDER / scale);
-
-  // Track modifier keys globally
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setModifiers(m => ({ ...m, shift: true }));
-      if (e.key === 'Alt') setModifiers(m => ({ ...m, alt: true }));
-    };
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setModifiers(m => ({ ...m, shift: false }));
-      if (e.key === 'Alt') setModifiers(m => ({ ...m, alt: false }));
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []);
 
   // Handle positioning using transforms for perfect centering
   const position = useMemo((): React.CSSProperties => {
@@ -184,12 +161,9 @@ export const PhotoshopResizeHandle: React.FC<{
         aspectRatio: overlay.width / overlay.height,
       };
 
-      // Current modifier state (capture at start, but also track during drag)
-      let currentModifiers = { ...modifiers };
-
       const onPointerMove = (moveEvent: PointerEvent) => {
-        // Update modifiers during drag
-        currentModifiers = {
+        // Read modifiers directly from the event (no state tracking needed)
+        const currentModifiers = {
           shift: moveEvent.shiftKey,
           alt: moveEvent.altKey,
         };
@@ -510,7 +484,7 @@ export const PhotoshopResizeHandle: React.FC<{
       window.addEventListener("pointermove", onPointerMove, { passive: true });
       window.addEventListener("pointerup", onPointerUp, { once: true });
     },
-    [overlay, scale, setOverlay, type, alignmentGuides, allOverlays, modifiers, isCorner]
+    [overlay, scale, setOverlay, type, alignmentGuides, allOverlays, isCorner]
   );
 
   if (overlay.type === OverlayType.SOUND) {

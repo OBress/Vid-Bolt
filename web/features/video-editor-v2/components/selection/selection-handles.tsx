@@ -86,6 +86,7 @@ export const SelectionHandles: React.FC<{
     transformOrigin: "center center",
     zIndex: 999999, // Extreme z-index to be above everything
     pointerEvents: "none", // Don't block clicks on the container itself
+    contain: "layout style", // PERF: Isolate style recalc from propagating through handle children
   };
 
   return (

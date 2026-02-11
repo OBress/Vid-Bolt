@@ -19,11 +19,23 @@ export {
   startShapePresetDrag,
   getCurrentDrag,
   endDrag,
-  // Selectors
+  // Selectors (memoized computed)
   selectTracks,
-  selectTrackById,
+  selectTracksArray,
   selectVideoTracks,
   selectAudioTracks,
+  selectClipsArray,
+  selectClipIds,
+  selectClipPositions,
+  selectClipsWithLinkGroups,
+  selectClipsByTrackIndex,
+  selectTransitionsByClipIndex,
+  selectTracksWithClips,
+  selectDurationInSeconds,
+  selectDurationInFrames,
+  computeLinkGroup,
+  // Selectors (atomic)
+  selectTrackById,
   selectClips,
   selectClipById,
   selectClipsByTrack,
@@ -54,8 +66,6 @@ export {
   selectProjectId,
   selectIsDirty,
   selectLastSavedAt,
-  selectDurationInSeconds,
-  selectDurationInFrames,
   selectActions,
   // Drag selectors (unified)
   selectDragState,
@@ -71,6 +81,11 @@ export {
   selectIsDraggingNewItem,
   selectIsDraggingClip,
 } from './video-editor-store';
+
+export {
+  selectOverlays,
+  selectSelectedOverlayId,
+} from './memoized-render-selectors';
 
 export type {
   VideoEditorStore,
@@ -93,4 +108,7 @@ export type {
   EditMode,
   ClipType,
   TrackType,
+  ItemTransition,
+  TimelineItem,
+  TrackWithClips,
 } from './video-editor-store';

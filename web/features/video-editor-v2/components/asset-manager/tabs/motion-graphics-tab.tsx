@@ -23,8 +23,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../ui/select";
-import { useVideoEditorStore } from "../../../stores/video-editor-store";
-import { startMediaDrag, endDrag } from "../../../stores/video-editor-store";
+import { useVideoEditorStore, getTypedState, useTypedStore, startMediaDrag, endDrag } from "../../../stores/video-editor-store";
+import type { VideoEditorStore } from "../../../stores/video-editor-store";
 import {
   MotionGraphicsTemplate,
   MotionGraphicsCategory,
@@ -259,7 +259,7 @@ interface ChatMessageItemProps {
 const ChatMessageItem: React.FC<ChatMessageItemProps> = ({ message, onUseTemplate, onSaveTemplate, onExportGif, isExportingGif, gifExportProgress }) => {
   // Drag handler for generated templates
   const handleTemplateDragStart = useCallback((e: React.DragEvent, template: MotionGraphicsTemplate) => {
-    const fps = useVideoEditorStore.getState().fps || 30;
+    const fps = getTypedState().fps || 30;
     const duration = template.duration ? template.duration / fps : 5; // Convert frames to seconds
 
     // Create property values from editable properties
@@ -506,11 +506,11 @@ export const MotionGraphicsTab: React.FC = () => {
   }, [generationError]);
 
   // Store
-  const addClip = useVideoEditorStore((state) => state.addClip);
-  const tracks = useVideoEditorStore((state) => state.tracks);
-  const fps = useVideoEditorStore((state) => state.fps);
-  const aspectRatio = useVideoEditorStore((state) => state.aspectRatio);
-  const resolution = useVideoEditorStore((state) => state.resolution);
+  const addClip = useTypedStore(state => state.addClip);
+  const tracks = useTypedStore(state => state.tracks);
+  const fps = useTypedStore(state => state.fps);
+  const aspectRatio = useTypedStore(state => state.aspectRatio);
+  const resolution = useTypedStore(state => state.resolution);
 
   // Load saved templates from localStorage on mount
   useEffect(() => {
@@ -1143,7 +1143,7 @@ export const MotionGraphicsTab: React.FC = () => {
     }, {} as Record<string, any>);
     
     // Place at end of existing clips on track (allows multiple adds to stack sequentially)
-    const existingClips = Object.values(useVideoEditorStore.getState().clips).filter(c => c.trackId === trackId);
+    const existingClips = Object.values(getTypedState().clips).filter(c => c.trackId === trackId);
     const endOfTrack = existingClips.reduce((max, clip) => Math.max(max, clip.startTime + clip.duration), 0);
     const startTime = endOfTrack; // 0 if no clips, otherwise right after the last one
     

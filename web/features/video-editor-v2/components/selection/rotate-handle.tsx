@@ -72,7 +72,7 @@ export const RotateHandle: React.FC<{
         window.removeEventListener("pointermove", onPointerMove);
       };
 
-      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointermove", onPointerMove, { passive: true });
       window.addEventListener("pointerup", onPointerUp, { once: true });
     },
     [overlay, setOverlay]

@@ -7,7 +7,7 @@ import { getAnimationKey } from "../../../adaptors/default-animation-adaptors";
 import { useLoadFontFromTextItem } from "../../text/load-font-from-text-item";
 import { Shadow } from "../../../types/shadows";
 import { Gradient, GradientType } from "../../../types/gradients";
-import { useVideoEditorStore } from "../../../stores/video-editor-store";
+import { useTypedStore } from "../../../stores/video-editor-store";
 import { _lastEditClickPosition } from "../../../components/selection/selected-outline";
 
 export interface TextLayerContentProps {
@@ -27,9 +27,9 @@ export const TextLayerContent: React.FC<TextLayerContentProps> = ({
   const originalContentRef = useRef<string>(overlay.content);
 
   // Store access for persisting text changes
-  const updateClip = useVideoEditorStore(s => s.updateClip);
-  const setEditingOverlayId = useVideoEditorStore(s => s.setEditingOverlayId);
-  const clips = useVideoEditorStore(s => s.clips);
+  const updateClip = useTypedStore(s => s.updateClip);
+  const setEditingOverlayId = useTypedStore(s => s.setEditingOverlayId);
+  const clips = useTypedStore(s => s.clips);
 
   // Find the matching clip ID for this overlay
   const clipId = useMemo(() => {

@@ -79,6 +79,10 @@ import {
   getKeyframeAtTime,
   DEFAULT_INTERPOLATION,
 } from "../types/keyframes";
+import {
+  syncTransitionsOnClipMove,
+  wouldOverlapOnTrack,
+} from "./timeline-store-helpers";
 
 // ============================================================
 // TYPES
@@ -470,6 +474,12 @@ export interface VideoEditorActions {
 // ============================================================
 // HELPERS
 // ============================================================
+
+/** Debug logging — only outputs in development mode */
+const __DEV__ = process.env.NODE_ENV === "development";
+const debugLog = __DEV__
+  ? (...args: unknown[]) => console.log(...args)
+  : () => {};
 
 let dragIdCounter = 0;
 const generateDragId = (): string => {
@@ -912,7 +922,7 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
                 });
 
                 if (wouldOverlap) {
-                  console.log(
+                  debugLog(
                     "[VideoEditorStore] addClip: Overlap detected, creating new track",
                   );
 
@@ -938,7 +948,7 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
                   };
 
                   targetTrackId = newTrackToAdd!.id;
-                  console.log(
+                  debugLog(
                     "[VideoEditorStore] addClip: Will create new track:",
                     newTrackToAdd!.id,
                     "for clip",
@@ -1038,15 +1048,15 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
 
               // Log audio effect updates
               if (updates.audioEffects !== undefined) {
-                console.log(
+                debugLog(
                   "[VideoEditorStore] updateClip: Updating audioEffects for",
                   clipId,
                 );
-                console.log(
+                debugLog(
                   "[VideoEditorStore] Current audioEffects:",
                   clip.audioEffects,
                 );
-                console.log(
+                debugLog(
                   "[VideoEditorStore] New audioEffects:",
                   updates.audioEffects,
                 );
@@ -1097,18 +1107,8 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
               if (targetTrack && !targetTrack.allowOverlap) {
                 const newStart = finalUpdates.startTime ?? clip.startTime;
                 const newDuration = finalUpdates.duration ?? clip.duration;
-                const newEnd = newStart + newDuration;
 
-                const wouldOverlap = (
-                  Object.values(state.clips) as TimelineClip[]
-                ).some((c) => {
-                  if (c.id === clipId) return false;
-                  if (c.trackId !== targetTrackId) return false;
-                  const existingEnd = c.startTime + c.duration;
-                  return newStart < existingEnd && newEnd > c.startTime;
-                });
-
-                if (wouldOverlap) {
+                if (wouldOverlapOnTrack(state.clips, targetTrackId, newStart, newDuration, clipId)) {
                   console.warn(
                     "[VideoEditorStore] updateClip: Update would cause overlap, rejecting",
                   );
@@ -1128,27 +1128,14 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
                 });
 
                 if (finalUpdates.audioEffects !== undefined) {
-                  console.log(
+                  debugLog(
                     "[VideoEditorStore] Clip updated with audioEffects:",
                     state.clips[clipId].audioEffects,
                   );
                 }
 
                 // Auto-update transitions when clip position changes
-                if (timeDelta !== 0) {
-                  for (const [tId, t] of Object.entries(state.transitions)) {
-                    if (t.clipIds.includes(clipId)) {
-                      if (t.position === "in" || t.position === "out") {
-                        state.transitions[tId].startTime += timeDelta;
-                        state.transitions[tId].endTime += timeDelta;
-                        state.transitions[tId].updatedAt = Date.now();
-                      }
-                      if (t.position === "between") {
-                        delete state.transitions[tId];
-                      }
-                    }
-                  }
-                }
+                syncTransitionsOnClipMove(state.transitions, clipId, timeDelta);
 
                 state.isDirty = true;
               });
@@ -1202,18 +1189,7 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
 
               // Check for overlaps on non-overlap tracks
               if (!targetTrack.allowOverlap) {
-                const endTime = validStartTime + clip.duration;
-
-                const wouldOverlap = (
-                  Object.values(state.clips) as TimelineClip[]
-                ).some((c) => {
-                  if (c.id === clipId) return false;
-                  if (c.trackId !== trackId) return false;
-                  const existingEnd = c.startTime + c.duration;
-                  return validStartTime < existingEnd && endTime > c.startTime;
-                });
-
-                if (wouldOverlap) {
+                if (wouldOverlapOnTrack(state.clips, trackId, validStartTime, clip.duration, clipId)) {
                   console.warn(
                     "[VideoEditorStore] moveClip: Move would cause overlap, rejecting",
                   );
@@ -1228,20 +1204,7 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
                 state.clips[clipId].startTime = validStartTime;
                 state.clips[clipId].updatedAt = Date.now();
 
-                if (timeDelta !== 0) {
-                  for (const [tId, t] of Object.entries(state.transitions)) {
-                    if (t.clipIds.includes(clipId)) {
-                      if (t.position === "in" || t.position === "out") {
-                        state.transitions[tId].startTime += timeDelta;
-                        state.transitions[tId].endTime += timeDelta;
-                        state.transitions[tId].updatedAt = Date.now();
-                      }
-                      if (t.position === "between") {
-                        delete state.transitions[tId];
-                      }
-                    }
-                  }
-                }
+                syncTransitionsOnClipMove(state.transitions, clipId, timeDelta);
 
                 state.isDirty = true;
               });
@@ -1392,16 +1355,7 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
               // Validation: check for overlaps on non-overlap tracks
               const track = state.tracks[clip.trackId];
               if (track && !track.allowOverlap) {
-                const trimEnd = validStartTime + validDuration;
-                const wouldOverlap = (
-                  Object.values(state.clips) as TimelineClip[]
-                ).some((c) => {
-                  if (c.id === clipId) return false;
-                  if (c.trackId !== clip.trackId) return false;
-                  const existingEnd = c.startTime + c.duration;
-                  return validStartTime < existingEnd && trimEnd > c.startTime;
-                });
-                if (wouldOverlap) {
+                if (wouldOverlapOnTrack(state.clips, clip.trackId, validStartTime, validDuration, clipId)) {
                   console.warn(
                     "[VideoEditorStore] trimClip: Trim would cause overlap, rejecting",
                   );
@@ -1416,20 +1370,7 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
                 state.clips[clipId].duration = validDuration;
                 state.clips[clipId].updatedAt = Date.now();
 
-                if (timeDelta !== 0) {
-                  for (const [tId, t] of Object.entries(state.transitions)) {
-                    if (t.clipIds.includes(clipId)) {
-                      if (t.position === "in" || t.position === "out") {
-                        state.transitions[tId].startTime += timeDelta;
-                        state.transitions[tId].endTime += timeDelta;
-                        state.transitions[tId].updatedAt = Date.now();
-                      }
-                      if (t.position === "between") {
-                        delete state.transitions[tId];
-                      }
-                    }
-                  }
-                }
+                syncTransitionsOnClipMove(state.transitions, clipId, timeDelta);
 
                 state.isDirty = true;
               });
@@ -1677,11 +1618,11 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
             },
 
             clearAllTransitions: () => {
-              set(() => ({
-                transitions: {},
-                selection: { clipIds: [], transitionId: null },
-                isDirty: true,
-              }));
+              set((state) => {
+                state.transitions = {};
+                state.selection = { clipIds: [], transitionId: null };
+                state.isDirty = true;
+              });
             },
 
             setTransitions: (transitions) => {
@@ -1735,22 +1676,17 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
             },
 
             selectTransition: (id) => {
-              set((state) => ({
-                selection: {
-                  ...state.selection,
-                  transitionId: id,
-                },
-              }));
+              set((state) => {
+                state.selection.transitionId = id;
+              });
             },
 
             clearSelection: () => {
-              set(() => ({
-                selection: {
-                  clipIds: [],
-                  transitionId: null,
-                },
-                editingOverlayId: null,
-              }));
+              set((state) => {
+                state.selection.clipIds = [];
+                state.selection.transitionId = null;
+                state.editingOverlayId = null;
+              });
             },
 
             // ========================================
@@ -1758,7 +1694,9 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
             // ========================================
 
             setEditingOverlayId: (id: number | null) => {
-              set(() => ({ editingOverlayId: id }));
+              set((state) => {
+                state.editingOverlayId = id;
+              });
             },
 
             // ========================================
@@ -1767,25 +1705,23 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
 
             startDrag: (data) => {
               const dragId = generateDragId();
-              set(() => ({
-                dragState: { ...data, dragId } as UnifiedDragState,
-              }));
+              set((state) => {
+                state.dragState = { ...data, dragId } as UnifiedDragState;
+              });
               return dragId;
             },
 
             updateDrag: (updates) => {
-              set((state) => ({
-                dragState: state.dragState
-                  ? { ...state.dragState, ...updates }
-                  : null,
-              }));
+              set((state) => {
+                if (state.dragState) Object.assign(state.dragState, updates);
+              });
             },
 
             endDrag: () => {
-              set(() => ({
-                dragState: null,
-                dragVisuals: null,
-              }));
+              set((state) => {
+                state.dragState = null;
+                state.dragVisuals = null;
+              });
             },
 
             getDragState: () => get().dragState,
@@ -1803,53 +1739,47 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
             },
 
             updateDragVisuals: (updates) => {
-              set((state) => ({
-                dragVisuals: state.dragVisuals
-                  ? { ...state.dragVisuals, ...updates }
-                  : (updates as DragVisualState),
-              }));
+              set((state) => {
+                if (state.dragVisuals) {
+                  Object.assign(state.dragVisuals, updates);
+                } else {
+                  state.dragVisuals = updates as DragVisualState;
+                }
+              });
             },
 
             setGhostElements: (elements) => {
-              set((state) => ({
-                dragVisuals: {
-                  ...state.dragVisuals,
-                  ghostElements: elements || undefined,
-                },
-              }));
+              set((state) => {
+                if (!state.dragVisuals) state.dragVisuals = {} as DragVisualState;
+                state.dragVisuals.ghostElements = elements || undefined;
+              });
             },
 
             setSnapLine: (snapLine) => {
-              set((state) => ({
-                dragVisuals: {
-                  ...state.dragVisuals,
-                  snapLine: snapLine
-                    ? {
-                        trackIndex: snapLine.trackIndex,
-                        snappedToTrackIndex: snapLine.snappedToTrackIndex,
-                        insertionTime: snapLine.time,
-                      }
-                    : undefined,
-                },
-              }));
+              set((state) => {
+                if (!state.dragVisuals) state.dragVisuals = {} as DragVisualState;
+                state.dragVisuals.snapLine = snapLine
+                  ? {
+                      trackIndex: snapLine.trackIndex,
+                      snappedToTrackIndex: snapLine.snappedToTrackIndex,
+                      insertionTime: snapLine.time,
+                    }
+                  : undefined;
+              });
             },
 
             setTrackInsertionIndicator: (indicator) => {
-              set((state) => ({
-                dragVisuals: {
-                  ...state.dragVisuals,
-                  trackInsertion: indicator || undefined,
-                },
-              }));
+              set((state) => {
+                if (!state.dragVisuals) state.dragVisuals = {} as DragVisualState;
+                state.dragVisuals.trackInsertion = indicator || undefined;
+              });
             },
 
             setCommittedPositions: (positions) => {
-              set((state) => ({
-                dragVisuals: {
-                  ...state.dragVisuals,
-                  committedPositions: positions,
-                },
-              }));
+              set((state) => {
+                if (!state.dragVisuals) state.dragVisuals = {} as DragVisualState;
+                state.dragVisuals.committedPositions = positions;
+              });
             },
 
             clearCommittedPosition: (clipId) => {
@@ -1857,12 +1787,10 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
               if (positions?.has(clipId)) {
                 const newPositions = new Map(positions);
                 newPositions.delete(clipId);
-                set((state) => ({
-                  dragVisuals: {
-                    ...state.dragVisuals,
-                    committedPositions: newPositions,
-                  },
-                }));
+                set((state) => {
+                  if (!state.dragVisuals) state.dragVisuals = {} as DragVisualState;
+                  state.dragVisuals.committedPositions = newPositions;
+                });
               }
             },
 
@@ -1890,49 +1818,46 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
             // ========================================
 
             setCurrentTime: (time) => {
-              set((state) => ({
-                playback: { ...state.playback, currentTime: time },
-              }));
+              set((state) => {
+                state.playback.currentTime = time;
+              });
             },
 
             setCurrentFrame: (frame) => {
               const fps = get().fps;
-              set((state) => ({
-                playback: { ...state.playback, currentTime: frame / fps },
-              }));
+              set((state) => {
+                state.playback.currentTime = frame / fps;
+              });
             },
 
             setIsPlaying: (playing) => {
-              set((state) => ({
-                playback: { ...state.playback, isPlaying: playing },
-              }));
+              set((state) => {
+                state.playback.isPlaying = playing;
+              });
             },
 
             setPlaybackRate: (rate) => {
-              set((state) => ({
-                playback: { ...state.playback, playbackRate: rate },
-              }));
+              set((state) => {
+                state.playback.playbackRate = rate;
+              });
             },
 
             play: () => {
-              set((state) => ({
-                playback: { ...state.playback, isPlaying: true },
-              }));
+              set((state) => {
+                state.playback.isPlaying = true;
+              });
             },
 
             pause: () => {
-              set((state) => ({
-                playback: { ...state.playback, isPlaying: false },
-              }));
+              set((state) => {
+                state.playback.isPlaying = false;
+              });
             },
 
             togglePlayPause: () => {
-              set((state) => ({
-                playback: {
-                  ...state.playback,
-                  isPlaying: !state.playback.isPlaying,
-                },
-              }));
+              set((state) => {
+                state.playback.isPlaying = !state.playback.isPlaying;
+              });
             },
 
             // ========================================
@@ -1940,19 +1865,30 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
             // ========================================
 
             setAspectRatio: (ratio) => {
-              set(() => ({ aspectRatio: ratio, isDirty: true }));
+              set((state) => {
+                state.aspectRatio = ratio;
+                state.isDirty = true;
+              });
             },
 
             setResolution: (resolution) => {
-              set(() => ({ resolution, isDirty: true }));
+              set((state) => {
+                state.resolution = resolution;
+                state.isDirty = true;
+              });
             },
 
             setPlayerDimensions: (dimensions) => {
-              set(() => ({ playerDimensions: dimensions }));
+              set((state) => {
+                state.playerDimensions = dimensions;
+              });
             },
 
             setBackgroundColor: (color) => {
-              set(() => ({ backgroundColor: color, isDirty: true }));
+              set((state) => {
+                state.backgroundColor = color;
+                state.isDirty = true;
+              });
             },
 
             getAspectRatioDimensions: () => {
@@ -2001,31 +1937,45 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
             // ========================================
 
             setFps: (fps) => {
-              set(() => ({ fps }));
+              set((state) => {
+                state.fps = fps;
+              });
             },
 
             setEditMode: (mode) => {
-              set(() => ({ editMode: mode }));
+              set((state) => {
+                state.editMode = mode;
+              });
             },
 
             setSnappingEnabled: (enabled) => {
-              set(() => ({ snappingEnabled: enabled }));
+              set((state) => {
+                state.snappingEnabled = enabled;
+              });
             },
 
             toggleSnapping: () => {
-              set((state) => ({ snappingEnabled: !state.snappingEnabled }));
+              set((state) => {
+                state.snappingEnabled = !state.snappingEnabled;
+              });
             },
 
             setShowAlignmentGuides: (show) => {
-              set(() => ({ showAlignmentGuides: show }));
+              set((state) => {
+                state.showAlignmentGuides = show;
+              });
             },
 
             setTrackHeight: (height) => {
-              set(() => ({ trackHeight: height }));
+              set((state) => {
+                state.trackHeight = height;
+              });
             },
 
             setClipHeight: (height) => {
-              set(() => ({ clipHeight: height }));
+              set((state) => {
+                state.clipHeight = height;
+              });
             },
 
             // ========================================
@@ -2033,15 +1983,22 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
             // ========================================
 
             setProjectId: (id) => {
-              set(() => ({ projectId: id }));
+              set((state) => {
+                state.projectId = id;
+              });
             },
 
             markDirty: () => {
-              set(() => ({ isDirty: true }));
+              set((state) => {
+                state.isDirty = true;
+              });
             },
 
             markSaved: () => {
-              set(() => ({ isDirty: false, lastSavedAt: Date.now() }));
+              set((state) => {
+                state.isDirty = false;
+                state.lastSavedAt = Date.now();
+              });
             },
 
             // ========================================
@@ -2102,29 +2059,25 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
                   : newClips
                 : {};
 
-              set(() => ({
-                projectId: projectId ?? null,
-                tracks: tracksData.tracks,
-                trackOrder: tracksData.trackOrder,
-                clips: clipsData,
-                transitions: newTransitions ?? {},
-                ...(newFps !== undefined && { fps: newFps }),
-                ...(newAspectRatio !== undefined && {
-                  aspectRatio: newAspectRatio,
-                }),
-                ...(newResolution !== undefined && {
-                  resolution: newResolution,
-                }),
-                ...(newBackgroundColor !== undefined && {
-                  backgroundColor: newBackgroundColor,
-                }),
-                isDirty: false,
-                lastSavedAt: null,
-              }));
+              set((state) => {
+                state.projectId = projectId ?? null;
+                state.tracks = tracksData.tracks;
+                state.trackOrder = tracksData.trackOrder;
+                state.clips = clipsData;
+                state.transitions = newTransitions ?? {};
+                if (newFps !== undefined) state.fps = newFps;
+                if (newAspectRatio !== undefined) state.aspectRatio = newAspectRatio;
+                if (newResolution !== undefined) state.resolution = newResolution;
+                if (newBackgroundColor !== undefined) state.backgroundColor = newBackgroundColor;
+                state.isDirty = false;
+                state.lastSavedAt = null;
+              });
             },
 
             reset: () => {
-              set(() => ({ ...initialState }));
+              set((state) => {
+                Object.assign(state, initialState);
+              });
             },
 
             // ========================================
@@ -2621,12 +2574,14 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
                 state.keyframeSelection?.clipId === clipId &&
                 state.keyframeSelection?.propertyPath === propertyPath
               ) {
+                const currentSelection = state.keyframeSelection!;
                 set({
                   keyframeSelection: {
-                    ...state.keyframeSelection,
+                    clipId: currentSelection.clipId,
+                    propertyPath: currentSelection.propertyPath,
                     keyframeIds: [
                       ...new Set([
-                        ...state.keyframeSelection.keyframeIds,
+                        ...currentSelection.keyframeIds,
                         ...keyframeIds,
                       ]),
                     ],
@@ -2710,47 +2665,84 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
   ), // Close subscribeWithSelector(...)
 );
 
+/**
+ * Type-safe getState() helper.
+ * The middleware stack (temporal → mutative → persist → subscribeWithSelector)
+ * causes TypeScript to lose the store type in some contexts.
+ * Use this helper instead of useVideoEditorStore.getState() when TypeScript
+ * infers the state as 'unknown' or '{}'.
+ */
+export const getTypedState = (): VideoEditorStore =>
+  useVideoEditorStore.getState() as unknown as VideoEditorStore;
+
+/**
+ * Type-safe selector hook.
+ * The middleware stack causes useVideoEditorStore's selector parameter
+ * to be inferred as (state: unknown) => T. This wrapper casts the store
+ * so selectors receive the correct VideoEditorStore type automatically.
+ * 
+ * Usage: const tracks = useTypedStore(s => s.tracks);
+ */
+export const useTypedStore = <T>(
+  selector: (state: VideoEditorStore) => T,
+  equalityFn?: (a: T, b: T) => boolean
+): T => {
+  return (useVideoEditorStore as any)(selector, equalityFn) as T;
+};
+
 // ============================================================
 // SELECTORS
 // ============================================================
+// Memoized computed selectors are in ./memoized-selectors.ts
+// Only atomic (single-property) selectors remain here.
 
-// === TRACK SELECTORS ===
+// Import memoized computed selectors (available locally + re-exported)
+import {
+  selectTracksArray,
+  selectTracks,
+  selectVideoTracks,
+  selectAudioTracks,
+  selectClipsArray,
+  selectClipIds,
+  selectClipPositions,
+  selectClipsWithLinkGroups,
+  selectClipsByTrackIndex,
+  selectTransitionsByClipIndex,
+  selectTracksWithClips,
+  selectDurationInSeconds,
+  selectDurationInFrames,
+  computeLinkGroup,
+} from "./memoized-selectors";
 
-/** Compatibility: get tracks as sorted array */
-export const selectTracksArray = (state: VideoEditorStore): TimelineTrack[] =>
-  state.trackOrder.map((id) => state.tracks[id]).filter(Boolean);
-
-export const selectTracks = (state: VideoEditorStore) => {
-  // Sort tracks: video tracks first (REVERSED so V1 is at bottom), then audio tracks (by order)
-  const allTracks = selectTracksArray(state);
-  const videoTracks = allTracks
-    .filter((t) => t.type === "video")
-    .sort((a, b) => b.order - a.order); // Reversed!
-  const audioTracks = allTracks
-    .filter((t) => t.type === "audio")
-    .sort((a, b) => a.order - b.order);
-  return [...videoTracks, ...audioTracks];
+// Re-export memoized computed selectors for external consumers
+export {
+  selectTracksArray,
+  selectTracks,
+  selectVideoTracks,
+  selectAudioTracks,
+  selectClipsArray,
+  selectClipIds,
+  selectClipPositions,
+  selectClipsWithLinkGroups,
+  selectClipsByTrackIndex,
+  selectTransitionsByClipIndex,
+  selectTracksWithClips,
+  selectDurationInSeconds,
+  selectDurationInFrames,
+  computeLinkGroup,
 };
+
+// Re-export types from memoized-selectors
+export type {
+  ItemTransition,
+  TimelineItem,
+  TrackWithClips,
+} from "./memoized-selectors";
+
+// === ATOMIC SELECTORS (no memoization needed — direct property access) ===
+
 export const selectTrackById = (trackId: string) => (state: VideoEditorStore) =>
   state.tracks[trackId];
-export const selectVideoTracks = (state: VideoEditorStore) => {
-  const allTracks = selectTracksArray(state);
-  return allTracks
-    .filter((t) => t.type === "video")
-    .sort((a, b) => b.order - a.order); // Reversed so V1 is at bottom
-};
-export const selectAudioTracks = (state: VideoEditorStore) => {
-  const allTracks = selectTracksArray(state);
-  return allTracks
-    .filter((t) => t.type === "audio")
-    .sort((a, b) => a.order - b.order);
-};
-
-// === CLIP SELECTORS ===
-
-/** Compatibility: get clips as array */
-export const selectClipsArray = (state: VideoEditorStore): TimelineClip[] =>
-  Object.values(state.clips);
 
 /** Get clips Record (normalized) */
 export const selectClips = (state: VideoEditorStore) => state.clips;
@@ -2873,21 +2865,16 @@ export const selectShowAlignmentGuides = (state: VideoEditorStore) =>
 export const selectTrackHeight = (state: VideoEditorStore) => state.trackHeight;
 export const selectClipHeight = (state: VideoEditorStore) => state.clipHeight;
 
+// === KEYFRAME SELECTORS ===
+export const selectKeyframeSelection = (state: VideoEditorStore) =>
+  state.keyframeSelection;
+export const selectKeyframeClipboard = (state: VideoEditorStore) =>
+  state.keyframeClipboard;
+
 // === PROJECT SELECTORS ===
 export const selectProjectId = (state: VideoEditorStore) => state.projectId;
 export const selectIsDirty = (state: VideoEditorStore) => state.isDirty;
 export const selectLastSavedAt = (state: VideoEditorStore) => state.lastSavedAt;
-
-// === DERIVED SELECTORS ===
-export const selectDurationInSeconds = (state: VideoEditorStore) => {
-  const clipsArr = Object.values(state.clips);
-  if (clipsArr.length === 0) return 30;
-  return Math.max(...clipsArr.map((c) => c.startTime + c.duration));
-};
-export const selectDurationInFrames = (state: VideoEditorStore) =>
-  Math.ceil(selectDurationInSeconds(state) * state.fps);
-
-// === CLIP SELECTORS ===
 
 /**
  * Get clips for a specific track, sorted by start time
@@ -2898,7 +2885,6 @@ export const selectClipsByTrackId =
 
 /**
  * Get all clips as a map by ID for O(1) lookup
- * Now this is essentially the same as state.clips since clips ARE a Record
  */
 export const selectClipsMap = (
   state: VideoEditorStore,
@@ -2912,258 +2898,20 @@ export const selectClipIdsByTrackId =
     getTrackClips(state.clips, trackId).map((clip) => clip.id);
 
 /**
- * Compute linkGroup for a clip from its linkedClipId
- * Sorting ensures the same group ID regardless of which clip is primary
- */
-export const computeLinkGroup = (
-  clipId: string,
-  linkedClipId?: string,
-): string | undefined => {
-  if (!linkedClipId) return undefined;
-  return `link-${[clipId, linkedClipId].sort().join("-")}`;
-};
-
-/**
- * Get all clips with computed linkGroup
- */
-export const selectClipsWithLinkGroups = (state: VideoEditorStore) =>
-  Object.values(state.clips).map((clip) => ({
-    ...clip,
-    linkGroup: computeLinkGroup(clip.id, clip.linkedClipId),
-  }));
-
-/**
  * Hook: Get clips for a track with shallow comparison
  */
 export const useClipsByTrackId = (trackId: string) =>
   useVideoEditorStore(useShallow(selectClipsByTrackId(trackId)));
 
-// === DENORMALIZED VIEW SELECTOR ===
-
 /**
- * TimelineItem - Denormalized clip data for UI rendering
- *
- * This is the computed view of a clip with:
- * - start/end times (computed from startTime + duration)
- * - linkGroup (computed from linkedClipId)
- * - Flattened media properties
- */
-/**
- * ItemTransition - Transition data for timeline item overlays
- * Uses the simplified TransitionEntity format with absolute startTime/endTime
- */
-export type ItemTransition = TransitionEntity;
-
-export interface TimelineItem {
-  id: string;
-  start: number;
-  end: number;
-  type?: string;
-  label?: string;
-  color?: string;
-  data?: Record<string, any>;
-  mediaStart?: number;
-  mediaDuration?: number;
-  mediaSrcDuration?: number;
-  mediaEnd?: number;
-  speed?: number;
-  linkGroup?: string;
-  linkedItemId?: string;
-  /**
-   * @deprecated - Use inTransition/outTransition TransitionEntity instead
-   * Kept for backward compatibility during migration
-   */
-  transitions?: {
-    in?: TransitionEntity;
-    out?: TransitionEntity;
-  };
-  /** In transition (fade in, or second clip in crossfade) */
-  inTransition?: TransitionEntity;
-  /** Out transition (fade out, or first clip in crossfade) */
-  outTransition?: TransitionEntity;
-}
-
-/**
- * TrackWithClips - Denormalized track with embedded clips for UI rendering
- */
-export interface TrackWithClips extends TimelineTrack {
-  items: TimelineItem[];
-}
-
-/**
- * Selector: Tracks with embedded clips (denormalized view)
- *
- * This computes a denormalized view for UI components that need
- * tracks with their clips pre-filtered and embedded.
- *
- * The store stays normalized (tracks + clips separate) for efficient updates,
- * and this selector computes the denormalized view for rendering.
- */
-export const selectTracksWithClips = (
-  state: VideoEditorStore,
-): TrackWithClips[] => {
-  const sortedTracks = selectTracks(state);
-  return sortedTracks.map((track) => {
-    const trackClips = getTrackClips(state.clips, track.id);
-    const items: TimelineItem[] = trackClips
-      .map((clip) => {
-        const linkGroup = computeLinkGroup(clip.id, clip.linkedClipId);
-
-        // Get transition entities for this clip using canonical pure function
-        const { inTransition, outTransition } = getClipTransitionsPure(
-          clip.id,
-          state.transitions,
-        );
-
-        return {
-          id: clip.id,
-          start: clip.startTime,
-          end: clip.startTime + clip.duration,
-          type: clip.type,
-          label: clip.label,
-          color: clip.color,
-          data: {
-            ...clip.data,
-            sourceId: clip.sourceId,
-            transform: clip.transform,
-            text: clip.text,
-            linkedClipId: clip.linkedClipId,
-            thumbnailUrl: clip.thumbnailUrl,
-            effects: clip.effects,
-            keyframes: clip.keyframes, // Include keyframes for animation markers
-          },
-          mediaStart: clip.media?.mediaStartTime,
-          mediaDuration: clip.media?.mediaDuration,
-          mediaSrcDuration: clip.media?.mediaDuration,
-          speed: clip.media?.speed,
-          linkGroup,
-          linkedItemId: clip.linkedClipId,
-          transitions: clip.transitions,
-          // Use full TransitionEntity objects for "between" transitions
-          inTransition: inTransition as ItemTransition | undefined,
-          outTransition: outTransition as ItemTransition | undefined,
-        };
-      })
-      .sort((a, b) => a.start - b.start);
-
-    return { ...track, items };
-  });
-};
-
-/**
- * Hook: Get tracks with embedded clips using shallow comparison
+ * Hook: Get tracks with embedded clips using memoized selector
  */
 export const useTracksWithClips = () =>
   useVideoEditorStore(useShallow(selectTracksWithClips));
 
 // ============================================================
-// ACTION SELECTOR (for stable references)
-// ============================================================
-
-export const selectActions = (state: VideoEditorStore) => ({
-  // Track actions
-  addTrack: state.addTrack,
-  deleteTrack: state.deleteTrack,
-  updateTrack: state.updateTrack,
-  reorderTracks: state.reorderTracks,
-  toggleTrackLock: state.toggleTrackLock,
-  toggleTrackVisibility: state.toggleTrackVisibility,
-  toggleTrackMute: state.toggleTrackMute,
-  setTracks: state.setTracks,
-  // Clip actions
-  addClip: state.addClip,
-  deleteClip: state.deleteClip,
-  deleteClips: state.deleteClips,
-  updateClip: state.updateClip,
-  moveClip: state.moveClip,
-  duplicateClip: state.duplicateClip,
-  splitClip: state.splitClip,
-  trimClip: state.trimClip,
-  setClips: state.setClips,
-  // Clip linking
-  linkClips: state.linkClips,
-  unlinkClips: state.unlinkClips,
-  getLinkedClipIds: state.getLinkedClipIds,
-  // Transition actions
-  addTransition: state.addTransition,
-  addBetweenTransition: state.addBetweenTransition,
-  updateTransition: state.updateTransition,
-  removeTransition: state.removeTransition,
-  clearAllTransitions: state.clearAllTransitions,
-  setTransitions: state.setTransitions,
-  // Selection actions
-  selectClip: state.selectClip,
-  selectClips: state.selectClips,
-  addToSelection: state.addToSelection,
-  removeFromSelection: state.removeFromSelection,
-  selectTransition: state.selectTransition,
-  clearSelection: state.clearSelection,
-  // Drag actions (unified)
-  startDrag: state.startDrag,
-  updateDrag: state.updateDrag,
-  endDrag: state.endDrag,
-  getDragState: state.getDragState,
-  isDraggingType: state.isDraggingType,
-  isDragging: state.isDragging,
-  // Drag visual actions
-  setDragVisuals: state.setDragVisuals,
-  updateDragVisuals: state.updateDragVisuals,
-  setGhostElements: state.setGhostElements,
-  setSnapLine: state.setSnapLine,
-  setTrackInsertionIndicator: state.setTrackInsertionIndicator,
-  setCommittedPositions: state.setCommittedPositions,
-  clearCommittedPosition: state.clearCommittedPosition,
-  getCommittedPosition: state.getCommittedPosition,
-  resetDragState: state.resetDragState,
-  // Playback actions
-  setCurrentTime: state.setCurrentTime,
-  setCurrentFrame: state.setCurrentFrame,
-  setIsPlaying: state.setIsPlaying,
-  setPlaybackRate: state.setPlaybackRate,
-  play: state.play,
-  pause: state.pause,
-  togglePlayPause: state.togglePlayPause,
-  // Canvas actions
-  setAspectRatio: state.setAspectRatio,
-  setResolution: state.setResolution,
-  setPlayerDimensions: state.setPlayerDimensions,
-  setBackgroundColor: state.setBackgroundColor,
-  getAspectRatioDimensions: state.getAspectRatioDimensions,
-  // Settings actions
-  setFps: state.setFps,
-  setEditMode: state.setEditMode,
-  setSnappingEnabled: state.setSnappingEnabled,
-  toggleSnapping: state.toggleSnapping,
-  setShowAlignmentGuides: state.setShowAlignmentGuides,
-  setTrackHeight: state.setTrackHeight,
-  setClipHeight: state.setClipHeight,
-  // Project actions
-  setProjectId: state.setProjectId,
-  markDirty: state.markDirty,
-  markSaved: state.markSaved,
-  // Derived data
-  getDurationInSeconds: state.getDurationInSeconds,
-  getDurationInFrames: state.getDurationInFrames,
-  getClipsByTrack: state.getClipsByTrack,
-  getClipById: state.getClipById,
-  getTrackById: state.getTrackById,
-  // Initialization
-  initialize: state.initialize,
-  reset: state.reset,
-  // History (undo/redo)
-  saveToHistory: state.saveToHistory,
-  undo: state.undo,
-  redo: state.redo,
-  clearHistory: state.clearHistory,
-  canUndo: state.canUndo,
-  canRedo: state.canRedo,
-});
-
-// ============================================================
 // SHALLOW COMPARISON SELECTORS (Performance Optimized)
 // ============================================================
-// These selectors use shallow comparison to prevent unnecessary re-renders
-// when array contents haven't actually changed (common with computed arrays).
 
 /**
  * Export shallow for use in component-level selectors
@@ -3171,32 +2919,12 @@ export const selectActions = (state: VideoEditorStore) => ({
 export { shallow };
 
 /**
- * Select only clip IDs (shallow compared) - use when you only need to track
- * which clips exist, not their full data
- */
-export const selectClipIds = (state: VideoEditorStore) =>
-  Object.keys(state.clips);
-
-/**
  * Select only track IDs (shallow compared)
  */
 export const selectTrackIds = (state: VideoEditorStore) => state.trackOrder;
 
 /**
- * Combined selector for clip position data only - useful for timeline rendering
- * Returns minimal data needed for clip positioning
- */
-export const selectClipPositions = (state: VideoEditorStore) =>
-  Object.values(state.clips).map((c) => ({
-    id: c.id,
-    trackId: c.trackId,
-    startTime: c.startTime,
-    duration: c.duration,
-  }));
-
-/**
  * Selector for a single clip by ID - returns undefined if not found
- * Use with shallow comparison at component level
  */
 export const createClipSelector =
   (clipId: string) => (state: VideoEditorStore) =>
@@ -3204,7 +2932,6 @@ export const createClipSelector =
 
 /**
  * Hook for using clip IDs with shallow comparison
- * Only triggers re-render when actual clip IDs change
  */
 export const useClipIds = () => useVideoEditorStore(useShallow(selectClipIds));
 
@@ -3222,10 +2949,141 @@ export const useSelectedClipIds = () =>
 
 /**
  * Hook for using clip positions with shallow comparison
- * Useful for timeline item rendering where only position matters
  */
 export const useClipPositions = () =>
   useVideoEditorStore(useShallow(selectClipPositions));
+
+// ============================================================
+// ACTION SELECTOR (cached stable reference)
+// ============================================================
+// Zustand actions are stable function references — they never change after
+// store creation. We cache the actions object on first access to prevent
+// creating a new ~100-property object on every render, which would cause
+// every component using useVideoEditorActions() to re-render on ANY state change.
+
+let _cachedActions: ReturnType<typeof _buildActions> | null = null;
+
+function _buildActions(state: VideoEditorStore) {
+  return {
+    // Track actions
+    addTrack: state.addTrack,
+    deleteTrack: state.deleteTrack,
+    updateTrack: state.updateTrack,
+    reorderTracks: state.reorderTracks,
+    toggleTrackLock: state.toggleTrackLock,
+    toggleTrackVisibility: state.toggleTrackVisibility,
+    toggleTrackMute: state.toggleTrackMute,
+    setTracks: state.setTracks,
+    // Clip actions
+    addClip: state.addClip,
+    deleteClip: state.deleteClip,
+    deleteClips: state.deleteClips,
+    updateClip: state.updateClip,
+    moveClip: state.moveClip,
+    duplicateClip: state.duplicateClip,
+    splitClip: state.splitClip,
+    trimClip: state.trimClip,
+    setClips: state.setClips,
+    // Clip linking
+    linkClips: state.linkClips,
+    unlinkClips: state.unlinkClips,
+    getLinkedClipIds: state.getLinkedClipIds,
+    // Transition actions
+    addTransition: state.addTransition,
+    addBetweenTransition: state.addBetweenTransition,
+    updateTransition: state.updateTransition,
+    removeTransition: state.removeTransition,
+    clearAllTransitions: state.clearAllTransitions,
+    setTransitions: state.setTransitions,
+    getClipTransitions: state.getClipTransitions,
+    // Selection actions
+    selectClip: state.selectClip,
+    selectClips: state.selectClips,
+    addToSelection: state.addToSelection,
+    removeFromSelection: state.removeFromSelection,
+    selectTransition: state.selectTransition,
+    clearSelection: state.clearSelection,
+    // Drag actions (unified)
+    startDrag: state.startDrag,
+    updateDrag: state.updateDrag,
+    endDrag: state.endDrag,
+    getDragState: state.getDragState,
+    isDraggingType: state.isDraggingType,
+    isDragging: state.isDragging,
+    // Drag visual actions
+    setDragVisuals: state.setDragVisuals,
+    updateDragVisuals: state.updateDragVisuals,
+    setGhostElements: state.setGhostElements,
+    setSnapLine: state.setSnapLine,
+    setTrackInsertionIndicator: state.setTrackInsertionIndicator,
+    setCommittedPositions: state.setCommittedPositions,
+    clearCommittedPosition: state.clearCommittedPosition,
+    getCommittedPosition: state.getCommittedPosition,
+    resetDragState: state.resetDragState,
+    // Playback actions
+    setCurrentTime: state.setCurrentTime,
+    setCurrentFrame: state.setCurrentFrame,
+    setIsPlaying: state.setIsPlaying,
+    setPlaybackRate: state.setPlaybackRate,
+    play: state.play,
+    pause: state.pause,
+    togglePlayPause: state.togglePlayPause,
+    // Canvas actions
+    setAspectRatio: state.setAspectRatio,
+    setResolution: state.setResolution,
+    setPlayerDimensions: state.setPlayerDimensions,
+    setBackgroundColor: state.setBackgroundColor,
+    getAspectRatioDimensions: state.getAspectRatioDimensions,
+    // Settings actions
+    setFps: state.setFps,
+    setEditMode: state.setEditMode,
+    setSnappingEnabled: state.setSnappingEnabled,
+    toggleSnapping: state.toggleSnapping,
+    setShowAlignmentGuides: state.setShowAlignmentGuides,
+    setTrackHeight: state.setTrackHeight,
+    setClipHeight: state.setClipHeight,
+    // Project actions
+    setProjectId: state.setProjectId,
+    markDirty: state.markDirty,
+    markSaved: state.markSaved,
+    // Derived data
+    getDurationInSeconds: state.getDurationInSeconds,
+    getDurationInFrames: state.getDurationInFrames,
+    getClipsByTrack: state.getClipsByTrack,
+    getClipById: state.getClipById,
+    getTrackById: state.getTrackById,
+    // Initialization
+    initialize: state.initialize,
+    reset: state.reset,
+    // History (undo/redo)
+    saveToHistory: state.saveToHistory,
+    undo: state.undo,
+    redo: state.redo,
+    clearHistory: state.clearHistory,
+    canUndo: state.canUndo,
+    canRedo: state.canRedo,
+    // Keyframe actions
+    addKeyframe: state.addKeyframe,
+    updateKeyframe: state.updateKeyframe,
+    deleteKeyframe: state.deleteKeyframe,
+    togglePropertyAnimation: state.togglePropertyAnimation,
+    setKeyframeInterpolation: state.setKeyframeInterpolation,
+    getPropertyKeyframes: state.getPropertyKeyframes,
+    selectKeyframes: state.selectKeyframes,
+    addKeyframesToSelection: state.addKeyframesToSelection,
+    clearKeyframeSelection: state.clearKeyframeSelection,
+    copyKeyframes: state.copyKeyframes,
+    pasteKeyframes: state.pasteKeyframes,
+  };
+}
+
+/** Returns a stable, cached actions object — same reference on every call */
+export const selectActions = (state: VideoEditorStore) => {
+  if (!_cachedActions) {
+    _cachedActions = _buildActions(state);
+  }
+  return _cachedActions;
+};
 
 // ============================================================
 // CONVENIENCE HOOKS

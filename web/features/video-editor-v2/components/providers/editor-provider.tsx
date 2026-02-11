@@ -10,7 +10,7 @@
  * All state is managed by VideoEditorStore - no bidirectional sync.
  */
 
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { EditorProvider as EditorContextProvider } from "../../contexts/editor-context";
 import { useVideoPlayer } from "../../hooks/use-video-player";
 import { useRenderer } from "../../contexts/renderer-context";
@@ -228,8 +228,11 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
     }
   }, [projectId, onSaving, onSaved]);
 
-  // Context value - configuration and callbacks only (data props come from the context provider)
-  const contextValue = {
+  // Context value - MEMOIZED to prevent re-render cascade
+  // IMPORTANT: currentFrame and isPlaying are intentionally excluded —
+  // they change at 30fps during playback and are already synced to the Zustand store
+  // (see useEffect above). Components should read them from the store, not context.
+  const contextValue = useMemo(() => ({
     // Project identification
     projectId,
     
@@ -278,7 +281,14 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
     
     // Loading state
     isInitialLoadComplete: !isLoadingProject,
-  };
+  }), [
+    projectId, fps, playerRef, isScrubbingRef, renderType, baseUrl,
+    initialRows, maxRows, zoomConstraints, snappingConfig,
+    disableMobileLayout, disableVideoKeyframes, enablePushOnDrag,
+    videoWidth, videoHeight,
+    play, pause, togglePlayPause, seekTo, formatTime,
+    renderMedia, saveProject, isLoadingProject,
+  ]);
 
   return (
     <EditorContextProvider value={contextValue as any}>

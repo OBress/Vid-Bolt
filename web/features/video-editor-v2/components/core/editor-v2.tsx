@@ -62,13 +62,16 @@ export const EditorV2: React.FC<EditorV2Props> = ({
   const compositionEditorOpen = useCompositionEditorStore((state) => state.isOpen);
   const sourceClipId = useCompositionEditorStore((state) => state.sourceClipId);
   
-  // Video editor store - get clips array and updateClip action
-  const clips = useVideoEditorStore((state) => state.clips);
-  const updateClip = useVideoEditorStore((state) => state.updateClip);
-
   // Handle save from composition editor
+  // NOTE: clips and updateClip are read from getState() here instead of using
+  // reactive selectors. They were only needed inside this callback, and subscribing
+  // reactively caused EditorV2 to re-render on every state change (including
+  // currentFrame updates during scrubbing), cascading to MediaTab/sidebar (471ms).
   const handleCompositionSave = useCallback((compositionData: CompositionDefinition) => {
     if (!sourceClipId) return;
+
+    const store = useVideoEditorStore.getState();
+    const clips = store.clips;
 
     // Get the original clip from the clips Record
     const clip = clips[sourceClipId];
@@ -90,13 +93,13 @@ export const EditorV2: React.FC<EditorV2Props> = ({
     const fixedComposition = validateAndFixComposition(compositionData);
 
     // Update the clip with the validated composition definition
-    updateClip(sourceClipId, {
+    store.updateClip(sourceClipId, {
       properties: {
         ...clip.properties,
         compositionDefinition: fixedComposition,
       },
     });
-  }, [sourceClipId, clips, updateClip]);
+  }, [sourceClipId]);
 
   return (
     <>

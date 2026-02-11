@@ -12,19 +12,13 @@ import { getNearestKeyframeTime } from '../utils/keyframe-interpolator';
  * This hook should be used at the editor level.
  */
 export function useEditorShortcuts() {
+  // Actions only — these are stable function references and don't cause re-renders
   const undo = useVideoEditorStore(state => state.undo);
   const redo = useVideoEditorStore(state => state.redo);
   const canUndo = useVideoEditorStore(state => state.canUndo);
   const canRedo = useVideoEditorStore(state => state.canRedo);
-  
-  // Keyframe-related state and actions
-  const clips = useVideoEditorStore(state => state.clips);
-  const selection = useVideoEditorStore(state => state.selection);
-  const playback = useVideoEditorStore(state => state.playback);
-  const keyframeSelection = useVideoEditorStore(state => state.keyframeSelection);
   const setCurrentTime = useVideoEditorStore(state => state.setCurrentTime);
   const addKeyframe = useVideoEditorStore(state => state.addKeyframe);
-  const deleteKeyframe = useVideoEditorStore(state => state.deleteKeyframe);
   const deleteKeyframes = useVideoEditorStore(state => state.deleteKeyframes);
   const clearKeyframeSelection = useVideoEditorStore(state => state.clearKeyframeSelection);
   const getPropertyKeyframes = useVideoEditorStore(state => state.getPropertyKeyframes);
@@ -64,6 +58,12 @@ export function useEditorShortcuts() {
     // ========================================
     // KEYFRAME SHORTCUTS
     // ========================================
+    
+    // Read state on-demand from getState() instead of reactive selectors.
+    // This avoids re-rendering EditorV2 (and the entire sidebar/MediaTab tree)
+    // on every state change (clips, selection, playback, keyframeSelection).
+    const state = useVideoEditorStore.getState();
+    const { clips, selection, playback, keyframeSelection } = state;
     
     // Get selected clip for keyframe operations
     const selectedClipId = selection?.clipIds?.[0];
@@ -145,10 +145,6 @@ export function useEditorShortcuts() {
     redo, 
     canUndo, 
     canRedo, 
-    clips, 
-    selection, 
-    playback, 
-    keyframeSelection,
     setCurrentTime,
     addKeyframe,
     deleteKeyframes,

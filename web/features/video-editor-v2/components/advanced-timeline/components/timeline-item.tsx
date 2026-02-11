@@ -2,7 +2,7 @@ import React, { useRef, useCallback, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { TimelineItem as TimelineItemType, isVideoTrackItem } from '../types';
 import { TIMELINE_CONSTANTS } from '../constants';
-import { useVideoEditorStore, getCurrentDrag, type UnifiedDragState } from '../../../stores/video-editor-store';
+import { useVideoEditorStore, useVideoEditorActions, useTypedStore, getTypedState, selectEditMode, selectDragState, selectDragVisuals, getCurrentDrag, type UnifiedDragState } from '../../../stores/video-editor-store';
 import { EyeOff, VolumeX, Lock, Link2, Sparkles, Shuffle, Volume2 } from 'lucide-react';
 
 // Debug logging for timeline item interactions - DISABLED IN PRODUCTION
@@ -484,14 +484,11 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   const splitThrottleRef = useRef<number | null>(null);
   const lastSplitPositionRef = useRef<number | null>(null);
 
-  // Get current edit mode, drag state, and committed position from store
-  const { 
-    editMode, 
-    dragState,
-    dragVisuals,
-    clearCommittedPosition,
-    getCommittedPosition,
-  } = useVideoEditorStore();
+  // Get current edit mode, drag state from individual selectors (performance: only re-renders when these change)
+  const editMode = useTypedStore(selectEditMode);
+  const dragState = useTypedStore(selectDragState);
+  const dragVisuals = useTypedStore(selectDragVisuals);
+  const { clearCommittedPosition, getCommittedPosition } = useVideoEditorActions();
   
   // Derive isDragging from drag state - use store as source of truth
   const storeIsDragging = dragState !== null;
@@ -790,7 +787,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
 
   // Simple mouse down handler
   const handleMouseDown = (e: React.MouseEvent) => {
-    const currentDrag = useVideoEditorStore.getState().dragState;
+    const currentDrag = getTypedState().dragState;
     const activeDragType = currentDrag?.type || null;
     
     // ============================================================
@@ -1572,7 +1569,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
               : itemSnapshot.originalDuration + deltaDuration;
             
             // Calculate track row indices for vertical offset
-            const tracks = Object.values(useVideoEditorStore.getState().tracks);
+            const tracks = Object.values(getTypedState().tracks);
             
             // For linked items (not the primary item), keep them on their original track
             const isPrimaryItem = item.id === dragState.clipId;
@@ -1612,6 +1609,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
             );
           })()}
           
+          {(isHovering || isSelected) && (
           <TimelineItemResizeHandles 
             onDragStart={!!onDragStart}
             splittingEnabled={splittingEnabled}
@@ -1624,6 +1622,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
             onMouseDown={handleResizeMouseDown}
             onTouchStart={handleResizeTouchStart}
           />
+          )}
           
           <TimelineItemContent 
             label={item.label}
@@ -1753,6 +1752,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
           </div>
           
           {/* Transition drop zones - visible when dragging transitions */}
+          {isDraggingTransition && (
           <TimelineItemTransitionDropZones
             isDraggingTransition={isDraggingTransition}
             draggingTransitionIsVideo={draggingTransitionIsVideo}
@@ -1767,6 +1767,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
             pixelsPerSecond={itemRef.current ? (itemRef.current.offsetWidth / duration) : 100}
             isVideoItem={isVideoTrackItem(item.type)}
           />
+          )}
 
           {/* Effect drop overlay - shows when dragging an effect over this item */}
           {isDragOverForEffect && (
@@ -1785,11 +1786,13 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
           )}
           
           {/* Fade overlays for audio/sound items */}
+          {(fadeIn > 0 || fadeOut > 0) && (
           <TimelineItemFadeOverlays 
             fadeIn={fadeIn}
             fadeOut={fadeOut}
             duration={duration}
           />
+          )}
           
           {/* Interactive transition overlays */}
           {/* Only render individual overlays if NOT a between transition */}
@@ -1825,11 +1828,13 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
             />
           )}
           
+          {splittingEnabled && isHovering && (
           <TimelineItemSplitLine 
             splittingEnabled={splittingEnabled}
             isHovering={isHovering}
             splitPosition={splitPosition}
           />
+          )}
         </div>
       </ContextMenuTrigger>
       
@@ -1884,7 +1889,8 @@ export const MemoizedTimelineItem = React.memo(TimelineItem, (prevProps, nextPro
   if (prevProps.isSelected !== nextProps.isSelected) return false;
   if (prevProps.isDragging !== nextProps.isDragging) return false;
   if (prevProps.splittingEnabled !== nextProps.splittingEnabled) return false;
-  if (prevProps.currentFrame !== nextProps.currentFrame) return false;
+  // NOTE: currentFrame intentionally excluded from memo comparison.
+  // It changes 10×/sec during playback and would bust the memo for ALL items.
   if (prevProps.fps !== nextProps.fps) return false;
   if (prevProps.trackLocked !== nextProps.trackLocked) return false;
   if (prevProps.trackHidden !== nextProps.trackHidden) return false;
@@ -1904,16 +1910,10 @@ export const MemoizedTimelineItem = React.memo(TimelineItem, (prevProps, nextPro
   if (prevProps.nextItem !== nextProps.nextItem) return false;
   if (prevProps.prevItem !== nextProps.prevItem) return false;
   
-  // Compare selectedItemIds array (used for multi-selection UI)
-  const prevIds = prevProps.selectedItemIds || [];
-  const nextIds = nextProps.selectedItemIds || [];
-  if (prevIds.length !== nextIds.length) return false;
-  // Only deep compare if lengths match and are small
-  if (prevIds.length > 0 && prevIds.length <= 10) {
-    for (let i = 0; i < prevIds.length; i++) {
-      if (prevIds[i] !== nextIds[i]) return false;
-    }
-  }
+  // NOTE: selectedItemIds intentionally excluded from memo comparison.
+  // Each item receives `isSelected` boolean for rendering, and context menu
+  // operations use a ref (selectedItemIdsRef) pattern in the parent.
+  // This prevents O(N×M) comparisons on every selection click.
   
   // IMPORTANT: Always allow re-renders when callback props change
   // Callback functions are recreated on each render, so we must compare them

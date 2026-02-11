@@ -46,7 +46,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "../../../utils/general/utils";
-import { useVideoEditorStore } from "../../../stores/video-editor-store";
+import { useVideoEditorStore, useVideoEditorActions, selectFps, selectKeyframeClipboard } from "../../../stores/video-editor-store";
 import { useOptimizedScrubbing } from "../../../hooks/use-optimized-scrubbing";
 import { useEditorContext } from "../../../contexts/editor-context";
 import type { TimelineClip } from "../../../types/timeline-v2";
@@ -983,7 +983,7 @@ const PropertyRow: React.FC<PropertyRowProps> = React.memo(({
     setKeyframeInterpolation,
     setCurrentTime: setGlobalTime,
     updateClip,
-  } = useVideoEditorStore();
+  } = useVideoEditorActions();
   
   const isEnabled = propertyKeyframes?.enabled ?? false;
   const keyframes = propertyKeyframes?.keyframes ?? [];
@@ -1629,10 +1629,10 @@ export const KeyframesSection: React.FC<KeyframesSectionProps> = ({
   const [isCurveEditorOpen, setIsCurveEditorOpen] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   
+  const fps = useVideoEditorStore(selectFps);
+  const keyframeClipboard = useVideoEditorStore(selectKeyframeClipboard);
   const { 
     setCurrentTime, 
-    playback, 
-    fps, 
     setKeyframeInterpolation,
     selectKeyframes: storeSelectKeyframes,
     clearKeyframeSelection,
@@ -1640,8 +1640,7 @@ export const KeyframesSection: React.FC<KeyframesSectionProps> = ({
     pasteKeyframes,
     deleteKeyframe,
     updateKeyframe,
-    keyframeClipboard,
-  } = useVideoEditorStore();
+  } = useVideoEditorActions();
   
   if (!clip) return null;
   

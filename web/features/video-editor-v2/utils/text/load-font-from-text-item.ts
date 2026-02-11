@@ -218,8 +218,17 @@ export const loadFontFromTextItem = async (item: LoadFontInfo): Promise<void> =>
     // Determine font variant based on weight and style
     const variant = item.fontStyle === 'italic' ? 'italic' : 'normal';
 
+    // Normalize CSS keyword weights to numeric values
+    // Google Font info objects only use numeric weight strings ('100', '400', '700', etc.)
+    const WEIGHT_KEYWORD_MAP: Record<string, string> = {
+      'normal': '400',
+      'bold': '700',
+      'lighter': '300',
+      'bolder': '900',
+    };
+    let fontWeight = WEIGHT_KEYWORD_MAP[item.fontWeight] ?? item.fontWeight;
+
     // If using fallback font, adjust weight to available ones
-    let fontWeight = item.fontWeight;
     if (fontInfo.fontFamily === 'Roboto' && item.fontFamily !== 'Roboto') {
       console.warn('[loadFontFromTextItem] Font fell back to Roboto! Requested:', item.fontFamily);
       // Roboto supports all standard weights, but ensure we use a valid one

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { TrackWithClips as TimelineTrackType, TimelineItem as TimelineItemType } from '../types';
 import { MemoizedTimelineItem } from './timeline-item';
 import { TimelineItemBetweenTransitionOverlay } from './timeline-item/timeline-item-between-transition-overlay';
@@ -7,7 +7,8 @@ import { TimelineGapIndicator } from './timeline-gap-indicator';
 import { MemoizedTimelineGhostElement } from './timeline-ghost-element';
 import { findGapsInTrack } from '../utils/gap-utils';
 import { TIMELINE_CONSTANTS } from '../constants';
-import { useVideoEditorStore } from '../../../stores/video-editor-store';
+import { useVideoEditorStore, useTypedStore } from '../../../stores/video-editor-store';
+import type { VideoEditorStore } from '../../../stores/video-editor-store';
 import type { TransitionEntity } from '../../../types/timeline-v2';
 import { isBetweenTransition } from '../../../types/timeline-v2';
 
@@ -132,9 +133,9 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
   const gaps = findGapsInTrack(track.items);
   
   // Get transitions from store for detecting between transitions
-  const storeTransitions = useVideoEditorStore(state => state.transitions);
-  const updateTransition = useVideoEditorStore(state => state.updateTransition);
-  const removeTransition = useVideoEditorStore(state => state.removeTransition);
+  const storeTransitions = useTypedStore(state => state.transitions);
+  const updateTransition = useTypedStore(state => state.updateTransition);
+  const removeTransition = useTypedStore(state => state.removeTransition);
   
   // Find between transitions that involve clips in this track
   const betweenTransitions = React.useMemo(() => {
@@ -190,18 +191,21 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
   }, [track.items, betweenTransitions]);
 
   // Handle item selection change with support for multi-selection
-  const handleSelectionChange = (itemId: string, isMultiple: boolean) => {
+  // Use ref for selectedItemIds to keep handleSelectionChange referentially stable
+  const selectedItemIdsRef = React.useRef(selectedItemIds);
+  selectedItemIdsRef.current = selectedItemIds;
+  
+  const handleSelectionChange = useCallback((itemId: string, isMultiple: boolean) => {
+    const currentIds = selectedItemIdsRef.current;
     if (onSelectedItemsChange) {
       if (isMultiple) {
         // Multi-selection: toggle the item
-        const currentlySelected = selectedItemIds.includes(itemId);
+        const currentlySelected = currentIds.includes(itemId);
         if (currentlySelected) {
-          // Remove from selection
-          const newSelection = selectedItemIds.filter(id => id !== itemId);
+          const newSelection = currentIds.filter(id => id !== itemId);
           onSelectedItemsChange(newSelection);
         } else {
-          // Add to selection
-          const newSelection = [...selectedItemIds, itemId];
+          const newSelection = [...currentIds, itemId];
           onSelectedItemsChange(newSelection);
         }
       } else {
@@ -209,10 +213,9 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
         onSelectedItemsChange([itemId]);
       }
     } else {
-      // Fallback to old behavior
       onItemSelect?.(itemId);
     }
-  };
+  }, [onSelectedItemsChange, onItemSelect]);
 
   // Handle click on empty track area to move playhead (like Premiere Pro)
   const handleTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -423,7 +426,10 @@ export const MemoizedTimelineTrack = React.memo(TimelineTrack, (prevProps, nextP
   if (prevProps.isValidDrop !== nextProps.isValidDrop) return false;
   if (prevProps.splittingEnabled !== nextProps.splittingEnabled) return false;
   if (prevProps.hideItemsOnDrag !== nextProps.hideItemsOnDrag) return false;
-  if (prevProps.currentFrame !== nextProps.currentFrame) return false;
+  // NOTE: currentFrame intentionally excluded from memo comparison.
+  // It changes 10×/sec during playback and would bust the memo for ALL tracks,
+  // causing cascading re-renders. The split line and playhead-over-item highlight
+  // are cosmetic and don't need per-tick updates.
   if (prevProps.fps !== nextProps.fps) return false;
   if (prevProps.trackHeight !== nextProps.trackHeight) return false;
   
@@ -436,7 +442,10 @@ export const MemoizedTimelineTrack = React.memo(TimelineTrack, (prevProps, nextP
   const nextSel = nextProps.selectedTransition;
   if (prevSel?.itemId !== nextSel?.itemId || prevSel?.position !== nextSel?.position) return false;
   
-  // Compare selectedItemIds array
+  // Compare selectedItemIds array — track MUST re-render on selection change
+  // to propagate updated `isSelected` boolean props to child items.
+  // Fix #1 (stable onDragStart ref) ensures only items whose isSelected actually
+  // changed will re-render, not ALL items.
   const prevIds = prevProps.selectedItemIds || [];
   const nextIds = nextProps.selectedItemIds || [];
   if (prevIds.length !== nextIds.length) return false;

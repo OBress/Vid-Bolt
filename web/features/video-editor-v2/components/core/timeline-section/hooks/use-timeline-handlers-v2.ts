@@ -9,7 +9,7 @@ import React from 'react';
 import { OverlayType } from '../../../../types';
 import { TimelineTrack } from '../../../advanced-timeline/types';
 import { FPS } from '../../../../constants';
-import { useVideoEditorStore } from '../../../../stores/video-editor-store';
+import { useVideoEditorStore, getTypedState, useTypedStore } from '../../../../stores/video-editor-store';
 import { useMediaAdaptors } from '../../../../contexts/media-adaptor-context';
 import { calculateIntelligentAssetSize, getAssetDimensions } from '../../../../utils/asset-sizing';
 import type { TimelineClip, ClipTransform } from '../../../../types/timeline-v2';
@@ -31,19 +31,19 @@ export const useTimelineHandlers = ({
   const { videoAdaptors, imageAdaptors } = useMediaAdaptors();
   
   // Get actions from store
-  const deleteClip = useVideoEditorStore(s => s.deleteClip);
-  const deleteClips = useVideoEditorStore(s => s.deleteClips);
-  const duplicateClip = useVideoEditorStore(s => s.duplicateClip);
-  const splitClip = useVideoEditorStore(s => s.splitClip);
-  const moveClip = useVideoEditorStore(s => s.moveClip);
-  const updateClip = useVideoEditorStore(s => s.updateClip);
-  const addClip = useVideoEditorStore(s => s.addClip);
-  const getLinkedClipIds = useVideoEditorStore(s => s.getLinkedClipIds);
-  const selectClips = useVideoEditorStore(s => s.selectClips);
+  const deleteClip = useTypedStore(s => s.deleteClip);
+  const deleteClips = useTypedStore(s => s.deleteClips);
+  const duplicateClip = useTypedStore(s => s.duplicateClip);
+  const splitClip = useTypedStore(s => s.splitClip);
+  const moveClip = useTypedStore(s => s.moveClip);
+  const updateClip = useTypedStore(s => s.updateClip);
+  const addClip = useTypedStore(s => s.addClip);
+  const getLinkedClipIds = useTypedStore(s => s.getLinkedClipIds);
+  const selectClips = useTypedStore(s => s.selectClips);
   
   // Helper to get aspect ratio dimensions
   const getAspectRatioDimensions = React.useCallback(() => {
-    const state = useVideoEditorStore.getState();
+    const state = getTypedState();
     const aspectRatio = state.aspectRatio || '16:9';
     const resolution = state.resolution || '1080p';
     
@@ -79,9 +79,9 @@ export const useTimelineHandlers = ({
       playerRef.current.seekTo(frame);
     }
     // Update the store's currentTime so text/shapes are added at the correct position
-    const fps = useVideoEditorStore.getState().fps || 30;
+    const fps = getTypedState().fps || 30;
     const timeInSeconds = frame / fps;
-    useVideoEditorStore.getState().setCurrentTime(timeInSeconds);
+    getTypedState().setCurrentTime(timeInSeconds);
   }, [playerRef]);
 
   // Handler for item selection
@@ -140,7 +140,7 @@ export const useTimelineHandlers = ({
     
     // Re-link the duplicated items to each other
     idMapping.forEach((newId, oldId) => {
-      const originalClip = useVideoEditorStore.getState().clips[oldId];
+      const originalClip = getTypedState().clips[oldId];
       if (originalClip?.linkedClipId && idMapping.has(originalClip.linkedClipId)) {
         const newLinkedId = idMapping.get(originalClip.linkedClipId);
         updateClip(newId, { linkedClipId: newLinkedId });
@@ -161,7 +161,7 @@ export const useTimelineHandlers = ({
     const linkedIds = getLinkedClipIds(itemId);
     linkedIds.forEach(linkedId => {
       if (linkedId !== itemId) {
-        const linkedClip = useVideoEditorStore.getState().clips[linkedId];
+        const linkedClip = getTypedState().clips[linkedId];
         if (linkedClip) {
           moveClip(linkedId, linkedClip.trackId, newStart);
         }
@@ -201,7 +201,7 @@ export const useTimelineHandlers = ({
         data?: any;
       }
     ) => {
-      const tracksRecord = useVideoEditorStore.getState().tracks || {};
+      const tracksRecord = getTypedState().tracks || {};
       const tracksArr = Object.values(tracksRecord);
       
       // Sort tracks the same way they're displayed: video tracks first, then audio
@@ -317,14 +317,14 @@ export const useTimelineHandlers = ({
           // Need to create audio tracks up to the corresponding position
           const tracksToCreate = correspondingAudioIndex - audioTracks.length + 1;
           
-          const store = useVideoEditorStore.getState();
+          const store = getTypedState();
           
           for (let i = 0; i < tracksToCreate; i++) {
             store.addTrack('audio');
           }
           
           // Re-fetch tracks after creation
-          const updatedTracks = Object.values(useVideoEditorStore.getState().tracks);
+          const updatedTracks = Object.values(getTypedState().tracks);
           const updatedAudioTracks = updatedTracks.filter(t => t.type === 'audio').sort((a, b) => a.order - b.order);
           audioTrack = updatedAudioTracks[correspondingAudioIndex];
         } else if (audioTrack.locked) {

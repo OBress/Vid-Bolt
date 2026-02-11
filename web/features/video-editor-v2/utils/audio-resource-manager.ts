@@ -64,14 +64,17 @@ class AudioResourceManager {
     console.log('[AudioResourceManager] Initializing...');
     
     // Store initial clip IDs
-    const initialClips = store.getState().clips as TimelineClip[];
+    const initialClips = Object.values(store.getState().clips) as TimelineClip[];
     this.previousClipIds = new Set(initialClips.map(c => c.id));
     
     // Subscribe to clip changes using Zustand's subscribeWithSelector
     this.unsubscribe = store.subscribe(
       (state: any) => state.clips,
-      (clips: TimelineClip[], prevClips: TimelineClip[]) => {
-        this.handleClipChanges(clips, prevClips);
+      (clips: Record<string, TimelineClip>, prevClips: Record<string, TimelineClip>) => {
+        this.handleClipChanges(
+          Object.values(clips) as TimelineClip[],
+          Object.values(prevClips) as TimelineClip[]
+        );
       }
     );
     

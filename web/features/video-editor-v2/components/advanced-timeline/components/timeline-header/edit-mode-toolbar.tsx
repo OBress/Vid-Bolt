@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { EditMode } from '../../types';
-import { useVideoEditorStore } from '../../../../stores/video-editor-store';
+import { useVideoEditorStore, useVideoEditorActions, selectEditMode, selectSnappingEnabled } from '../../../../stores/video-editor-store';
 import { 
   MousePointer2, 
   Scissors,
@@ -189,7 +189,9 @@ const ToolGroup: React.FC<{
  * - Snap: Snapping toggle
  */
 export const ToolsPanel: React.FC<ToolsPanelProps> = ({ className }) => {
-  const { editMode, setEditMode, snappingEnabled, toggleSnapping } = useVideoEditorStore();
+  const editMode = useVideoEditorStore(selectEditMode);
+  const snappingEnabled = useVideoEditorStore(selectSnappingEnabled);
+  const { setEditMode, toggleSnapping } = useVideoEditorActions();
   const [showSnapTooltip, setShowSnapTooltip] = useState(false);
   const snapButtonRef = useRef<HTMLButtonElement>(null);
   const snapHoverRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

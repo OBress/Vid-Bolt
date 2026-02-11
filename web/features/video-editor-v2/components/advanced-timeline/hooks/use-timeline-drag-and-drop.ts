@@ -2,7 +2,9 @@ import { useCallback, useRef, useEffect } from 'react';
 import { TimelineItem, TrackWithClips, isVideoTrackItem, isAudioTrackItem, EditMode } from '../types';
 import { TIMELINE_CONSTANTS, SNAPPING_CONFIG } from '../constants';
 import { 
-  useVideoEditorStore, 
+  useVideoEditorStore,
+  useVideoEditorActions,
+  selectEditMode,
   getCurrentDrag,
   type UnifiedDragState,
   type ClipDragSnapshot,
@@ -255,20 +257,28 @@ export const useTimelineDragAndDrop = ({
   trackHeight: propTrackHeight,
   getLinkedItemIds,
 }: UseTimelineDragAndDropProps) => {
+  // Use ref for selectedItemIds so wrappedHandleDragStart stays referentially stable
+  // across selection changes. Without this, every selection click changes the onDragStart
+  // callback reference, which busts React.memo for ALL timeline tracks and items.
+  const selectedItemIdsRef = useRef(selectedItemIds);
+  selectedItemIdsRef.current = selectedItemIds;
+
   // Use provided track height or fall back to constant
   const trackHeight = propTrackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
   
-  // Get state and actions from video editor store (unified drag system)
+  // Get state from video editor store (only re-renders when editMode changes)
+  const editMode = useVideoEditorStore(selectEditMode);
+  
+  // Get actions from video editor store (stable reference, never causes re-renders)
   const {
     resetDragState,
     setGhostElements,
-    editMode,
     startDrag,
     updateDrag,
     endDrag,
     getDragState,
     setSnapLine,
-  } = useVideoEditorStore();
+  } = useVideoEditorActions();
   
   // Local refs for drag UI state
   const draggedItemRef = useRef<any>(null);
@@ -1236,7 +1246,9 @@ export const useTimelineDragAndDrop = ({
     getLinkedItemIds,
   ]);
 
-  // Wrapper for handleDragStart that includes selectedItemIds
+  // Wrapper for handleDragStart that includes selectedItemIds via ref
+  // Using ref keeps this callback referentially stable across selection changes,
+  // preventing memo busts in MemoizedTimelineTrack and MemoizedTimelineItem.
   const wrappedHandleDragStart = useCallback(
     (
       item: TimelineItem,
@@ -1244,9 +1256,9 @@ export const useTimelineDragAndDrop = ({
       clientY: number,
       action: "move" | "resize-start" | "resize-end"
     ) => {
-      handleDragStart(item, clientX, clientY, action, selectedItemIds);
+      handleDragStart(item, clientX, clientY, action, selectedItemIdsRef.current);
     },
-    [handleDragStart, selectedItemIds]
+    [handleDragStart]
   );
 
   return {

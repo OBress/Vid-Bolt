@@ -17,7 +17,8 @@
 import React, { useMemo, useEffect, useCallback, useState } from "react";
 import { cn } from "../../utils/general/utils";
 import { useEditorContext } from "../../contexts/editor-context";
-import { useVideoEditorStore, selectSelectedTransition } from "../../stores/video-editor-store";
+import { useVideoEditorStore, useTypedStore, selectSelectedTransition } from "../../stores/video-editor-store";
+import { useShallow } from 'zustand/react/shallow';
 import { clipsToOverlays, clipToOverlay } from "../../utils/clip-to-render-adapter";
 import { OverlayType, Overlay, VideoTransitionType, AudioTransitionType, TransitionEasing } from "../../types";
 import type { TimelineClip } from "../../types/timeline-v2";
@@ -182,7 +183,13 @@ export const InspectorSection: React.FC<InspectorSectionProps> = ({
         <span className="text-sm font-medium flex-1 text-left">{title}</span>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="px-3 pb-3">
+        <div
+          className="px-3 pb-3"
+          style={{
+            contentVisibility: isOpen ? 'visible' : 'auto',
+            containIntrinsicSize: '0 200px',
+          }}
+        >
           {children}
         </div>
       </CollapsibleContent>
@@ -339,16 +346,15 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const { fps: contextFps } = useEditorContext();
   
   // Get state directly from the unified store
-  const timelineClips = useVideoEditorStore(state => Object.values(state.clips)) as TimelineClip[];
-  const timelineTracks = useVideoEditorStore(state => Object.values(state.tracks)) as any[];
-  const transitions = useVideoEditorStore(state => state.transitions) || {};
-  const selectedClipIds = useVideoEditorStore(state => state.selection?.clipIds) || [];
-  const storeFps = useVideoEditorStore(state => state.fps);
+  // PERF: Only subscribe reactively to selectedClipIds, fps, and actions.
+  // Clips/tracks/transitions are read on-demand via getState() to avoid
+  // re-rendering when unrelated clips change.
+  const selectedClipIds = useTypedStore(useShallow(state => state.selection?.clipIds)) || [];
+  const storeFps = useTypedStore(state => state.fps);
   const fps = storeFps || contextFps || 30;
-  const updateClip = useVideoEditorStore(state => state.updateClip);
-  const selectClip = useVideoEditorStore(state => state.selectClip);
-  const playback = useVideoEditorStore(state => state.playback);
-  const getLinkedClipIds = useVideoEditorStore(state => state.getLinkedClipIds);
+  const updateClip = useTypedStore(state => state.updateClip);
+  const selectClip = useTypedStore(state => state.selectClip);
+  const getLinkedClipIds = useTypedStore(state => state.getLinkedClipIds);
 
   // Track active tab
   const [activeTab, setActiveTab] = useState<InspectorTab>('properties');
@@ -412,11 +418,30 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     }
   }, [storeSelectedTransition]);
 
-  // Get selection info
-  const selectionInfo = useMemo(
-    () => getSelectionInfo(selectedClipIds, timelineClips, fps),
-    [selectedClipIds, timelineClips, fps]
-  );
+  // Get selection info — direct O(K) lookup by ID instead of O(N) materialization
+  const selectionInfo = useMemo(() => {
+    if (!selectedClipIds || selectedClipIds.length === 0) {
+      return { type: 'none' as const, clips: [], overlays: [], commonType: null, hasVisualClips: false };
+    }
+    const state = useVideoEditorStore.getState();
+    const selectedClips = selectedClipIds
+      .map(id => state.clips[id])
+      .filter(Boolean) as TimelineClip[];
+    if (selectedClips.length === 0) {
+      return { type: 'none' as const, clips: [], overlays: [], commonType: null, hasVisualClips: false };
+    }
+    const types = new Set(selectedClips.map(c => getClipOverlayType(c)));
+    const commonType = types.size === 1 ? getClipOverlayType(selectedClips[0]) : null;
+    const hasVisualClips = selectedClips.every(c => c.type !== 'audio');
+    const overlays = clipsToOverlays(selectedClips, fps);
+    return {
+      type: (selectedClips.length === 1 ? 'single' : 'multi') as 'single' | 'multi',
+      clips: selectedClips,
+      overlays,
+      commonType,
+      hasVisualClips,
+    };
+  }, [selectedClipIds, fps]);
 
   // Sync activeClipId when selection changes
   useEffect(() => {
@@ -445,8 +470,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     if (!activeClip) {
       return null;
     }
-    // Find the track index for this clip
-    const track = timelineTracks.find(t => t.id === activeClip.trackId);
+    // Read tracks and transitions on-demand via getState()
+    const state = useVideoEditorStore.getState();
+    const tracks = Object.values(state.tracks) as any[];
+    const transitions = state.transitions || {};
+    const track = tracks.find((t: any) => t.id === activeClip.trackId);
     const trackIndex = track ? track.order : 0;
     const overlay = clipToOverlay(activeClip, fps, trackIndex, transitions);
     
@@ -462,22 +490,18 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     }
     
     return overlay;
-  }, [activeClip, fps, timelineTracks, transitions]);
+  }, [activeClip, fps]);
 
   // Find clip for selected transition
   const transitionClip = useMemo(() => {
     if (!storeSelectedTransition) return null;
-    // Use clipIds array - first clip for standalone, first clip in between transitions
     const clipId = storeSelectedTransition.clipIds?.[0];
-    console.log('[InspectorPanel] Looking for transition clip:', {
-      transitionId: storeSelectedTransition.id,
-      clipIds: storeSelectedTransition.clipIds,
-      lookingForClipId: clipId,
-      availableClipIds: timelineClips.map(c => c.id),
-    });
     if (!clipId) return null;
-    return timelineClips.find(c => c.id === clipId) || null;
-  }, [storeSelectedTransition, timelineClips]);
+    // Read clips on-demand
+    const state = useVideoEditorStore.getState();
+    const clip = state.clips[clipId] as TimelineClip | undefined;
+    return clip || null;
+  }, [storeSelectedTransition]);
 
   const isTransitionSelected = storeSelectedTransition !== null && transitionClip !== null;
   
@@ -492,6 +516,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
   // Handler to update clip properties (converts overlay format back to clip format)
   const handleChangeOverlay = useCallback((id: number, updater: (prev: Overlay) => any) => {
+    // Read clips and tracks on-demand via getState()
+    const state = useVideoEditorStore.getState();
+    const timelineClips = Object.values(state.clips) as TimelineClip[];
+    const timelineTracks = Object.values(state.tracks) as any[];
+    const transitions = state.transitions || {};
+
     // Find the clip by numeric ID (converted from overlay)
     // The overlay ID is created by: parseInt(clip.id.replace(/\D/g, ''), 10)
     // So we need to use the same logic to match
@@ -504,7 +534,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     }
     
     // Find the track index for this clip
-    const track = timelineTracks.find(t => t.id === clip.trackId);
+    const track = timelineTracks.find((t: any) => t.id === clip.trackId);
     const trackIndex = track ? track.order : 0;
     
     // Get current overlay representation
@@ -634,7 +664,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     if (Object.keys(clipUpdates).length > 0) {
     updateClip(clip.id, clipUpdates);
     }
-  }, [timelineClips, timelineTracks, fps, transitions, updateClip, getLinkedClipIds]);
+  }, [fps, updateClip, getLinkedClipIds]);
 
   return (
     <div 
@@ -812,7 +842,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             selectionInfo.type === 'multi' ? "top-[112px]" : "top-[76px]"
           )}>
             {/* Properties Tab - Transform + Keyframes */}
-            <TabsContent value="properties" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-left-1 duration-200">
+            {activeTab === 'properties' && (
+            <TabsContent value="properties" className="h-full m-0 p-0 overflow-hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-left-1 duration-200" forceMount>
               <ScrollArea className="h-full inspector-scrollbar">
                   <div className="p-2 space-y-2">
                     {activeOverlay && activeOverlay.type !== OverlayType.SOUND && (
@@ -832,9 +863,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               </ScrollArea>
             </TabsContent>
+            )}
 
               {/* Style Tab */}
-            <TabsContent value="style" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-right-1 duration-200">
+            {activeTab === 'style' && (
+            <TabsContent value="style" className="h-full m-0 p-0 overflow-hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-right-1 duration-200" forceMount>
               <ScrollArea className="h-full inspector-scrollbar">
                 <div className="p-2 space-y-4">
                   {activeOverlay && activeOverlay.type !== OverlayType.SOUND && (
@@ -944,9 +977,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               </ScrollArea>
             </TabsContent>
+            )}
 
             {/* Effects Tab */}
-            <TabsContent value="effects" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-right-1 duration-200">
+            {activeTab === 'effects' && (
+            <TabsContent value="effects" className="h-full m-0 p-0 overflow-hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-right-1 duration-200" forceMount>
               <ScrollArea className="h-full inspector-scrollbar">
                 <div className="p-2 space-y-3">
                   {activeOverlay && activeOverlay.type !== OverlayType.SOUND ? (
@@ -1007,9 +1042,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               </ScrollArea>
             </TabsContent>
+            )}
 
               {/* Color Tab */}
-            <TabsContent value="color" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-right-1 duration-200">
+            {activeTab === 'color' && (
+            <TabsContent value="color" className="h-full m-0 p-0 overflow-hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-right-1 duration-200" forceMount>
               {activeOverlay && activeOverlay.type !== OverlayType.SOUND ? (
                 <ColorGradingSection
                   overlay={activeOverlay}
@@ -1031,13 +1068,15 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               )}
             </TabsContent>
+            )}
 
             {/* Animation Tab - Keyframe Animation (Premiere Pro style) */}
-            <TabsContent value="animation" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-right-1 duration-200">
+            {activeTab === 'animation' && (
+            <TabsContent value="animation" className="h-full m-0 p-0 overflow-hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-right-1 duration-200" forceMount>
               {activeClip && activeClip.type !== 'audio' ? (
                 <KeyframesSection
                   clip={activeClip}
-                  currentTime={playback.currentTime}
+                  currentTime={useVideoEditorStore.getState().playback?.currentTime ?? 0}
                 />
               ) : activeClip && activeClip.type === 'audio' ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
@@ -1061,6 +1100,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
               )}
             </TabsContent>
+            )}
           </div>
         </>
       )}

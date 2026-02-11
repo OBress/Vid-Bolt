@@ -16,7 +16,6 @@ import {
   useVideoEditorStore,
   computeLinkGroup,
   shallow,
-  getClipTransitionsPure,
   selectTracksArray,
   selectClipsArray,
   type TrackWithClips,
@@ -71,10 +70,46 @@ export function useTimelineTracks({
   const storeClips = useVideoEditorStore(useShallow(selectClipsArray));
   const storeTransitions = useVideoEditorStore(state => state.transitions);
   
-  // Helper to get transition entities for a clip using canonical pure function
-  const getClipTransitions = useCallback((clipId: string) => {
-    return getClipTransitionsPure(clipId, storeTransitions);
+  // Pre-compute a map of clipId -> transitions: O(M) once, instead of O(N×M) per render
+  const transitionsByClip = useMemo(() => {
+    const map = new Map<string, { inTransition?: any; outTransition?: any }>();
+    if (!storeTransitions) return map;
+
+    Object.values(storeTransitions).forEach((t: any) => {
+      const clipIds = t.clipIds;
+      if (t.position === 'between') {
+        // Between transition: first clip gets 'out', second clip gets 'in'
+        if (clipIds[0]) {
+          const existing = map.get(clipIds[0]) || {};
+          existing.outTransition = t;
+          map.set(clipIds[0], existing);
+        }
+        if (clipIds[1]) {
+          const existing = map.get(clipIds[1]) || {};
+          existing.inTransition = t;
+          map.set(clipIds[1], existing);
+        }
+      } else {
+        // Standalone transition
+        if (clipIds[0]) {
+          const existing = map.get(clipIds[0]) || {};
+          if (t.position === 'in') {
+            existing.inTransition = t;
+          } else if (t.position === 'out') {
+            existing.outTransition = t;
+          }
+          map.set(clipIds[0], existing);
+        }
+      }
+    });
+
+    return map;
   }, [storeTransitions]);
+
+  // O(1) lookup per clip from the pre-computed map
+  const getClipTransitions = useCallback((clipId: string) => {
+    return transitionsByClip.get(clipId) || { inTransition: undefined, outTransition: undefined };
+  }, [transitionsByClip]);
   
   // Compute denormalized tracks using useMemo to avoid infinite re-renders
   // This replaces the direct use of selectTracksWithClips which created new objects each call

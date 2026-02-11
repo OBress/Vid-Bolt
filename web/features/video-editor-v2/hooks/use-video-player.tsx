@@ -45,35 +45,26 @@ export const useVideoPlayer = (fps: number = 30, externalPlayerRef?: React.RefOb
     return undefined;
   }, [playerRef]);
 
-  // Frame update effect
+  // Frame update via Remotion's frameupdate event (replaces rAF polling)
+  // This only fires when the frame actually changes — during playback or seeking
   useEffect(() => {
-    let animationFrameId: number;
-    let lastUpdateTime = 0;
-    const frameInterval = 1000 / fps;
+    if (!playerRef.current) return;
+    const player = playerRef.current;
 
-    const updateCurrentFrame = () => {
-      const now = performance.now();
-      if (now - lastUpdateTime >= frameInterval) {
-        if (playerRef.current) {
-          const frame = Math.round(playerRef.current.getCurrentFrame());
-          setCurrentFrame(frame);
-        }
-        lastUpdateTime = now;
-      }
-
-      animationFrameId = requestAnimationFrame(updateCurrentFrame);
+    const handleFrameUpdate = (e: { detail: { frame: number } }) => {
+      setCurrentFrame(Math.round(e.detail.frame));
     };
 
-    // Start the animation frame loop
-    animationFrameId = requestAnimationFrame(updateCurrentFrame);
-
-    // Clean up
-    return () => {
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-      }
-    };
-  }, [isPlaying, fps, playerRef]);
+    try {
+      player.addEventListener('frameupdate', handleFrameUpdate as any);
+      return () => {
+        player.removeEventListener('frameupdate', handleFrameUpdate as any);
+      };
+    } catch (e) {
+      console.warn('[useVideoPlayer] frameupdate listener not available:', e);
+      return undefined;
+    }
+  }, [playerRef]);
 
   /**
    * Starts playing the video
@@ -95,12 +86,17 @@ export const useVideoPlayer = (fps: number = 30, externalPlayerRef?: React.RefOb
     }
   }, [playerRef]);
 
+  // Keep a ref to isPlaying for stable togglePlayPause callback
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+
   /**
    * Toggles between play and pause states
+   * Uses ref to avoid dependency on isPlaying — keeps callback reference stable
    */
   const togglePlayPause = useCallback(() => {
     if (playerRef.current) {
-      if (!isPlaying) {
+      if (!isPlayingRef.current) {
         playerRef.current.play();
         setIsPlaying(true);
       } else {
@@ -108,7 +104,7 @@ export const useVideoPlayer = (fps: number = 30, externalPlayerRef?: React.RefOb
         setIsPlaying(false);
       }
     }
-  }, [playerRef, isPlaying]);
+  }, [playerRef]);
 
   /**
    * Converts frame count to formatted time string

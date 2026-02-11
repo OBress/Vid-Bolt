@@ -7,10 +7,10 @@
  */
 
 /* Import base theme files */
-@import './styles/base-themes/light.css';
-@import './styles/base-themes/dark.css';
-@import './styles/base-themes/rve.css';
-@import './styles/timeline-animations.css';
+@import "./styles/base-themes/light.css";
+@import "./styles/base-themes/dark.css";
+@import "./styles/base-themes/rve.css";
+@import "./styles/timeline-animations.css";
 
 /*
   The default border color has changed to `currentcolor` in Tailwind CSS v4,
@@ -21,11 +21,11 @@
   color utility to any element that depends on these defaults.
 */
 @layer base {
-  *,
-  ::after,
-  ::before,
-  ::backdrop,
-  ::file-selector-button {
+  [data-editor-root] *,
+  [data-editor-root] ::after,
+  [data-editor-root] ::before,
+  [data-editor-root] ::backdrop,
+  [data-editor-root] ::file-selector-button {
     border-color: var(--border);
   }
 }
@@ -34,7 +34,7 @@
   :root {
     /* Ensure consistent rem calculations across browsers */
     font-size: 16px;
-    
+
     --background: var(--base-50);
     --foreground: var(--base-800);
     --card: hsl(0 0% 100%);
@@ -53,7 +53,7 @@
     --destructive-foreground: hsl(0 0% 98%);
     --success: hsl(142.1 76.2% 36.3%);
     --success-foreground: hsl(0 0% 98%);
-    --warning: hsl(32.1 95.0% 44.0%);
+    --warning: hsl(32.1 95% 44%);
     --warning-foreground: hsl(0 0% 98%);
     --info: hsl(198.6 88.7% 48.4%);
     --info-foreground: hsl(0 0% 98%);
@@ -81,12 +81,12 @@
     --text-tertiary: var(--base-500);
     --text-disabled: var(--base-400);
     --text-placeholder: var(--base-400);
-    
+
     /* === Surface colors for better layering === */
     --surface: var(--base-50);
     --surface-elevated: hsl(0 0% 100%);
     --surface-overlay: var(--base-100);
-    
+
     /* === Interactive states === */
     --interactive-hover: var(--base-100);
     --interactive-pressed: var(--base-200);
@@ -115,7 +115,7 @@
     --destructive-foreground: hsl(0 0% 98%);
     --success: hsl(142.1 70.6% 45.3%);
     --success-foreground: hsl(0 0% 98%);
-    --warning: hsl(32.1 95.0% 44.0%);
+    --warning: hsl(32.1 95% 44%);
     --warning-foreground: hsl(0 0% 98%);
     --info: hsl(198.6 88.7% 48.4%);
     --info-foreground: hsl(0 0% 98%);
@@ -142,12 +142,12 @@
     --text-tertiary: var(--base-500);
     --text-disabled: var(--base-600);
     --text-placeholder: var(--base-600);
-    
+
     /* === Dark mode surfaces === */
     --surface: var(--base-950);
     --surface-elevated: var(--base-900);
     --surface-overlay: var(--base-800);
-    
+
     /* === Dark mode interactive states === */
     --interactive-hover: var(--base-800);
     --interactive-pressed: var(--base-700);
@@ -159,8 +159,8 @@
     --background: var(--base-950);
     --foreground: var(--base-200);
     --card: hsl(217.5, 33.33%, 14.12%);
-    --card-foreground:hsl(212.5, 27.91%, 16.86%);
-    --popover:var(--base-950);
+    --card-foreground: hsl(212.5, 27.91%, 16.86%);
+    --popover: var(--base-950);
     --popover-foreground: var(--base-200);
     --primary: var(--primary-600);
     --primary-foreground: hsl(0 0% 100%);
@@ -201,23 +201,21 @@
     --text-tertiary: var(--base-500);
     --text-disabled: var(--base-600);
     --text-placeholder: var(--base-600);
-    
+
     /* === Dark blue surfaces === */
     --surface: var(--base-950);
     --surface-elevated: var(--base-900);
     --surface-overlay: var(--base-800);
-    
+
     /* === Dark blue interactive states === */
     --interactive-hover: var(--base-800);
     --interactive-pressed: var(--base-700);
     --interactive-disabled: var(--base-800);
   }
-
 }
 
 /* Base layer for global defaults */
 @layer base {
-
   html,
   body {
     overscroll-behavior-y: none;
@@ -232,31 +230,42 @@
     fill: none;
   }
 
-  /* Global thin scrollbar styles for the video editor */
-  * {
+  /* Global thin scrollbar styles for the video editor
+   * PERF: Scoped to [data-editor-root] * instead of global * to reduce
+   * 'Recalculate style' cost. The universal selector forces the browser
+   * to match against every DOM node, which is extremely expensive in 
+   * complex UIs with thousands of elements.
+   */
+  [data-editor-root],
+  [data-editor-root] * {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
   }
 
-  *::-webkit-scrollbar {
+  [data-editor-root]::-webkit-scrollbar,
+  [data-editor-root] *::-webkit-scrollbar {
     width: 4px;
     height: 4px;
   }
 
-  *::-webkit-scrollbar-track {
+  [data-editor-root]::-webkit-scrollbar-track,
+  [data-editor-root] *::-webkit-scrollbar-track {
     background: transparent;
   }
 
-  *::-webkit-scrollbar-thumb {
+  [data-editor-root]::-webkit-scrollbar-thumb,
+  [data-editor-root] *::-webkit-scrollbar-thumb {
     background-color: hsl(var(--muted-foreground) / 0.3);
     border-radius: 4px;
   }
 
-  *::-webkit-scrollbar-thumb:hover {
+  [data-editor-root]::-webkit-scrollbar-thumb:hover,
+  [data-editor-root] *::-webkit-scrollbar-thumb:hover {
     background-color: hsl(var(--muted-foreground) / 0.5);
   }
 
-  *::-webkit-scrollbar-corner {
+  [data-editor-root]::-webkit-scrollbar-corner,
+  [data-editor-root] *::-webkit-scrollbar-corner {
     background: transparent;
   }
 
@@ -264,16 +273,16 @@
   .track-handles-scroll::-webkit-scrollbar {
     width: 3px;
   }
-  
+
   .track-handles-scroll::-webkit-scrollbar-track {
     background: transparent;
   }
-  
+
   .track-handles-scroll::-webkit-scrollbar-thumb {
     background-color: rgba(150, 150, 150, 0.25);
     border-radius: 3px;
   }
-  
+
   .track-handles-scroll::-webkit-scrollbar-thumb:hover {
     background-color: rgba(150, 150, 150, 0.4);
   }
@@ -282,16 +291,16 @@
   .track-gutter-scroll::-webkit-scrollbar {
     width: 3px;
   }
-  
+
   .track-gutter-scroll::-webkit-scrollbar-track {
     background: transparent;
   }
-  
+
   .track-gutter-scroll::-webkit-scrollbar-thumb {
     background-color: rgba(150, 150, 150, 0.25);
     border-radius: 3px;
   }
-  
+
   .track-gutter-scroll::-webkit-scrollbar-thumb:hover {
     background-color: rgba(150, 150, 150, 0.4);
   }
@@ -303,12 +312,12 @@
     scrollbar-width: thin;
     scrollbar-color: rgba(150, 150, 150, 0.3) transparent;
   }
-  
+
   .timeline-tracks-scroll-container::-webkit-scrollbar {
     width: 6px;
     height: 0 !important;
   }
-  
+
   .timeline-tracks-scroll-container::-webkit-scrollbar:horizontal {
     display: none !important;
     height: 0 !important;
@@ -316,32 +325,32 @@
     appearance: none !important;
     -webkit-appearance: none !important;
   }
-  
+
   .timeline-tracks-scroll-container::-webkit-scrollbar-track {
     background: transparent;
   }
-  
+
   .timeline-tracks-scroll-container::-webkit-scrollbar-thumb {
     background-color: rgba(150, 150, 150, 0.3);
     border-radius: 4px;
   }
-  
+
   .timeline-tracks-scroll-container::-webkit-scrollbar-thumb:hover {
     background-color: rgba(150, 150, 150, 0.5);
   }
-  
+
   .timeline-tracks-scroll-container::-webkit-scrollbar-corner {
     display: none !important;
     background: transparent !important;
   }
-  
+
   /* Timeline markers wrapper - hide ALL scrollbars completely */
   .timeline-markers-wrapper,
   .timeline-markers-wrapper * {
     scrollbar-width: none !important;
     -ms-overflow-style: none !important;
   }
-  
+
   .timeline-markers-wrapper::-webkit-scrollbar,
   .timeline-markers-wrapper *::-webkit-scrollbar {
     display: none !important;
@@ -351,7 +360,7 @@
     appearance: none !important;
     -webkit-appearance: none !important;
   }
-  
+
   .timeline-markers-wrapper::-webkit-scrollbar-track,
   .timeline-markers-wrapper::-webkit-scrollbar-thumb,
   .timeline-markers-wrapper::-webkit-scrollbar-corner,
@@ -370,30 +379,30 @@
     scrollbar-width: thin;
     scrollbar-color: rgba(120, 120, 130, 0.4) rgba(60, 60, 70, 0.2);
   }
-  
+
   .inspector-scrollbar::-webkit-scrollbar,
   .sidepanel-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
-  
+
   .inspector-scrollbar::-webkit-scrollbar-track,
   .sidepanel-scrollbar::-webkit-scrollbar-track {
     background: rgba(60, 60, 70, 0.2);
     border-radius: 3px;
   }
-  
+
   .inspector-scrollbar::-webkit-scrollbar-thumb,
   .sidepanel-scrollbar::-webkit-scrollbar-thumb {
     background-color: rgba(120, 120, 130, 0.4);
     border-radius: 3px;
   }
-  
+
   .inspector-scrollbar::-webkit-scrollbar-thumb:hover,
   .sidepanel-scrollbar::-webkit-scrollbar-thumb:hover {
     background-color: rgba(140, 140, 150, 0.6);
   }
-  
+
   .inspector-scrollbar::-webkit-scrollbar-corner,
   .sidepanel-scrollbar::-webkit-scrollbar-corner {
     background: rgba(60, 60, 70, 0.2);

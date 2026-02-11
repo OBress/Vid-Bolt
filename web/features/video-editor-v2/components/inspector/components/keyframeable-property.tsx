@@ -32,7 +32,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { cn } from '../../../utils/general/utils';
-import { useVideoEditorStore } from '../../../stores/video-editor-store';
+import { useVideoEditorStore, useVideoEditorActions, selectClips, selectKeyframeSelection } from '../../../stores/video-editor-store';
 import type { PropertyKeyframes, KeyframeValue, KeyframeInterpolation } from '../../../types/keyframes';
 import { 
   getInterpolatedValue,
@@ -105,17 +105,16 @@ export const KeyframeableProperty: React.FC<KeyframeablePropertyProps> = ({
   className,
   disabled = false,
 }) => {
+  const clips = useVideoEditorStore(selectClips);
+  const keyframeSelection = useVideoEditorStore(selectKeyframeSelection);
   const {
-    clips,
     addKeyframe,
     updateKeyframe,
     deleteKeyframe,
     togglePropertyAnimation,
     getPropertyKeyframes,
     setCurrentTime,
-    playback,
-    keyframeSelection,
-  } = useVideoEditorStore();
+  } = useVideoEditorActions();
   
   // Get the clip's keyframes for this property
   const propertyKeyframes = useMemo(() => {

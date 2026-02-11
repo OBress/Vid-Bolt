@@ -16,6 +16,8 @@ import {
 } from "../types";
 import { 
   useVideoEditorStore,
+  useVideoEditorActions,
+  useTypedStore,
   selectSelectedTransitionId,
   selectTransitions,
 } from "../../../stores/video-editor-store";
@@ -40,8 +42,8 @@ export const useTimelineTransitions = (
   onTracksChange?: (tracks: TrackWithClips[]) => void
 ) => {
   // === UNIFIED STORE INTEGRATION ===
-  const selectedTransitionId = useVideoEditorStore(selectSelectedTransitionId);
-  const storeTransitions = useVideoEditorStore(selectTransitions);
+  const selectedTransitionId = useTypedStore(selectSelectedTransitionId);
+  const storeTransitions = useTypedStore(selectTransitions);
   
   // Get actions from unified store
   const {
@@ -51,7 +53,7 @@ export const useTimelineTransitions = (
     removeTransition: storeRemoveTransition,
     selectTransition: storeSelectTransition,
     getClipTransitions: storeGetClipTransitions,
-  } = useVideoEditorStore();
+  } = useVideoEditorActions();
   
   // Get clip transitions using the new helper
   const storeGetItemTransitions = useCallback((itemId: string) => {

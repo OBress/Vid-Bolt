@@ -214,7 +214,15 @@ const Panel: React.FC<PanelProps> = ({ children, className, style }) => (
       "relative overflow-hidden p-0 m-0 h-full",
       className
     )}
-    style={{...style, padding: 0, margin: 0, height: '100%' }}
+    style={{
+      ...style,
+      padding: 0,
+      margin: 0,
+      height: '100%',
+      // PERF: CSS containment isolates style recalculations to within this panel.
+      // Prevents changes in one panel from triggering 'Recalculate style' across the whole DOM.
+      contain: 'layout style paint',
+    }}
   >
     {children}
   </div>
@@ -462,7 +470,7 @@ export const EditorLayout: React.FC<EditorLayoutProps> = ({
         </div>
 
         {/* Timeline Section - uses its own resize mechanism */}
-        <div className="shrink-0 overflow-hidden">
+        <div className="shrink-0 overflow-hidden" style={{ contain: 'layout style paint' }}>
           <TimelineSection />
         </div>
       </div>

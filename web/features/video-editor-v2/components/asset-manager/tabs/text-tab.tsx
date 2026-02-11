@@ -15,7 +15,7 @@ import { ScrollArea } from "../../ui/scroll-area";
 import { Button } from "../../ui/button";
 import { Switch } from "../../ui/switch";
 import { Label } from "../../ui/label";
-import { useVideoEditorStore } from "../../../stores/video-editor-store";
+import { useVideoEditorStore, getTypedState } from "../../../stores/video-editor-store";
 import { useToolContext } from "../../../contexts/tool-context";
 import { ToolType } from "../../../types/tools";
 import { textStylePresets } from "../../../templates/text-style-presets";
@@ -141,7 +141,7 @@ const PresetCard: React.FC<PresetCardProps> = ({ preset, onClick, onDragStart, o
  * Get composition dimensions based on aspect ratio and resolution
  */
 const getCompositionDimensions = () => {
-  const state = useVideoEditorStore.getState();
+  const state = getTypedState();
   const aspectRatio = state.aspectRatio || '16:9';
   const resolution = state.resolution || '1080p';
   
@@ -170,7 +170,7 @@ const getCompositionDimensions = () => {
  * Ensure a video track exists, create one if needed
  */
 const ensureVideoTrack = (): string => {
-  const state = useVideoEditorStore.getState();
+  const state = getTypedState();
   const allTracks = Object.values(state.tracks);
   const videoTrack = allTracks.find(t => t.type === 'video');
   

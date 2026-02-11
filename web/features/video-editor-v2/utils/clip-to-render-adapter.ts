@@ -56,6 +56,89 @@ export type { RenderClip, RenderClipState };
 
 // Note: findClipTransitions is now imported as getClipTransitionsPure from the store
 
+// Cached regex for stripping non-digits from IDs (avoids recompilation per call)
+const NON_DIGIT_RE = /\D/g;
+
+/**
+ * Convert a string clip ID to a safe numeric ID.
+ * 
+ * The naive approach of stripping non-digits can produce numbers > MAX_SAFE_INTEGER
+ * when IDs contain timestamps (e.g., "clip-stress-1770771882549-3116" → 17707718825493116),
+ * causing precision loss and duplicate React keys.
+ * 
+ * This uses djb2 hashing to produce a deterministic, unique integer within safe range.
+ * Falls back to digit-stripping when the result fits in safe integer range.
+ */
+function clipIdToNumeric(clipId: string): number {
+  // Try the fast path: strip non-digits
+  const digitsOnly = clipId.replace(NON_DIGIT_RE, '');
+  if (digitsOnly.length > 0 && digitsOnly.length <= 15) {
+    // 15 digits is always safe (MAX_SAFE_INTEGER has 16 digits)
+    const num = parseInt(digitsOnly, 10);
+    if (num <= Number.MAX_SAFE_INTEGER) return num;
+  }
+
+  // Fallback: djb2 hash for IDs that would exceed safe integer range
+  let hash = 5381;
+  for (let i = 0; i < clipId.length; i++) {
+    // hash * 33 + char, kept within 32-bit signed range then made positive
+    hash = ((hash << 5) + hash + clipId.charCodeAt(i)) | 0;
+  }
+  // Ensure positive and add a large offset to avoid colliding with short numeric IDs
+  return (hash >>> 0) + 1_000_000_000;
+}
+
+/**
+ * Build video transition for Remotion rendering (module-level to avoid closure allocation)
+ *
+ * Uses absolute startTime/endTime for precise timing.
+ * Position is preserved from the original TransitionEntity.
+ */
+function buildVideoTransition(t: TransitionEntity): (VideoTransition & {
+  _absoluteStartTime: number;
+  _absoluteEndTime: number;
+  _isBetween: boolean;
+}) | undefined {
+  if (!t || t.isAudio) return undefined;
+
+  const durationSeconds = getTransitionDuration(t);
+  const isBetween = isBetweenTransition(t);
+
+  return {
+    type: t.type as VideoTransitionType,
+    duration: durationSeconds,
+    position: t.position === 'between' ? 'end' : (t.position === 'in' ? 'start' : 'end'),
+    easing: t.easing,
+    _absoluteStartTime: t.startTime,
+    _absoluteEndTime: t.endTime,
+    _isBetween: isBetween,
+  };
+}
+
+/**
+ * Build audio transition for Remotion rendering (module-level to avoid closure allocation)
+ */
+function buildAudioTransition(t: TransitionEntity): (AudioTransition & {
+  _absoluteStartTime: number;
+  _absoluteEndTime: number;
+  _isBetween: boolean;
+}) | undefined {
+  if (!t || !t.isAudio) return undefined;
+
+  const durationSeconds = getTransitionDuration(t);
+  const isBetween = isBetweenTransition(t);
+
+  return {
+    type: t.type as AudioTransitionType,
+    duration: durationSeconds,
+    position: t.position === 'between' ? 'end' : (t.position === 'in' ? 'start' : 'end'),
+    easing: t.easing,
+    _absoluteStartTime: t.startTime,
+    _absoluteEndTime: t.endTime,
+    _isBetween: isBetween,
+  };
+}
+
 /**
  * Convert a Timeline V2 clip to an Overlay for Remotion rendering.
  * 
@@ -93,8 +176,8 @@ export function clipToOverlay(
   const fromFrame = Math.round(fromSeconds * fps);
   const durationInFrames = Math.round((toSeconds - fromSeconds) * fps);
   
-  // Use clip ID as numeric ID
-  const numericId = parseInt(clip.id.replace(/\D/g, ''), 10) || Date.now();
+  // Convert string ID to safe numeric ID (handles IDs that exceed MAX_SAFE_INTEGER)
+  const numericId = clipIdToNumeric(clip.id);
   
   // Base properties shared by all overlay types
   const baseOverlay = {
@@ -108,68 +191,13 @@ export function clipToOverlay(
     height: clip.transform?.height ?? 100,
     rotation: clip.transform?.rotation ?? 0,
     isDragging: false,
-    linkedOverlayId: clip.linkedClipId 
-      ? parseInt(clip.linkedClipId.replace(/\D/g, ''), 10) 
+    linkedOverlayId: clip.linkedClipId
+      ? clipIdToNumeric(clip.linkedClipId)
       : undefined,
     data: clip.data,
     keyframes: clip.keyframes,
   };
 
-  /**
-   * Build video transition for Remotion rendering
-   * 
-   * Uses absolute startTime/endTime for precise timing.
-   * Position is preserved from the original TransitionEntity.
-   */
-  const buildVideoTransition = (t: TransitionEntity): (VideoTransition & { 
-    _absoluteStartTime: number;
-    _absoluteEndTime: number;
-    _isBetween: boolean;
-  }) | undefined => {
-    if (!t || t.isAudio) return undefined;
-    
-    const durationSeconds = getTransitionDuration(t);
-    const isBetween = isBetweenTransition(t);
-    
-    return {
-      type: t.type as VideoTransitionType,
-      duration: durationSeconds,
-      // Keep original position format for consistency
-      position: t.position === 'between' ? 'end' : (t.position === 'in' ? 'start' : 'end'),
-      easing: t.easing,
-      // Absolute times for transition timing
-      _absoluteStartTime: t.startTime,
-      _absoluteEndTime: t.endTime,
-      // Flag for between transition detection
-      _isBetween: isBetween,
-    };
-  };
-
-  /**
-   * Build audio transition for Remotion rendering
-   */
-  const buildAudioTransition = (t: TransitionEntity): (AudioTransition & { 
-    _absoluteStartTime: number;
-    _absoluteEndTime: number;
-    _isBetween: boolean;
-  }) | undefined => {
-    if (!t || !t.isAudio) return undefined;
-    
-    const durationSeconds = getTransitionDuration(t);
-    const isBetween = isBetweenTransition(t);
-    
-    return {
-      type: t.type as AudioTransitionType,
-      duration: durationSeconds,
-      position: t.position === 'between' ? 'end' : (t.position === 'in' ? 'start' : 'end'),
-      easing: t.easing,
-      // Absolute times for transition timing
-      _absoluteStartTime: t.startTime,
-      _absoluteEndTime: t.endTime,
-      // Flag for between transition detection
-      _isBetween: isBetween,
-    };
-  };
 
   // Get opacity and zIndex from canonical locations
   const opacity = clip.transform?.opacity ?? clip.styles?.opacity ?? 1;
@@ -343,15 +371,6 @@ export function clipToOverlay(
       // 2. template.compositionDefinition (generated by AI)
       const compositionDefinition = clip.properties?.compositionDefinition || template?.compositionDefinition;
       
-      console.log('[clipToOverlay] Converting motion-graphics clip:', {
-        clipId: clip.id,
-        clipType: clip.type,
-        hasTemplate: !!template,
-        templateName: template?.name,
-        hasCompositionDefinition: !!compositionDefinition,
-        compositionLayerCount: compositionDefinition?.layers?.length ?? 0,
-        propertyCount: Object.keys(propertyValues).length,
-      });
       
       const motionGraphicsOverlay: MotionGraphicsOverlay = {
         ...baseOverlay,

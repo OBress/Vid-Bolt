@@ -1,6 +1,6 @@
 import React from "react";
 
-import { useVideoEditorStore } from "../../../stores/video-editor-store";
+import { useVideoEditorStore, getTypedState } from "../../../stores/video-editor-store";
 import type { TimelineClip } from "../../../types/timeline-v2";
 import {
   templatesByCategory,
@@ -14,7 +14,7 @@ import { StickerDetails } from "./sticker-details";
  * Get composition dimensions based on aspect ratio and resolution
  */
 const getCompositionDimensions = () => {
-  const state = useVideoEditorStore.getState();
+  const state = getTypedState();
   const aspectRatio = state.aspectRatio || '16:9';
   const resolution = state.resolution || '1080p';
   
@@ -43,7 +43,7 @@ const getCompositionDimensions = () => {
  * Ensure video track exists
  */
 const ensureVideoTrack = () => {
-  const state = useVideoEditorStore.getState();
+  const state = getTypedState();
   let trackId = Object.values(state.tracks).find(t => t.type === 'video')?.id;
   if (!trackId) {
     trackId = state.addTrack('video');

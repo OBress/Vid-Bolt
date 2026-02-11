@@ -1,15 +1,15 @@
 /**
  * Video Editor Hooks - Public API
- * 
+ *
  * Export all hooks for the video editor.
  * All hooks use the unified VideoEditorStore directly.
+ *
+ * For state access, prefer atomic selectors from video-editor-store.ts
+ * (e.g. selectClips, selectFps) with useVideoEditorStore().
+ * For actions, use useVideoEditorActions().
  */
 
-// Primary unified hook - recommended entry point
-export { useTimeline, type UseTimelineReturn } from './use-timeline';
-
-// Specialized hooks for specific use cases
-export { useTimelineClips } from './use-timeline-clips';
+// Specialized hooks
 export { useTrackManagement } from './use-timeline-tracks';
 export { useProjectSync } from './use-project-sync';
 

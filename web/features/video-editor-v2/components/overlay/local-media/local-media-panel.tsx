@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useVideoEditorStore } from "../../../stores/video-editor-store";
+import { useVideoEditorStore, getTypedState } from "../../../stores/video-editor-store";
 import { calculateIntelligentAssetSize, getAssetDimensions } from "../../../utils/asset-sizing";
 import { LocalMediaGallery } from "./local-media-gallery";
 import { DEFAULT_IMAGE_DURATION_FRAMES, IMAGE_DURATION_PERCENTAGE } from "../../../constants";
@@ -19,7 +19,7 @@ import { DEFAULT_IMAGE_DURATION_FRAMES, IMAGE_DURATION_PERCENTAGE } from "../../
  * Get composition dimensions based on aspect ratio and resolution
  */
 const getCompositionDimensions = () => {
-  const state = useVideoEditorStore.getState();
+  const state = getTypedState();
   const aspectRatio = state.aspectRatio || '16:9';
   const resolution = state.resolution || '1080p';
   
@@ -48,7 +48,7 @@ const getCompositionDimensions = () => {
  * Ensure appropriate tracks exist for media types
  */
 const ensureTracks = () => {
-  const state = useVideoEditorStore.getState();
+  const state = getTypedState();
   
   let videoTrackId = Object.values(state.tracks).find(t => t.type === 'video')?.id;
   let audioTrackId = Object.values(state.tracks).find(t => t.type === 'audio')?.id;

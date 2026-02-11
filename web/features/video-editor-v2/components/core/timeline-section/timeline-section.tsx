@@ -12,11 +12,11 @@ import { TimelineResizeHandle } from './components';
 import { OverlayType } from '../../../types';
 import { createEffect, EffectType } from '../../../types/effects';
 import { FPS } from '../../../constants';
-import { useVideoEditorStore, selectTracksArray, selectClipsArray } from '../../../stores/video-editor-store';
+import { useVideoEditorStore, useTypedStore, selectTracksArray, selectClipsArray } from '../../../stores/video-editor-store';
+import type { VideoEditorStore } from '../../../stores/video-editor-store';
 import type { TimelineClip as TimelineClipV2, TimelineTrack as TimelineTrackV2 } from '../../../types/timeline-v2';
 import { useCompositionEditorStore } from '../../../stores/composition-editor-store';
 import { useShallow } from 'zustand/react/shallow';
-import { clipsToOverlaysWithTracks } from '../../../utils/clip-to-render-adapter';
 import { createComposition, createTextLayer, createShapeLayer } from '../../../types/composition';
 import type { CompositionDefinition, CompositionLayer } from '../../../types/composition';
 
@@ -48,25 +48,30 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
   // Get configuration from context
   const { playerRef, togglePlayPause } = useEditorContext();
 
-  // Get all state from unified store with safe defaults
+  // PERF: Split subscriptions — tracks/clips use reselect (stable references),
+  // UI state uses useShallow for frequently-changing values.
+  // This prevents timelineTracks useMemo from being busted by selection/playback changes.
+  const timelineV2Tracks = useVideoEditorStore(selectTracksArray) as TimelineTrackV2[];
+  const timelineV2Clips = useVideoEditorStore(selectClipsArray) as TimelineClipV2[];
+
+  // PERF: Separate subscription for selection — changes infrequently.
+  // Prevents selection clicks from triggering playback-related logic and vice versa.
+  const selectedClipIds = useTypedStore(
+    useShallow((state: VideoEditorStore) => state.selection?.clipIds || [])
+  );
+
   const {
-    timelineV2Tracks,
-    timelineV2Clips,
     fps,
     isPlaying,
     currentFrame,
-    selectedClipIds,
     playbackRate,
     aspectRatio,
     resolution,
-  } = useVideoEditorStore(
-    useShallow(state => ({
-      timelineV2Tracks: selectTracksArray(state) as TimelineTrackV2[],
-      timelineV2Clips: selectClipsArray(state) as TimelineClipV2[],
+  } = useTypedStore(
+    useShallow((state: VideoEditorStore) => ({
       fps: state.fps || 30,
       isPlaying: state.playback?.isPlaying || false,
       currentFrame: Math.round((state.playback?.currentTime || 0) * (state.fps || 30)),
-      selectedClipIds: state.selection?.clipIds || [],
       playbackRate: state.playback?.playbackRate || 1,
       aspectRatio: state.aspectRatio || '16:9',
       resolution: state.resolution || '1080p',
@@ -75,7 +80,7 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
   
   // Separate subscription for transitions to ensure updates are detected
   // (useShallow can sometimes miss nested object changes)
-  const transitions = useVideoEditorStore(state => state.transitions);
+  const transitions = useTypedStore(state => state.transitions);
   
   // Calculate durationInFrames from actual clip content
   // For empty timelines, this is 0 - the scrollable area is handled separately by virtual scroll
@@ -98,31 +103,36 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
   // Get sidebar context
   const { setActivePanel, setIsOpen } = useEditorSidebar();
   
+  // Pre-index transitions by clipId for O(1) lookup (replaces O(N×T) nested loop)
+  const transitionsByClipId = React.useMemo(() => {
+    const index = new Map<string, { inTransition?: any; outTransition?: any }>();
+    for (const t of Object.values(transitions)) {
+      const clipIds = t.clipIds;
+      if (!clipIds?.length) continue;
+      if (t.position === 'between') {
+        if (clipIds[0]) {
+          const first = index.get(clipIds[0]) || {};
+          first.outTransition = t;
+          index.set(clipIds[0], first);
+        }
+        if (clipIds[1]) {
+          const second = index.get(clipIds[1]) || {};
+          second.inTransition = t;
+          index.set(clipIds[1], second);
+        }
+      } else if (clipIds[0]) {
+        const entry = index.get(clipIds[0]) || {};
+        if (t.position === 'in') entry.inTransition = t;
+        else if (t.position === 'out') entry.outTransition = t;
+        index.set(clipIds[0], entry);
+      }
+    }
+    return index;
+  }, [transitions]);
+
   // Convert Timeline V2 clips to Timeline component format
   const timelineTracks = React.useMemo<TimelineTrack[]>(() => {
     if (!timelineV2Tracks || !timelineV2Clips) return [];
-    
-    // Helper to find transition entities for a clip using clipIds array
-    const getClipTransitions = (clipId: string) => {
-      let inTransition: any = undefined;
-      let outTransition: any = undefined;
-      
-      Object.values(transitions).forEach(t => {
-        const clipIds = t.clipIds;
-        if (t.position === 'between') {
-          // Between transition: first clip gets 'out', second clip gets 'in'
-          if (clipIds[0] === clipId) outTransition = t;
-          else if (clipIds[1] === clipId) inTransition = t;
-        } else {
-          if (clipIds[0] === clipId) {
-            if (t.position === 'in') inTransition = t;
-            else if (t.position === 'out') outTransition = t;
-          }
-        }
-      });
-      
-      return { inTransition, outTransition };
-    };
     
     // Sort tracks: video tracks first (by order), then audio tracks (by order)
     const sortedTracks = [...timelineV2Tracks].sort((a, b) => {
@@ -135,32 +145,19 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
       const clipsForTrack = timelineV2Clips.filter(c => c.trackId === track.id);
       
       const items = clipsForTrack.map(clip => {
-        // Build the data object in the format expected by timeline-item-content
-        // This includes src (from sourceId), thumbnails, etc.
         const itemData = {
-          // Core properties needed by timeline item components
           src: clip.sourceId,
           originalUrl: clip.sourceId,
           content: clip.thumbnailUrl || clip.sourceId,
-          
-          // Preserve the original clip data
           ...clip.data,
-          
-          // Media properties
           startFromSound: clip.media?.mediaStartTime,
           mediaSrcDuration: clip.media?.mediaDuration,
           speed: clip.media?.speed,
           volume: clip.media?.volume,
-          
-          // Visual properties
           thumbnailUrl: clip.thumbnailUrl,
           width: clip.transform?.width,
           height: clip.transform?.height,
-          
-          // Effects
           effects: clip.effects,
-          
-          // Text properties (for text clips)
           text: clip.text?.text,
           fontSize: clip.text?.fontSize,
           fontFamily: clip.text?.fontFamily,
@@ -168,30 +165,29 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
           textAlign: clip.text?.textAlign,
         };
         
-        // Generate a stable link group for linked clips
         const linkGroup = clip.linkedClipId 
           ? `link-${[clip.id, clip.linkedClipId].sort().join('-')}`
           : undefined;
         
-        // Get transition entities for this clip
-        const { inTransition, outTransition } = getClipTransitions(clip.id);
+        // O(1) transition lookup via pre-indexed map
+        const { inTransition, outTransition } = transitionsByClipId.get(clip.id) || {};
         
         return {
-        id: clip.id,
-        trackId: track.id,
-        start: clip.startTime,
-        end: clip.startTime + clip.duration,
+          id: clip.id,
+          trackId: track.id,
+          start: clip.startTime,
+          end: clip.startTime + clip.duration,
           label: clip.label || clip.name || clip.type,
-        type: clip.type as any,
-        color: clip.color || getDefaultColorForType(clip.type),
+          type: clip.type as any,
+          color: clip.color || getDefaultColorForType(clip.type),
           data: itemData,
           linkedItemId: clip.linkedClipId,
           linkGroup,
-        mediaStart: clip.media?.mediaStartTime,
-        mediaSrcDuration: clip.media?.mediaDuration,
-        speed: clip.media?.speed,
-        inTransition,
-        outTransition,
+          mediaStart: clip.media?.mediaStartTime,
+          mediaSrcDuration: clip.media?.mediaDuration,
+          speed: clip.media?.speed,
+          inTransition,
+          outTransition,
         };
       }).sort((a, b) => a.start - b.start);
       
@@ -200,12 +196,7 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
         items,
       };
     });
-  }, [timelineV2Tracks, timelineV2Clips, transitions]);
-
-  // Convert clips to overlays for the Timeline component prop (still needed for some features)
-  const overlays = React.useMemo(() => {
-    return clipsToOverlaysWithTracks(timelineV2Clips, timelineV2Tracks, fps, transitions);
-  }, [timelineV2Clips, timelineV2Tracks, fps, transitions]);
+  }, [timelineV2Tracks, timelineV2Clips, transitionsByClipId]);
 
   /** State for timeline collapse */
   const [isTimelineCollapsed, setIsTimelineCollapsed] = React.useState(false);

@@ -8,7 +8,7 @@
  */
 
 import { useCallback } from "react";
-import { useVideoEditorStore } from "../stores/video-editor-store";
+import { useVideoEditorStore, getTypedState } from "../stores/video-editor-store";
 import { useToolContext } from "../contexts/tool-context";
 import { ToolType, SHAPE_TOOLS } from "../types/tools";
 
@@ -41,7 +41,7 @@ interface ShapeCreationResult {
  * Get composition dimensions based on aspect ratio and resolution
  */
 const getCompositionDimensions = () => {
-  const state = useVideoEditorStore.getState();
+  const state = getTypedState();
   const aspectRatio = state.aspectRatio || '16:9';
   const resolution = state.resolution || '1080p';
   
@@ -70,7 +70,7 @@ const getCompositionDimensions = () => {
  * Ensure a video track exists, create one if needed
  */
 const ensureVideoTrack = (): string => {
-  const state = useVideoEditorStore.getState();
+  const state = getTypedState();
   const videoTrack = Object.values(state.tracks).find(t => t.type === 'video');
   
   if (videoTrack) {

@@ -1,13 +1,18 @@
 import { useEffect, useRef } from 'react';
-import { useVideoEditorStore } from '../stores/video-editor-store';
+import { useVideoEditorStore, selectClipsArray } from '../stores/video-editor-store';
 import { loadFontFromTextItem } from '../utils/text/load-font-from-text-item';
+import type { TimelineClip } from '../types/timeline-v2';
 
 /**
  * Hook that preloads all fonts used in text clips when the page loads
  * or when clips change.
+ * 
+ * PERF: Uses reselect's selectClipsArray instead of inline Object.values().
+ * selectClipsArray only recomputes when state.clips reference changes,
+ * NOT on selection/playback/UI state changes.
  */
 export const useFontPreloader = () => {
-  const timelineClips = useVideoEditorStore(state => Object.values(state.clips)) as import('../types/timeline-v2').TimelineClip[];
+  const timelineClips = useVideoEditorStore(selectClipsArray) as TimelineClip[];
   const loadedFontsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {

@@ -27,7 +27,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { cn } from '../../../utils/general/utils';
-import { useVideoEditorStore } from '../../../stores/video-editor-store';
+import { useVideoEditorActions } from '../../../stores/video-editor-store';
 import type { 
   PropertyKeyframes, 
   Keyframe, 
@@ -171,7 +171,7 @@ export const GraphEditor: React.FC<GraphEditorProps> = ({
   const [boxEnd, setBoxEnd] = useState<Point | null>(null);
   const [selectedKeyframeIds, setSelectedKeyframeIds] = useState<string[]>([]);
   
-  const { updateKeyframe, setKeyframeInterpolation } = useVideoEditorStore();
+  const { updateKeyframe, setKeyframeInterpolation } = useVideoEditorActions();
   
   const propertyColor = useMemo(() => getPropertyColor(propertyPath), [propertyPath]);
   const keyframes = propertyKeyframes.keyframes;

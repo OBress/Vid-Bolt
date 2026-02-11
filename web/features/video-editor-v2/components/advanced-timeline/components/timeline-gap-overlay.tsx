@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { TrackWithClips, TimelineItem } from '../types';
-import { useVideoEditorStore } from '../../../stores/video-editor-store';
+import { useVideoEditorStore, selectEditMode } from '../../../stores/video-editor-store';
 import { TIMELINE_CONSTANTS } from '../constants';
 
 interface Gap {
@@ -31,7 +31,7 @@ export const TimelineGapOverlay: React.FC<TimelineGapOverlayProps> = ({
 }) => {
   // Use provided track height or fall back to default
   const trackHeight = propTrackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
-  const { editMode } = useVideoEditorStore();
+  const editMode = useVideoEditorStore(selectEditMode);
   const [hoveredGap, setHoveredGap] = useState<string | null>(null);
 
   // Calculate gaps for all tracks
