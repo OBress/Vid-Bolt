@@ -230,6 +230,25 @@ export interface TrackWithClips extends TimelineTrack {
 }
 
 /**
+ * Distinct colors for each clip type so items are visually distinguishable
+ * on the timeline. Used as the final fallback when neither clip.color nor
+ * track.color is set.
+ */
+const CLIP_TYPE_COLORS: Record<string, string> = {
+  video:            '#0ea5e9', // Sky-500  – teal/sky for video clips
+  image:            '#8b5cf6', // Violet-500 – purple for image clips
+  audio:            '#22c55e', // Green-500 – green for audio clips
+  text:             '#f59e0b', // Amber-500 – amber for text clips
+  caption:          '#f97316', // Orange-500 – orange for captions
+  sticker:          '#ec4899', // Pink-500  – pink for stickers
+  shape:            '#6366f1', // Indigo-500 – indigo for shapes
+  blur:             '#64748b', // Slate-500 – slate for blur
+  'motion-graphics':'#a855f7', // Purple-500 – purple for motion graphics
+};
+
+const DEFAULT_CLIP_COLOR = '#3b82f6'; // Blue-500 fallback
+
+/**
  * Tracks with embedded clips (denormalized view)
  *
  * Uses memoized indexes (clipsByTrack, transitionsByClip) for O(1) lookups
@@ -255,13 +274,20 @@ export const selectTracksWithClips = createSelector(
           const inTransition = clipTransitions?.in;
           const outTransition = clipTransitions?.out;
 
+          // Resolve color: explicit clip color > track color > type-based default
+          const resolvedColor =
+            clip.color ||
+            track.color ||
+            CLIP_TYPE_COLORS[clip.type] ||
+            DEFAULT_CLIP_COLOR;
+
           return {
             id: clip.id,
             start: clip.startTime,
             end: clip.startTime + clip.duration,
             type: clip.type,
             label: clip.label,
-            color: clip.color,
+            color: resolvedColor,
             data: {
               ...clip.data,
               sourceId: clip.sourceId,
@@ -299,7 +325,7 @@ export const selectDurationInSeconds = createSelector(
   [selectClipsRecord],
   (clips): number => {
     const clipsArr = Object.values(clips);
-    if (clipsArr.length === 0) return 30;
+    if (clipsArr.length === 0) return 0;
     return Math.max(...clipsArr.map((c) => c.startTime + c.duration));
   },
 );

@@ -62,14 +62,12 @@ import {
   TimelineItemContent,
   TimelineItemResizeHandles,
   TimelineItemSplitLine,
-  TimelineItemContextMenu,
   TimelineItemFadeOverlays,
   TimelineItemTransitionIndicators,
   TimelineItemTransitionDropZones,
   TimelineItemTransitionOverlay,
 } from './timeline-item/index';
 import { TimelineKeyframes } from './timeline-keyframes';
-import { ContextMenu, ContextMenuTrigger } from '../../ui/context-menu';
 import type { PropertyKeyframes } from '../../../types/keyframes';
 
 /**
@@ -412,6 +410,32 @@ interface TimelineItemProps {
   onEffectDrop?: (itemId: string, effectType: string, effectValue: string) => void;
   // Composition editor props
   onOpenCompositionEditor?: (itemId: string) => void;
+  /** PERF: Callback for the shared context menu — item passes its data to the parent rather than rendering its own Radix ContextMenu wrapper */
+  onContextMenuRequest?: (data: TimelineItemContextMenuData) => void;
+}
+
+/**
+ * Data passed to the shared context menu when an item is right-clicked.
+ * This allows the parent (TimelineTrack) to render a single ContextMenu
+ * instead of 50+ per-item instances.
+ */
+export interface TimelineItemContextMenuData {
+  itemId: string;
+  isMultiSelection: boolean;
+  selectedItemIds: string[];
+  deleteText: string;
+  duplicateText: string;
+  showSplit: boolean;
+  canLink: boolean;
+  canUnlink: boolean;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onSplit: () => void;
+  onLink: () => void;
+  onUnlink: () => void;
+  onDuplicateItems?: (itemIds: string[]) => void;
+  onDeleteItems?: (itemIds: string[]) => void;
+  onSplitItems?: (itemId: string, splitTime: number) => void;
 }
 
 export const TimelineItem: React.FC<TimelineItemProps> = ({ 
@@ -458,18 +482,18 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   onSelectedItemsChange,
   // Composition editor
   onOpenCompositionEditor,
+  onContextMenuRequest,
 }) => {
   const itemRef = useRef<HTMLDivElement>(null);
   
   // Use provided track height or fall back to default
   const trackHeightPx = propTrackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
   
-  // State for splitting mode
+  // State for splitting mode — isHovering is ONLY set when splittingEnabled is
+  // true.  In normal mode the CSS `group-hover:` class on the parent handles all
+  // visual hover effects without triggering React re-renders.
   const [splitPosition, setSplitPosition] = React.useState<number | null>(null);
   const [isHovering, setIsHovering] = React.useState(false);
-
-  // State for hover cursor management
-  const [isHoveringItem, setIsHoveringItem] = React.useState(false);
 
   // State to track if video thumbnails are showing (for transparent background)
   const [isShowingVideoThumbnails, setIsShowingVideoThumbnails] = React.useState(false);
@@ -484,10 +508,45 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   const splitThrottleRef = useRef<number | null>(null);
   const lastSplitPositionRef = useRef<number | null>(null);
 
-  // Get current edit mode, drag state from individual selectors (performance: only re-renders when these change)
-  const editMode = useTypedStore(selectEditMode);
-  const dragState = useTypedStore(selectDragState);
-  const dragVisuals = useTypedStore(selectDragVisuals);
+  // ──────────────────────────────────────────────────────────
+  // DEFERRED ZUSTAND SUBSCRIPTIONS
+  // During fast scrolling, items mount/unmount in <100ms.
+  // Reading from getTypedState() on mount is free (no subscription setup).
+  // We only subscribe after 100ms, eliminating subscribe/unsubscribe churn.
+  //
+  // We use a ref + forceUpdate instead of useState to avoid a cascade:
+  // with useState, hundreds of items all calling setIsStoreSubscribed(true)
+  // at ~100ms triggers an exponential re-render storm ("Maximum update depth").
+  // ──────────────────────────────────────────────────────────
+  const isStoreSubscribedRef = React.useRef(false);
+  const [, forceUpdate] = React.useReducer((c: number) => c + 1, 0);
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      isStoreSubscribedRef.current = true;
+      forceUpdate();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Stable fallback selectors — never change identity between renders.
+  // These read a one-shot snapshot from getTypedState() (no subscription).
+  const fallbackEditMode = useMemo(() => () => getTypedState().editMode, []);
+  const fallbackDragState = useMemo(() => () => getTypedState().dragState, []);
+  const fallbackDragVisuals = useMemo(() => () => getTypedState().dragVisuals, []);
+
+  const subscribed = isStoreSubscribedRef.current;
+
+  // When subscribed: reactive updates. When not: one-shot read (stale but cheap).
+  const editMode = useTypedStore(
+    subscribed ? selectEditMode : fallbackEditMode
+  );
+  const dragState = useTypedStore(
+    subscribed ? selectDragState : fallbackDragState
+  );
+  const dragVisuals = useTypedStore(
+    subscribed ? selectDragVisuals : fallbackDragVisuals
+  );
   const { clearCommittedPosition, getCommittedPosition } = useVideoEditorActions();
   
   // Derive isDragging from drag state - use store as source of truth
@@ -1037,25 +1096,46 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   }, [item.id, item.type, trackLocked, onOpenCompositionEditor]);
 
   // Handle context menu (right-click) separately
+  // PERF: No per-item <ContextMenu> wrapper — we call onContextMenuRequest
+  // to let the parent render a single shared Radix ContextMenu instance.
+  // NOTE: We intentionally do NOT call e.stopPropagation() or e.preventDefault()
+  // so the native contextmenu event bubbles to the parent <ContextMenuTrigger>.
   const handleContextMenu = (e: React.MouseEvent) => {
-    e.stopPropagation();
-  
-    // Mouse position no longer needed since we split at playhead position
   
     // If this item is not already selected, select it
     // Premiere Pro behavior: When right-clicking a linked item, select all linked items
     if (!isSelected) {
       if (isItemLinked?.(item.id) && getLinkedItemIds && onSelectedItemsChange) {
-        // Select all linked items
         const linkedIds = getLinkedItemIds(item.id);
         onSelectedItemsChange(linkedIds);
       } else if (onSelectionChange) {
-        onSelectionChange(item.id, false); // Single selection when right-clicking unselected item
+        onSelectionChange(item.id, false);
       } else {
         onSelect?.(item.id);
       }
     }
-    // else: Right-clicked selected item - preserve current selection
+
+    // Pass context menu data to parent for the shared menu
+    if (onContextMenuRequest) {
+      onContextMenuRequest({
+        itemId: item.id,
+        isMultiSelection,
+        selectedItemIds,
+        deleteText,
+        duplicateText,
+        showSplit: showSplitOption,
+        canLink,
+        canUnlink,
+        onDuplicate: handleDuplicate,
+        onDelete: handleDelete,
+        onSplit: handleSplit,
+        onLink: handleLink,
+        onUnlink: handleUnlink,
+        onDuplicateItems,
+        onDeleteItems,
+        onSplitItems,
+      });
+    }
   };
 
   const getCursorStyle = (): { className: string; style: React.CSSProperties } => {
@@ -1088,11 +1168,10 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
       };
     }
     
-    // Use grabbing cursor when hovering for better feedback
-    const cursor = isHoveringItem ? "grabbing" : "grab";
+    // Use CSS hover pseudo-class for cursor feedback — no JS state needed
     return { 
       className: `cursor-grab hover:cursor-grabbing`, 
-      style: { cursor } 
+      style: { cursor: "grab" } 
     };
   };
 
@@ -1246,14 +1325,17 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     }
   };
 
-  const handleMouseEnter = () => {
+  // ── PERF: Hover tracking only when splitting ──────────────────────
+  // In normal mode (no splitting), hover is purely CSS via the `group`
+  // class on the parent div + `group-hover:` utilities on children.
+  // This eliminates per-item React re-renders on every mouse enter/leave,
+  // which was the primary contributor to the 408ms pointerover cost.
+  const handleMouseEnter = splittingEnabled ? () => {
     setIsHovering(true);
-    setIsHoveringItem(true);
-  };
+  } : undefined;
 
-  const handleMouseLeave = () => {
+  const handleMouseLeave = splittingEnabled ? () => {
     setIsHovering(false);
-    setIsHoveringItem(false);
     
     // Cancel any pending throttled updates
     if (splitThrottleRef.current) {
@@ -1263,7 +1345,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     
     setSplitPosition(null);
     lastSplitPositionRef.current = null;
-  };
+  } : undefined;
 
   // ==========================================
   // SIMPLE TRANSITION DROP HANDLERS
@@ -1453,11 +1535,9 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   const fadeOut = item.data?.styles?.fadeOut ?? 0;
 
   return (
-    <ContextMenu onOpenChange={onContextMenuOpenChange}>
-      <ContextMenuTrigger asChild>
         <div
           ref={itemRef}
-          className={`timeline-item group absolute rounded flex items-center justify-center text-xs font-light text-white shadow-sm hover:shadow-md select-none overflow-hidden touch-none ${getCursorStyle().className} ${
+          className={`timeline-item group absolute rounded flex items-center justify-center text-xs font-light text-white select-none overflow-hidden touch-none ${getCursorStyle().className} ${
             isBeingDragged && hasActualDragMovement
               ? 'border-2 border-dashed border-cyan-400' 
               : isDragOverForEffect 
@@ -1486,12 +1566,12 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
             transform: hasCommittedPosition
               ? `translate(${transformX}%, calc(-50% + ${transformY}px))` 
               : 'translateY(-50%)',
-            // Disable transitions on transform/left to prevent wobble during drag handoff
-            // Only allow transitions on non-position properties like opacity
-            transition: 'opacity 0.1s ease-out',
             pointerEvents: isBeingDragged && hasActualDragMovement ? 'none' : 'auto',
-            // CSS containment for performance - isolates layout/style calculations
-            contain: 'layout style',
+            // PERF: 'strict' = size + layout + paint + style containment.
+            // Isolates each item's layout/paint entirely — the browser skips
+            // painting off-screen items and doesn't cascade style recalculations
+            // across sibling items. Safe because items have explicit width/height.
+            contain: 'strict',
             // Dynamic border and glow based on link group color
             ...(isBeingDragged && hasActualDragMovement
               ? { boxShadow: '0 0 8px rgba(34,211,238,0.5)' }
@@ -1609,11 +1689,13 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
             );
           })()}
           
-          {(isHovering || isSelected) && (
+          {/* PERF: Always mount resize handles — they manage their own visibility
+              via CSS group-hover:opacity-100. Removing the (isHovering || isSelected)
+              guard eliminates per-item mount/unmount on hover. */}
           <TimelineItemResizeHandles 
             onDragStart={!!onDragStart}
             splittingEnabled={splittingEnabled}
-            isHovering={isHovering}
+            isHovering={false}
             isSelected={isSelected}
             isDragging={isDragging}
             isMultiSelected={isSelected && selectedItemIds.length > 1}
@@ -1622,7 +1704,6 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
             onMouseDown={handleResizeMouseDown}
             onTouchStart={handleResizeTouchStart}
           />
-          )}
           
           <TimelineItemContent 
             label={item.label}
@@ -1836,24 +1917,6 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
           />
           )}
         </div>
-      </ContextMenuTrigger>
-      
-      <TimelineItemContextMenu 
-        onDuplicate={handleDuplicate}
-        onDelete={handleDelete}
-        onSplit={handleSplit}
-        onDuplicateItems={onDuplicateItems}
-        onDeleteItems={onDeleteItems}
-        onSplitItems={onSplitItems}
-        duplicateText={duplicateText}
-        deleteText={deleteText}
-        showSplit={showSplitOption}
-        canLink={canLink}
-        canUnlink={canUnlink}
-        onLink={handleLink}
-        onUnlink={handleUnlink}
-      />
-    </ContextMenu>
   );
 };
 

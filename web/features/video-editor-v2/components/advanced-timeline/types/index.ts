@@ -150,6 +150,9 @@ export interface TimelineContentProps {
   onScrollYChange?: (scrollY: number) => void;
   getVisibleTimeRange?: () => VisibleTimeRange;
   getContentTransform?: () => { x: number; y: number };
+  // DOM refs for direct scroll transform (bypasses React during active scroll)
+  scrollContentRef?: React.MutableRefObject<HTMLDivElement | null>;
+  scrollMarkersRef?: React.MutableRefObject<HTMLDivElement | null>;
   // Other props
   onFrameChange?: (frame: number) => void;
   onItemSelect?: (itemId: string | null) => void;

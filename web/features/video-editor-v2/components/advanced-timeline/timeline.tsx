@@ -264,6 +264,9 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     handleWheel: handleVirtualWheel,
     reset: resetZoom,
     zoomToFit,
+    // DOM refs for direct scroll transform
+    scrollContentRef,
+    scrollMarkersRef,
   } = useVirtualScroll({
     totalDuration: compositionDuration, // Use computed duration that includes all content
     containerWidth,
@@ -761,6 +764,9 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
             onScrollYChange={setScrollY}
             getVisibleTimeRange={getVisibleTimeRange}
             getContentTransform={getContentTransform}
+            // DOM refs for direct scroll transform
+            scrollContentRef={scrollContentRef}
+            scrollMarkersRef={scrollMarkersRef}
             // Other props
             onFrameChange={onFrameChange}
             onItemSelect={onItemSelect}

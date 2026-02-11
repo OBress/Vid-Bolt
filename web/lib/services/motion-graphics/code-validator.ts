@@ -8,7 +8,10 @@
  * ✓ Validating code structure and syntax
  * ✓ Applying auto-fixes for common errors
  * ✓ Providing metadata to frontend (icons, corrections, warnings)
+ * ✓ Babel-based syntax validation (transpileCheck)
  */
+
+import { parse } from '@babel/parser';
 
 export interface ValidationResult {
   isValid: boolean;
@@ -494,3 +497,60 @@ export function extractComponentCode(code: string): string {
 
   return preContent ? `${preContent}\n\n${mainComponent}` : mainComponent;
 }
+
+/**
+ * Babel-based syntax validation for AI-generated Remotion code.
+ * Uses @babel/parser to parse TSX — catches ALL syntax errors in ~1-2ms.
+ * 
+ * Wraps the code in a component shell before parsing (same pattern
+ * as the frontend remotion-compiler) so it validates accurately.
+ */
+export function transpileCheck(code: string): { valid: boolean; error?: string } {
+  if (!code?.trim()) {
+    return { valid: false, error: 'No code provided' };
+  }
+
+  try {
+    // Strip imports — the runtime injects everything into scope, so imports
+    // are decorative. Removing them avoids false-positive parse errors from
+    // import-only syntax issues while keeping the actual component logic intact.
+    let body = code;
+    body = body.replace(/import\s+type\s*\{[\s\S]*?\}\s*from\s*["'][^"']+["'];?/g, '');
+    body = body.replace(/import\s+\w+\s*,\s*\{[\s\S]*?\}\s*from\s*["'][^"']+["'];?/g, '');
+    body = body.replace(/import\s*\{[\s\S]*?\}\s*from\s*["'][^"']+["'];?/g, '');
+    body = body.replace(/import\s+\*\s+as\s+\w+\s+from\s*["'][^"']+["'];?/g, '');
+    body = body.replace(/import\s+\w+\s+from\s*["'][^"']+["'];?/g, '');
+    body = body.replace(/import\s*["'][^"']+["'];?/g, '');
+    // Strip ICONS comment
+    body = body.replace(/^\/\/\s*ICONS:.*$/m, '');
+
+    body = body.trim();
+
+    // Detect if the code is a module-level construct (has export, top-level const, function, etc.)
+    // If so, parse directly as a module. If it's just a function body (starts with hooks/return),
+    // wrap it in a component shell.
+    const isModuleCode = /^\s*(export\s|const\s|let\s|var\s|function\s|class\s|\/\*|\/\/)/m.test(body)
+      && /\bexport\b/.test(body);
+
+    const sourceToCheck = isModuleCode
+      ? body
+      : `const DynamicAnimation = () => {\n${body}\n};`;
+
+    parse(sourceToCheck, {
+      sourceType: 'module',
+      plugins: ['jsx', 'typescript'],
+      errorRecovery: false,
+    });
+
+    console.log('[CodeValidator] ✅ Babel syntax check passed');
+    return { valid: true };
+  } catch (err) {
+    const error = err as Error & { loc?: { line: number; column: number } };
+    const loc = error.loc ? ` (${error.loc.line}:${error.loc.column})` : '';
+    const message = `Syntax error${loc}: ${error.message}`;
+
+    console.error('[CodeValidator] ❌ Babel syntax check failed:', message);
+    return { valid: false, error: message };
+  }
+}
+

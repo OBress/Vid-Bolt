@@ -12,7 +12,7 @@ import { TimelineResizeHandle } from './components';
 import { OverlayType } from '../../../types';
 import { createEffect, EffectType } from '../../../types/effects';
 import { FPS } from '../../../constants';
-import { useVideoEditorStore, useTypedStore, selectTracksArray, selectClipsArray } from '../../../stores/video-editor-store';
+import { useVideoEditorStore, useTypedStore, selectTracksArray, selectClipsArray, selectDurationInSeconds } from '../../../stores/video-editor-store';
 import type { VideoEditorStore } from '../../../stores/video-editor-store';
 import type { TimelineClip as TimelineClipV2, TimelineTrack as TimelineTrackV2 } from '../../../types/timeline-v2';
 import { useCompositionEditorStore } from '../../../stores/composition-editor-store';
@@ -82,15 +82,7 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
   // (useShallow can sometimes miss nested object changes)
   const transitions = useTypedStore(state => state.transitions);
   
-  // Calculate durationInFrames from actual clip content
-  // For empty timelines, this is 0 - the scrollable area is handled separately by virtual scroll
-  const durationInFrames = React.useMemo(() => {
-    if (!timelineV2Clips || timelineV2Clips.length === 0) {
-      return 0; // No content = 0 duration (scrollable area is separate)
-    }
-    const maxEndTime = Math.max(...timelineV2Clips.map(c => c.startTime + c.duration));
-    return Math.ceil(maxEndTime * fps);
-  }, [timelineV2Clips, fps]);
+  const totalDurationSeconds = useVideoEditorStore(selectDurationInSeconds);
 
   // Get actions from store (with safe fallbacks)
   const selectClip = useVideoEditorStore(state => state.selectClip) || (() => {});
@@ -269,10 +261,10 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
 
   const handleSeekToEnd = React.useCallback(() => {
     if (playerRef?.current) {
-      const endFrame = Math.max(0, durationInFrames - 1);
+      const endFrame = Math.max(0, Math.ceil(totalDurationSeconds * fps) - 1);
       playerRef.current.seekTo(endFrame);
     }
-  }, [playerRef, durationInFrames]);
+  }, [playerRef, totalDurationSeconds, fps]);
 
   // Timeline resize
   const { 
@@ -433,7 +425,7 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
         <Timeline
           ref={timelineRef}
           tracks={timelineTracks as any}
-          totalDuration={durationInFrames / (fps || FPS)}
+          totalDuration={totalDurationSeconds}
           currentFrame={currentFrame}
           fps={fps || FPS}
           onFrameChange={handleTimelineFrameChange}

@@ -307,10 +307,9 @@
 
   /* Timeline tracks scroll container - horizontal hidden (use navigator), vertical thin */
   .timeline-tracks-scroll-container {
-    overflow-x: scroll !important;
-    overflow-y: auto !important;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(150, 150, 150, 0.3) transparent;
+    overflow: hidden !important;
+    scrollbar-width: none;
+    scrollbar-color: transparent transparent;
   }
 
   .timeline-tracks-scroll-container::-webkit-scrollbar {

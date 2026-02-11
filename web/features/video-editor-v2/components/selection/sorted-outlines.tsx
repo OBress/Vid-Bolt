@@ -4,6 +4,8 @@ import { SelectionOutline } from "./selected-outline";
 import { SelectionHandles } from "./selection-handles";
 import { Overlay } from "../../types";
 import { useAlignmentGuides } from "../../hooks/use-alignment-guides";
+import { useVideoEditorStore } from "../../stores/video-editor-store";
+import { selectSelectedOverlayId } from "../../stores/memoized-render-selectors";
 
 /**
  * Sorts overlays by their row number to maintain proper stacking order
@@ -19,21 +21,26 @@ const sortOverlaysByRow = (overlays: Overlay[]): Overlay[] => {
  * Maintains natural stacking order based on row numbers
  * Each outline is wrapped in a Remotion Sequence component for timeline positioning
  *
+ * PERF: Reads selectedOverlayId directly from the Zustand store instead of
+ * receiving it as a prop. This prevents VideoPlayer from re-rendering on every
+ * selection change — only SortedOutlines re-renders, which is much cheaper.
+ *
  * @param props
  * @param props.overlays - Array of overlay objects to render
- * @param props.selectedOverlayId - ID of currently selected overlay
  * @param props.changeOverlay - Callback to modify an overlay's properties
- * @param props.setSelectedOverlayId - State setter for selected overlay ID
  */
 export const SortedOutlines: React.FC<{
   overlays: Overlay[];
-  selectedOverlayId: number | null;
   changeOverlay: (
     overlayId: number,
     updater: (overlay: Overlay) => Overlay
   ) => void;
   alignmentGuides: ReturnType<typeof useAlignmentGuides>;
-}> = ({ overlays, selectedOverlayId, changeOverlay, alignmentGuides }) => {
+}> = ({ overlays, changeOverlay, alignmentGuides }) => {
+  // PERF: Read selection from store directly — avoids prop-drilling through
+  // VideoPlayer → Main → SortedOutlines, eliminating VideoPlayer re-render
+  // on every selection change.
+  const selectedOverlayId = useVideoEditorStore(selectSelectedOverlayId);
   const overlaysToDisplay = React.useMemo(
     () => sortOverlaysByRow(overlays),
     [overlays]

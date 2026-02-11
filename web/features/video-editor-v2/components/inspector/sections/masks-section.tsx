@@ -1254,10 +1254,15 @@ export const MasksSection: React.FC<MasksSectionProps> = ({
   overlay,
   onUpdate,
 }) => {
-  // Get clips from store and convert to overlays for track matte source selection
-  const clips = useVideoEditorStore(state => Object.values(state.clips)) as TimelineClip[];
+  // PERF: Subscribe to the clips record (stable reference) instead of
+  // Object.values() which creates a new array on every store change.
+  // Only actual clip mutations change the record reference.
+  const clipsRecord = useVideoEditorStore(state => state.clips);
   const fps = useVideoEditorStore(state => state.fps) || 30;
-  const overlays = clips.map((clip: TimelineClip) => clipToOverlay(clip, fps));
+  const overlays = useMemo(
+    () => (Object.values(clipsRecord) as TimelineClip[]).map((clip) => clipToOverlay(clip, fps)),
+    [clipsRecord, fps]
+  );
   
   // Get composition dimensions to calculate the overlay's pixel aspect ratio
   const aspectRatioString = useVideoEditorStore(state => state.aspectRatio) || '16:9';

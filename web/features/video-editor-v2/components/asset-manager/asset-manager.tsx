@@ -24,12 +24,26 @@ import {
   TooltipTrigger,
 } from "../ui/tooltip";
 
-// Import tab content components
-import { MediaTab } from "./tabs/media-tab";
-import { TextTab } from "./tabs/text-tab";
-import { EffectsTab } from "./tabs/effects-tab";
-import { ShapesTab } from "./tabs/shapes-tab";
-import { MotionGraphicsTab } from "./tabs/motion-graphics-tab";
+// PERF: Lazy-loaded asset manager tabs — only the active tab's code is loaded.
+// Heaviest tabs: MotionGraphicsTab (~57KB), MediaTab (~49KB), EffectsTab (~47KB).
+const MediaTab = React.lazy(() => import("./tabs/media-tab").then(m => ({ default: m.MediaTab })));
+const TextTab = React.lazy(() => import("./tabs/text-tab").then(m => ({ default: m.TextTab })));
+const EffectsTab = React.lazy(() => import("./tabs/effects-tab").then(m => ({ default: m.EffectsTab })));
+const ShapesTab = React.lazy(() => import("./tabs/shapes-tab").then(m => ({ default: m.ShapesTab })));
+const MotionGraphicsTab = React.lazy(() => import("./tabs/motion-graphics-tab").then(m => ({ default: m.MotionGraphicsTab })));
+
+/** Lightweight skeleton shown while tab chunks are loading */
+const TabSkeleton: React.FC = () => (
+  <div className="flex flex-col gap-3 p-3 animate-pulse">
+    <div className="h-8 bg-muted/40 rounded-md w-full" />
+    <div className="grid grid-cols-2 gap-2">
+      <div className="h-20 bg-muted/20 rounded-md" />
+      <div className="h-20 bg-muted/20 rounded-md" />
+      <div className="h-20 bg-muted/20 rounded-md" />
+      <div className="h-20 bg-muted/20 rounded-md" />
+    </div>
+  </div>
+);
 
 import {
   ImageIcon,
@@ -153,23 +167,33 @@ export const AssetManager: React.FC<AssetManagerProps> = ({
         {/* Tab Content - absolute positioned below tabs (header 40px + tabs 36px = 76px) */}
         <div className="absolute top-[76px] left-0 right-0 bottom-0 overflow-hidden">
           <TabsContent value="media" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden">
-            <MediaTab />
+            <React.Suspense fallback={<TabSkeleton />}>
+              <MediaTab />
+            </React.Suspense>
           </TabsContent>
           
           <TabsContent value="text" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden">
-            <TextTab />
+            <React.Suspense fallback={<TabSkeleton />}>
+              <TextTab />
+            </React.Suspense>
           </TabsContent>
           
           <TabsContent value="shapes" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden">
-            <ShapesTab />
+            <React.Suspense fallback={<TabSkeleton />}>
+              <ShapesTab />
+            </React.Suspense>
           </TabsContent>
           
           <TabsContent value="effects" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden">
-            <EffectsTab />
+            <React.Suspense fallback={<TabSkeleton />}>
+              <EffectsTab />
+            </React.Suspense>
           </TabsContent>
           
           <TabsContent value="motion-graphics" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden">
-            <MotionGraphicsTab />
+            <React.Suspense fallback={<TabSkeleton />}>
+              <MotionGraphicsTab />
+            </React.Suspense>
           </TabsContent>
         </div>
       </Tabs>

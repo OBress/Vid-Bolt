@@ -27,6 +27,7 @@ import {
 } from './prompts';
 import {
   validateCode,
+  transpileCheck,
   extractAndEnsureIcons,
   stripMarkdownFences,
   extractComponentCode,
@@ -707,8 +708,10 @@ class MotionGraphicsService {
         });
       }
 
-      // Step 6: Finalize
-      await this.finalizeGeneration(sendSSE, accumulatedCode, detectedSkills, null, plannedDuration);
+      // Step 6: Finalize (with syntax retry context so Babel failures auto-correct)
+      await this.finalizeGeneration(sendSSE, accumulatedCode, detectedSkills, null, plannedDuration, {
+        apiKey, model, prompt, attempt: 0,
+      });
 
     } catch (error) {
       console.error('[MotionGraphicsService] Generation error:', error);
@@ -948,24 +951,70 @@ class MotionGraphicsService {
   }
 
   /**
-   * Finalize generation with validation and completion event
+   * Finalize generation with validation and completion event.
+   * Runs Babel syntax check — if it fails, auto-retries with AI error correction
+   * up to MAX_SYNTAX_RETRIES times within the same SSE stream.
    */
   private async finalizeGeneration(
     sendSSE: SSEWriter,
     code: string,
     detectedSkills: string[],
     editType: string | null = null,
-    duration: number | null = null
+    duration: number | null = null,
+    _syntaxRetryContext?: { apiKey: string; model: string; prompt: string; attempt: number }
   ): Promise<void> {
+    const MAX_SYNTAX_RETRIES = 2;
+
     let cleanedCode = stripMarkdownFences(code);
     cleanedCode = extractComponentCode(cleanedCode);
 
     sendSSE({ type: 'stage', stage: 'validating', message: 'Validating code...' });
-    
+
+    // Step 1: Regex-based heuristic validation (auto-fixes common issues)
     const validation = validateCode(cleanedCode);
-    
     if (validation.fixedCode) {
       cleanedCode = validation.fixedCode;
+    }
+
+    // Step 2: Babel syntax check (~1-2ms) — catches ALL syntax errors
+    const syntaxResult = transpileCheck(cleanedCode);
+
+    if (!syntaxResult.valid && _syntaxRetryContext) {
+      const { apiKey, model, prompt, attempt } = _syntaxRetryContext;
+
+      if (attempt < MAX_SYNTAX_RETRIES) {
+        console.log(`[MotionGraphicsService] Babel check failed (attempt ${attempt + 1}/${MAX_SYNTAX_RETRIES}), auto-retrying with AI fix...`);
+        sendSSE({ type: 'stage', stage: 'regenerating', message: `Fixing syntax error (attempt ${attempt + 1})...` });
+
+        // Re-generate with the error context — the AI will fix the specific syntax issue
+        try {
+          await this.handleFollowUpEdit(sendSSE, apiKey, {
+            prompt,
+            model,
+            currentCode: cleanedCode,
+            conversationHistory: [],
+            detectedSkills,
+            errorCorrection: {
+              error: syntaxResult.error!,
+              attemptNumber: attempt + 1,
+              maxAttempts: MAX_SYNTAX_RETRIES,
+            },
+          });
+          // handleFollowUpEdit calls finalizeGeneration internally with the fixed code,
+          // so we return here — the recursive call handles completion.
+          return;
+        } catch (retryError) {
+          console.error('[MotionGraphicsService] Syntax retry failed:', retryError);
+          // Fall through to send what we have
+        }
+      } else {
+        console.warn(`[MotionGraphicsService] Max syntax retries (${MAX_SYNTAX_RETRIES}) reached. Sending code with syntax errors.`);
+        validation.errors.push(`Babel syntax check: ${syntaxResult.error}`);
+      }
+    } else if (!syntaxResult.valid) {
+      // No retry context available — just report the error
+      console.warn('[MotionGraphicsService] Babel check failed (no retry context):', syntaxResult.error);
+      validation.errors.push(`Babel syntax check: ${syntaxResult.error}`);
     }
 
     const iconResult = extractAndEnsureIcons(cleanedCode);
@@ -975,7 +1024,7 @@ class MotionGraphicsService {
     sendSSE({
       type: 'validation',
       result: {
-        isValid: validation.isValid,
+        isValid: validation.isValid && syntaxResult.valid,
         errors: validation.errors,
         warnings: validation.warnings,
       },

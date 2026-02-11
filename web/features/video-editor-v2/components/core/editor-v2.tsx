@@ -14,7 +14,8 @@ import { EditorLayout } from "../layout/editor-layout";
 import { EditorHeader, EditorHeaderProps } from "./editor-header";
 import { useEditorShortcuts } from "../../hooks/use-editor-shortcuts";
 import { useFontPreloader } from "../../hooks/use-font-preloader";
-import { CompositionEditor } from "../composition-editor/composition-editor";
+// PERF: Lazy-loaded — the composition editor is a full sub-application rarely opened by most users.
+const CompositionEditor = React.lazy(() => import("../composition-editor/composition-editor").then(m => ({ default: m.CompositionEditor })));
 import { useCompositionEditorStore } from "../../stores/composition-editor-store";
 import { useVideoEditorStore } from "../../stores/video-editor-store";
 import type { CompositionDefinition } from "../../types/composition";
@@ -120,9 +121,15 @@ export const EditorV2: React.FC<EditorV2Props> = ({
 
       {/* Composition Editor Overlay */}
       {compositionEditorOpen && (
-        <CompositionEditor
-          onSave={handleCompositionSave}
-        />
+        <React.Suspense fallback={
+          <div className="fixed inset-0 z-50 bg-background flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
+          </div>
+        }>
+          <CompositionEditor
+            onSave={handleCompositionSave}
+          />
+        </React.Suspense>
       )}
     </>
   );

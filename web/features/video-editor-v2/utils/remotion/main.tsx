@@ -19,8 +19,6 @@ export type MainProps = {
   readonly setSelectedOverlayId: React.Dispatch<
     React.SetStateAction<number | null>
   >;
-  /** Currently selected overlay ID, or null if none selected */
-  readonly selectedOverlayId: number | null;
   /**
    * Function to update an overlay
    * @param overlayId - The ID of the overlay to update
@@ -68,7 +66,6 @@ const layerContainer: React.CSSProperties = {
 export const Main: React.FC<MainProps> = ({
   overlays,
   setSelectedOverlayId,
-  selectedOverlayId,
   changeOverlay,
   width,
   height,
@@ -132,8 +129,9 @@ export const Main: React.FC<MainProps> = ({
           );
         })}
       </AbsoluteFill>
+      {/* PERF: SortedOutlines reads selectedOverlayId from store directly,
+           avoiding VideoPlayer re-render on selection change */}
       <SortedOutlines
-        selectedOverlayId={selectedOverlayId}
         overlays={visibleOverlays}
         changeOverlay={changeOverlay}
         alignmentGuides={alignmentGuides}

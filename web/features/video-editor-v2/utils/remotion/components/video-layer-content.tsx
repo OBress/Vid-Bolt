@@ -1,10 +1,6 @@
 import {
   useCurrentFrame,
-  delayRender,
-  continueRender,
-  Html5Video,
   OffthreadVideo,
-  getRemotionEnvironment,
 } from "remotion";
 import { ClipOverlay } from "../../../types";
 import { animationTemplates, getAnimationKey } from "../../../adaptors/default-animation-adaptors";
@@ -21,23 +17,17 @@ import { SvgCurvesFilter, SvgFilterDefs, useCurvesFilter, CurvesFilterValues } f
 import { useKeyframedMasks } from "../../../hooks/use-keyframed-value";
 
 /**
- * Determines whether to use OffthreadVideo (for server-side rendering/Lambda)
- * or Html5Video (for browser preview)
- * 
- * OffthreadVideo is optimized for rendering and ensures consistent timing,
- * but doesn't support real-time preview playback as well as Html5Video.
- * 
- * Using the same component for both preview and render ensures visual parity.
+ * Always use OffthreadVideo for both preview and render.
+ *
+ * OffthreadVideo avoids Chrome's simultaneous <video> element throttling,
+ * which causes static frames when many video clips are on the timeline.
+ * During preview it still uses a <video> tag internally but with better
+ * throttle avoidance, and during rendering it uses an off-thread decoder
+ * for frame-perfect output.
+ *
+ * Remotion explicitly recommends OffthreadVideo over Html5Video.
+ * @see https://remotion.dev/docs/offthreadvideo
  */
-const useVideoComponent = () => {
-  // Check if we're in a rendering environment (Lambda, CLI render, etc.)
-  const environment = getRemotionEnvironment();
-  const isRendering = environment.isRendering;
-  
-  // Use OffthreadVideo for actual renders to ensure frame-accurate playback
-  // Use Html5Video for preview to maintain smooth playback experience
-  return isRendering ? OffthreadVideo : Html5Video;
-};
 
 /**
  * Interface defining the props for the VideoLayerContent component
@@ -85,10 +75,6 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
   const { baseUrl: contextBaseUrl } = useSafeEditorContext();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastProcessedFrameRef = useRef<CanvasImageSource | null>(null);
-  
-  // Select appropriate video component based on rendering environment
-  // This ensures visual parity between preview and final render
-  const VideoComponent = useVideoComponent();
 
   // Use prop baseUrl first, then context baseUrl
   const resolvedBaseUrl = baseUrl || contextBaseUrl;
@@ -131,33 +117,10 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
   } else {
   }
 
-  useEffect(() => {
-    const handle = delayRender("Loading video");
-
-    // Create a video element to preload the video
-    const video = document.createElement("video");
-    video.src = videoSrc;
-    
-
-    const handleLoadedMetadata = () => {
-      continueRender(handle);
-    };
-
-    const handleError = (error: ErrorEvent) => {
-      console.error(`Error loading video ${overlay.src}:`, error);
-      continueRender(handle);
-    };
-
-    video.addEventListener("loadedmetadata", handleLoadedMetadata);
-    video.addEventListener("error", handleError);
-
-    return () => {
-      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      video.removeEventListener("error", handleError);
-      // Ensure we don't leave hanging render delays
-      continueRender(handle);
-    };
-  }, [overlay.src, videoSrc]);
+  // NOTE: Removed manual delayRender + document.createElement('video') preloading.
+  // OffthreadVideo handles its own loading/buffering internally.
+  // The old approach created phantom <video> elements on every mount, which
+  // compounded Chrome's simultaneous video element throttling in stress tests.  
 
   // Process video frame with greenscreen removal
   const processVideoFrame = useCallback(
@@ -422,9 +385,10 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
         )}
         <div style={{ position: 'relative', width: '100%', height: '100%' }}>
           {/* Hidden video that feeds frames to canvas */}
-          <VideoComponent
+          <OffthreadVideo
             src={videoSrc}
             startFrom={startFromFrames}
+            pauseWhenBuffering
             style={{ 
               ...videoStyle,
               position: 'absolute',
@@ -469,9 +433,10 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
       {needsSvgMaskForFeather && svgMaskString && (
         <div dangerouslySetInnerHTML={{ __html: svgMaskString }} />
       )}
-      <VideoComponent
+      <OffthreadVideo
         src={videoSrc}
         startFrom={startFromFrames}
+        pauseWhenBuffering
         style={videoStyle}
         volume={overlay.styles.volume ?? 1}
         playbackRate={overlay.speed ?? 1}

@@ -4,7 +4,7 @@ import { Main } from "../../utils/remotion/main";
 import { useEditorContext } from "../../contexts/editor-context";
 import { useVideoEditorStore, selectDurationInFrames } from "../../stores/video-editor-store";
 import type { TimelineClip } from "../../types/timeline-v2";
-import { selectOverlays, selectSelectedOverlayId } from "../../stores/memoized-render-selectors";
+import { selectOverlays } from "../../stores/memoized-render-selectors";
 import { SelectionOverlays } from "./selection-overlays";
 
 /**
@@ -38,7 +38,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Get state directly from the unified store
   // PERF: selectOverlays is memoized via reselect — only recomputes when clips/tracks/transitions/fps change
   const overlays = useVideoEditorStore(selectOverlays);
-  const selectedOverlayId = useVideoEditorStore(selectSelectedOverlayId);
+  // PERF: selectedOverlayId subscription removed — SortedOutlines now reads it
+  // directly from the store. This prevents the entire VideoPlayer + Remotion Player
+  // from re-rendering on every selection change.
   // PERF: selectedClipIds subscription removed — it caused full VideoPlayer re-renders
   // on every selection change, busting all downstream useMemos and re-rendering the
   // Remotion Player. Mask/shape overlays are now in SelectionOverlays component.
@@ -194,8 +196,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [containerDimensions, playerDimensions, compositionWidth, compositionHeight]);
 
-  // NOTE: overlays and selectedOverlayId are now computed via memoized selectors
-  // at the top of this component (selectOverlays, selectSelectedOverlayId)
+  // NOTE: overlays are computed via memoized selector at the top (selectOverlays).
+  // selectedOverlayId is no longer subscribed here — SortedOutlines reads it from store directly.
 
   // Adapter for setSelectedOverlayId to use the new selectClip action
   // Remotion passes a numeric overlay ID, we need to find the corresponding clip ID
@@ -436,13 +438,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [updateClip]);
 
-  // PERF: selectedOverlayId is excluded from inputProps to prevent full Remotion
-  // re-renders on every selection change. SortedOutlines reads it from the store directly.
+  // PERF: selectedOverlayId is no longer passed — SortedOutlines reads it
+  // directly from the Zustand store. This means VideoPlayer doesn't re-render
+  // on selection change, and the value is always fresh (eliminates stale-value bug).
   const editorInputProps = useMemo(() => ({
     overlays,
     setSelectedOverlayId,
     changeOverlay,
-    selectedOverlayId,
     durationInFrames,
     fps: fps,
     width: compositionWidth,
@@ -453,7 +455,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     overlays,
     setSelectedOverlayId,
     changeOverlay,
-    // selectedOverlayId intentionally excluded — SortedOutlines reads from store
     durationInFrames,
     fps,
     compositionWidth,
@@ -467,7 +468,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     overlays,
     setSelectedOverlayId,
     changeOverlay,
-    selectedOverlayId,
     durationInFrames,
     fps: fps,
     width: compositionWidth,
@@ -478,7 +478,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     overlays,
     setSelectedOverlayId,
     changeOverlay,
-    // selectedOverlayId intentionally excluded
     durationInFrames,
     fps,
     compositionWidth,
@@ -591,7 +590,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 playbackRate={playbackRate}
                 acknowledgeRemotionLicense={true}
                 inputProps={editorInputProps as any}
-                errorFallback={() => <></>}
+                numberOfSharedAudioTags={16}
+                errorFallback={({error}) => (
+                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1a1a1a', color: '#ff6b6b', fontSize: '13px', padding: '16px', textAlign: 'center' }}>
+                    <span>Player error: {error.message}</span>
+                  </div>
+                )}
                 overflowVisible
               />
               
@@ -633,7 +637,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               fps={PLAYER_CONFIG.fps}
               playbackRate={playbackRate}
               inputProps={playerOnlyInputProps as any}
-              errorFallback={() => <></>}
+              numberOfSharedAudioTags={16}
+              errorFallback={({error}) => (
+                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1a1a1a', color: '#ff6b6b', fontSize: '13px', padding: '16px', textAlign: 'center' }}>
+                  <span>Player error: {error.message}</span>
+                </div>
+              )}
               overflowVisible
             />
           </div>

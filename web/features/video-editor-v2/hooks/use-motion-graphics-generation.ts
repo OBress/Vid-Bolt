@@ -10,7 +10,7 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
-import { stripMarkdownFences, validateCode } from '../utils/remotion-compiler';
+import { stripMarkdownFences, validateCodeAsync } from '../utils/remotion-compiler';
 import { createClient } from '@/lib/supabase/client';
 
 // ============================================================
@@ -377,8 +377,8 @@ export function useMotionGraphicsGeneration(): UseMotionGraphicsGenerationReturn
                   setDetectedSkills(finalSkills);
                 }
                 
-                // Client-side validation - just checks for JSX and tries to compile
-                const clientValidation = validateCode(workingCode);
+                // Client-side validation (belt-and-suspenders) - full Babel compilation check
+                const clientValidation = await validateCodeAsync(workingCode);
                 
                 if (!clientValidation.isValid && clientValidation.error) {
                   // Use ref for synchronous tracking (state updates are async)

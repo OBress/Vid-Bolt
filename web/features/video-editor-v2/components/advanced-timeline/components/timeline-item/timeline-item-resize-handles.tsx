@@ -53,7 +53,6 @@ export const TimelineItemResizeHandles: React.FC<TimelineItemResizeHandlesProps>
     backdrop-blur-sm
     bg-gray-600/40 hover:bg-gray-600/60 border-gray-500/60
     ${shouldShowHandles ? "opacity-100" : "opacity-0 group-hover:opacity-100"}
-    transition-all duration-200 ease-in-out
   `.trim();
 
   const cursorStyle: React.CSSProperties = !isDragging 

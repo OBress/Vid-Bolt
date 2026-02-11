@@ -1,9 +1,27 @@
-import React, { useRef, useEffect, useState, memo } from 'react';
+import React, { useRef, useEffect, useState, memo, useCallback } from 'react';
 import { TimelineItemContentFactory } from './timeline-item-content-factory';
+import { TimelineItemSkeleton } from './timeline-item-skeleton';
 import { TrackItemType } from '../../types';
 import { useWaveformProcessor } from '../../hooks/use-waveform-processor';
 import { useThumbnailGenerator } from '../../hooks/use-thumbnail-generator';
+import { useScrollState } from '../../contexts/scroll-state-context';
 
+/**
+ * Loading phases for multi-tier lazy loading:
+ * 
+ * Phase 0 - SKELETON:  Ultra-lightweight placeholder (colored bar + label).
+ *                      Rendered during active scrolling. No hooks fire.
+ * Phase 1 - BASIC:     Full TimelineItemContentFactory renders (labels, badges,
+ *                      type icons, resize handles). ResizeObserver attached.
+ * Phase 2 - FULL:      Expensive hooks fire — waveform processing for audio,
+ *                      thumbnail sprite generation for video. Triggered via
+ *                      requestIdleCallback so it never blocks the main thread.
+ */
+const enum LoadPhase {
+  SKELETON = 0,
+  BASIC = 1,
+  FULL = 2,
+}
 
 interface TimelineItemContentProps {
   label?: string;
@@ -21,6 +39,9 @@ interface TimelineItemContentProps {
   fps?: number; // Frames per second for time conversion
 }
 
+/** Delay (ms) after scroll stops before promoting from SKELETON → BASIC */
+const SETTLE_DELAY_MS = 100;
+
 export const TimelineItemContent: React.FC<TimelineItemContentProps> = memo(({
   label,
   type,
@@ -28,8 +49,8 @@ export const TimelineItemContent: React.FC<TimelineItemContentProps> = memo(({
   start = 0,
   end = 0,
   mediaStart,
-  isHovering = false, // Default to false
-  isSelected = false, // Default to false
+  isHovering = false,
+  isSelected = false,
   itemId,
   onThumbnailDisplayChange,
   currentFrame,
@@ -37,62 +58,195 @@ export const TimelineItemContent: React.FC<TimelineItemContentProps> = memo(({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [phase, setPhase] = useState<LoadPhase>(LoadPhase.SKELETON);
 
-  // Calculate audio content timing - prioritize mediaStart from timeline item, then fall back to data properties
-  const audioContentStart = type === TrackItemType.AUDIO 
-    ? (mediaStart !== undefined 
-        ? mediaStart 
+  // Read scroll state from context (provided by ScrollStateProvider in TimelineContent)
+  const { isScrolling } = useScrollState();
+
+  // Track whether we were ever settled (prevents re-skeletonizing on subsequent scrolls
+  // after the item has already fully loaded)
+  const hasFullyLoadedRef = useRef(false);
+
+  // ──────────────────────────────────────────────────────────
+  // Phase transitions
+  // ──────────────────────────────────────────────────────────
+
+  // SKELETON → BASIC: after scroll stops and a short settle delay
+  useEffect(() => {
+    // If already at BASIC or FULL, no-op (we never go back to skeleton once loaded)
+    if (phase >= LoadPhase.BASIC || hasFullyLoadedRef.current) return;
+
+    // If still scrolling, stay at SKELETON
+    if (isScrolling) return;
+
+    // Scroll stopped — promote to BASIC after settle delay
+    const timer = setTimeout(() => {
+      setPhase(LoadPhase.BASIC);
+    }, SETTLE_DELAY_MS);
+
+    return () => clearTimeout(timer);
+  }, [isScrolling, phase]);
+
+  // BASIC → FULL: use requestIdleCallback to avoid blocking the main thread
+  useEffect(() => {
+    if (phase !== LoadPhase.BASIC) return;
+
+    let handle: number;
+    const hasIdleCallback = typeof window.requestIdleCallback === 'function';
+
+    if (hasIdleCallback) {
+      // Use requestIdleCallback for non-urgent loading of expensive content
+      handle = window.requestIdleCallback(() => {
+        setPhase(LoadPhase.FULL);
+        hasFullyLoadedRef.current = true;
+      }, { timeout: 500 }); // Force within 500ms even if browser stays busy
+    } else {
+      // Fallback for browsers without rIC
+      handle = window.setTimeout(() => {
+        setPhase(LoadPhase.FULL);
+        hasFullyLoadedRef.current = true;
+      }, 50) as unknown as number;
+    }
+
+    return () => {
+      if (hasIdleCallback) {
+        window.cancelIdleCallback(handle);
+      } else {
+        clearTimeout(handle);
+      }
+    };
+  }, [phase]);
+
+  // ──────────────────────────────────────────────────────────
+  // Phase 0: SKELETON — return early, no expensive work
+  // ──────────────────────────────────────────────────────────
+
+  if (phase === LoadPhase.SKELETON && !hasFullyLoadedRef.current) {
+    return (
+      <div ref={containerRef} className="flex-1 min-w-0 h-full">
+        <TimelineItemSkeleton label={label} type={type as TrackItemType} />
+      </div>
+    );
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // Phase 1+: BASIC / FULL content (hooks below only run in these phases)
+  // ──────────────────────────────────────────────────────────
+
+  return (
+    <TimelineItemContentInner
+      containerRef={containerRef}
+      label={label}
+      type={type}
+      data={data}
+      start={start}
+      end={end}
+      mediaStart={mediaStart}
+      isHovering={isHovering}
+      isSelected={isSelected}
+      itemId={itemId}
+      onThumbnailDisplayChange={onThumbnailDisplayChange}
+      currentFrame={currentFrame}
+      fps={fps}
+      dimensions={dimensions}
+      setDimensions={setDimensions}
+      enableExpensiveHooks={phase >= LoadPhase.FULL}
+    />
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inner component for Phase 1/2 — contains all the expensive hooks
+// Separated so that Phase 0 (skeleton) never mounts these hooks at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface TimelineItemContentInnerProps {
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  label?: string;
+  type?: TrackItemType | string;
+  data?: any;
+  start: number;
+  end: number;
+  mediaStart?: number;
+  isHovering: boolean;
+  isSelected: boolean;
+  itemId?: string;
+  onThumbnailDisplayChange?: (isShowingThumbnails: boolean) => void;
+  currentFrame?: number;
+  fps: number;
+  dimensions: { width: number; height: number };
+  setDimensions: (dims: { width: number; height: number }) => void;
+  enableExpensiveHooks: boolean;
+}
+
+const TimelineItemContentInner: React.FC<TimelineItemContentInnerProps> = memo(({
+  containerRef,
+  label,
+  type,
+  data,
+  start,
+  end,
+  mediaStart,
+  isHovering,
+  isSelected,
+  itemId,
+  onThumbnailDisplayChange,
+  currentFrame,
+  fps,
+  dimensions,
+  setDimensions,
+  enableExpensiveHooks,
+}) => {
+  // Calculate audio content timing
+  const audioContentStart = type === TrackItemType.AUDIO
+    ? (mediaStart !== undefined
+        ? mediaStart
         : (data?.startFromSound !== undefined ? data.startFromSound : 0))
     : 0;
 
-  // Generate waveform data for audio items - ALWAYS generate fresh waveforms
-  // This ensures split audio items get correct waveforms for their time segment
+  // Generate waveform data for audio items — only in Phase 2 (FULL)
   const waveformResult = useWaveformProcessor(
-    type === TrackItemType.AUDIO && data?.src ? data.src : undefined,
-    audioContentStart, // Start time in seconds
-    end - start // Duration in seconds
+    type === TrackItemType.AUDIO && data?.src && enableExpensiveHooks ? data.src : undefined,
+    audioContentStart,
+    end - start
   );
 
-  // Generate thumbnail data - always call the hook but conditionally pass parameters
+  // Generate thumbnail data — only in Phase 2 (FULL)
   const thumbnailResult = useThumbnailGenerator(
-    type === TrackItemType.VIDEO 
+    type === TrackItemType.VIDEO && enableExpensiveHooks
       ? {
           videoId: data?.content,
           videoSrc: data?.src || data?.originalUrl,
           duration: end - start,
           itemWidth: dimensions.width,
-          itemHeight: dimensions.height
+          itemHeight: dimensions.height,
         }
       : {
           videoId: null,
           videoSrc: null,
           duration: 0,
           itemWidth: 0,
-          itemHeight: 0
+          itemHeight: 0,
         }
   );
 
-  // Augment data with waveform information for audio items and thumbnail information for video items
-  const enhancedData = type === TrackItemType.AUDIO 
-    ? { 
-        ...data, 
-        // Always use the generated waveform for correct timing
-        waveformData: waveformResult.data, 
-        // Show loading state when generating
+  // Augment data with waveform/thumbnail information
+  const enhancedData = type === TrackItemType.AUDIO
+    ? {
+        ...data,
+        waveformData: waveformResult.data,
         isLoadingWaveform: waveformResult.isLoading,
-        // Pass clipId for effects processing status tracking
-        clipId: itemId
+        clipId: itemId,
       }
     : type === TrackItemType.VIDEO
     ? {
         ...data,
-        // Pass raw thumbnail data for rendering
         spriteUrl: thumbnailResult.spriteUrl,
         rectForTime: thumbnailResult.rectForTime,
         isLoadingThumbnails: thumbnailResult.isLoading,
         thumbnailError: thumbnailResult.error,
         intervalSec: thumbnailResult.intervalSec,
-        mediaStart: mediaStart
+        mediaStart: mediaStart,
       }
     : data;
 
@@ -109,7 +263,7 @@ export const TimelineItemContent: React.FC<TimelineItemContentProps> = memo(({
     };
 
     updateDimensions();
-    
+
     // Update dimensions on resize
     const resizeObserver = new ResizeObserver(updateDimensions);
     if (containerRef.current) {
@@ -122,7 +276,7 @@ export const TimelineItemContent: React.FC<TimelineItemContentProps> = memo(({
   }, []);
 
   return (
-    <div 
+    <div
       ref={containerRef}
       className="flex-1 min-w-0 h-full"
     >
@@ -136,13 +290,14 @@ export const TimelineItemContent: React.FC<TimelineItemContentProps> = memo(({
           itemHeight={dimensions.height}
           start={start}
           end={end}
-          isHovering={isHovering} // Pass hover state to factory
-          isSelected={isSelected} // Pass selected state to factory
-          onThumbnailDisplayChange={onThumbnailDisplayChange} // Pass thumbnail display callback to factory
+          isHovering={isHovering}
+          isSelected={isSelected}
+          onThumbnailDisplayChange={onThumbnailDisplayChange}
           currentFrame={currentFrame}
           fps={fps}
         />
       )}
     </div>
   );
-}); 
+});
+ 

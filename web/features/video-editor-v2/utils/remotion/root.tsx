@@ -18,7 +18,6 @@ export const Root: React.FC = () => {
   // Default props for the Main component
   const defaultProps: MainProps = {
     overlays: [],
-    selectedOverlayId: null,
     durationInFrames: DEFAULT_DURATION_IN_FRAMES,
     fps: DEFAULT_FPS,
     width: DEFAULT_VIDEO_WIDTH,

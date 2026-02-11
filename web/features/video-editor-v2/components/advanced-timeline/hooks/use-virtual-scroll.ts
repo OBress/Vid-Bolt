@@ -193,21 +193,103 @@ export const useVirtualScroll = ({
     };
   }, [maxScrollX]);
 
-  // Set horizontal scroll (0-1 range)
-  const setScrollX = useCallback((scrollX: number) => {
-    setState(prev => ({
-      ...prev,
-      scrollX: Math.max(0, Math.min(1, scrollX)),
-    }));
+  // ──────────────────────────────────────────────────────────
+  // REF-BASED IMMEDIATE SCROLL (Bypasses React During Active Scroll)
+  //
+  // Problem: Even rAF-coalesced setState causes full React reconciliation of
+  // the massive TimelineContent component tree on every frame during scroll.
+  //
+  // Solution: During active scrolling, update only a ref and mutate the DOM
+  // transform directly. React state is synced only when scrolling stops,
+  // eliminating ALL React work during active scrolling.
+  // ──────────────────────────────────────────────────────────
+
+  /** Ref holding the "live" scrollX/scrollY during active scroll (not in React state) */
+  const liveScrollRef = useRef({ x: state.scrollX, y: state.scrollY });
+  // Keep live ref in sync when React state updates (e.g., from zoom, scrollToTime, etc.)
+  useEffect(() => {
+    liveScrollRef.current = { x: state.scrollX, y: state.scrollY };
+  }, [state.scrollX, state.scrollY]);
+
+  /** Ref to the DOM element whose transform we update directly */
+  const scrollContentRef = useRef<HTMLDivElement | null>(null);
+  /** Ref to the markers DOM element for synchronized header scroll */
+  const scrollMarkersRef = useRef<HTMLDivElement | null>(null);
+
+  /** Timer for flushing live scroll to React state after scroll stops */
+  const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** rAF handle for batching direct DOM updates */
+  const scrollRafRef = useRef<number | null>(null);
+
+  /** Cleanup on unmount */
+  useEffect(() => {
+    return () => {
+      if (scrollIdleTimerRef.current !== null) clearTimeout(scrollIdleTimerRef.current);
+      if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+    };
   }, []);
 
-  // Set vertical scroll (pixels) - clamped to content bounds
+  /** Apply live scroll position directly to DOM (no React!) */
+  const applyDOMTransform = useCallback(() => {
+    scrollRafRef.current = null;
+    const { x, y } = liveScrollRef.current;
+    const scrollOffsetX = x * maxScrollX;
+    if (scrollContentRef.current) {
+      scrollContentRef.current.style.transform = `translate(${-scrollOffsetX}px, ${-y}px)`;
+    }
+    if (scrollMarkersRef.current) {
+      scrollMarkersRef.current.style.transform = `translateX(${-scrollOffsetX}px)`;
+    }
+  }, [maxScrollX]);
+
+  /** Flush live scroll ref to React state (called when scroll stops) */
+  const flushScrollToState = useCallback(() => {
+    scrollIdleTimerRef.current = null;
+    const { x, y } = liveScrollRef.current;
+    setState(prev => {
+      // Only update if values actually changed
+      if (Math.abs(prev.scrollX - x) < 0.0001 && Math.abs(prev.scrollY - y) < 0.0001) {
+        return prev;
+      }
+      return { ...prev, scrollX: x, scrollY: y };
+    });
+  }, []);
+
+  /** Duration (ms) of scroll inactivity before flushing to React state */
+  const SCROLL_IDLE_MS = 150;
+
+  // Set horizontal scroll (0-1 range) — ref-based, bypasses React during scroll
+  const setScrollX = useCallback((scrollX: number) => {
+    const clamped = Math.max(0, Math.min(1, scrollX));
+    liveScrollRef.current.x = clamped;
+    // Also keep stateRef in sync for getVisibleTimeRange, getContentTransform, etc.
+    stateRef.current = { ...stateRef.current, scrollX: clamped };
+
+    // Schedule direct DOM update (batched to rAF)
+    if (scrollRafRef.current === null) {
+      scrollRafRef.current = requestAnimationFrame(applyDOMTransform);
+    }
+
+    // Reset idle timer — flush to React state only after scrolling stops
+    if (scrollIdleTimerRef.current !== null) clearTimeout(scrollIdleTimerRef.current);
+    scrollIdleTimerRef.current = setTimeout(flushScrollToState, SCROLL_IDLE_MS);
+  }, [applyDOMTransform, flushScrollToState]);
+
+  // Set vertical scroll (pixels) — ref-based, bypasses React during scroll
   const setScrollY = useCallback((scrollY: number) => {
-    setState(prev => ({
-      ...prev,
-      scrollY: Math.max(0, Math.min(maxScrollY, scrollY)),
-    }));
-  }, [maxScrollY]);
+    const clamped = Math.max(0, Math.min(maxScrollY, scrollY));
+    liveScrollRef.current.y = clamped;
+    stateRef.current = { ...stateRef.current, scrollY: clamped };
+
+    // Schedule direct DOM update
+    if (scrollRafRef.current === null) {
+      scrollRafRef.current = requestAnimationFrame(applyDOMTransform);
+    }
+
+    // Reset idle timer
+    if (scrollIdleTimerRef.current !== null) clearTimeout(scrollIdleTimerRef.current);
+    scrollIdleTimerRef.current = setTimeout(flushScrollToState, SCROLL_IDLE_MS);
+  }, [maxScrollY, applyDOMTransform, flushScrollToState]);
 
   // Set zoom level
   const setZoomScale = useCallback((zoomScale: number) => {
@@ -275,15 +357,19 @@ export const useVirtualScroll = ({
 
     // Shift + Wheel = Horizontal scroll
     if (e.shiftKey) {
-      const scrollDelta = e.deltaY / maxScrollX;
-      setScrollX(scrollX + scrollDelta * 0.5);
+      // Scroll by a fraction of the viewport duration per wheel event
+      // Each notch scrolls ~5% of the visible time range for consistent feel
+      const viewportFraction = 0.05;
+      const scrollDelta = Math.sign(e.deltaY) * viewportFraction * (viewportDuration / scrollableDuration);
+      const normalizedDelta = scrollableDuration > viewportDuration ? scrollDelta : 0;
+      setScrollX(scrollX + normalizedDelta);
       return;
     }
 
     // Normal Wheel = Vertical scroll (for tracks)
     const newScrollY = scrollY + e.deltaY;
     setScrollY(Math.max(0, newScrollY));
-  }, [maxScrollX, setScrollX, setScrollY]);
+  }, [viewportDuration, scrollableDuration, setScrollX, setScrollY]);
 
   // Reset to default zoom and scroll
   const reset = useCallback(() => {
@@ -346,6 +432,10 @@ export const useVirtualScroll = ({
     timeToViewportPixels,
     calcScrollForFixedTime,
     zoomAtPlayhead,
+
+    // DOM refs for direct scroll transform (bypasses React during active scroll)
+    scrollContentRef,
+    scrollMarkersRef,
   };
 };
 

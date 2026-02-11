@@ -9,13 +9,60 @@ import { useKeyframedTransform, useKeyframedNumber } from "../../hooks/use-keyfr
 import { TrackMatteLayer, getTrackMatte, isTrackMatteSource } from "./components/track-matte-layer";
 import { useVideoEditorStore } from "../../stores/video-editor-store";
 
+// ============================================================
+// SHALLOW COMPARISON HELPERS (for areLayerPropsEqual)
+// ============================================================
+
+/**
+ * Shallow-compare two arrays by reference equality of items.
+ * Much faster than JSON.stringify for the common case where arrays
+ * contain the same object references in the same order.
+ *
+ * Returns true if structurally equal, false otherwise.
+ * Safe: never produces false negatives (missing a real change).
+ */
+function shallowArrayEqual(a: any[] | undefined | null, b: any[] | undefined | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Shallow-compare two plain objects by reference equality of values.
+ * Handles the common case where style/config objects have the same primitive values.
+ *
+ * Returns true if structurally equal, false otherwise.
+ */
+function shallowObjectEqual(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
 /**
  * Custom comparison function for Layer memo
  * Only re-renders when meaningful overlay properties change
  * This prevents unnecessary re-renders during drag operations on other overlays
- * 
- * IMPORTANT: If keyframes are enabled, we MUST allow re-renders on every frame
- * so that useKeyframedTransform can recalculate interpolated values
+ *
+ * PERF: Keyframed overlays no longer unconditionally return false.
+ * Layer uses useCurrentFrame() which subscribes to Remotion's TimelineContext.
+ * React.memo does NOT block context-triggered re-renders, so the Layer already
+ * re-renders every frame via context. The old unconditional bail-out caused a
+ * DUPLICATE re-render per frame (once from context, once from parent props).
+ *
+ * PERF: JSON.stringify replaced with shallow comparison helpers.
+ * During editing operations, overlay references change and the reference checks
+ * fail. Shallow comparison is O(keys) instead of O(serialize_size).
  */
 const areLayerPropsEqual = (
   prevProps: { overlay: Overlay; baseUrl?: string; fontInfos?: Record<string, FontInfo>; allOverlays?: Overlay[] },
@@ -28,19 +75,12 @@ const areLayerPropsEqual = (
   // We do a shallow length check first for performance
   if (prevProps.allOverlays?.length !== nextProps.allOverlays?.length) return false;
   
-  // CRITICAL: If overlay has active keyframes, ALWAYS re-render
-  // This is necessary because useKeyframedTransform needs to run on every frame
-  // to calculate interpolated values based on the current playback time
-  const nextKeyframes = (next as any).keyframes;
-  if (nextKeyframes && Array.isArray(nextKeyframes)) {
-    const hasActiveKeyframes = nextKeyframes.some(
-      (pk: any) => pk.enabled && pk.keyframes && pk.keyframes.length > 0
-    );
-    if (hasActiveKeyframes) {
-      // Allow re-render on every frame for animated overlays
-      return false;
-    }
-  }
+  // NOTE: Keyframed overlays do NOT need unconditional re-render from this comparator.
+  // Layer calls useCurrentFrame() which subscribes to Remotion's TimelineContext.
+  // Context changes bypass React.memo — the Layer re-renders every frame regardless.
+  // The hooks (useKeyframedTransform etc.) execute on that context-triggered re-render.
+  // Removing the old `return false` here eliminates a duplicate re-render per frame
+  // for every keyframed overlay (N overlays × 30fps = N×30 wasted re-renders/sec).
   
   // Quick reference check - if same object, no need to re-render
   if (prev === next) return true;
@@ -72,10 +112,11 @@ const areLayerPropsEqual = (
   // The visual position is handled by CSS transforms in SelectionOutline
   
   // Check masks - critical for visual rendering
+  // PERF: Uses shallow array comparison instead of JSON.stringify
   const prevMasks = (prev as any).masks;
   const nextMasks = (next as any).masks;
   if (prevMasks !== nextMasks) {
-    if (JSON.stringify(prevMasks) !== JSON.stringify(nextMasks)) {
+    if (!shallowArrayEqual(prevMasks, nextMasks)) {
       return false;
     }
   }
@@ -84,7 +125,7 @@ const areLayerPropsEqual = (
   const prevEffects = (prev as any).effects;
   const nextEffects = (next as any).effects;
   if (prevEffects !== nextEffects) {
-    if (JSON.stringify(prevEffects) !== JSON.stringify(nextEffects)) {
+    if (!shallowArrayEqual(prevEffects, nextEffects)) {
       return false;
     }
   }
@@ -93,16 +134,17 @@ const areLayerPropsEqual = (
   const prevAudioEffects = (prev as any).audioEffects;
   const nextAudioEffects = (next as any).audioEffects;
   if (prevAudioEffects !== nextAudioEffects) {
-    if (JSON.stringify(prevAudioEffects) !== JSON.stringify(nextAudioEffects)) {
+    if (!shallowArrayEqual(prevAudioEffects, nextAudioEffects)) {
       return false;
     }
   }
   
   // Check styles object - only re-render if styles actually changed
+  // PERF: Uses shallow object comparison instead of JSON.stringify
   const prevStyles = (prev as any).styles;
   const nextStyles = (next as any).styles;
   if (prevStyles !== nextStyles) {
-    if (JSON.stringify(prevStyles) !== JSON.stringify(nextStyles)) {
+    if (!shallowObjectEqual(prevStyles, nextStyles)) {
       return false;
     }
   }
@@ -111,15 +153,16 @@ const areLayerPropsEqual = (
   const prevGreenscreen = (prev as any).greenscreen;
   const nextGreenscreen = (next as any).greenscreen;
   if (prevGreenscreen !== nextGreenscreen) {
-    if (JSON.stringify(prevGreenscreen) !== JSON.stringify(nextGreenscreen)) {
+    if (!shallowObjectEqual(prevGreenscreen, nextGreenscreen)) {
       return false;
     }
   }
   
-  // Check keyframes structure changed (but active keyframes are handled above)
+  // Check keyframes structure changed
   const prevKeyframes = (prev as any).keyframes;
+  const nextKeyframes = (next as any).keyframes;
   if (prevKeyframes !== nextKeyframes) {
-    if (JSON.stringify(prevKeyframes) !== JSON.stringify(nextKeyframes)) {
+    if (!shallowArrayEqual(prevKeyframes, nextKeyframes)) {
       return false;
     }
   }
@@ -128,7 +171,7 @@ const areLayerPropsEqual = (
   const prevInTransition = (prev as any).inTransition;
   const nextInTransition = (next as any).inTransition;
   if (prevInTransition !== nextInTransition) {
-    if (JSON.stringify(prevInTransition) !== JSON.stringify(nextInTransition)) {
+    if (!shallowObjectEqual(prevInTransition, nextInTransition)) {
       return false;
     }
   }
@@ -136,7 +179,7 @@ const areLayerPropsEqual = (
   const prevOutTransition = (prev as any).outTransition;
   const nextOutTransition = (next as any).outTransition;
   if (prevOutTransition !== nextOutTransition) {
-    if (JSON.stringify(prevOutTransition) !== JSON.stringify(nextOutTransition)) {
+    if (!shallowObjectEqual(prevOutTransition, nextOutTransition)) {
       return false;
     }
   }
@@ -555,8 +598,13 @@ export const Layer: React.FC<{
 
   /**
    * Render content - with or without track matte masking
+   *
+   * PERF: Memoized to avoid re-creating LayerContent + TrackMatteLayer JSX on every
+   * context-triggered re-render. During playback, `overlay` reference is stable
+   * (from memoized selector), so useMemo returns cached JSX. React's reconciler
+   * sees the same element references and skips diffing the subtree entirely.
    */
-  const renderContent = () => {
+  const renderedContent = useMemo(() => {
     const content = (
       <LayerContent overlay={overlay} isEditing={isEditing} {...(baseUrl && { baseUrl })} {...(fontInfos && { fontInfos })} />
     );
@@ -577,7 +625,7 @@ export const Layer: React.FC<{
     }
 
     return content;
-  };
+  }, [overlay, isEditing, baseUrl, fontInfos, trackMatte, matteSourceOverlay]);
 
   /**
    * Standard layer rendering for visual elements
@@ -599,7 +647,7 @@ export const Layer: React.FC<{
     >
       <div style={style}>
         <TransitionWrapper overlay={overlay} durationInFrames={overlay.durationInFrames}>
-          {renderContent()}
+          {renderedContent}
         </TransitionWrapper>
       </div>
     </Sequence>

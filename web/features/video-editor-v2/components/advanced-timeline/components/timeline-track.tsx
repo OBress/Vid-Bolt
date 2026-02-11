@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo } from 'react';
 import { TrackWithClips as TimelineTrackType, TimelineItem as TimelineItemType } from '../types';
-import { MemoizedTimelineItem } from './timeline-item';
+import { MemoizedTimelineItem, type TimelineItemContextMenuData } from './timeline-item';
 import { TimelineItemBetweenTransitionOverlay } from './timeline-item/timeline-item-between-transition-overlay';
+import { TimelineItemContextMenu } from './timeline-item/timeline-item-context-menu';
 import { TimelineBoundaryTransitionDropZone } from './timeline-boundary-transition-drop-zone';
 import { TimelineGapIndicator } from './timeline-gap-indicator';
 import { MemoizedTimelineGhostElement } from './timeline-ghost-element';
@@ -11,6 +12,7 @@ import { useVideoEditorStore, useTypedStore } from '../../../stores/video-editor
 import type { VideoEditorStore } from '../../../stores/video-editor-store';
 import type { TransitionEntity } from '../../../types/timeline-v2';
 import { isBetweenTransition } from '../../../types/timeline-v2';
+import { ContextMenu, ContextMenuTrigger } from '../../ui/context-menu';
 
 interface TimelineTrackProps {
   track: TimelineTrackType;
@@ -129,6 +131,17 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
   // magneticPreview is now passed as prop from timeline-content
   const magneticPreview = null; // TODO: Pass as prop if needed
 
+  // ── PERF: Shared context menu ─────────────────────────────────
+  // A single state variable stores the context menu data for whatever
+  // item was last right-clicked. This state only updates on right-click
+  // (rare interaction), so the re-render cost is negligible.
+  // The native contextmenu event bubbles up to our track-level
+  // <ContextMenuTrigger>, which opens ONE Radix menu.
+  const [contextMenuData, setContextMenuData] = React.useState<TimelineItemContextMenuData | null>(null);
+  const handleContextMenuRequest = useCallback((data: TimelineItemContextMenuData) => {
+    setContextMenuData(data);
+  }, []);
+
   // Find gaps in the track for gap indicators
   const gaps = findGapsInTrack(track.items);
   
@@ -240,15 +253,15 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
   // Visual styling for hidden tracks
   const isHidden = track.visible === false;
   
-  return (
+  const trackContent = (
     <div 
       className={`track relative border-b border-neutral-700 w-full transition-all duration-200 ease-in-out ${
         isHidden ? 'bg-neutral-950/80' : 'bg-[var(--timeline-row)]'
       }`}
       style={{ 
         height: 'var(--timeline-track-height, 48px)',
-        // CSS containment for performance - isolates layout calculations within this track
-        contain: 'layout style',
+        // PERF: 'strict' containment isolates layout/paint/style per track
+        contain: 'strict',
       }}
       onClick={handleTrackClick}
     >
@@ -305,6 +318,7 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
               onEffectDrop={onEffectDrop}
               // Composition editor
               onOpenCompositionEditor={onOpenCompositionEditor}
+              onContextMenuRequest={handleContextMenuRequest}
             />
           );
         })}
@@ -391,6 +405,32 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
       ))}
     </div>
   );
+
+  return (
+    <ContextMenu onOpenChange={onContextMenuOpenChange}>
+      <ContextMenuTrigger asChild>
+        {trackContent}
+      </ContextMenuTrigger>
+      {/* PERF: Single shared ContextMenu for ALL items in this track.
+          contextMenuDataRef is populated synchronously by the item's
+          onContextMenuRequest callback before the native event opens the menu. */}
+      <TimelineItemContextMenu
+        onDuplicate={contextMenuData?.onDuplicate}
+        onDelete={contextMenuData?.onDelete}
+        onSplit={contextMenuData?.onSplit}
+        onDuplicateItems={contextMenuData?.onDuplicateItems}
+        onDeleteItems={contextMenuData?.onDeleteItems}
+        onSplitItems={contextMenuData?.onSplitItems}
+        duplicateText={contextMenuData?.duplicateText ?? 'Duplicate'}
+        deleteText={contextMenuData?.deleteText ?? 'Delete'}
+        showSplit={contextMenuData?.showSplit}
+        canLink={contextMenuData?.canLink}
+        canUnlink={contextMenuData?.canUnlink}
+        onLink={contextMenuData?.onLink}
+        onUnlink={contextMenuData?.onUnlink}
+      />
+    </ContextMenu>
+  );
 };
 
 /**
@@ -442,17 +482,19 @@ export const MemoizedTimelineTrack = React.memo(TimelineTrack, (prevProps, nextP
   const nextSel = nextProps.selectedTransition;
   if (prevSel?.itemId !== nextSel?.itemId || prevSel?.position !== nextSel?.position) return false;
   
-  // Compare selectedItemIds array — track MUST re-render on selection change
-  // to propagate updated `isSelected` boolean props to child items.
-  // Fix #1 (stable onDragStart ref) ensures only items whose isSelected actually
-  // changed will re-render, not ALL items.
-  const prevIds = prevProps.selectedItemIds || [];
-  const nextIds = nextProps.selectedItemIds || [];
-  if (prevIds.length !== nextIds.length) return false;
-  if (prevIds.length > 0 && prevIds.length <= 20) {
-    for (let i = 0; i < prevIds.length; i++) {
-      if (prevIds[i] !== nextIds[i]) return false;
-    }
+  // PERF: Per-track selection comparison.
+  // Instead of comparing the full selectedItemIds array (which busts ALL tracks
+  // on any selection change), we only check whether items IN THIS TRACK changed
+  // their selection status. This reduces re-renders from O(allTracks) to
+  // O(affectedTracks) — typically 1-2 tracks instead of all 10+.
+  const prevSelIds = prevProps.selectedItemIds || [];
+  const nextSelIds = nextProps.selectedItemIds || [];
+  const prevSelSet = new Set(prevSelIds);
+  const nextSelSet = new Set(nextSelIds);
+  const trackItems = nextProps.track.items;
+  for (let i = 0; i < trackItems.length; i++) {
+    const itemId = trackItems[i].id;
+    if (prevSelSet.has(itemId) !== nextSelSet.has(itemId)) return false;
   }
   
   // Compare ghost elements array (by reference)

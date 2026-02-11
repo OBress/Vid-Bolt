@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo, useDeferredValue } from 'react';
 import { TimelineMarkers, MemoizedTimelineTrack, TimelineGhostMarker, TimelineMarker, TimelineGuidelines, TimelineGapOverlay } from './';
 import { TimelineMarqueeSelection } from './timeline-marquee-selection';
 import { TimelineInsertionLine } from './timeline-insertion-line';
@@ -12,6 +12,7 @@ import { useMarqueeSelection } from '../hooks/use-marquee-selection';
 import { useTimelineZoomSelection } from '../hooks/use-timeline-zoom-selection';
 import { useVideoEditorStore, selectDragState, selectDragVisuals, getCurrentDrag, endDrag } from '../../../stores/video-editor-store';
 import { TIMELINE_CONSTANTS, VIRTUAL_SCROLL_CONSTANTS } from '../constants';
+import { ScrollStateProvider } from '../contexts/scroll-state-context';
 
 /**
  * Timeline content area component that contains all the zoomable timeline elements
@@ -31,6 +32,9 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
   onScrollYChange,
   getVisibleTimeRange,
   getContentTransform,
+  // DOM refs for direct scroll transform (bypasses React during active scroll)
+  scrollContentRef,
+  scrollMarkersRef,
   // Other props
   onFrameChange,
   onItemSelect,
@@ -722,12 +726,31 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
   );
 
   // Virtual scroll: get transform offset for content positioning
+  // NOTE: During active scrolling, the transform is updated directly on the DOM
+  // via scrollContentRef (bypasses React). This useMemo only runs when React
+  // state catches up after scroll stops.
   const virtualTransform = useMemo(() => {
     if (getContentTransform) {
       return getContentTransform();
     }
     return { x: 0, y: 0 };
   }, [getContentTransform, scrollX, scrollY, zoomScale]); // Re-calculate when scroll or zoom changes
+
+  // Callback ref: assigns both the local timelineRef AND the scrollContentRef
+  // from useVirtualScroll (which mutates its transform directly during active scroll).
+  const contentRefCallback = useCallback(
+    (node: HTMLDivElement | null) => {
+      // Set the local timelineRef
+      if (timelineRef && 'current' in timelineRef) {
+        (timelineRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+      }
+      // Set the scrollContentRef (from useVirtualScroll) for direct DOM scroll updates
+      if (scrollContentRef) {
+        scrollContentRef.current = node;
+      }
+    },
+    [timelineRef, scrollContentRef]
+  );
 
   // VIRTUALIZATION: Only render items that are visible in the current viewport
   // This significantly improves performance for large timelines
@@ -752,6 +775,10 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
       }),
     }));
   }, [tracks, getVisibleTimeRange, scrollX, zoomScale]); // Re-filter when scroll or zoom changes
+
+  // Use useDeferredValue to avoid blocking urgent UI updates while the
+  // virtualizedTracks filter is recomputed during rapid scrolling.
+  const deferredVirtualizedTracks = useDeferredValue(virtualizedTracks);
 
   // Timeline-level drop handler for new items
   const handleTimelineDrop = useCallback(
@@ -809,6 +836,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
         }}
       >
         <div 
+          ref={scrollMarkersRef}
           className="timeline-markers-content"
           style={{
             ...timelineContentStyle,
@@ -831,23 +859,24 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
       </div>
 
       {/* Tracks area - horizontal scroll controlled by navigator */}
+      <ScrollStateProvider scrollX={scrollX} scrollY={scrollY} zoomScale={zoomScale}>
       <div 
         className="timeline-tracks-scroll-container flex-1"
         data-timeline-scroll-container
         style={{ 
           // Virtual scroll - content positioned via transforms, no native scroll
-          overflowX: 'hidden',
-          overflowY: 'auto',
-          overscrollBehavior: 'contain',
+          overflow: 'hidden',
         }}
       >
         <div 
-          ref={timelineRef}
+          ref={contentRefCallback}
           className="timeline-zoomable-content relative"
           style={{
             ...timelineContentStyle,
             minHeight: 'fit-content',
             // Virtual scroll: position content via transform (X for horizontal, Y for vertical)
+            // During active scrolling, this transform is updated directly on the DOM
+            // via scrollContentRef, bypassing React entirely.
             transform: `translate(${virtualTransform.x}px, ${virtualTransform.y}px)`,
           }}
           onMouseDown={handleMouseDown}
@@ -862,10 +891,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
           onTouchMove={enhancedTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          <div className="timeline-tracks-container" style={{
-            contentVisibility: 'auto',
-            containIntrinsicSize: 'auto 500px',
-          }}>
+          <div className="timeline-tracks-container">
             {/* Spacer to match "Add Video Track" button height in track handles */}
             <div className="h-7 bg-neutral-900 border-b border-neutral-700" />
             
@@ -877,8 +903,8 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
               
               return (
                 <>
-                  {/* Use virtualizedTracks for rendering (filters to visible items) */}
-                  {virtualizedTracks.map((track, index) => {
+                  {/* Use deferred virtualizedTracks for rendering (filters to visible items) */}
+                  {deferredVirtualizedTracks.map((track, index) => {
             // Find all ghost elements that belong to this track
             const trackGhostElements = ghostElements?.filter(ghost => {
               // Use the same calculation as ghost creation to avoid floating-point precision issues
@@ -1098,6 +1124,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
           />
         </div>
       </div>
+      </ScrollStateProvider>
       
       {/* Floating ghost disabled - items now move directly */}
     </div>
