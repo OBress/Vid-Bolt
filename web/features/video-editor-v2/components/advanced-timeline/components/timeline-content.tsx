@@ -5,6 +5,23 @@ import { TimelineInsertionLine } from './timeline-insertion-line';
 import { TimelineMagneticInsertionIndicator } from './timeline-magnetic-insertion-indicator';
 import { TimelineZoomSelectionOverlay } from './timeline-zoom-selection-overlay';
 import { TrackInsertionIndicator } from './track-insertion-indicator';
+import dynamic from 'next/dynamic';
+
+// PixiJS accesses browser APIs (WebGL, canvas, document) at module level.
+// Must use dynamic import with ssr: false to prevent Next.js SSR crashes.
+const CanvasTimeline = dynamic(
+  () => import('./canvas-timeline').then(mod => ({ default: mod.CanvasTimeline })),
+  { ssr: false },
+);
+const CanvasContextMenu = dynamic(
+  () => import('./canvas-timeline/canvas-context-menu').then(mod => ({ default: mod.CanvasContextMenu })),
+  { ssr: false },
+);
+const CanvasDragPreview = dynamic(
+  () => import('./canvas-timeline/canvas-drag-preview').then(mod => ({ default: mod.CanvasDragPreview })),
+  { ssr: false },
+);
+import type { CanvasContextMenuData } from './canvas-timeline/canvas-timeline-item';
 import { TimelineContentProps, isVideoTrackItem, isAudioTrackItem } from '../types';
 import { useTimelineDragAndDrop } from '../hooks/use-timeline-drag-and-drop';
 import { useMediaDrop } from '../hooks/use-media-drop';
@@ -148,6 +165,12 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
   // Use percentage-based width to avoid the feedback loop entirely
   const scrollableWidth = `${scrollableWidthPercent}%`;
   
+  // Pixel-based scrollable width for the canvas renderer
+  // Canvas needs actual pixel values, not CSS percentages
+  const scrollableWidthPixels = useMemo(() => {
+    return scrollableDuration * pixelsPerSecond;
+  }, [scrollableDuration, pixelsPerSecond]);
+  
   // Get visible time range for playhead positioning
   // Playhead uses viewport-relative positioning (unified coordinate system)
   // IMPORTANT: Must include scrollX and zoomScale as dependencies so this recalculates when scroll/zoom changes
@@ -186,6 +209,9 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
   // Local state for timeline-specific UI
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null);
   const timelineRefLocal = useRef<HTMLDivElement | null>(null);
+
+  // Canvas context menu state
+  const [canvasContextMenuData, setCanvasContextMenuData] = useState<CanvasContextMenuData | null>(null);
   
   // Derive drag state from unified dragState
   const draggedItem = dragState?.clipId ? { id: dragState.clipId } : null;
@@ -812,6 +838,44 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
     onFrameChange?.(frame);
   }, [fps, onFrameChange]);
 
+  // ========================================
+  // CANVAS INTERACTION HANDLERS
+  // ========================================
+
+  /** Handle Shift+click multi-select from canvas items */
+  const handleCanvasSelectionChange = useCallback((itemId: string, isMultiple: boolean) => {
+    if (isMultiple && onSelectedItemsChange) {
+      // Shift+click: toggle item in selection
+      const newSelection = selectedItemIds.includes(itemId)
+        ? selectedItemIds.filter(id => id !== itemId)
+        : [...selectedItemIds, itemId];
+      onSelectedItemsChange(newSelection);
+    } else {
+      // Single click: replace selection
+      onItemSelect?.(itemId);
+    }
+  }, [selectedItemIds, onSelectedItemsChange, onItemSelect]);
+
+  /** Handle right-click context menu from canvas items */
+  const handleCanvasContextMenu = useCallback((data: CanvasContextMenuData) => {
+    setCanvasContextMenuData(data);
+  }, []);
+
+  /** Close canvas context menu */
+  const handleCanvasContextMenuClose = useCallback(() => {
+    setCanvasContextMenuData(null);
+  }, []);
+
+  /** Bridge canvas drag start to useTimelineDragAndDrop hook */
+  const handleCanvasDragStart = useCallback((
+    item: any,
+    clientX: number,
+    clientY: number,
+    action: 'move' | 'resize-start' | 'resize-end',
+  ) => {
+    handleDragStart(item, clientX, clientY, action);
+  }, [handleDragStart]);
+
   return (
     <div 
       ref={containerRef}
@@ -891,114 +955,63 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
           onTouchMove={enhancedTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          <div className="timeline-tracks-container">
-            {/* Spacer to match "Add Video Track" button height in track handles */}
-            <div className="h-7 bg-neutral-900 border-b border-neutral-700" />
-            
-            {(() => {
-              // Check if we need a bottom spacer for audio tracks
-              const hasAudioTracks = tracks.some(t => t.type === 'audio');
-              const audioStartIndex = tracks.findIndex(t => t.type === 'audio');
-              const needsBottomAudioSpacer = !hasAudioTracks || audioStartIndex === -1;
-              
-              return (
-                <>
-                  {/* Use deferred virtualizedTracks for rendering (filters to visible items) */}
-                  {deferredVirtualizedTracks.map((track, index) => {
-            // Find all ghost elements that belong to this track
-            const trackGhostElements = ghostElements?.filter(ghost => {
-              // Use the same calculation as ghost creation to avoid floating-point precision issues
-              // Ghost creation: trackIndex * (100 / tracks.length) = ghost.top
-              // So: trackIndex = ghost.top / (100 / tracks.length) = ghost.top * tracks.length / 100
-              const calculatedIndex = Math.round(ghost.top * tracks.length / 100);
-              
-              return calculatedIndex === index;
-            }) || [];
+          {/* ========================================
+             CANVAS TIMELINE — GPU-Accelerated Rendering
+             ========================================
+             Replaces the DOM-based tracks container with a PixiJS canvas.
+             All items are now rendered as GPU-drawn pixels (zero DOM nodes).
+             DOM overlays (guidelines, gaps, insertion lines, marquee) remain
+             positioned on top via absolute positioning below.
+          */}
+          <CanvasTimeline
+            tracks={deferredVirtualizedTracks}
+            scrollableDuration={scrollableDuration}
+            scrollableWidth={scrollableWidthPixels}
+            scrollX={scrollX ?? 0}
+            scrollY={scrollY ?? 0}
+            zoomScale={zoomScale}
+            selectedItemIds={selectedItemIds}
+            currentFrame={currentFrame}
+            fps={fps}
+            trackHeight={trackHeight}
+            splittingEnabled={splittingEnabled}
+            onItemSelect={onItemSelect}
+            onSelectionChange={handleCanvasSelectionChange}
+            onDragStart={handleCanvasDragStart}
+            onContextMenu={handleCanvasContextMenu}
+            onTimeClick={handleTimeClick}
+          />
 
-            // Check if we need to render a divider before this track
-            // Divider appears between video and audio tracks (like Premiere Pro)
-            const previousTrack = index > 0 ? tracks[index - 1] : null;
-            const isTransitionToAudio = previousTrack?.type === 'video' && track.type === 'audio';
+          {/* Canvas Context Menu — DOM portal positioned at right-click coords */}
+          <CanvasContextMenu
+            data={canvasContextMenuData}
+            onClose={handleCanvasContextMenuClose}
+            onDuplicate={onDuplicateItems}
+            onDelete={onDeleteItems}
+            onSplit={onSplitItems}
+            onLink={onLinkItems}
+            onUnlink={onUnlinkItems}
+            selectedItemIds={selectedItemIds}
+            isSelected={canvasContextMenuData ? selectedItemIds.includes(canvasContextMenuData.item.id) : false}
+            currentTime={currentTime}
+            canSplit={canvasContextMenuData ? (
+              currentTime > canvasContextMenuData.item.start &&
+              currentTime < canvasContextMenuData.item.end
+            ) : false}
+            canLink={canvasContextMenuData ? (selectedItemIds.length >= 2 && !!canLinkItems?.(selectedItemIds)) : false}
+            canUnlink={canvasContextMenuData ? (!!areItemsLinked?.(selectedItemIds)) : false}
+          />
 
-            return (
-              <React.Fragment key={track.id}>
-                {/* Video/Audio track divider - matches Add Audio Track button height in handles */}
-                {isTransitionToAudio && (
-                  <div 
-                    className="track-section-divider bg-neutral-800 border-b border-neutral-700" 
-                    style={{ height: 'calc(var(--timeline-track-height, 48px) / 2)' }}
-                  />
-                )}
-                <MemoizedTimelineTrack
-                  track={track}
-                  trackIndex={index}
-                  trackCount={tracks.length}
-                  totalDuration={scrollableDuration}
-                  onItemSelect={onItemSelect}
-                  onDeleteItems={onDeleteItems}
-                  onDuplicateItems={onDuplicateItems}
-                  onSplitItems={onSplitItems}
-                  selectedItemIds={selectedItemIds}
-                  onSelectedItemsChange={onSelectedItemsChange}
-                  onItemMove={onItemMove}
-                  onDragStart={handleDragStart}
-                  zoomScale={zoomScale}
-                  isDragging={isDragging}
-                  draggedItemId={draggedItem?.id}
-                  ghostElements={ghostElements ?? undefined}
-                  isValidDrop={isValidDrop}
-                  newItemDragData={newItemDragState?.itemData}
-                  onContextMenuOpenChange={onContextMenuOpenChange}
-                  splittingEnabled={splittingEnabled}
-                  hideItemsOnDrag={hideItemsOnDrag}
-                  currentFrame={currentFrame}
-                  fps={fps}
-                  trackHeight={trackHeight}
-                  onTimeClick={handleTimeClick}
-                  // Transition props
-                  isDraggingTransition={isDraggingTransition}
-                  draggingTransitionIsVideo={draggingTransitionIsVideo}
-                  selectedTransition={selectedTransition}
-                  onTransitionDrop={onTransitionDrop}
-                  onBoundaryTransitionDrop={onBoundaryTransitionDrop}
-                  onTransitionSelect={onTransitionSelect}
-                  onTransitionDeselect={onTransitionDeselect}
-                  onTransitionTimesChange={onTransitionTimesChange}
-                  onTransitionRemove={onTransitionRemove}
-                  // Link props
-                  canLinkItems={canLinkItems}
-                  areItemsLinked={areItemsLinked}
-                  isItemLinked={isItemLinked}
-                  getLinkGroupSize={getLinkGroupSize}
-                  getLinkedItemIds={getLinkedItemIds}
-                  onLinkItems={onLinkItems}
-                  onUnlinkItems={onUnlinkItems}
-                  // Effect drop
-                  onEffectDrop={onEffectDrop}
-                  // Composition editor
-                  onOpenCompositionEditor={onOpenCompositionEditor}
-                />
-              </React.Fragment>
-            );
-          })}
-                  
-                  {/* Spacer for "Add Audio Track" button when there are no audio tracks */}
-                  {needsBottomAudioSpacer && (
-                    <div 
-                      className="track-section-divider bg-neutral-800 border-b border-neutral-700" 
-                      style={{ height: 'calc(var(--timeline-track-height, 48px) / 2)' }}
-                    />
-                  )}
-                  
-                  {/* Bottom padding spacer - half track height for visual comfort when scrolled */}
-                  <div 
-                    className="bg-black" 
-                    style={{ height: 'calc(var(--timeline-track-height, 48px) / 2)' }}
-                  />
-                </>
-              );
-            })()}
-          </div>
+          {/* Canvas Drag Preview — DOM overlay showing semi-transparent preview during drag */}
+          <CanvasDragPreview
+            timelineRef={timelineRef!}
+            scrollableDuration={scrollableDuration}
+            scrollX={virtualTransform.x}
+            pixelsPerSecond={pixelsPerSecond}
+            tracks={tracks}
+            trackHeight={trackHeight}
+            fps={fps}
+          />
 
           {/* Timeline Guidelines */}
           {showTimelineGuidelines && (

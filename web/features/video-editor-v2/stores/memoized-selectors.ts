@@ -231,19 +231,21 @@ export interface TrackWithClips extends TimelineTrack {
 
 /**
  * Distinct colors for each clip type so items are visually distinguishable
- * on the timeline. Used as the final fallback when neither clip.color nor
- * track.color is set.
+ * on the timeline. Uses -600 tones for better contrast on dark backgrounds.
+ *
+ * Priority chain: clip.color > CLIP_TYPE_COLORS[type] > track.color > DEFAULT
  */
 const CLIP_TYPE_COLORS: Record<string, string> = {
-  video:            '#0ea5e9', // Sky-500  – teal/sky for video clips
-  image:            '#8b5cf6', // Violet-500 – purple for image clips
-  audio:            '#22c55e', // Green-500 – green for audio clips
-  text:             '#f59e0b', // Amber-500 – amber for text clips
-  caption:          '#f97316', // Orange-500 – orange for captions
-  sticker:          '#ec4899', // Pink-500  – pink for stickers
-  shape:            '#6366f1', // Indigo-500 – indigo for shapes
-  blur:             '#64748b', // Slate-500 – slate for blur
-  'motion-graphics':'#a855f7', // Purple-500 – purple for motion graphics
+  video:             '#0891b2', // Cyan-600  – teal for video clips
+  image:             '#7c3aed', // Violet-600 – purple for image clips
+  audio:             '#16a34a', // Green-600 – green for audio (universal NLE convention)
+  text:              '#d97706', // Amber-600 – warm amber for text / titles
+  caption:           '#ea580c', // Orange-600 – orange for captions
+  sticker:           '#db2777', // Pink-600  – pink for stickers
+  shape:             '#4f46e5', // Indigo-600 – indigo for shapes
+  blur:              '#475569', // Slate-600 – muted for utility clips
+  'motion-graphics': '#9333ea', // Purple-600 – vivid purple for motion graphics
+  effect:            '#7c3aed', // Violet-600 – effects / adjustment layers
 };
 
 const DEFAULT_CLIP_COLOR = '#3b82f6'; // Blue-500 fallback
@@ -274,11 +276,11 @@ export const selectTracksWithClips = createSelector(
           const inTransition = clipTransitions?.in;
           const outTransition = clipTransitions?.out;
 
-          // Resolve color: explicit clip color > track color > type-based default
+          // Resolve color: explicit clip color > type-based > track color > default
           const resolvedColor =
             clip.color ||
-            track.color ||
             CLIP_TYPE_COLORS[clip.type] ||
+            track.color ||
             DEFAULT_CLIP_COLOR;
 
           return {

@@ -275,6 +275,24 @@ export const useVirtualScroll = ({
     scrollIdleTimerRef.current = setTimeout(flushScrollToState, SCROLL_IDLE_MS);
   }, [applyDOMTransform, flushScrollToState]);
 
+  // Set horizontal scroll with IMMEDIATE React state update (no deferral).
+  // Use this for UI controls like the navigator scrollbar where the control's
+  // visual position depends on React state and must stay in sync during drag.
+  const setScrollXImmediate = useCallback((scrollX: number) => {
+    const clamped = Math.max(0, Math.min(1, scrollX));
+    liveScrollRef.current.x = clamped;
+    stateRef.current = { ...stateRef.current, scrollX: clamped };
+
+    // Apply DOM transform immediately (no rAF batching)
+    applyDOMTransform();
+
+    // Update React state synchronously so the navigator thumb re-renders
+    setState(prev => {
+      if (Math.abs(prev.scrollX - clamped) < 0.0001) return prev;
+      return { ...prev, scrollX: clamped };
+    });
+  }, [applyDOMTransform]);
+
   // Set vertical scroll (pixels) — ref-based, bypasses React during scroll
   const setScrollY = useCallback((scrollY: number) => {
     const clamped = Math.max(0, Math.min(maxScrollY, scrollY));
@@ -416,6 +434,7 @@ export const useVirtualScroll = ({
     
     // Functions
     setScrollX,
+    setScrollXImmediate,
     setScrollY,
     setZoomScale,
     setZoomAndScrollX,

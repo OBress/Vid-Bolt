@@ -132,13 +132,9 @@ const TEXT_LABELS = [
   "Commentary", "Analysis", "Summary", "Transition", "Epilogue",
 ];
 
-const TRACK_COLORS_VIDEO = [
-  "#3b82f6", "#8b5cf6", "#06b6d4", "#f59e0b", "#ef4444", "#ec4899",
-];
-
-const TRACK_COLORS_AUDIO = [
-  "#22c55e", "#14b8a6", "#a3e635", "#fbbf24",
-];
+// Track colors are intentionally omitted so clips resolve to
+// CLIP_TYPE_COLORS[clip.type] in memoized-selectors.ts, which gives
+// distinct colors per clip type (teal for video, green for audio, etc.).
 
 /** Placeholder URLs in case R2 has no media */
 const FALLBACK_IMAGES = [
@@ -268,7 +264,6 @@ export async function populateStressTest(
       visible: true,
       muted: false,
       allowOverlap: true,
-      color: TRACK_COLORS_VIDEO[i % TRACK_COLORS_VIDEO.length],
       createdAt: now,
       updatedAt: now,
     };
@@ -287,7 +282,6 @@ export async function populateStressTest(
       visible: true,
       muted: false,
       allowOverlap: false,
-      color: TRACK_COLORS_AUDIO[i % TRACK_COLORS_AUDIO.length],
       createdAt: now,
       updatedAt: now,
     };

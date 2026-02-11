@@ -254,6 +254,7 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     scrollableDuration,
     maxScrollY,
     setScrollX,
+    setScrollXImmediate,
     setScrollY,
     setZoomScale,
     setZoomAndScrollX,
@@ -660,10 +661,11 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     setZoomAndScrollX(clampedZoom, newScrollX);
   }, [setZoomAndScrollX, scrollableDuration]);
 
-  // Navigator handlers for virtual scroll
+  // Navigator scroll handler — uses immediate state update so the
+  // scrollbar thumb re-renders in real-time during drag (no 150ms deferral)
   const handleNavigatorScrollChange = useCallback((newScrollX: number) => {
-    setScrollX(newScrollX);
-  }, [setScrollX]);
+    setScrollXImmediate(newScrollX);
+  }, [setScrollXImmediate]);
 
   // Zoom handler using unified coordinate system - keeps playhead at same pixel position
   const handleNavigatorZoomAtPlayhead = useCallback((newZoom: number) => {

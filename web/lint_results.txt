@@ -1,0 +1,1132 @@
+`next lint` is deprecated and will be removed in Next.js 16.
+For new projects, use create-next-app to choose your preferred linter.
+For existing projects, migrate to the ESLint CLI:
+npx @next/codemod@canary next-lint-to-eslint-cli .
+
+ ⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of C:\Users\owen\Desktop\Projects\Vid-Bolt\package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * C:\Users\owen\Desktop\Projects\Vid-Bolt\web\package-lock.json
+
+
+./app/actions/audio-actions.ts
+24:20  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+82:43  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+99:58  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+114:9  Error: 'allWordTimestamps' is never reassigned. Use 'const' instead.  prefer-const
+114:28  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+118:47  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+118:55  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/admin/audio-clean/route.ts
+20:53  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+30:12  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+156:16  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+295:14  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+360:18  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+401:14  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/admin/clear-temporary/route.ts
+13:30  Error: 'request' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/debug-check/[videoId]/route.ts
+42:47  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+44:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+45:44  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+46:39  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+46:60  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/gcp/check/route.ts
+50:14  Error: 'tokenError' is defined but never used.  @typescript-eslint/no-unused-vars
+86:14  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+112:14  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+131:60  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+148:16  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/gcp/disconnect/route.ts
+11:28  Error: 'req' is defined but never used.  @typescript-eslint/no-unused-vars
+26:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/gcp/update-activity/route.ts
+8:28  Error: 'req' is defined but never used.  @typescript-eslint/no-unused-vars
+30:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/gcp/vm/route.ts
+41:26  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+132:35  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+141:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/gpu-api/loras/route.ts
+131:7  Error: Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free.  @typescript-eslint/ban-ts-comment
+
+./app/api/gpu-api/settings/vram-mode/route.ts
+11:27  Error: 'request' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/gpu-api/system/route.ts
+11:27  Error: 'request' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/gpu-api/test/clear-storage/route.ts
+14:30  Error: 'request' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/loras/route.ts
+10:10  Error: 'createClient' is defined but never used.  @typescript-eslint/no-unused-vars
+34:27  Error: 'request' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/motion-graphics/visual-qc/route.ts
+182:55  Error: 'i' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/openrouter/models/route.ts
+39:27  Error: 'request' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/pexels/process/route.ts
+202:36  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+219:63  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+224:63  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/process/asset-reference-images/route.ts
+94:61  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/process/outline/route.ts
+41:7  Error: 'stockMediaLevel' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/process/script-chat/route.ts
+58:95  Error: 'i' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/process/script-writing/route.ts
+64:55  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/serper/scrape/route.ts
+209:59  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+210:56  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+211:65  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/stock-media/batch-scrape/route.ts
+36:20  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+37:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+101:43  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+146:69  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/stock-media/clear-storage/route.ts
+11:30  Error: 'request' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/stock-media/clear-vector-db/route.ts
+10:30  Error: 'request' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/stock-media/debug/route.ts
+31:37  Error: 'countError' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+38:31  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+44:41  Error: 'embeddingError' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+56:45  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/vector/enrich/route.ts
+40:16  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/video-editor/media/upload-thumbnail/route.ts
+23:32  Error: 'filename' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/videos/incomplete/route.ts
+43:27  Error: 'request' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/videos/regenerate-shot/route.ts
+10:48  Error: 'AgentContext' is defined but never used.  @typescript-eslint/no-unused-vars
+55:67  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+65:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+78:39  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+144:67  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+145:92  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/videos/route.ts
+5:33  Error: 'VideoProject' is defined but never used.  @typescript-eslint/no-unused-vars
+5:47  Error: 'ListVideosParams' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/api/videos/[videoId]/audio/regenerate/route.ts
+101:44  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/videos/[videoId]/reset-step/route.ts
+73:35  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+83:7  Error: 'dbUpdates' is never reassigned. Use 'const' instead.  prefer-const
+83:33  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+84:7  Error: 'metadataUpdates' is never reassigned. Use 'const' instead.  prefer-const
+84:39  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+130:30  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+295:30  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+399:30  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+608:63  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/videos/[videoId]/route.ts
+79:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+80:81  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+81:42  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+110:41  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+141:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+145:67  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+157:54  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+207:9  Error: 'updateBody' is never reassigned. Use 'const' instead.  prefer-const
+219:59  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/videos/[videoId]/trigger-image-gen/route.ts
+43:17  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+51:25  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/webhooks/gcp-startup/route.ts
+29:25  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+103:17  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/wikimedia/scrape/route.ts
+130:16  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+155:59  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+156:56  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+157:65  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/api/youtube/intelligent-select/route.ts
+49:14  Error: 'tokenError' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/command-center/intelligence/page.tsx
+13:10  Error: 'selectedReport' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./app/command-center/media/[projectId]/page.tsx
+389:50  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/command-center/navigation.ts
+1:10  Error: 'Monitor' is defined but never used.  @typescript-eslint/no-unused-vars
+1:27  Error: 'Settings' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/command-center/page.tsx
+37:14  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/command-center/payments/components/FinancialForm.tsx
+102:6  Warning: React Hook useEffect has a missing dependency: 'initializeCosts'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+233:14  Error: 'error' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/command-center/payments/components/PaymentUploadModal.tsx
+12:10  Error: 'Input' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/command-center/systems/page.tsx
+11:10  Error: 'selectedSystem' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./app/login/page.tsx
+6:23  Error: 'LogIn' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./app/onboarding/actions.ts
+35:44  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./app/onboarding/page.tsx
+48:9  Error: 'router' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+72:21  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+111:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/color-panel/alpha.tsx
+84:22  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+94:29  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+128:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/color-panel/board.tsx
+6:3  Error: 'MutableRefObject' is defined but never used.  @typescript-eslint/no-unused-vars
+136:32  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+154:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+165:30  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/color-panel/ribbon.tsx
+106:22  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+116:25  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+150:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/gradient/index.tsx
+33:5  Warning: Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps').
+77:14  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+108:41  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/gradient-panel/index.tsx
+114:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+139:22  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+153:25  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+193:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+340:35  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+340:51  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/gradient-panel/Markers.tsx
+124:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+157:22  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+176:25  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+195:47  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+225:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/gradient-panel/types.ts
+9:16  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/helper.ts
+92:38  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+92:53  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+103:39  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+103:53  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/input.tsx
+5:18  Error: An interface declaring no members is equivalent to its supertype.  @typescript-eslint/no-empty-object-type
+
+./components/color-picker/types.ts
+34:8  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+35:10  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/utils/checkFormat.ts
+3:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+
+./components/color-picker/utils/getGradient.ts
+3:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+5:16  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/color-picker/utils/getHexAlpha.ts
+3:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+
+./components/color-picker/utils/hexToRgba.ts
+1:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+
+./components/color-picker/utils/isValidHex.ts
+1:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+
+./components/color-picker/utils/isValidRgba.ts
+3:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+
+./components/color-picker/utils/parseGradient.ts
+25:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+
+./components/color-picker/utils/rgbaToArray.ts
+1:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+1:24  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+26:5  Warning: Unused eslint-disable directive (no problems were reported).
+
+./components/color-picker/utils/rgbaToHex.ts
+1:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+8:5  Error: Expected an assignment or function call and instead saw an expression.  @typescript-eslint/no-unused-expressions
+
+./components/color-picker/utils/useDebounce.ts
+3:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+
+./components/color-picker/utils/validGradient.ts
+159:1  Warning: Assign arrow function to a variable before exporting as module default  import/no-anonymous-default-export
+
+./components/features/admin/tabs/DevToolsTab.tsx
+9:3  Error: 'ArrowLeft' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/features/admin/tabs/UsersTab.tsx
+15:10  Error: 'Checkbox' is defined but never used.  @typescript-eslint/no-unused-vars
+31:3  Error: 'Filter' is defined but never used.  @typescript-eslint/no-unused-vars
+106:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/features/admin/UserDetailModal.tsx
+95:6  Warning: React Hook useEffect has a missing dependency: 'fetchPaymentHistory'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+134:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+454:63  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/features/dev/AudioCleaningTester.tsx
+48:3  Error: 'inline' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./components/features/dev/AVScriptTester.tsx
+462:21  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+
+./components/features/dev/GPUApiTester.tsx
+43:3  Error: 'Filter' is defined but never used.  @typescript-eslint/no-unused-vars
+80:14  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+119:20  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+295:10  Error: 'trackedBatches' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+304:10  Error: 'batchSubmitting' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+346:6  Warning: React Hook useEffect has a missing dependency: 'syncUrlToStore'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+352:6  Warning: React Hook useEffect has a missing dependency: 'syncUrlToStore'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+357:6  Warning: React Hook useEffect has a missing dependency: 'syncUrlToStore'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+362:6  Warning: React Hook useEffect has a missing dependency: 'syncUrlToStore'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+367:6  Warning: React Hook useEffect has a missing dependency: 'syncUrlToStore'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+372:6  Warning: React Hook useEffect has a missing dependency: 'syncUrlToStore'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+757:9  Error: 'submitJobToApi' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+1177:9  Error: 'handleSwitchMode' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+1655:9  Error: 'calculateDefaultResolutions' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+2065:11  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+2472:25  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+3894:35  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+4049:31  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+
+./components/features/dev/MotionGraphicsTester.tsx
+7:3  Error: 'DialogHeader' is defined but never used.  @typescript-eslint/no-unused-vars
+8:3  Error: 'DialogTitle' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/features/dev/StockScraperTester.tsx
+34:3  Error: 'FileText' is defined but never used.  @typescript-eslint/no-unused-vars
+76:54  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+83:17  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+89:54  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+99:68  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+107:64  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+111:50  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+127:56  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+134:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+167:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+216:54  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+220:64  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+230:58  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+231:56  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+234:27  Error: 'setQueryGenVideoId' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+265:10  Error: 'scriptStatus' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+394:44  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+406:50  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+407:50  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+776:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+916:24  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+957:24  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+988:24  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+1212:27  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1349:64  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1372:63  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1391:63  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1408:70  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1425:66  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1484:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1725:73  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1782:35  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1786:43  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1791:42  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1793:42  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1794:43  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1797:51  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+1799:49  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1802:41  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+1870:27  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1991:63  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+2008:62  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+2026:65  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+2092:29  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+2180:34  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+2800:29  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+2894:37  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+3050:39  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+3110:27  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+3110:43  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+3164:65  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+3197:74  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+3220:70  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+3422:52  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+3455:44  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+3455:59  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+3463:41  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+3463:51  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+
+./components/features/dev/UniversalScriptTester.tsx
+54:3  Error: 'Link' is defined but never used.  @typescript-eslint/no-unused-vars
+55:3  Error: 'GitCompareArrows' is defined but never used.  @typescript-eslint/no-unused-vars
+98:22  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+118:33  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+119:28  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+120:18  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+128:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+129:30  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+130:28  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+131:18  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+137:29  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+138:28  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+208:54  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+259:10  Error: 'compareMode' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+259:23  Error: 'setCompareMode' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+270:16  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+284:16  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+296:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+297:16  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+298:24  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+304:10  Error: 'comparisonDetailView' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+304:32  Error: 'setComparisonDetailView' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+1503:37  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1589:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1662:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1755:45  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1808:45  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1847:38  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1891:39  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1897:37  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+1897:65  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+1932:58  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1985:41  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+2015:42  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+2168:56  Error: 'i' is defined but never used.  @typescript-eslint/no-unused-vars
+2316:47  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+2321:50  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+2328:47  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+2328:71  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+2388:37  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+2388:51  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+2780:33  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+
+./components/features/dev/VideoEditorTester.tsx
+262:3  Error: 'inline' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./components/features/operations/OperationModal.tsx
+51:9  Error: 'getStatusIcon' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./components/features/project/settings/AudioTab.tsx
+3:27  Error: 'useMemo' is defined but never used.  @typescript-eslint/no-unused-vars
+16:41  Error: 'CardTitle' is defined but never used.  @typescript-eslint/no-unused-vars
+37:10  Error: 'INWORLD_MODELS' is defined but never used.  @typescript-eslint/no-unused-vars
+171:21  Error: 'audioDuration' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+240:9  Error: 'getDisplayValue' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+693:27  Error: `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.  react/no-unescaped-entities
+694:33  Error: `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.  react/no-unescaped-entities
+
+./components/features/project/settings/BasicInfoTab.tsx
+77:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/features/project/settings/ExportTab.tsx
+14:3  Error: 'Download' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/features/project/settings/ModelSelector.tsx
+19:3  Error: 'Zap' is defined but never used.  @typescript-eslint/no-unused-vars
+106:14  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+117:6  Warning: React Hook useEffect has a missing dependency: 'models.length'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/features/project/settings/VoiceSelector.tsx
+3:47  Error: 'useRef' is defined but never used.  @typescript-eslint/no-unused-vars
+279:60  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/features/project/SettingsTab.tsx
+7:3  Error: 'Mic2' is defined but never used.  @typescript-eslint/no-unused-vars
+27:26  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+35:26  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+41:26  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+47:26  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+55:26  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+63:26  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/features/project/VideoCard.tsx
+169:13  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/features/settings/ApiKeysTab.tsx
+24:10  Error: 'Alert' is defined but never used.  @typescript-eslint/no-unused-vars
+24:17  Error: 'AlertDescription' is defined but never used.  @typescript-eslint/no-unused-vars
+24:35  Error: 'AlertTitle' is defined but never used.  @typescript-eslint/no-unused-vars
+70:10  Error: 'isAdmin' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+72:10  Error: 'isSaving' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+79:10  Error: 'projectValid' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+79:24  Error: 'setProjectValid' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+80:10  Error: 'projectValidating' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+80:29  Error: 'setProjectValidating' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+305:54  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+306:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+347:9  Error: 'handleSaveProjectId' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+361:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+407:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+432:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+476:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+817:43  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/features/settings/MediaProjectsTab.tsx
+21:10  Error: 'NAV_GROUPS' is defined but never used.  @typescript-eslint/no-unused-vars
+59:14  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+229:19  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+229:43  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+
+./components/layout/Sidebar.tsx
+3:20  Error: 'useEffect' is defined but never used.  @typescript-eslint/no-unused-vars
+83:14  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/layout/VMStatus.tsx
+20:9  Error: 'handleAction' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./components/modal-upload.tsx
+1:17  Error: 'use' is defined but never used.  @typescript-eslint/no-unused-vars
+15:8  Error: 'axios' is defined but never used.  @typescript-eslint/no-unused-vars
+53:23  Error: 'setIsUploading' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+123:41  Error: 'file' is defined but never used.  @typescript-eslint/no-unused-vars
+126:12  Error: 'getTypeFromContentType' is defined but never used.  @typescript-eslint/no-unused-vars
+134:18  Error: 'createUpload' is defined but never used.  @typescript-eslint/no-unused-vars
+139:16  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+213:6  Warning: React Hook useEffect has a missing dependency: 'setFiles'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+279:35  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+286:35  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/shared/draggable.tsx
+8:25  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+73:29  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+75:8  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/shared/icons.tsx
+56:3  Error: 'ShapesIcon' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/ui/accordion.tsx
+5:10  Error: 'ChevronDownIcon' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/ui/autosize-input.tsx
+64:5  Error: 'injectStyles' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+138:6  Warning: React Hook useEffect has a missing dependency: 'props.type'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+148:55  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/ui/chat-message.tsx
+80:20  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/ui/command.tsx
+26:11  Error: An interface declaring no members is equivalent to its supertype.  @typescript-eslint/no-empty-object-type
+
+./components/ui/droppable.tsx
+44:5  Warning: React Hook React.useCallback has a missing dependency: 'onValueChange'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/ui/horizontal-scroll.tsx
+57:6  Warning: React Hook useEffect has a missing dependency: 'checkShadows'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+59:9  Error: 'shadowClasses' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./components/ui/markdown-renderer.tsx
+6:20  Error: 'WorkflowIcon' is defined but never used.  @typescript-eslint/no-unused-vars
+36:48  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+43:50  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+64:16  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+91:35  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+128:6  Error: 'rest' is defined but never used.  @typescript-eslint/no-unused-vars
+148:10  Error: 'childrenTakeAllStringContents' is defined but never used.  @typescript-eslint/no-unused-vars
+148:49  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+176:33  Error: 'node' is defined but never used.  @typescript-eslint/no-unused-vars
+176:50  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+215:23  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+237:24  Error: 'node' is defined but never used.  @typescript-eslint/no-unused-vars
+237:42  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/video-creation/AsyncLoadingStep.tsx
+36:3  Error: 'fallbackDuration' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./components/video-creation/audio/AudioCard.tsx
+61:13  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+61:26  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+149:15  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+149:28  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+
+./components/video-creation/entity-badge.tsx
+38:9  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/video-creation/entity-reference.tsx
+3:26  Error: 'useState' is defined but never used.  @typescript-eslint/no-unused-vars
+65:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/video-creation/GPUToggle.tsx
+3:10  Error: 'Cpu' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/video-creation/ShotPlayerPanel.tsx
+7:3  Error: 'PlaybackSpeed' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/video-creation/StepNavigationConfirmDialog.tsx
+12:10  Error: 'ArrowLeft' is defined but never used.  @typescript-eslint/no-unused-vars
+70:40  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+70:58  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+
+./components/video-creation/steps/ResearchDocsPanel.tsx
+424:37  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+425:40  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+432:37  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+432:61  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+484:21  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+484:35  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+515:44  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+561:47  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+594:43  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/video-creation/steps/scene-review/KeyframeEditPopup.tsx
+139:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+153:21  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+
+./components/video-creation/steps/scene-review/KeyframeThumbnail.tsx
+55:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+87:17  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+
+./components/video-creation/steps/scene-review/MediaEditModal.tsx
+447:25  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+454:27  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+489:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+502:23  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+640:17  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+
+./components/video-creation/steps/scene-review/SceneCard.tsx
+144:13  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+175:19  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+228:13  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+
+./components/video-creation/steps/scene-review/SceneList.tsx
+4:10  Error: 'ScrollArea' is defined but never used.  @typescript-eslint/no-unused-vars
+4:22  Error: 'ScrollBar' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/video-creation/steps/scene-review/SceneReviewSidebar.tsx
+8:3  Error: 'Sparkles' is defined but never used.  @typescript-eslint/no-unused-vars
+50:3  Error: 'onGenerateAll' is defined but never used.  @typescript-eslint/no-unused-vars
+194:19  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+
+./components/video-creation/steps/Step1Outline.tsx
+6:10  Error: 'Input' is defined but never used.  @typescript-eslint/no-unused-vars
+24:3  Error: 'ArrowLeft' is defined but never used.  @typescript-eslint/no-unused-vars
+39:3  Error: 'X' is defined but never used.  @typescript-eslint/no-unused-vars
+159:33  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+187:47  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+188:43  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+208:3  Error: 'onBack' is defined but never used.  @typescript-eslint/no-unused-vars
+272:11  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+500:9  Error: 'handleConfirm' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+542:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+543:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1155:36  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1157:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1200:107  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1217:108  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1234:107  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1251:99  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1268:82  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1322:88  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1345:91  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1362:79  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1404:39  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1408:61  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1408:99  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1421:39  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1425:61  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1425:96  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1438:39  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1441:43  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1444:84  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1447:43  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1450:84  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1474:9  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/video-creation/steps/Step2StockMedia.tsx
+108:3  Error: 'videoId' is defined but never used.  @typescript-eslint/no-unused-vars
+115:3  Error: 'isLocked' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+163:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+235:5  Warning: React Hook useCallback has a missing dependency: 'mapWorkerMedia'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+356:9  Error: 'getCurrentPhaseIndex' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+423:42  Error: 'index' is defined but never used.  @typescript-eslint/no-unused-vars
+553:17  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+606:39  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+681:23  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+698:49  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+815:17  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+831:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/video-creation/steps/Step3Script.tsx
+14:10  Error: 'Tabs' is defined but never used.  @typescript-eslint/no-unused-vars
+14:16  Error: 'TabsList' is defined but never used.  @typescript-eslint/no-unused-vars
+14:26  Error: 'TabsTrigger' is defined but never used.  @typescript-eslint/no-unused-vars
+17:3  Error: 'ArrowLeft' is defined but never used.  @typescript-eslint/no-unused-vars
+18:3  Error: 'Play' is defined but never used.  @typescript-eslint/no-unused-vars
+21:3  Error: 'FileText' is defined but never used.  @typescript-eslint/no-unused-vars
+22:3  Error: 'Search' is defined but never used.  @typescript-eslint/no-unused-vars
+23:3  Error: 'Users' is defined but never used.  @typescript-eslint/no-unused-vars
+24:3  Error: 'Layout' is defined but never used.  @typescript-eslint/no-unused-vars
+25:3  Error: 'Check' is defined but never used.  @typescript-eslint/no-unused-vars
+43:21  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+44:22  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+178:14  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+184:9  Error: 'outlineConfig' is defined but never used.  @typescript-eslint/no-unused-vars
+191:9  Error: 'onBack' is defined but never used.  @typescript-eslint/no-unused-vars
+192:9  Error: 'isLocked' is defined but never used.  @typescript-eslint/no-unused-vars
+193:9  Error: 'lockedMessage' is defined but never used.  @typescript-eslint/no-unused-vars
+209:14  Error: 'error' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+214:14  Error: 'activeTab' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+214:25  Error: 'setActiveTab' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+384:9  Warning: React Hook useCallback has a missing dependency: 'onScriptGenerated'. Either include it or remove the dependency array. If 'onScriptGenerated' changes too often, find the parent component that defines it and wrap that definition in useCallback.  react-hooks/exhaustive-deps
+400:13  Error: 'startGeneration' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+667:13  Error: 'escapeHtml' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+910:25  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+910:52  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+1112:53  Error: 'i' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/video-creation/steps/Step4Audio.tsx
+1:10  Error: 'useState' is defined but never used.  @typescript-eslint/no-unused-vars
+1:20  Error: 'useEffect' is defined but never used.  @typescript-eslint/no-unused-vars
+3:29  Error: 'PlaybackSpeed' is defined but never used.  @typescript-eslint/no-unused-vars
+6:10  Error: 'Button' is defined but never used.  @typescript-eslint/no-unused-vars
+7:37  Error: 'ArrowRight' is defined but never used.  @typescript-eslint/no-unused-vars
+22:3  Error: 'onComplete' is defined but never used.  @typescript-eslint/no-unused-vars
+23:3  Error: 'onBack' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/video-creation/steps/Step5ShotCreation.tsx
+15:3  Error: 'MoreHorizontal' is defined but never used.  @typescript-eslint/no-unused-vars
+16:3  Error: 'Smartphone' is defined but never used.  @typescript-eslint/no-unused-vars
+23:3  Error: 'ArrowRight' is defined but never used.  @typescript-eslint/no-unused-vars
+35:10  Error: 'Input' is defined but never used.  @typescript-eslint/no-unused-vars
+150:33  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+157:29  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+186:3  Error: 'onNext' is defined but never used.  @typescript-eslint/no-unused-vars
+187:3  Error: 'onBack' is defined but never used.  @typescript-eslint/no-unused-vars
+188:3  Error: 'isLocked' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+334:9  Error: 'hasNoElements' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+661:25  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+760:45  Error: 'index' is defined but never used.  @typescript-eslint/no-unused-vars
+925:29  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+937:29  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+1060:23  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1082:23  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1133:15  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+1133:32  Error: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+1190:23  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1332:19  Warning: Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images.  jsx-a11y/alt-text
+
+./components/video-creation/steps/Step6SceneReview.tsx
+54:3  Error: 'projectId' is defined but never used.  @typescript-eslint/no-unused-vars
+56:3  Error: 'outlineAssets' is defined but never used.  @typescript-eslint/no-unused-vars
+60:3  Error: 'onContinue' is defined but never used.  @typescript-eslint/no-unused-vars
+62:3  Error: 'isLocked' is defined but never used.  @typescript-eslint/no-unused-vars
+63:3  Error: 'lockedMessage' is defined but never used.  @typescript-eslint/no-unused-vars
+313:5  Warning: React Hook useCallback has a missing dependency: 'gpuEnabled'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/video-creation/steps/Step7Editor.tsx
+3:10  Error: 'ArrowRight' is defined but never used.  @typescript-eslint/no-unused-vars
+4:10  Error: 'Button' is defined but never used.  @typescript-eslint/no-unused-vars
+32:3  Error: 'onContinue' is defined but never used.  @typescript-eslint/no-unused-vars
+34:3  Error: 'lockedMessage' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/video-creation/steps/Step8Export.tsx
+5:3  Error: 'Share2' is defined but never used.  @typescript-eslint/no-unused-vars
+45:3  Error: 'onBack' is defined but never used.  @typescript-eslint/no-unused-vars
+61:55  Error: 'timeline' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+96:28  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+134:29  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+147:36  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+168:28  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+202:24  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+228:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./components/video-creation/VideoCreationWizard.tsx
+21:10  Error: 'PlaceholderStep' is defined but never used.  @typescript-eslint/no-unused-vars
+56:21  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+57:11  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+58:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+66:23  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+82:18  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+83:18  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+88:22  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+90:17  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+92:17  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+97:24  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+148:10  Error: 'generateFallbackScript' is defined but never used.  @typescript-eslint/no-unused-vars
+188:11  Error: 'createVideo' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+192:10  Error: 'isSaving' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+192:20  Error: 'setIsSaving' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+240:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+296:49  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+299:45  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+302:49  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+304:30  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+313:62  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+324:48  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+328:41  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+331:23  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+335:39  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+355:50  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+356:49  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+359:32  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+382:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+391:48  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+399:51  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+404:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+407:48  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+409:32  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+424:58  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+443:41  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+451:42  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+524:6  Warning: React Hook useEffect has a missing dependency: 'setCurrentVideoName'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+871:17  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+871:25  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+884:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+902:26  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+903:27  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1198:6  Warning: React Hook useCallback has missing dependencies: 'state.avScriptPart1Output.shots', 'state.gpuEnabled', 'state.stockMediaOverride', and 'vmDisplayStatus'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+1379:56  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1689:45  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1696:25  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1711:62  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1803:32  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1807:30  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1809:44  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1886:55  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1999:55  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+2047:47  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+2175:26  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./components/video-creation/WizardProgress.tsx
+99:31  Error: 'index' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/av-script/agent-prompts.ts
+501:7  Error: 'SFX_DIRECTOR_SYSTEM_PROMPT' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+639:3  Error: 'compositionSpec' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/av-script/analyzer.ts
+88:47  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+127:7  Error: 'lastOrdinalIndex' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+221:3  Error: 'wordTimestamps' is defined but never used.  @typescript-eslint/no-unused-vars
+286:3  Error: 'wordTimestamps' is defined but never used.  @typescript-eslint/no-unused-vars
+289:9  Error: 'text' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+348:3  Error: 'wordTimestamps' is defined but never used.  @typescript-eslint/no-unused-vars
+385:3  Error: 'wordTimestamps' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/av-script/gpu-batch-generation.ts
+117:75  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+119:49  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+274:8  Error: 'event' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/av-script/prompt-gen.ts
+69:47  Error: 'type' is defined but never used.  @typescript-eslint/no-unused-vars
+187:36  Error: '_segment' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/av-script/segmenter.ts
+18:3  Error: 'ListSpan' is defined but never used.  @typescript-eslint/no-unused-vars
+148:23  Error: 'reason' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+194:9  Error: 'minEndTime' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+271:3  Error: 'maxEndTime' is defined but never used.  @typescript-eslint/no-unused-vars
+384:3  Error: 'allWordTimestamps' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/av-script/shot-list.ts
+8:10  Error: 'WordTimestamp' is defined but never used.  @typescript-eslint/no-unused-vars
+13:3  Error: 'ContentType' is defined but never used.  @typescript-eslint/no-unused-vars
+213:17  Error: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/av-script/stock-media-director.ts
+22:10  Error: 'escapeRegex' is defined but never used.  @typescript-eslint/no-unused-vars
+65:29  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+422:49  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+984:37  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/av-script/stock-media-utils.ts
+254:16  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/classification/media-classifier.ts
+133:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+169:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+202:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+273:12  Error: 'error' is defined but never used.  @typescript-eslint/no-unused-vars
+406:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+452:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+594:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+818:14  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1108:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1205:18  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/export/davinci-export.ts
+14:3  Error: 'MediaAsset' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/export/fcpxml-generator.ts
+127:32  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+127:62  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/gcp/provision.ts
+23:21  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+70:21  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+141:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+469:21  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/gcp/token-refresh.ts
+95:25  Error: 'error' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+129:28  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/queues/webhook-listener.ts
+87:9  Error: 'timeoutId' is never reassigned. Use 'const' instead.  prefer-const
+
+./lib/queues/worker-bootstrap.ts
+35:10  Error: 'allQueues' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/workers/asset-reference-images.ts
+39:3  Error: 'buildCharacterNegativePrompt' is defined but never used.  @typescript-eslint/no-unused-vars
+40:3  Error: 'buildLocationNegativePrompt' is defined but never used.  @typescript-eslint/no-unused-vars
+41:3  Error: 'buildObjectNegativePrompt' is defined but never used.  @typescript-eslint/no-unused-vars
+428:48  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/queues/workers/av-script.ts
+139:42  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+244:18  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+376:61  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+411:10  Error: 'generateFallbackSummary' is defined but never used.  @typescript-eslint/no-unused-vars
+504:13  Error: 'generateJSON' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+516:9  Error: 'detailedPrompts' is never reassigned. Use 'const' instead.  prefer-const
+545:73  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+546:89  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+761:53  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+796:10  Error: 'buildEntityContext' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/workers/gcp-provision.ts
+118:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/queues/workers/gpu-api-test.ts
+25:3  Error: 'callGpuVideoGenerate' is defined but never used.  @typescript-eslint/no-unused-vars
+537:21  Error: 'publicUrl' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/workers/gpu-shutdown-checker.ts
+94:31  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/queues/workers/research-compare.ts
+16:31  Error: 'quickScoping' is defined but never used.  @typescript-eslint/no-unused-vars
+75:75  Error: 'researchProvider' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+114:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+117:35  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+118:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+119:36  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/queues/workers/script-writing.ts
+107:11  Error: 'totalBeats' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/workers/segment.ts
+48:39  Error: 'targetClipDuration' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+131:20  Error: 'transcription' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+316:41  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/queues/workers/stock-media.ts
+12:3  Error: 'classifyMedia' is defined but never used.  @typescript-eslint/no-unused-vars
+13:3  Error: 'checkImageForWatermark' is defined but never used.  @typescript-eslint/no-unused-vars
+14:3  Error: 'checkImageRelevance' is defined but never used.  @typescript-eslint/no-unused-vars
+20:10  Error: 'PexelsApi' is defined but never used.  @typescript-eslint/no-unused-vars
+43:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+57:20  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+78:7  Error: 'QUALITY_THRESHOLD' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+79:7  Error: 'RELEVANCE_THRESHOLD' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+80:7  Error: 'WATERMARK_CONFIDENCE_THRESHOLD' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+167:10  Error: 'getClassificationData' is defined but never used.  @typescript-eslint/no-unused-vars
+274:22  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+381:20  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+531:30  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+568:66  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+662:19  Error: 'getRedisConnection' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+719:69  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/queues/workers/universal-script.ts
+19:22  Error: 'UNIVERSAL_PHASES' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/workers/visual-director.ts
+27:3  Error: 'VideoProjectMetadata' is defined but never used.  @typescript-eslint/no-unused-vars
+160:30  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/queues/writing/assembly/output-formatter.ts
+15:3  Error: 'BeatType' is defined but never used.  @typescript-eslint/no-unused-vars
+158:11  Error: 'startTime' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+159:11  Error: 'endTime' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/assembly/quality-validator.ts
+7:10  Error: 'generateJSON' is defined but never used.  @typescript-eslint/no-unused-vars
+16:10  Error: 'UNIVERSAL_PROMPTS' is defined but never used.  @typescript-eslint/no-unused-vars
+17:26  Error: 'QUALITY_THRESHOLDS' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/assembly/transition-smoother.ts
+128:3  Error: 'spine' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/expansion/beat-writer.ts
+69:40  Error: 'dossier' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+69:49  Error: 'bannedPhrases' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+74:32  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/queues/writing/expansion/consistency-injector.ts
+28:3  Error: 'dossier' is defined but never used.  @typescript-eslint/no-unused-vars
+62:3  Error: 'registry' is defined but never used.  @typescript-eslint/no-unused-vars
+64:7  Error: 'narration' is never reassigned. Use 'const' instead.  prefer-const
+
+./lib/queues/writing/expansion/quality-reviewer.ts
+10:3  Error: 'ExpandedBeat' is defined but never used.  @typescript-eslint/no-unused-vars
+414:7  Error: 'BATCH_RATING_PROMPT' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+488:35  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+493:16  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/research/dossier.ts
+15:3  Error: 'NarrativeContext' is defined but never used.  @typescript-eslint/no-unused-vars
+16:3  Error: 'KeyDevelopment' is defined but never used.  @typescript-eslint/no-unused-vars
+17:3  Error: 'KeyEntityV2' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/research/fact-extraction.ts
+7:10  Error: 'generateWithWebSearch' is defined but never used.  @typescript-eslint/no-unused-vars
+105:11  Error: 'searchQuery' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/research/index.ts
+16:44  Error: 'ResearchQuestion' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/research/topic-decomposition.ts
+174:15  Error: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/research/valyu-research-provider.ts
+12:3  Error: 'valyuSearch' is defined but never used.  @typescript-eslint/no-unused-vars
+18:3  Error: 'MappedValyuSource' is defined but never used.  @typescript-eslint/no-unused-vars
+37:3  Error: 'assignConfidenceLevel' is defined but never used.  @typescript-eslint/no-unused-vars
+479:16  Error: 'transformSearchResultsToFacts' is defined but never used.  @typescript-eslint/no-unused-vars
+707:104  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/queues/writing/scoping/density-analyzer.ts
+34:3  Error: 'options' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/scoping/duration-calculator.ts
+19:10  Error: 'calculateContentScore' is defined but never used.  @typescript-eslint/no-unused-vars
+261:3  Error: 'durationRange' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/scoping/index.ts
+14:10  Error: 'DEFAULT_CONTENT_ALLOCATION' is defined but never used.  @typescript-eslint/no-unused-vars
+14:38  Error: 'GENRE_CONFIG' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/spine/beat-types.ts
+7:31  Error: 'EngagementMarkers' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/spine/engagement-mechanics.ts
+7:21  Error: 'BeatType' is defined but never used.  @typescript-eslint/no-unused-vars
+7:31  Error: 'EngagementMarkers' is defined but never used.  @typescript-eslint/no-unused-vars
+8:29  Error: 'QUALITY_THRESHOLDS' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/queues/writing/spine/index.ts
+15:3  Error: 'EngagementMarkers' is defined but never used.  @typescript-eslint/no-unused-vars
+18:10  Error: 'ENGAGEMENT_TIMING' is defined but never used.  @typescript-eslint/no-unused-vars
+18:29  Error: 'BEAT_DURATION' is defined but never used.  @typescript-eslint/no-unused-vars
+217:51  Error: 'genre' is defined but never used.  @typescript-eslint/no-unused-vars
+292:3  Error: 'genreTemplate' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/segmentation/segment-video.ts
+14:29  Error: 'getPublicUrl' is defined but never used.  @typescript-eslint/no-unused-vars
+224:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+538:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+758:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+889:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+933:69  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+964:12  Error: 'error' is defined but never used.  @typescript-eslint/no-unused-vars
+1090:3  Error: 'baseR2Path' is defined but never used.  @typescript-eslint/no-unused-vars
+1112:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1113:42  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1157:46  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/serper/client.ts
+26:7  Error: 'SUPPORTED_IMAGE_FORMATS' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+66:19  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+67:30  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/serper/types.ts
+186:30  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/services/gpu-api-service.ts
+171:12  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+198:45  Error: 'userId' is defined but never used.  @typescript-eslint/no-unused-vars
+235:12  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+297:12  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+328:12  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+1170:9  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/services/motion-graphics/code-validator.ts
+406:7  Error: 'codeWithoutComment' is never reassigned. Use 'const' instead.  prefer-const
+
+./lib/services/motion-graphics/skill-loader.ts
+55:16  Error: 'err' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/services/r2-storage.ts
+15:121  Error: 'HeadObjectCommand' is defined but never used.  @typescript-eslint/no-unused-vars
+735:12  Error: 'e' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/services/video-service.ts
+91:16  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/stock-media/service.ts
+175:35  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+222:40  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/supabase/middleware.ts
+18:48  Error: 'options' is defined but never used.  @typescript-eslint/no-unused-vars
+35:13  Error: 'user' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./lib/types.ts
+7:13  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/valyu/client.ts
+16:3  Error: 'DEFAULT_VALYU_CONFIG' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./lib/wikimedia/client.ts
+93:52  Error: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./lib/youtube/youtube-ranker.ts
+8:26  Error: 'OpenRouterConfig' is defined but never used.  @typescript-eslint/no-unused-vars
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules

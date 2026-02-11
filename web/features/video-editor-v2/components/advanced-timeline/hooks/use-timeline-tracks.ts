@@ -111,6 +111,22 @@ export function useTimelineTracks({
     return transitionsByClip.get(clipId) || { inTransition: undefined, outTransition: undefined };
   }, [transitionsByClip]);
   
+  // --- Per-type color palette (mirrors memoized-selectors.ts) ---
+  // Priority chain: clip.color > CLIP_TYPE_COLORS > track.color > DEFAULT
+  const CLIP_TYPE_COLORS: Record<string, string> = useMemo(() => ({
+    video:             '#0891b2', // Cyan-600
+    image:             '#7c3aed', // Violet-600
+    audio:             '#16a34a', // Green-600
+    text:              '#d97706', // Amber-600
+    caption:           '#ea580c', // Orange-600
+    sticker:           '#db2777', // Pink-600
+    shape:             '#4f46e5', // Indigo-600
+    blur:              '#475569', // Slate-600
+    'motion-graphics': '#9333ea', // Purple-600
+    effect:            '#7c3aed', // Violet-600
+  }), []);
+  const DEFAULT_CLIP_COLOR = '#3b82f6';
+
   // Compute denormalized tracks using useMemo to avoid infinite re-renders
   // This replaces the direct use of selectTracksWithClips which created new objects each call
   const tracks = useMemo<TrackWithClips[]>(() => {
@@ -121,6 +137,13 @@ export function useTimelineTracks({
         
         // Get transition entities for this clip
         const { inTransition, outTransition } = getClipTransitions(clip.id);
+
+        // Resolve color: explicit > type-based > track > default
+        const resolvedColor =
+          clip.color ||
+          CLIP_TYPE_COLORS[clip.type] ||
+          track.color ||
+          DEFAULT_CLIP_COLOR;
         
         return {
           id: clip.id,
@@ -128,7 +151,7 @@ export function useTimelineTracks({
           end: clip.startTime + clip.duration,
           type: clip.type,
           label: clip.label,
-          color: clip.color,
+          color: resolvedColor,
           data: {
             ...clip.data,
             sourceId: clip.sourceId,
@@ -152,7 +175,7 @@ export function useTimelineTracks({
       
       return { ...track, items };
     });
-  }, [storeTracks, storeClips, getClipTransitions]);
+  }, [storeTracks, storeClips, getClipTransitions, CLIP_TYPE_COLORS]);
   
   // Get store actions via getState() to avoid subscribing to all state changes
   // This ensures stable action references and prevents stale closure issues
