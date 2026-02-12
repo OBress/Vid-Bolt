@@ -185,7 +185,7 @@ function countBalance(code: string, open: string, close: string): number {
 const KNOWN_COMPONENTS = new Set([
   'React', 'AbsoluteFill', 'Sequence', 'Series', 'Img', 'Audio', 'Video', 'Fragment',
   'TransitionSeries', 'Rect', 'Circle', 'Triangle', 'Star', 'Polygon', 'Ellipse', 
-  'Heart', 'Pie', 'ThreeCanvas', 'Lottie', 'Component'
+  'Heart', 'Pie', 'ThreeCanvas', 'Lottie', 'LightLeak', 'Component'
 ]);
 
 /**

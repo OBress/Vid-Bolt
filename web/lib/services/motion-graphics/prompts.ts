@@ -249,6 +249,12 @@ import * as THREE from "three";
 // Lottie (optional)
 import { Lottie } from "@remotion/lottie";
 
+// Noise (optional — deterministic Perlin noise functions)
+import { noise2D, noise3D, noise4D } from "@remotion/noise";
+
+// Light Leaks (optional — WebGL light leak overlay effects)
+import { LightLeak } from "@remotion/light-leaks";
+
 // Geographic Maps (ALREADY IN SCOPE — do NOT import, just use directly)
 // CRITICAL: For ANY map/geography/location content, you MUST use these globals.
 // ❌ NEVER draw hardcoded SVG paths/polygons for countries/continents — they look terrible
