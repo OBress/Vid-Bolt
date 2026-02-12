@@ -222,19 +222,37 @@ export const useVirtualScroll = ({
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** rAF handle for batching direct DOM updates */
   const scrollRafRef = useRef<number | null>(null);
-  /** Interval for periodic React state flush during active scrolling.
-   *  This ensures virtualizedTracks recomputes so newly-visible items mount. */
-  const scrollFlushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** Handle for periodic React state flush during active scrolling.
+   *  Uses requestIdleCallback to yield to the browser during busy frames. */
+  const scrollFlushIdleRef = useRef<number | null>(null);
+  const isFlushingRef = useRef(false);
   const SCROLL_FLUSH_INTERVAL_MS = 200;
+
+  // requestIdleCallback with setTimeout fallback for Safari
+  const scheduleIdle = useCallback((cb: () => void) => {
+    if (typeof requestIdleCallback !== 'undefined') {
+      return requestIdleCallback(cb) as unknown as number;
+    }
+    return setTimeout(cb, SCROLL_FLUSH_INTERVAL_MS) as unknown as number;
+  }, [SCROLL_FLUSH_INTERVAL_MS]);
+
+  const cancelIdle = useCallback((id: number) => {
+    if (typeof cancelIdleCallback !== 'undefined') {
+      cancelIdleCallback(id as unknown as number);
+    } else {
+      clearTimeout(id);
+    }
+  }, []);
 
   /** Cleanup on unmount */
   useEffect(() => {
     return () => {
       if (scrollIdleTimerRef.current !== null) clearTimeout(scrollIdleTimerRef.current);
       if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
-      if (scrollFlushIntervalRef.current !== null) clearInterval(scrollFlushIntervalRef.current);
+      if (scrollFlushIdleRef.current !== null) cancelIdle(scrollFlushIdleRef.current);
+      isFlushingRef.current = false;
     };
-  }, []);
+  }, [cancelIdle]);
 
   /** Apply live scroll position directly to DOM (no React!) */
   const applyDOMTransform = useCallback(() => {
@@ -255,23 +273,33 @@ export const useVirtualScroll = ({
 
   /** Start periodic React state flush if not already running */
   const startPeriodicFlush = useCallback(() => {
-    if (scrollFlushIntervalRef.current !== null) return;
-    scrollFlushIntervalRef.current = setInterval(() => {
-      const { x, y } = liveScrollRef.current;
-      setState(prev => {
-        if (Math.abs(prev.scrollX - x) < 0.0001 && Math.abs(prev.scrollY - y) < 0.0001) return prev;
-        return { ...prev, scrollX: x, scrollY: y };
+    if (isFlushingRef.current) return;
+    isFlushingRef.current = true;
+
+    const scheduleNextFlush = () => {
+      scrollFlushIdleRef.current = scheduleIdle(() => {
+        const { x, y } = liveScrollRef.current;
+        setState(prev => {
+          if (Math.abs(prev.scrollX - x) < 0.0001 && Math.abs(prev.scrollY - y) < 0.0001) return prev;
+          return { ...prev, scrollX: x, scrollY: y };
+        });
+        // Continue flushing if still active
+        if (isFlushingRef.current) {
+          scheduleNextFlush();
+        }
       });
-    }, SCROLL_FLUSH_INTERVAL_MS);
-  }, [SCROLL_FLUSH_INTERVAL_MS]);
+    };
+    scheduleNextFlush();
+  }, [scheduleIdle]);
 
   /** Stop periodic flush */
   const stopPeriodicFlush = useCallback(() => {
-    if (scrollFlushIntervalRef.current !== null) {
-      clearInterval(scrollFlushIntervalRef.current);
-      scrollFlushIntervalRef.current = null;
+    isFlushingRef.current = false;
+    if (scrollFlushIdleRef.current !== null) {
+      cancelIdle(scrollFlushIdleRef.current);
+      scrollFlushIdleRef.current = null;
     }
-  }, []);
+  }, [cancelIdle]);
 
   /** Flush live scroll ref to React state (called when scroll stops) */
   const flushScrollToState = useCallback(() => {

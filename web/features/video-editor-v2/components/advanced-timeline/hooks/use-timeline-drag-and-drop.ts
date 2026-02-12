@@ -1,6 +1,9 @@
 import { useCallback, useRef, useEffect } from 'react';
 import { TimelineItem, TrackWithClips, isVideoTrackItem, isAudioTrackItem, EditMode } from '../types';
 import { TIMELINE_CONSTANTS, SNAPPING_CONFIG } from '../constants';
+import {
+  resolveGroup,
+} from '../components/canvas-timeline/canvas-timeline-utils';
 import { 
   useVideoEditorStore,
   useVideoEditorActions,
@@ -721,7 +724,6 @@ export const useTimelineDragAndDrop = ({
 
       // Calculate time and track changes
       const deltaTime = (deltaX / timelineRect.width) * totalDuration;
-      const deltaTrack = Math.round(deltaY / trackHeight);
 
       let newStart: number;
       let newDuration: number;
@@ -731,30 +733,38 @@ export const useTimelineDragAndDrop = ({
       const startTrackIndex = tracks.findIndex(t => t.id === dragState.startTrackId);
       if (startTrackIndex === -1) return;
 
-      // Get the source track type for track compatibility validation
       const sourceTrack = tracks[startTrackIndex];
-      const sourceTrackType = sourceTrack?.type || 'video';
 
-      // Calculate potential target track
-      let targetTrackIndex = Math.max(0, Math.min(tracks.length - 1, startTrackIndex + deltaTrack));
-      
-      // Validate track type compatibility
-      const targetTrack = tracks[targetTrackIndex];
-      if (targetTrack && targetTrack.type !== sourceTrackType) {
-        let nearestSameTypeIndex = startTrackIndex;
-        let minDistance = Infinity;
-        
-        for (let i = 0; i < tracks.length; i++) {
-          if (tracks[i].type === sourceTrackType) {
-            const distance = Math.abs(i - targetTrackIndex);
-            if (distance < minDistance) {
-              minDistance = distance;
-              nearestSameTypeIndex = i;
-            }
-          }
+      // ======================================================
+      // GROUP-CONSTRAINED TRACK RESOLUTION
+      // ======================================================
+      // Clips are constrained to their source group (video, audio, text,
+      // effects, overlays). Since there are no group headers between tracks
+      // within the same group, simple deltaY/trackHeight arithmetic works.
+      const sourceGroup = resolveGroup(sourceTrack);
+
+      // Build list of track indices belonging to the same group
+      const sameGroupIndices: number[] = [];
+      for (let i = 0; i < tracks.length; i++) {
+        if (resolveGroup(tracks[i]) === sourceGroup) {
+          sameGroupIndices.push(i);
         }
-        targetTrackIndex = nearestSameTypeIndex;
       }
+
+      // Find the source track's position within its group
+      const sourcePositionInGroup = sameGroupIndices.indexOf(startTrackIndex);
+      if (sourcePositionInGroup === -1) return;
+
+      // Compute target position within group using simple division
+      // (safe — no headers between tracks of the same group)
+      const deltaTrack = Math.round(deltaY / trackHeight);
+      const targetPositionInGroup = Math.max(
+        0,
+        Math.min(sameGroupIndices.length - 1, sourcePositionInGroup + deltaTrack),
+      );
+
+      // Map back to full tracks array index
+      let targetTrackIndex = sameGroupIndices[targetPositionInGroup];
 
       // Get source duration limit for video/audio items
       const primaryItem = dragState.selectedClipsSnapshot?.find(item => item.id === dragState.clipId);
@@ -1166,22 +1176,32 @@ export const useTimelineDragAndDrop = ({
     const isMultiDrag = snapshots.length > 1;
     const action = dragState.type;
     
-    if (isMultiDrag && action === 'clip-move' && onItemMove && primarySnapshot) {
+    if (isMultiDrag && action === 'clip-move' && primarySnapshot) {
       const deltaTime = finalStart - primarySnapshot.originalStartTime;
       
       const primaryLinkedIds = getLinkedItemIds ? getLinkedItemIds(dragState.clipId!) : [dragState.clipId!];
       const linkedItemSet = new Set(primaryLinkedIds);
       
+      // Collect all moves into a batch instead of calling onItemMove per clip
+      const moves: Array<{ clipId: string; trackId: string; startTime: number; duration: number }> = [];
+      
       for (const snapshot of snapshots) {
         const itemNewStart = Math.max(0, snapshot.originalStartTime + deltaTime);
-        const itemNewEnd = itemNewStart + snapshot.originalDuration;
         
         // Linked items stay on their original track
         const isLinkedItem = linkedItemSet.has(snapshot.id) && snapshot.id !== dragState.clipId;
         const itemTrackId = isLinkedItem ? snapshot.originalTrackId : finalTrackId!;
         
-        onItemMove(snapshot.id, itemNewStart, itemNewEnd, itemTrackId);
+        moves.push({
+          clipId: snapshot.id,
+          trackId: itemTrackId,
+          startTime: itemNewStart,
+          duration: snapshot.originalDuration,
+        });
       }
+      
+      // Single set() call for all clips
+      useVideoEditorStore.getState().batchMoveClips(moves);
       
       logDrag('MULTI_DRAG_MOVE_COMPLETE', {
         primaryClipId: dragState.clipId,
@@ -1221,8 +1241,14 @@ export const useTimelineDragAndDrop = ({
     } else if (!isMultiDrag) {
       const targetTrack = tracks[finalTrackIndex];
       
-      if (action === 'clip-move' && onItemMove && targetTrack && dragState.clipId) {
-        onItemMove(dragState.clipId, finalStart, finalEnd, targetTrack.id);
+      if (action === 'clip-move' && targetTrack && dragState.clipId) {
+        // Even for single clip, use batch for consistency (single-item batch is cheap)
+        useVideoEditorStore.getState().batchMoveClips([{
+          clipId: dragState.clipId,
+          trackId: targetTrack.id,
+          startTime: finalStart,
+          duration: finalEnd - finalStart,
+        }]);
       } else if ((action === 'clip-resize-start' || action === 'clip-resize-end') && onItemResize && dragState.clipId) {
         onItemResize(dragState.clipId, finalStart, finalEnd);
       }

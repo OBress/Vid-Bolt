@@ -137,8 +137,10 @@ export interface CanvasTimelineProps {
 /**
  * Inner canvas content — separated so it can use useApplication() hook.
  * The PixiJS Application must be the parent for context to work.
+ * Wrapped in React.memo to prevent cascading re-renders when the parent
+ * CanvasTimeline re-renders (e.g. during scroll flush).
  */
-function CanvasTimelineContent({
+const CanvasTimelineContent = React.memo(function CanvasTimelineContent({
   tracks,
   scrollableDuration,
   scrollableWidth,
@@ -292,7 +294,7 @@ function CanvasTimelineContent({
       />
     </pixiContainer>
   );
-}
+});
 
 // ============================================================
 // MAIN COMPONENT

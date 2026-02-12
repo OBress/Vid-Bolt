@@ -51,13 +51,13 @@ export function xToTime(
 const GROUP_ORDER: string[] = ['video', 'overlays', 'text', 'effects', 'audio'];
 
 /** Height of each group header bar in pixels */
-const GROUP_HEADER_HEIGHT = 24;
+export const GROUP_HEADER_HEIGHT = 24;
 
 /**
  * Resolve the effective group for a track.
  * Falls back to 'video' for video-type tracks and 'audio' for audio-type tracks.
  */
-function resolveGroup(track: { type: string; group?: string }): string {
+export function resolveGroup(track: { type: string; group?: string }): string {
   return track.group || (track.type === 'audio' ? 'audio' : 'video');
 }
 

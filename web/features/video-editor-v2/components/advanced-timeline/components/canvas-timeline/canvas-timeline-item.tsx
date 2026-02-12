@@ -21,11 +21,10 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { Graphics, Text, TextStyle, Container } from 'pixi.js';
+import { Graphics, Text, TextStyle, Container, Rectangle } from 'pixi.js';
 import { extend } from '@pixi/react';
 import {
   hexToPixiColor,
-  darkenColor,
   getItemRect,
   truncateLabel,
 } from './canvas-timeline-utils';
@@ -371,8 +370,8 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
     [baseColor],
   );
   const borderColor = useMemo(
-    () => hexToPixiColor(darkenColor(item.color || '#3b82f6', 0.6)),
-    [item.color],
+    () => darkenPixiColor(baseColor, 0.6),
+    [baseColor],
   );
 
   // Link group styling
@@ -802,8 +801,65 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
     [item, isSelected, onSelect, onSelectionChange, onContextMenu],
   );
 
+  // ========================================
+  // EXTRACTED DRAW CALLBACKS (previously inline closures)
+  // ========================================
+
+  // Audio waveform visualization — lightweight sine bars
+  const drawAudioWaveform = useCallback((g: Graphics) => {
+    g.clear();
+    if (rect.width < 20) return;
+    const barW = 2;
+    const gap = 3;
+    const maxH = rect.height * 0.4;
+    const baseY = rect.height / 2;
+    for (let x = ACCENT_BAR_WIDTH + 8; x < rect.width - 4; x += barW + gap) {
+      const h = maxH * (0.3 + 0.7 * Math.abs(Math.sin(x * 0.15)));
+      g.rect(x, baseY - h / 2, barW, h);
+      g.fill({ color: 0xffffff, alpha: 0.15 });
+    }
+  }, [rect.width, rect.height]);
+
+  // Effect/shape clip background pattern
+  const drawEffectPatternCb = useCallback((g: Graphics) => {
+    g.clear();
+    drawEffectPattern(g, rect.width, rect.height, item.label);
+  }, [rect.width, rect.height, item.label]);
+
+  // Label backdrop — dark rounded rect behind text for readability
+  const labelLayout = useMemo(() => {
+    if (!displayLabel) return null;
+    const labelX = ACCENT_BAR_WIDTH + TYPE_ICON_SIZE + TYPE_ICON_MARGIN + LABEL_PADDING + (linkGroupColor ? BADGE_SIZE + BADGE_MARGIN + 2 : 0);
+    const labelY = (rect.height - LABEL_FONT_SIZE) / 2;
+    const estimatedTextWidth = Math.min(displayLabel.length * 6, rect.width - labelX - 4);
+    return { labelX, labelY, estimatedTextWidth };
+  }, [displayLabel, rect.height, rect.width, linkGroupColor]);
+
+  const drawLabelBackdrop = useCallback((g: Graphics) => {
+    g.clear();
+    if (!labelLayout) return;
+    const backdropPadX = 3;
+    const backdropPadY = 2;
+    g.roundRect(
+      labelLayout.labelX - backdropPadX,
+      labelLayout.labelY - backdropPadY,
+      labelLayout.estimatedTextWidth + backdropPadX * 2,
+      LABEL_FONT_SIZE + backdropPadY * 2,
+      3,
+    );
+    g.fill({ color: 0x000000, alpha: 0.4 });
+  }, [labelLayout]);
+
   // Don't render items that are too narrow to see (< 1px)
   if (rect.width < 1) return null;
+
+  // Explicit hit area required because interactiveChildren=false means
+  // PixiJS won't traverse children for hit testing. Without this,
+  // clicks pass through items to the timeline background.
+  const hitArea = useMemo(
+    () => new Rectangle(0, 0, rect.width, rect.height),
+    [rect.width, rect.height],
+  );
 
   return (
     <pixiContainer
@@ -812,6 +868,9 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
       alpha={alpha}
       eventMode="static"
       cursor={isLocked ? 'not-allowed' : 'pointer'}
+      cullable={true}
+      interactiveChildren={false}
+      hitArea={hitArea}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerEnter={handlePointerEnter}
@@ -826,27 +885,12 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
 
       {/* Audio faux waveform — lightweight sine-wave bars for visual identification */}
       {item.type === 'audio' && (
-        <pixiGraphics draw={(g: Graphics) => {
-          g.clear();
-          if (rect.width < 20) return;
-          const barW = 2;
-          const gap = 3;
-          const maxH = rect.height * 0.4;
-          const baseY = rect.height / 2;
-          for (let x = ACCENT_BAR_WIDTH + 8; x < rect.width - 4; x += barW + gap) {
-            const h = maxH * (0.3 + 0.7 * Math.abs(Math.sin(x * 0.15)));
-            g.rect(x, baseY - h / 2, barW, h);
-            g.fill({ color: 0xffffff, alpha: 0.15 });
-          }
-        }} />
+        <pixiGraphics draw={drawAudioWaveform} />
       )}
 
       {/* Effect/shape clip background pattern */}
       {(item.type === 'shape' || item.type === 'effect') && (
-        <pixiGraphics draw={(g: Graphics) => {
-          g.clear();
-          drawEffectPattern(g, rect.width, rect.height, item.label);
-        }} />
+        <pixiGraphics draw={drawEffectPatternCb} />
       )}
 
       {/* Transition, fade, keyframe overlays */}
@@ -859,36 +903,18 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
       <pixiGraphics draw={drawBadges} />
 
       {/* Label text with dark backdrop for readability over waveforms/thumbnails */}
-      {displayLabel && (() => {
-        const labelX = ACCENT_BAR_WIDTH + TYPE_ICON_SIZE + TYPE_ICON_MARGIN + LABEL_PADDING + (linkGroupColor ? BADGE_SIZE + BADGE_MARGIN + 2 : 0);
-        const labelY = (rect.height - LABEL_FONT_SIZE) / 2;
-        // Estimate text width: ~6px per character at 11px font size
-        const estimatedTextWidth = Math.min(displayLabel.length * 6, rect.width - labelX - 4);
-        const backdropPadX = 3;
-        const backdropPadY = 2;
-        return (
-          <>
-            <pixiGraphics draw={(g: Graphics) => {
-              g.clear();
-              g.roundRect(
-                labelX - backdropPadX,
-                labelY - backdropPadY,
-                estimatedTextWidth + backdropPadX * 2,
-                LABEL_FONT_SIZE + backdropPadY * 2,
-                3,
-              );
-              g.fill({ color: 0x000000, alpha: 0.4 });
-            }} />
-            <pixiText
-              text={displayLabel}
-              style={getLabelStyle(LABEL_FONT_SIZE)}
-              x={labelX}
-              y={labelY}
-              alpha={0.95}
-            />
-          </>
-        );
-      })()}
+      {displayLabel && labelLayout && (
+        <>
+          <pixiGraphics draw={drawLabelBackdrop} />
+          <pixiText
+            text={displayLabel}
+            style={getLabelStyle(LABEL_FONT_SIZE)}
+            x={labelLayout.labelX}
+            y={labelLayout.labelY}
+            alpha={0.95}
+          />
+        </>
+      )}
     </pixiContainer>
   );
 });

@@ -542,7 +542,6 @@ export const CanvasTransitionItem = React.memo(function CanvasTransitionItem({
 
   const handlePointerDown = useCallback(
     (e: any) => {
-      console.log('[CanvasTransitionItem] pointerDown', transition.id, { e, onTransitionClick: !!onTransitionClick });
       e.stopPropagation?.();
 
       const nativeEvent = e.nativeEvent || e.data?.originalEvent;

@@ -172,6 +172,7 @@ export interface VideoEditorActions {
   deleteClips: (clipIds: string[]) => void;
   updateClip: (clipId: string, updates: Partial<TimelineClip>) => void;
   moveClip: (clipId: string, trackId: string, startTime: number) => void;
+  batchMoveClips: (moves: Array<{ clipId: string; trackId: string; startTime: number; duration?: number }>) => void;
   duplicateClip: (clipId: string) => string | null;
   splitClip: (clipId: string, splitTime: number) => [string, string] | null;
   trimClip: (clipId: string, newStartTime: number, newDuration: number) => void;
@@ -1219,6 +1220,72 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
 
                 syncTransitionsOnClipMove(state.transitions, clipId, timeDelta);
 
+                state.isDirty = true;
+              });
+            },
+
+            // Batch move multiple clips in a single state update.
+            // This avoids N separate set() calls (and N re-render cycles)
+            // when dropping multi-selected or linked clips.
+            batchMoveClips: (moves) => {
+              const state = get();
+              const now = Date.now();
+
+              // Pre-validate all moves before committing any
+              const validatedMoves: Array<{
+                clipId: string;
+                trackId: string;
+                startTime: number;
+                duration: number;
+                timeDelta: number;
+              }> = [];
+
+              for (const move of moves) {
+                const clip = state.clips[move.clipId];
+                if (!clip) continue;
+
+                const targetTrack = state.tracks[move.trackId];
+                if (!targetTrack) continue;
+                if (targetTrack.locked) continue;
+
+                const requiredType = clip.type === "audio" ? "audio" : "video";
+                if (targetTrack.type !== requiredType) continue;
+
+                // Also enforce group-level constraint (video, audio, text, effects, overlays)
+                const sourceTrack = state.tracks[clip.trackId];
+                const sourceGroup = sourceTrack?.group || (clip.type === "audio" ? "audio" : "video");
+                const targetGroup = targetTrack.group || (targetTrack.type === "audio" ? "audio" : "video");
+                if (targetGroup !== sourceGroup) continue;
+
+                const validStartTime = Math.max(0, move.startTime);
+                const duration = move.duration ?? clip.duration;
+                const timeDelta = validStartTime - clip.startTime;
+
+                validatedMoves.push({
+                  clipId: move.clipId,
+                  trackId: move.trackId,
+                  startTime: validStartTime,
+                  duration,
+                  timeDelta,
+                });
+              }
+
+              if (validatedMoves.length === 0) return;
+
+              // Apply all mutations in a single set() call
+              set((state) => {
+                for (const move of validatedMoves) {
+                  state.clips[move.clipId].trackId = move.trackId;
+                  state.clips[move.clipId].startTime = move.startTime;
+                  state.clips[move.clipId].duration = move.duration;
+                  state.clips[move.clipId].updatedAt = now;
+
+                  syncTransitionsOnClipMove(
+                    state.transitions,
+                    move.clipId,
+                    move.timeDelta,
+                  );
+                }
                 state.isDirty = true;
               });
             },
@@ -2993,6 +3060,7 @@ function _buildActions(state: VideoEditorStore) {
     deleteClips: state.deleteClips,
     updateClip: state.updateClip,
     moveClip: state.moveClip,
+    batchMoveClips: state.batchMoveClips,
     duplicateClip: state.duplicateClip,
     splitClip: state.splitClip,
     trimClip: state.trimClip,
