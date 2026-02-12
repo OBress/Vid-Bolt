@@ -18,7 +18,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import Link from "next/link";
-import { NAV_GROUPS } from "@/app/command-center/navigation";
 
 import { useMediaProjects } from "@/hooks/use-media-projects";
 import { Plus, Loader2 } from "lucide-react";
@@ -56,7 +55,7 @@ export function MediaProjectsTab() {
       await createProject(newProjectName);
       setCreateDialogOpen(false);
       setNewProjectName("");
-    } catch (err) {
+    } catch (_err) {
       // error handled in hook
     } finally {
       setCreating(false);
@@ -226,7 +225,7 @@ export function MediaProjectsTab() {
               <p className="text-xs text-neutral-500">
                 Type{" "}
                 <span className="text-orange-500 font-bold">
-                  "{projectToDelete?.name}"
+                  &quot;{projectToDelete?.name}&quot;
                 </span>{" "}
                 exactly to confirm:
               </p>

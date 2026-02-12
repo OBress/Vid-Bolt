@@ -230,7 +230,7 @@ export function FinancialForm({ currentDate, initialStatement, defaultCosts = []
 
       await upsertStatement(initialStatement?.id, currentDate, Number(revenue), cleanCosts, revenueProofUrl);
       toast.success("Changes saved successfully");
-    } catch (error) {
+    } catch (_error) {
       toast.error("Failed to save changes");
     } finally {
       setLoading(false);

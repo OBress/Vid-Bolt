@@ -61,8 +61,6 @@ export interface CanvasDragPreviewProps {
   timelineRef: React.RefObject<HTMLDivElement | null>;
   /** Total scrollable duration */
   scrollableDuration: number;
-  /** Current scrollX offset */
-  scrollX: number;
   /** Pixels per second (for time→pixel conversion) */
   pixelsPerSecond: number;
   /** All tracks (for computing Y positions) */
@@ -71,6 +69,8 @@ export interface CanvasDragPreviewProps {
   trackHeight?: number;
   /** FPS for time formatting */
   fps?: number;
+  /** Collapsed track groups (for correct Y positioning) */
+  collapsedGroups?: Set<string>;
 }
 
 // ============================================================
@@ -169,11 +169,11 @@ function DragInfoOverlay({
 export function CanvasDragPreview({
   timelineRef,
   scrollableDuration,
-  scrollX,
   pixelsPerSecond,
   tracks,
   trackHeight: propTrackHeight,
   fps = 30,
+  collapsedGroups,
 }: CanvasDragPreviewProps) {
   const dragState = useVideoEditorStore(selectDragState);
   const trackHeight = propTrackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
@@ -200,9 +200,6 @@ export function CanvasDragPreview({
   // Compute delta from primary item's movement
   const deltaTime = dragState.currentTime - primarySnapshot.originalStartTime;
   const deltaDuration = (dragState.currentDuration ?? primarySnapshot.originalDuration) - primarySnapshot.originalDuration;
-
-  // Add video track button spacer height
-  const ADD_BUTTON_HEIGHT = 28;
 
   return createPortal(
     <>
@@ -243,12 +240,14 @@ export function CanvasDragPreview({
         const previewW = itemCurrentDuration * pixelsPerSecond;
 
         // Get track Y position in the content space
-        const trackY = getTrackYOffset(currentTrackIndex, trackHeight, tracks);
+        const trackY = getTrackYOffset(currentTrackIndex, trackHeight, tracks, collapsedGroups);
         const itemY = trackY + (trackHeight - itemHeight) / 2;
 
-        // Convert to screen space using the container rect + scroll offset
-        const screenX = containerRect.left + previewX + scrollX;
-        const screenY = containerRect.top + itemY + ADD_BUTTON_HEIGHT;
+        // Convert to screen space using the container rect.
+        // getBoundingClientRect() already includes CSS transform offsets (scrollX/scrollY),
+        // so we only need to add the item's position within content space.
+        const screenX = containerRect.left + previewX;
+        const screenY = containerRect.top + itemY;
 
         // Don't render if off-screen
         if (screenX + previewW < containerRect.left || screenX > containerRect.right) return null;

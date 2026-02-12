@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
@@ -34,7 +34,6 @@ import {
 import { useProjectSettings } from "@/hooks/use-project-settings";
 import { useApiKeys } from "@/hooks/use-api-keys";
 import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
-import { INWORLD_MODELS } from "@/lib/services/inworld-tts";
 import { VoiceSelector } from "@/components/features/project/settings/VoiceSelector";
 import { useUserSettings } from "@/hooks/use-user-settings";
 import { generateInworldSpeechAction } from "@/app/actions/inworld-actions";
@@ -168,7 +167,7 @@ export function AudioTab({ projectId }: { projectId?: string }) {
       if (currentProvider === "inworld") {
         const {
           audioBase64,
-          duration: audioDuration,
+          duration: _audioDuration,
           error,
         } = await generateInworldSpeechAction(userId, testText, {
           modelId: voice.model,
@@ -237,7 +236,7 @@ export function AudioTab({ projectId }: { projectId?: string }) {
   };
 
   // Convert stability (0-100) to temperature (0-2) for Inworld and vice versa
-  const getDisplayValue = (key: string, value: number): number => {
+  const _getDisplayValue = (key: string, value: number): number => {
     if (key === "stability" && isInworld) {
       // For Inworld, stability slider shows temperature (0-2 range mapped to 0-200)
       return value; // stored as 0-200 in settings
@@ -690,8 +689,8 @@ export function AudioTab({ projectId }: { projectId?: string }) {
                         Background Symphony
                       </h3>
                       <p className="text-neutral-500 text-sm leading-relaxed">
-                        We're building an intelligent background audio engine.
-                        Soon you'll be able to generate context-aware music,
+                        We&apos;re building an intelligent background audio engine.
+                        Soon you&apos;ll be able to generate context-aware music,
                         ambient layers, and procedural sound effects.
                       </p>
                     </div>

@@ -9,6 +9,8 @@ interface TimelineNavigatorV2Props {
   zoomScale: number;
   /** Callback to zoom while keeping playhead at same pixel position (uses unified coordinate system) */
   onZoomAtPlayhead: (newZoom: number) => void;
+  /** Callback to zoom while anchoring a specific time at a viewport fraction (for handle drags) */
+  onZoomWithAnchor: (newZoom: number, anchorTime: number, anchorViewportFraction: number) => void;
   /** Duration of viewport in seconds (how much time is visible) */
   viewportDuration: number;
   /** Total scrollable duration in seconds (content + buffer) */
@@ -39,6 +41,7 @@ export const TimelineNavigatorV2: React.FC<TimelineNavigatorV2Props> = ({
   onScrollChange,
   zoomScale,
   onZoomAtPlayhead,
+  onZoomWithAnchor,
   viewportDuration,
   scrollableDuration,
   minZoom = 0.5,
@@ -140,7 +143,7 @@ export const TimelineNavigatorV2: React.FC<TimelineNavigatorV2Props> = ({
         onScrollChange(newScrollX);
         
       } else if (isDragging === 'left') {
-        // Dragging left handle = zoom (change width from left edge)
+        // Dragging left handle = zoom while anchoring RIGHT edge of thumb
         const rightEdge = startThumbLeft + startThumbWidth;
         
         // Calculate new left edge and thumb width (as percentage)
@@ -151,11 +154,14 @@ export const TimelineNavigatorV2: React.FC<TimelineNavigatorV2Props> = ({
         const newViewportDuration = (newThumbWidthPct * startScrollable) / 100;
         const newZoom = Math.max(minZoom, Math.min(maxZoom, FIXED_BASE_DURATION / newViewportDuration));
         
-        // Use unified coordinate system to zoom while keeping playhead fixed
-        onZoomAtPlayhead(newZoom);
+        // Anchor: the right edge of the thumb should stay fixed
+        // Right edge % → time in seconds
+        const rightEdgeTime = (rightEdge / 100) * startScrollable;
+        // Right edge sits at fraction 1.0 of the viewport
+        onZoomWithAnchor(newZoom, rightEdgeTime, 1.0);
         
       } else if (isDragging === 'right') {
-        // Dragging right handle = zoom (change width from right edge)
+        // Dragging right handle = zoom while anchoring LEFT edge of thumb
         const newRight = Math.min(100, Math.max(startThumbLeft + 3, startThumbLeft + startThumbWidth + deltaPct));
         const newThumbWidthPct = newRight - startThumbLeft;
         
@@ -163,8 +169,11 @@ export const TimelineNavigatorV2: React.FC<TimelineNavigatorV2Props> = ({
         const newViewportDuration = (newThumbWidthPct * startScrollable) / 100;
         const newZoom = Math.max(minZoom, Math.min(maxZoom, FIXED_BASE_DURATION / newViewportDuration));
         
-        // Use unified coordinate system to zoom while keeping playhead fixed
-        onZoomAtPlayhead(newZoom);
+        // Anchor: the left edge of the thumb should stay fixed
+        // Left edge % → time in seconds
+        const leftEdgeTime = (startThumbLeft / 100) * startScrollable;
+        // Left edge sits at fraction 0.0 of the viewport
+        onZoomWithAnchor(newZoom, leftEdgeTime, 0.0);
       }
     };
 

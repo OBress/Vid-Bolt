@@ -51,8 +51,6 @@ import {
   ArrowLeft,
   Settings2,
   ExternalLink,
-  Link,
-  GitCompareArrows,
   Clock,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
@@ -256,7 +254,7 @@ export function UniversalScriptTester({
   const [researchOnly, setResearchOnly] = useState(true);
 
   // Comparison mode state (Legacy vs Valyu side-by-side)
-  const [compareMode, setCompareMode] = useState(false);
+  const [_compareMode, _setCompareMode] = useState(false);
   const [isComparing, setIsComparing] = useState(false);
   const [comparisonResult, setComparisonResult] = useState<{
     topic: string;
@@ -301,7 +299,7 @@ export function UniversalScriptTester({
   } | null>(null);
 
   // Detail view for comparison results - 'legacy' | 'valyu' | null
-  const [comparisonDetailView, setComparisonDetailView] = useState<
+  const [_comparisonDetailView, _setComparisonDetailView] = useState<
     "legacy" | "valyu" | null
   >(null);
 
@@ -1894,7 +1892,7 @@ export function UniversalScriptTester({
                                   className="bg-neutral-900 rounded-lg p-3 border border-neutral-800"
                                 >
                                   <blockquote className="text-sm text-neutral-200 italic border-l-2 border-green-500 pl-3">
-                                    "{quote.quote || quote.text}"
+                                    &quot;{quote.quote || quote.text}&quot;
                                   </blockquote>
                                   <div className="flex items-center gap-2 mt-2 text-xs text-neutral-400">
                                     <span className="font-medium text-green-400">
@@ -2165,7 +2163,7 @@ export function UniversalScriptTester({
 
                   {output.expandedBeats && output.expandedBeats.length > 0 ? (
                     <div className="space-y-6">
-                      {output.expandedBeats.map((beat, i) => {
+                      {output.expandedBeats.map((beat, _i) => {
                         const score = beat.qualityScore ?? 0;
                         const scoreColor =
                           score >= 8
@@ -2313,19 +2311,19 @@ export function UniversalScriptTester({
                                         {"content" in primarySource &&
                                           primarySource.content && (
                                             <p className="text-sm text-neutral-400 italic line-clamp-3">
-                                              "
+                                              &quot;
                                               {primarySource.content.substring(
                                                 0,
                                                 200,
                                               )}
-                                              ..."
+                                              ...&quot;
                                             </p>
                                           )}
                                         {"excerpt" in primarySource &&
                                           primarySource.excerpt &&
                                           !("content" in primarySource) && (
                                             <p className="text-sm text-neutral-400 italic line-clamp-3">
-                                              "{primarySource.excerpt}"
+                                              &quot;{primarySource.excerpt}&quot;
                                             </p>
                                           )}
                                         <div className="flex items-center gap-2 text-xs pt-1">
@@ -2385,7 +2383,7 @@ export function UniversalScriptTester({
                                   className="p-2 bg-neutral-800 rounded text-xs"
                                 >
                                   <p className="text-neutral-300 italic">
-                                    "{quote.quote}"
+                                    &quot;{quote.quote}&quot;
                                   </p>
                                   <p className="text-neutral-500 mt-1">
                                     — {quote.speaker}

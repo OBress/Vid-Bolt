@@ -33,7 +33,7 @@ export function AsyncLoadingStep({
   taskId,
   onComplete,
   onError,
-  fallbackDuration = 3000,
+  fallbackDuration: _fallbackDuration = 3000,
   pollInterval = 2000,
 }: AsyncLoadingStepProps) {
   console.log("[AsyncLoadingStep Render] ID:", taskId, "Title:", title);

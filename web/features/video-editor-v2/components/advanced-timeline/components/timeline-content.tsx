@@ -52,6 +52,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
   // DOM refs for direct scroll transform (bypasses React during active scroll)
   scrollContentRef,
   scrollMarkersRef,
+  canvasContainerRef,
   // Other props
   onFrameChange,
   onItemSelect,
@@ -126,12 +127,40 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
     
     updateWidth();
     
+    // ResizeObserver: catches layout-driven size changes.
+    // Observe both the container AND the editor root so that any ancestor
+    // layout change (app sidebar toggle, panel resize, etc.) is detected.
     const resizeObserver = new ResizeObserver(updateWidth);
     if (containerRef.current) {
       resizeObserver.observe(containerRef.current);
+      const editorRoot = containerRef.current.closest('[data-editor-root]') as HTMLElement | null;
+      if (editorRoot) resizeObserver.observe(editorRoot);
     }
+
+    // Window resize: browser window resizing, dev tools, tab reshaping.
+    window.addEventListener('resize', updateWidth);
+
+    // Fullscreen: explicit listener with RAF for immediate post-reflow measurement.
+    const onFullscreenChange = () => {
+      requestAnimationFrame(updateWidth);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+
+    // Transition end: re-measure after CSS transitions complete (e.g. app sidebar
+    // 300ms width transition) so the final settled size is captured exactly.
+    const onTransitionEnd = (e: TransitionEvent) => {
+      if (e.propertyName === 'width' || e.propertyName === 'max-width' || e.propertyName === 'flex') {
+        requestAnimationFrame(updateWidth);
+      }
+    };
+    document.addEventListener('transitionend', onTransitionEnd);
     
-    return () => resizeObserver.disconnect();
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updateWidth);
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      document.removeEventListener('transitionend', onTransitionEnd);
+    };
   }, []);
 
   
@@ -991,6 +1020,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
             collapsedGroups={collapsedGroups}
             onTransitionClick={handleTransitionClick}
             selectedTransitionId={selectedTransitionId}
+            canvasContainerRef={canvasContainerRef}
           />
 
           {/* Canvas Context Menu — DOM portal positioned at right-click coords */}
@@ -1017,11 +1047,11 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
           <CanvasDragPreview
             timelineRef={timelineRef!}
             scrollableDuration={scrollableDuration}
-            scrollX={virtualTransform.x}
             pixelsPerSecond={pixelsPerSecond}
             tracks={tracks}
             trackHeight={trackHeight}
             fps={fps}
+            collapsedGroups={collapsedGroups}
           />
 
           {/* Timeline Guidelines */}

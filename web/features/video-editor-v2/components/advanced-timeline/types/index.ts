@@ -153,6 +153,7 @@ export interface TimelineContentProps {
   // DOM refs for direct scroll transform (bypasses React during active scroll)
   scrollContentRef?: React.MutableRefObject<HTMLDivElement | null>;
   scrollMarkersRef?: React.MutableRefObject<HTMLDivElement | null>;
+  canvasContainerRef?: React.MutableRefObject<HTMLDivElement | null>;
   // Other props
   onFrameChange?: (frame: number) => void;
   onItemSelect?: (itemId: string | null) => void;

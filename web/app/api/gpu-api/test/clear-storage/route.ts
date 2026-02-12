@@ -11,7 +11,7 @@ import { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } from '@/lib/serv
 // GPU API test storage prefix (under temporary/)
 const GPU_TEST_PREFIX = `${STORAGE_PATHS.TEMPORARY}/${STORAGE_PATHS.GPU_TEST}/`;
 
-export async function DELETE(request: NextRequest) {
+export async function DELETE(_request: NextRequest) {
   try {
     // Check if R2 is configured
     if (!isR2Configured()) {

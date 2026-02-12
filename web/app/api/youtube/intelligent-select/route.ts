@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     let accessToken: string;
     try {
       accessToken = await getValidGCPToken(user.id);
-    } catch (tokenError) {
+    } catch (_tokenError) {
       return NextResponse.json({
         success: false,
         error: 'GCP connection required for YouTube search',

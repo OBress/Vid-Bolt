@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
  * POST /api/gcp/update-activity
  * Updates the last_gpu_activity_at timestamp for auto-shutdown tracking
  */
-export async function POST(req: NextRequest) {
+export async function POST(_req: NextRequest) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
 

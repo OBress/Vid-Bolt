@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     let accessToken: string;
     try {
       accessToken = await getValidGCPToken(user.id);
-    } catch (tokenError) {
+    } catch (_tokenError) {
       return NextResponse.json(
         { error: 'GCP authentication required. Please reconnect your Google account.' },
         { status: 401 }
@@ -83,7 +83,7 @@ export async function POST(request: Request) {
           results.computeApi.error = errorData.error?.message || 'API check failed';
         }
       }
-    } catch (e) {
+    } catch (_e) {
       results.computeApi.error = 'Failed to check Compute Engine API';
     }
 
@@ -109,7 +109,7 @@ export async function POST(request: Request) {
           results.youtubeApi.error = errorData.error?.message || 'API check failed';
         }
       }
-    } catch (e) {
+    } catch (_e) {
       results.youtubeApi.error = 'Failed to check YouTube Data API';
     }
 
@@ -145,7 +145,7 @@ export async function POST(request: Request) {
 
           if (results.gpuQuota.available) break;
         }
-      } catch (e) {
+      } catch (_e) {
         // Continue checking other regions
       }
     }

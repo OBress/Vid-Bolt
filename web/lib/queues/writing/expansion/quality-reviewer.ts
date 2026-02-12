@@ -7,7 +7,6 @@
 
 import { generateJSON, generateText, type OpenRouterConfig } from '@/lib/ai/openrouter';
 import type { 
-  ExpandedBeat,
   ContinuityState,
   ScriptGenre,
 } from '../types';
@@ -411,7 +410,7 @@ Write the improved version now:`;
 /** Fast model for batch rating - much cheaper than pro */
 const BATCH_RATING_MODEL = 'google/gemini-2.0-flash-001';
 
-const BATCH_RATING_PROMPT = `You are a script quality rater. Rate each beat on a 1-10 scale based on:
+const _BATCH_RATING_PROMPT = `You are a script quality rater. Rate each beat on a 1-10 scale based on:
 - Natural language (no AI-isms like "delve", "tapestry", "unprecedented")
 - Engagement (keeps viewer watching)
 - Flow (smooth transitions, varied sentences)
@@ -490,7 +489,7 @@ Example for 3 sections: [7, 8, 6]`;
             return isNaN(num) ? 6 : Math.min(10, Math.max(1, num));
           });
         }
-      } catch (e) {
+      } catch (_e) {
         console.log('[BatchRating] JSON parse failed, trying fallback');
       }
     }

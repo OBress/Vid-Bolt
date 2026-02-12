@@ -23,7 +23,7 @@ const SERPER_API_ENDPOINT = 'https://google.serper.dev/images';
 const PRODUCTION_MAX_IMAGES = 10;
 
 // Supported image formats for classification (same as Wikimedia)
-const SUPPORTED_IMAGE_FORMATS = [
+const _SUPPORTED_IMAGE_FORMATS = [
   'image/jpeg',
   'image/png',
   'image/gif',

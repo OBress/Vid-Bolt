@@ -21,7 +21,6 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -67,17 +66,17 @@ export function ApiKeysTab() {
   const supabase = createClient();
 
   // GCP DevTools State
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [_isAdmin, setIsAdmin] = useState(false);
   const [projectId, setProjectId] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
+  const [_isSaving, setIsSaving] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [gcpToken, setGcpToken] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>(INITIAL_LOGS);
   const [vmStatus, setVmStatus] = useState<string>("NOT_FOUND");
   const [vmIp, setVmIp] = useState<string | null>(null);
   const [gcpLoading, setGcpLoading] = useState(false);
-  const [projectValid, setProjectValid] = useState<boolean | null>(null);
-  const [projectValidating, setProjectValidating] = useState(false);
+  const [_projectValid, _setProjectValid] = useState<boolean | null>(null);
+  const [_projectValidating, _setProjectValidating] = useState(false);
   const [apiReady, setApiReady] = useState(false);
 
   // Pre-flight check state (APIs + GPU quota)
@@ -344,7 +343,7 @@ export function ApiKeysTab() {
     return true;
   };
 
-  const handleSaveProjectId = async () => {
+  const _handleSaveProjectId = async () => {
     if (!userId || !projectId) return;
     setIsSaving(true);
     try {

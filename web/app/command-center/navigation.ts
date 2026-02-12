@@ -1,4 +1,4 @@
-import { Monitor, Target, Settings, Folder, type LucideIcon } from "lucide-react";
+import { Target, Folder, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   id: string;

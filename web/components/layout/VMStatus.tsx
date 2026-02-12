@@ -17,7 +17,7 @@ export function VMStatus() {
   const router = useRouter();
 
   // Handle Action Click
-  const handleAction = async (e: React.MouseEvent) => {
+  const _handleAction = async (e: React.MouseEvent) => {
     e.stopPropagation();
 
     // SETUP Redirect

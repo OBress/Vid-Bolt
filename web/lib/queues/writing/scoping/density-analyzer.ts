@@ -31,7 +31,7 @@ export interface DensityAnalysisOptions {
  */
 export function analyzeContentDensity(
   dossier: ResearchDossier | null,
-  options: DensityAnalysisOptions = {}
+  _options: DensityAnalysisOptions = {}
 ): ContentDensityAnalysis {
   // If no dossier, return default medium density
   if (!dossier) {

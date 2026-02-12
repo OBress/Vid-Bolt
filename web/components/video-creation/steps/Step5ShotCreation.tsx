@@ -12,15 +12,12 @@ import {
   User,
   Box,
   MapPin,
-  MoreHorizontal,
-  Smartphone,
   Search,
   Grid,
   Film,
   Edit2,
   Trash2,
   Loader2,
-  ArrowRight,
   RefreshCw,
   Save,
   Image,
@@ -32,7 +29,6 @@ import {
   Package,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
@@ -183,9 +179,9 @@ interface ElementItem {
 }
 
 export function Step5ShotCreation({
-  onNext,
-  onBack,
-  isLocked = false,
+  onNext: _onNext,
+  onBack: _onBack,
+  isLocked: _isLocked = false,
   outlineAssets,
   avScriptShots,
   onUpdateShots,
@@ -331,7 +327,7 @@ export function Step5ShotCreation({
   }, [assetReferenceImages]);
 
   // Check if we have missing elements (outline was lost)
-  const hasNoElements = elements.length === 0 && !outlineAssets;
+  const _hasNoElements = elements.length === 0 && !outlineAssets;
 
   // Create entity lookup for rendering @(EntityName) references
   const entityLookup = useMemo(
@@ -757,7 +753,7 @@ export function Step5ShotCreation({
 
                 {/* Shots List */}
                 <div className="p-1 space-y-[1px] bg-neutral-900/30">
-                  {avScriptShots.map((shot, index) => {
+                  {avScriptShots.map((shot, _index) => {
                     const displayShot = getDisplayShot(shot);
                     const hasChanges = hasPendingChange(shot.segment_index);
 
@@ -1130,7 +1126,7 @@ export function Step5ShotCreation({
             </DialogTitle>
             <DialogDescription className="text-neutral-400">
               Modify the shot details. Changes will be saved when you click
-              "Save All Changes".
+              &quot;Save All Changes&quot;.
             </DialogDescription>
           </DialogHeader>
 

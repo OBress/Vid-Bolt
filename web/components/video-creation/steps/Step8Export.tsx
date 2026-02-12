@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 import {
-  Share2,
   Clapperboard,
   Loader2,
   CheckCircle,
@@ -42,7 +41,7 @@ type ExportStatus = "idle" | "exporting" | "success" | "error";
 export function Step8Export({
   videoId,
   projectId,
-  onBack,
+  onBack: _onBack,
   onClose,
   audioChunks,
   shotList,
@@ -58,7 +57,7 @@ export function Step8Export({
   const hasPopulatedRef = useRef(false);
 
   // Get timeline data from editor store
-  const { trackItemsMap, tracks, duration, fps, size, timeline } = useStore();
+  const { trackItemsMap, tracks, duration, fps, size, timeline: _timeline } = useStore();
 
   // Get video name from navigation store
   const { currentVideoName } = useNavigationStore();

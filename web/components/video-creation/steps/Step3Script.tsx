@@ -11,18 +11,10 @@ import React, {
 } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  ArrowLeft,
-  Play,
   Loader2,
   CheckCircle,
-  FileText,
-  Search,
-  Users,
-  Layout,
-  Check,
   Plus,
   Send,
   X,
@@ -181,16 +173,16 @@ export const Step3Script = memo(
         videoId,
         projectId,
         outlineData,
-        outlineConfig,
+        outlineConfig: _outlineConfig,
         initialScriptOutput,
         isLoading: isLoadingProp,
         taskId: taskIdProp,
         onComplete,
         onSave,
         onScriptGenerated,
-        onBack,
-        isLocked,
-        lockedMessage,
+        onBack: _onBack,
+        isLocked: _isLocked,
+        lockedMessage: _lockedMessage,
       },
       ref,
     ) => {
@@ -206,12 +198,12 @@ export const Step3Script = memo(
       );
       const [progress, setProgress] = useState(0);
       const [currentStep, setCurrentStep] = useState<string | null>(null);
-      const [error, setError] = useState<string | null>(null);
+      const [_error, setError] = useState<string | null>(null);
       const [output, setOutput] = useState<ScriptOutput | null>(
         initialScriptOutput || null,
       );
       const [isStarting, setIsStarting] = useState(false);
-      const [activeTab, setActiveTab] = useState("script");
+      const [_activeTab, _setActiveTab] = useState("script");
 
       // Editing state for script
       const [editingScript, setEditingScript] = useState<string>(
@@ -397,7 +389,7 @@ export const Step3Script = memo(
         return () => clearInterval(interval);
       }, [view, taskId, fetchTaskStatus]);
 
-      const startGeneration = async () => {
+      const _startGeneration = async () => {
         if (!outlineData?.spine) {
           setError("Outline data is missing. Please complete Step 1 first.");
           return;
@@ -664,7 +656,7 @@ export const Step3Script = memo(
       };
 
       // Escape HTML special characters
-      const escapeHtml = useCallback((text: string) => {
+      const _escapeHtml = useCallback((text: string) => {
         return text
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
@@ -907,7 +899,7 @@ export const Step3Script = memo(
                       className="inline-flex items-center gap-1 px-2 py-1 bg-orange-500/20 text-orange-400 text-[10px] rounded max-w-full"
                     >
                       <span className="truncate max-w-[120px]">
-                        "{text.substring(0, 30)}..."
+                        &quot;{text.substring(0, 30)}...&quot;
                       </span>
                       <button
                         onClick={() => removeFromContext(i)}
@@ -1109,7 +1101,7 @@ export const Step3Script = memo(
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
               {output?.beatTimingSheet && output.beatTimingSheet.length > 0
-                ? output.beatTimingSheet.map((beat, i) => {
+                ? output.beatTimingSheet.map((beat, _i) => {
                     const expandedBeat = output.expandedBeats?.find(
                       (eb) => eb.beatIndex === beat.beatIndex,
                     );

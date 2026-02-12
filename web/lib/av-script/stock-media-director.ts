@@ -19,7 +19,7 @@ import { validateStockImage } from '@/lib/classification/media-classifier';
 import { searchAndStoreImages, searchAndStoreFirstMatch, deleteStockMediaAsset } from '@/lib/av-script/stock-media-utils';
 
 // Helper function to escape special regex characters
-function escapeRegex(str: string): string {
+function _escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 

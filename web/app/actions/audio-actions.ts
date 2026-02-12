@@ -111,7 +111,7 @@ export async function regenerateAudioClip(
     // 5. Update Video Metadata (to keep word_timestamps in sync if used)
     // Needs to consolidate all timestamps again
     // Logic similar to functions.ts finalize-audio
-    let allWordTimestamps: any[] = [];
+    const allWordTimestamps: any[] = [];
     let timeOffset = 0;
     
     // Sort chunks by index to ensure correct order

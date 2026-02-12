@@ -13,7 +13,7 @@
 
 import { Processor } from 'bullmq';
 import { executeResearchPhase } from '../writing/research';
-import { executeScopingPhase, quickScoping } from '../writing/scoping';
+import { executeScopingPhase } from '../writing/scoping';
 import { generateSpine } from '../writing/spine';
 import { generateAssetRegistry } from '../writing/assets';
 import type { 
@@ -72,7 +72,7 @@ export interface ResearchCompareOutput {
 // ============================================================================
 
 export const researchCompareProcessor: Processor<ResearchCompareInput, ResearchCompareOutput> = async (job) => {
-  const { userId, topic, genre, researchToggle, angle, sourcePreferences, researchProvider, durationRange } = job.data;
+  const { userId, topic, genre, researchToggle, angle, sourcePreferences, researchProvider: _researchProvider, durationRange } = job.data;
   
   // FORCE VALYU ONLY - no OpenRouter web search
   const useValyu = true;

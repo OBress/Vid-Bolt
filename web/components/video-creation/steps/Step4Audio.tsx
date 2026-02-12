@@ -1,10 +1,8 @@
-import { useState, useEffect } from "react";
 import { AudioChunk } from "@/types/video";
-import { useSequencedAudio, PlaybackSpeed } from "@/hooks/use-sequenced-audio";
+import { useSequencedAudio } from "@/hooks/use-sequenced-audio";
 import { AudioTimeline } from "../audio/AudioTimeline";
 import { AudioCard } from "../audio/AudioCard";
-import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, ArrowRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 interface Step4AudioProps {
   videoId: string;
@@ -19,8 +17,8 @@ export function Step4Audio({
   videoId,
   audioChunks,
   audioUrl,
-  onComplete,
-  onBack,
+  onComplete: _onComplete,
+  onBack: _onBack,
   onUpdateChunks,
 }: Step4AudioProps) {
   const {

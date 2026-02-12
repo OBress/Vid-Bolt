@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { UserDetailModal } from "../UserDetailModal";
 import { DeleteUserDialog, type DeleteMode } from "../DeleteUserDialog";
 import {
@@ -28,7 +27,6 @@ import {
   MoreHorizontal,
   Search,
   RefreshCw,
-  Filter,
   Eraser,
   Trash2,
   Copy,

@@ -5,7 +5,7 @@ export default (params: Array<string | number>) => {
 
   const parts = params.map(function (e: string | number) {
     let r = (+e).toString(16);
-    r.length === 1 && (r = "0" + r);
+    if (r.length === 1) { r = "0" + r; }
     return r;
   }, []);
 

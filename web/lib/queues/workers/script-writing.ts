@@ -104,7 +104,7 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
 
   try {
     // Get beat count for progress calculation
-    const totalBeats = outlineData.spine?.beats?.length || 1;
+    const _totalBeats = outlineData.spine?.beats?.length || 1;
     
     // Progress distribution:
     // 0-5%   = Initialization

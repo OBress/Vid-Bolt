@@ -66,7 +66,7 @@ CRITICAL RULES:
 
 For adjacent list items, ensure VISUAL VARIETY - each should be clearly different.
 
-${Object.entries(CONTENT_TYPE_GUIDANCE).map(([type, guidance]) => guidance).join('\n\n')}
+${Object.entries(CONTENT_TYPE_GUIDANCE).map(([_type, guidance]) => guidance).join('\n\n')}
 `;
 
 // ============================================================================

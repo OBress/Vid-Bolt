@@ -10,7 +10,7 @@ import { ReportList } from "@/components/features/intelligence/ReportList";
 
 export default function IntelligencePage() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedReport, setSelectedReport] = useState<Report | null>(null);
+  const [_selectedReport, setSelectedReport] = useState<Report | null>(null);
 
   const reports: Report[] = [
     {

@@ -9,13 +9,11 @@
  */
 
 import { 
-  valyuSearch, 
   performDeepResearch 
 } from '@/lib/valyu';
 import type { 
   ValyuSearchResult, 
   ValyuDeepResearchResult,
-  MappedValyuSource,
 } from '@/lib/valyu/types';
 import type { 
   VerifiedFact, 
@@ -34,7 +32,6 @@ import {
   generateQuoteId, 
   generateTimelineId,
   generateSourceId,
-  assignConfidenceLevel,
 } from '../utils';
 import type { ResearchQuestion } from './topic-decomposition';
 import type { ExtractedFacts } from './fact-extraction';
@@ -476,7 +473,7 @@ async function transformDeepResearchToFacts(
  * Transform Valyu Search results to ExtractedFacts
  * Uses LLM to extract structured facts from the raw source content
  */
-async function transformSearchResultsToFacts(
+async function _transformSearchResultsToFacts(
   userId: string,
   results: ValyuSearchResult[],
   topic: string

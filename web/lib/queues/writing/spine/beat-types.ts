@@ -4,7 +4,7 @@
  * Beat type definitions and factory functions for spine generation.
  */
 
-import type { Beat, BeatType, EngagementMarkers } from '../types';
+import type { Beat, BeatType } from '../types';
 
 // ============================================================================
 // TYPES

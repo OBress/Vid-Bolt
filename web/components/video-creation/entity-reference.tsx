@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { EntityBadge, type EntityType } from "./entity-badge";
 import { Image as ImageIcon } from "lucide-react";
 import {

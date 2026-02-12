@@ -9,15 +9,11 @@
 import { Job } from 'bullmq';
 import { createClient } from '@supabase/supabase-js';
 import { 
-  classifyMedia,
-  checkImageForWatermark,
-  checkImageRelevance,
   classifyAndValidateImage,
 } from '@/lib/classification/media-classifier';
 import type { ClassificationResult, ImageClassification, VideoClassification } from '@/lib/classification/types';
 import { generateEmbedding } from '@/lib/ai/embedding';
 import { searchSerperImages, downloadSerperImage, getExtensionFromUrl } from '@/lib/serper/client';
-import { PexelsApi } from '@/lib/pexels/api';
 import { YouTubeApi } from '@/lib/youtube/api';
 import { selectBestVideo } from '@/lib/youtube/youtube-ranker';
 import type { MediaDensityLevel } from '@/lib/query-generator/types';
@@ -75,9 +71,9 @@ export interface StockMediaJobResult {
 // Configuration
 // ==========================================================================
 
-const QUALITY_THRESHOLD = 5;
-const RELEVANCE_THRESHOLD = 5;
-const WATERMARK_CONFIDENCE_THRESHOLD = 0.7;
+const _QUALITY_THRESHOLD = 5;
+const _RELEVANCE_THRESHOLD = 5;
+const _WATERMARK_CONFIDENCE_THRESHOLD = 0.7;
 
 // Quotas by level - focused on quality over quantity
 // Stock media is supplementary to motion graphics and 3D animation
@@ -164,7 +160,7 @@ async function updateTaskProgress(
 }
 
 // Helper to extract classification data safely
-function getClassificationData(result: ClassificationResult) {
+function _getClassificationData(result: ClassificationResult) {
   const cls = result.classification as ImageClassification | VideoClassification;
   return {
     description: cls.description,
@@ -271,7 +267,7 @@ export async function stockMediaProcessor(
             let imageBuffer: Buffer;
             try {
               imageBuffer = await downloadSerperImage(img.imageUrl);
-            } catch (e) {
+            } catch (_e) {
               continue; // Skip failed downloads silently
             }
             
@@ -378,7 +374,7 @@ export async function stockMediaProcessor(
             stats.stored++;
             stats.classified++;
             imagesFromThisQuery++;
-          } catch (err) {
+          } catch (_err) {
             // Continue to next image on any error
           }
         }
@@ -659,7 +655,7 @@ export async function stockMediaProcessor(
           await updateTaskProgress(supabase, taskId, 60, 'video_generation', `Processing ${segmentJobs.length} YouTube videos...`);
           
           const { Job } = await import('bullmq');
-          const { getRedisConnection } = await import('@/lib/queues/redis');
+          const { getRedisConnection: _getRedisConnection } = await import('@/lib/queues/redis');
           
           for (let i = 0; i < segmentJobs.length; i++) {
             const { jobId, videoTitle } = segmentJobs[i];

@@ -105,14 +105,14 @@ const SCRAPING_PHASES = [
 // =============================================================================
 
 export function Step2StockMedia({
-  videoId,
+  videoId: _videoId,
   isLoading,
   taskId,
   initialMedia,
   onMediaLoaded,
   onNext,
   onBack,
-  isLocked = false,
+  isLocked: _isLocked = false,
   stockMediaLevel = "standard_images",
 }: Step2StockMediaProps) {
   // Determine if we're in images-only mode
@@ -353,7 +353,7 @@ export function Step2StockMedia({
   };
 
   // Get current phase index for progress display
-  const getCurrentPhaseIndex = () => {
+  const _getCurrentPhaseIndex = () => {
     const idx = SCRAPING_PHASES.findIndex((p) =>
       currentPhase?.toLowerCase().includes(p.key.toLowerCase()),
     );
@@ -420,7 +420,7 @@ export function Step2StockMedia({
         {/* Phase checklist */}
         <div className="w-full max-w-md bg-neutral-900/50 border border-neutral-800 rounded-lg p-4">
           <div className="space-y-3">
-            {SCRAPING_PHASES.map((phase, index) => {
+            {SCRAPING_PHASES.map((phase, _index) => {
               const PhaseIcon = phase.icon;
               const isPhaseActive = activePhaseKeys.includes(phase.key);
               const isSkipped = !isPhaseActive;

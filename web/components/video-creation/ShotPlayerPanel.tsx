@@ -4,7 +4,6 @@ import React, { useMemo, useEffect, useRef } from "react";
 import { AudioChunk } from "@/types/video";
 import {
   useSequencedAudio,
-  PlaybackSpeed,
   PLAYBACK_SPEEDS,
 } from "@/hooks/use-sequenced-audio";
 import {

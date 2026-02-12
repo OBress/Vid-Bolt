@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -21,7 +20,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  ArrowLeft,
   Play,
   Loader2,
   CheckCircle,
@@ -36,7 +34,6 @@ import {
   ChevronUp,
   Trash2,
   Plus,
-  X,
   Package,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
@@ -205,7 +202,7 @@ export function Step1Outline({
   onComplete,
   onSave,
   onStockMediaChange,
-  onBack,
+  onBack: _onBack,
   isLocked,
   lockedMessage,
 }: Step1OutlineProps) {
@@ -497,7 +494,7 @@ export function Step1Outline({
     }
   };
 
-  const handleConfirm = () => {
+  const _handleConfirm = () => {
     if (output) {
       // Use the editing spine if we have unsaved changes
       const finalOutput =

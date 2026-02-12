@@ -34,7 +34,7 @@ export default function CommandCenterPage() {
       setCreateDialogOpen(false);
       setNewProjectName("");
       router.push(`/command-center/media/${newProject.id}`);
-    } catch (err) {
+    } catch (_err) {
       // Error handled in hook
     } finally {
       setCreating(false);

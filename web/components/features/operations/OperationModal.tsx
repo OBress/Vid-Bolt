@@ -48,7 +48,7 @@ export function OperationModal({ operation, onClose }: OperationModalProps) {
     }
   };
 
-  const getStatusIcon = (status: string) => {
+  const _getStatusIcon = (status: string) => {
     switch (status) {
       case "active":
         return <Target className="w-4 h-4" />;

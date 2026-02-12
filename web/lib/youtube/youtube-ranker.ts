@@ -5,7 +5,7 @@
  * and content validation before expensive download operations.
  */
 
-import { callOpenRouter, OpenRouterConfig } from '@/lib/ai/openrouter';
+import { callOpenRouter } from '@/lib/ai/openrouter';
 
 // =============================================================================
 // Types

@@ -43,7 +43,7 @@ interface EdgeFeatherSelectorProps {
 
 const SectionHeader: React.FC<{ icon: React.ElementType; title: string }> = ({ icon: Icon, title }) => (
   <div className="flex items-center gap-2 mb-2">
-    <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+    {React.createElement(Icon, { className: "h-3.5 w-3.5 text-muted-foreground" })}
     <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
       {title}
     </span>

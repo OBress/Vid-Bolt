@@ -21,7 +21,7 @@ import {
   type TrackWithClips,
 } from '../../../stores/video-editor-store';
 import { useShallow } from 'zustand/react/shallow';
-import type { TimelineClip, TimelineTrack } from '../../../types/timeline-v2';
+import type { TimelineClip, TimelineTrack, TrackGroup } from '../../../types/timeline-v2';
 import type { TimelineItem } from '../types';
 
 interface UseTimelineTracksProps {
@@ -39,9 +39,9 @@ interface UseTimelineTracksReturn {
   tracks: TrackWithClips[];
   
   // Track handlers
-  handleAddTrack: (type: 'video' | 'audio') => string;
+  handleAddTrack: (type: 'video' | 'audio', group?: TrackGroup) => string;
   handleDeleteTrack: (trackId: string) => void;
-  handleTrackReorder: (trackIds: string[]) => void;
+  handleTrackReorder: (fromIndex: number, toIndex: number) => void;
   handleToggleLock: (trackId: string) => void;
   handleToggleVisibility: (trackId: string) => void;
   handleToggleMute: (trackId: string) => void;
@@ -191,16 +191,19 @@ export function useTimelineTracks({
   // === TRACK HANDLERS ===
   // All handlers use getActions() to get fresh store actions without subscribing to state
   
-  const handleAddTrack = useCallback((type: 'video' | 'audio') => {
-    return getActions().addTrack(type);
+  const handleAddTrack = useCallback((type: 'video' | 'audio', group?: TrackGroup) => {
+    return getActions().addTrack(type, group ? { group } : undefined);
   }, [getActions]);
 
   const handleDeleteTrack = useCallback((trackId: string) => {
     getActions().deleteTrack(trackId, true); // true = also delete clips on track
   }, [getActions]);
 
-  const handleTrackReorder = useCallback((trackIds: string[]) => {
-    getActions().reorderTracks(trackIds);
+  const handleTrackReorder = useCallback((fromIndex: number, toIndex: number) => {
+    const currentOrder = [...getActions().trackOrder];
+    const [moved] = currentOrder.splice(fromIndex, 1);
+    currentOrder.splice(toIndex, 0, moved);
+    getActions().reorderTracks(currentOrder);
   }, [getActions]);
 
   const handleToggleLock = useCallback((trackId: string) => {

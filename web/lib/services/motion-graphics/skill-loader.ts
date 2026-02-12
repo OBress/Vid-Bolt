@@ -52,7 +52,7 @@ class SkillLoader {
       let files: string[];
       try {
         files = await fs.readdir(skillsDir);
-      } catch (err) {
+      } catch (_err) {
         console.warn('[SkillLoader] Skills directory not found:', skillsDir);
         this.initialized = true;
         return;

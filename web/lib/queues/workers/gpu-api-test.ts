@@ -22,7 +22,6 @@ import {
 import {
   callGpuImageGenerate,
   callGpuImageEdit,
-  callGpuVideoGenerate,
   callGpuLtx2Generate,
   callGpuLtx2Interpolate,
   callGpuMusicGenerate,
@@ -534,7 +533,7 @@ export const gpuLtx2InterpolateProcessor: Processor<GpuLtx2InterpolateJobData> =
     await updateTaskStatus(taskId, { status: 'running', current_phase: 'video_generation', current_step: 'Generating presigned URL...', progress_percent: 10 });
 
     const key = generateGpuTestKey(userId, 'video', 'mp4');
-    const { putUrl, publicUrl } = await generatePresignedPutUrl(key, 'video/mp4');
+    const { putUrl, publicUrl: _publicUrl } = await generatePresignedPutUrl(key, 'video/mp4');
 
     await updateTaskStatus(taskId, { current_step: 'Calling GPU API...', progress_percent: 30 });
 

@@ -241,7 +241,7 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
           const { data: video } = await supabase.from('videos').select('name, idea').eq('id', videoId).single();
           videoTopic = video?.name || video?.idea || '';
           console.log(`${logPrefix} Using video topic for stock context: "${videoTopic.substring(0, 50)}..."`);
-        } catch (e) {
+        } catch (_e) {
           console.warn(`${logPrefix} Could not fetch video name for stock context`);
         }
         
@@ -408,7 +408,7 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
 /**
  * Generate a simple fallback summary based on content type.
  */
-function generateFallbackSummary(segment: { content_type: string; text: string }): string {
+function _generateFallbackSummary(segment: { content_type: string; text: string }): string {
   const firstWords = segment.text.split(' ').slice(0, 6).join(' ');
   
   switch (segment.content_type) {
@@ -501,7 +501,7 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
     
     // Import the multi-agent architecture
     const { buildAgentContext, routeToAgent } = await import('@/lib/av-script/agent-prompts');
-    const { generateJSON } = await import('@/lib/ai/openrouter');
+    const { generateJSON: _generateJSON } = await import('@/lib/ai/openrouter');
     
     // Build project metadata for context
     const projectMetadata = {
@@ -513,7 +513,7 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
     };
     
     // Process each shot through its specialized agent
-    let detailedPrompts: Array<{ index: number; prompt: string; agentUsed: string }> = [];
+    const detailedPrompts: Array<{ index: number; prompt: string; agentUsed: string }> = [];
     
     // Process in parallel batches of 3 to avoid rate limits
     const BATCH_SIZE = 3;
@@ -793,7 +793,7 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
 /**
  * Build entity context string for AI prompts
  */
-function buildEntityContext(outlineAssets?: AVScriptPart2JobData['outlineAssets']): string {
+function _buildEntityContext(outlineAssets?: AVScriptPart2JobData['outlineAssets']): string {
   const characters = outlineAssets?.characters || [];
   const locations = outlineAssets?.locations || [];
   const objects = outlineAssets?.objects || [];

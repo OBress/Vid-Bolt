@@ -40,7 +40,7 @@ function getServiceClient() {
 }
 
 // GET /api/videos/incomplete - Get user's incomplete videos
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     // Get authenticated user
     const { user, error: authError } = await getAuthenticatedUser();

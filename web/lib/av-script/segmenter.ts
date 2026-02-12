@@ -15,7 +15,6 @@ import {
   SEGMENT_BOUNDS,
   SENTENCE_ENDINGS,
   CLAUSE_SEPARATORS,
-  ListSpan,
 } from "./types";
 import { getContentTypeForWord, isInList } from "./analyzer";
 
@@ -145,7 +144,7 @@ function buildSegments(
     const durationRange = CONTENT_DURATION_RANGES[contentType];
     
     // Find the best break point for this segment
-    const { endIndex, reason } = findBestBreakPoint(
+    const { endIndex, reason: _reason } = findBestBreakPoint(
       currentStartIndex,
       wordTimestamps,
       breakPoints,
@@ -191,7 +190,7 @@ function findBestBreakPoint(
 ): { endIndex: number; reason: string } {
   const startTime = wordTimestamps[startIndex].start_seconds;
   const targetEndTime = startTime + durationRange.target;
-  const minEndTime = startTime + durationRange.min;
+  const _minEndTime = startTime + durationRange.min;
   const maxEndTime = startTime + durationRange.max;
   
   // Special handling for list items: try to end at item boundaries
@@ -268,7 +267,7 @@ function findFallbackBreakPoint(
   startIndex: number,
   wordTimestamps: WordTimestamp[],
   targetEndTime: number,
-  maxEndTime: number
+  _maxEndTime: number
 ): { endIndex: number; reason: string } {
   const startTime = wordTimestamps[startIndex].start_seconds;
   
@@ -381,7 +380,7 @@ function validateAndAdjustSegments(
  */
 function splitLongSegment(
   segment: ShotEvent,
-  allWordTimestamps: WordTimestamp[]
+  _allWordTimestamps: WordTimestamp[]
 ): ShotEvent[] {
   const words = segment.word_timestamps || [];
   if (words.length <= 1) {

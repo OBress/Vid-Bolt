@@ -293,6 +293,7 @@ export const selectTracksWithClips = createSelector(
             data: {
               ...clip.data,
               sourceId: clip.sourceId,
+              mediaSrc: clip.media?.src,
               transform: clip.transform,
               text: clip.text,
               linkedClipId: clip.linkedClipId,

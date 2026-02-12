@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
         "X-API-Key": gpuApiKey,
       },
       body: request.body,
-      // @ts-ignore - duplex is required for streaming bodies in node fetch but types might be missing
+      // @ts-expect-error - duplex is required for streaming bodies in node fetch but types might be missing
       duplex: 'half', 
     });
 

@@ -18,7 +18,6 @@ import { Step5ShotCreation } from "./steps/Step5ShotCreation";
 import { Step6SceneReview } from "./steps/Step6SceneReview";
 import { Step7Editor } from "./steps/Step7Editor";
 import { Step8Export } from "./steps/Step8Export";
-import { PlaceholderStep } from "./steps/PlaceholderStep";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
 import { useVideos } from "@/hooks/use-videos";
 import { Loader2 } from "lucide-react";
@@ -145,7 +144,7 @@ function stageToStepNumber(stage: VideoStage): number {
 }
 
 // Helper function to generate a fallback script when workflow fails
-function generateFallbackScript(prompt: string): string {
+function _generateFallbackScript(prompt: string): string {
   return `[INTRO - 0:00-0:15]
 HOST: "Have you ever wondered about ${prompt}? Today, we're diving deep into this fascinating topic."
 
@@ -185,11 +184,11 @@ export function VideoCreationWizard({
   videoId: initialVideoId,
 }: VideoCreationWizardProps) {
   const { setCurrentVideoName } = useNavigationStore();
-  const { createVideo, updateVideo } = useVideos({
+  const { createVideo: _createVideo, updateVideo } = useVideos({
     projectId,
     autoFetch: false,
   });
-  const [isSaving, setIsSaving] = useState(false);
+  const [_isSaving, _setIsSaving] = useState(false);
 
   // GPU VM status for Step 4->5 transition warning
   const { displayStatus: vmDisplayStatus, startVM } = useGCPVM();
@@ -2172,7 +2171,7 @@ export function VideoCreationWizard({
               if (state.videoId) {
                 try {
                   await updateVideo(state.videoId, { status: "completed" });
-                } catch (err) {
+                } catch (_err) {
                   console.error("Failed to mark video as completed:");
                 }
               }

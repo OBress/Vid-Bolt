@@ -158,7 +158,7 @@ const ToolButton: React.FC<{
           }
         `}
       >
-        <Icon className="w-4 h-4" />
+        {React.createElement(Icon, { className: "w-4 h-4" })}
       </button>
       <ToolTooltip
         buttonRef={buttonRef}

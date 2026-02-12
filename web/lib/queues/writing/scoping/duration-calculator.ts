@@ -16,7 +16,6 @@ import {
   DEFAULT_CONTENT_ALLOCATION,
   GENRE_CONFIG,
 } from '../config';
-import { calculateContentScore } from './density-analyzer';
 
 // ============================================================================
 // TYPES
@@ -258,7 +257,7 @@ export function calculateTimeAllocation(
  */
 export function shouldReconsiderRange(
   contentFit: ContentFit,
-  durationRange: DurationRange
+  _durationRange: DurationRange
 ): { shouldReconsider: boolean; suggestion: string } {
   if (contentFit.tooThin) {
     const suggestedMax = Math.ceil(contentFit.idealDurationSeconds / 60);

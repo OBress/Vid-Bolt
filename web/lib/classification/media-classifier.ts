@@ -270,7 +270,7 @@ function parseJsonResponse<T>(content: string): T {
 
   try {
     return JSON.parse(cleaned) as T;
-  } catch (error) {
+  } catch (_error) {
     console.error('[Classify] JSON parse error. Content preview:', cleaned.substring(0, 500));
     throw new Error(`Failed to parse classification response: ${cleaned.substring(0, 200)}`);
   }

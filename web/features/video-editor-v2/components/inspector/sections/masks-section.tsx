@@ -138,7 +138,7 @@ interface SectionHeaderProps {
 const SectionHeader: React.FC<SectionHeaderProps> = ({ icon: Icon, title, children }) => (
   <div className="flex items-center justify-between mb-3">
     <div className="flex items-center gap-2">
-      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+      {React.createElement(Icon, { className: "h-3.5 w-3.5 text-muted-foreground" })}
       <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
         {title}
       </span>
@@ -239,10 +239,10 @@ const MaskItem: React.FC<MaskItemProps> = ({
         className="flex items-center gap-1.5 px-3 py-2 cursor-pointer hover:bg-neutral-800/30 transition-colors"
         onClick={onExpand}
       >
-        <Icon className={cn(
+        {React.createElement(Icon, { className: cn(
           "h-3.5 w-3.5",
           mask.enabled ? "text-primary" : "text-muted-foreground/50"
-        )} />
+        ) })}
         <span className="text-xs font-medium text-foreground/90 flex-1 truncate">
           {mask.name || name}
         </span>

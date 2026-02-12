@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useCallback } from "react";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { SceneCard } from "./SceneCard";
 import type { GeneratedMedia, RoutingTag, SoundEffect } from "@/types/video";
 

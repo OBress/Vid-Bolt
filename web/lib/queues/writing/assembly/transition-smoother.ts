@@ -125,7 +125,7 @@ Return JSON only:
 export async function smoothTransitions(
   userId: string,
   expandedBeats: ExpandedBeat[],
-  spine: Spine
+  _spine: Spine
 ): Promise<TransitionSmoothingResult> {
   console.log(`[TransitionSmoother] Analyzing ${expandedBeats.length - 1} transitions...`);
 

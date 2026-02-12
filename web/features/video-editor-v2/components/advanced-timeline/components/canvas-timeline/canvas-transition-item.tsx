@@ -137,6 +137,252 @@ function getTransitionDisplayName(type: string): string {
 }
 
 // ============================================================
+// TYPE-SPECIFIC TRANSITION ICONS
+// ============================================================
+
+/**
+ * Draws a type-specific icon at the given center position.
+ * Each transition type gets a distinct visual representation.
+ */
+function drawTransitionTypeIcon(
+  g: Graphics,
+  type: string,
+  cx: number,
+  cy: number,
+  sz: number,
+  color: number,
+): void {
+  const lowerType = type.toLowerCase();
+  g.setStrokeStyle({ color, width: 1.5, alpha: 0.9 });
+
+  // --- Crossfade / Dissolve: overlapping translucent rectangles ---
+  if (lowerType.includes('crossfade') || lowerType === 'dissolve') {
+    // Left rect
+    g.rect(cx - sz - 1, cy - sz + 1, sz * 1.4, sz * 1.6);
+    g.fill({ color, alpha: 0.35 });
+    g.stroke();
+    // Right rect (overlapping)
+    g.rect(cx - 1, cy - sz - 1, sz * 1.4, sz * 1.6);
+    g.fill({ color, alpha: 0.25 });
+    g.stroke();
+    return;
+  }
+
+  // --- Fade / Fade to black / Fade to white: gradient bars ---
+  if (lowerType.includes('fade')) {
+    const bars = 4;
+    const totalW = sz * 2;
+    const barW = totalW / bars;
+    for (let i = 0; i < bars; i++) {
+      const alpha = lowerType.includes('in') || lowerType.includes('white')
+        ? 0.2 + (i / bars) * 0.7
+        : 0.9 - (i / bars) * 0.7;
+      g.rect(cx - sz + i * barW, cy - sz * 0.7, barW - 1, sz * 1.4);
+      g.fill({ color, alpha });
+    }
+    return;
+  }
+
+  // --- Wipe directions: arrow pointing in wipe direction ---
+  if (lowerType.includes('wipe')) {
+    const arrowSz = sz * 0.8;
+    if (lowerType.includes('right')) {
+      // Right arrow
+      g.moveTo(cx - arrowSz, cy).lineTo(cx + arrowSz, cy);
+      g.stroke();
+      g.moveTo(cx + arrowSz - 2, cy - 3).lineTo(cx + arrowSz, cy).lineTo(cx + arrowSz - 2, cy + 3);
+      g.stroke();
+      // Vertical wipe line
+      g.moveTo(cx, cy - sz).lineTo(cx, cy + sz);
+      g.stroke();
+    } else if (lowerType.includes('left')) {
+      g.moveTo(cx + arrowSz, cy).lineTo(cx - arrowSz, cy);
+      g.stroke();
+      g.moveTo(cx - arrowSz + 2, cy - 3).lineTo(cx - arrowSz, cy).lineTo(cx - arrowSz + 2, cy + 3);
+      g.stroke();
+      g.moveTo(cx, cy - sz).lineTo(cx, cy + sz);
+      g.stroke();
+    } else if (lowerType.includes('up')) {
+      g.moveTo(cx, cy + arrowSz).lineTo(cx, cy - arrowSz);
+      g.stroke();
+      g.moveTo(cx - 3, cy - arrowSz + 2).lineTo(cx, cy - arrowSz).lineTo(cx + 3, cy - arrowSz + 2);
+      g.stroke();
+      g.moveTo(cx - sz, cy).lineTo(cx + sz, cy);
+      g.stroke();
+    } else {
+      // Down
+      g.moveTo(cx, cy - arrowSz).lineTo(cx, cy + arrowSz);
+      g.stroke();
+      g.moveTo(cx - 3, cy + arrowSz - 2).lineTo(cx, cy + arrowSz).lineTo(cx + 3, cy + arrowSz - 2);
+      g.stroke();
+      g.moveTo(cx - sz, cy).lineTo(cx + sz, cy);
+      g.stroke();
+    }
+    return;
+  }
+
+  // --- Slide directions: double arrow ---
+  if (lowerType.includes('slide')) {
+    const arrowSz = sz * 0.7;
+    const isVertical = lowerType.includes('up') || lowerType.includes('down');
+    const isPositive = lowerType.includes('right') || lowerType.includes('down');
+
+    if (isVertical) {
+      const dir = isPositive ? 1 : -1;
+      // Box outline
+      g.rect(cx - sz * 0.6, cy - sz * 0.6, sz * 1.2, sz * 1.2);
+      g.stroke();
+      // Arrow inside
+      g.moveTo(cx, cy - arrowSz * 0.5 * dir).lineTo(cx, cy + arrowSz * 0.5 * dir);
+      g.stroke();
+    } else {
+      const dir = isPositive ? 1 : -1;
+      g.rect(cx - sz * 0.6, cy - sz * 0.6, sz * 1.2, sz * 1.2);
+      g.stroke();
+      g.moveTo(cx - arrowSz * 0.5 * dir, cy).lineTo(cx + arrowSz * 0.5 * dir, cy);
+      g.stroke();
+    }
+    return;
+  }
+
+  // --- Zoom: expanding/contracting concentric rectangles ---
+  if (lowerType.includes('zoom')) {
+    const isIn = lowerType.includes('in');
+    const s1 = isIn ? sz * 0.4 : sz * 0.9;
+    const s2 = isIn ? sz * 0.9 : sz * 0.4;
+    g.rect(cx - s1, cy - s1, s1 * 2, s1 * 2);
+    g.stroke();
+    g.setStrokeStyle({ color, width: 1, alpha: 0.5 });
+    g.rect(cx - s2, cy - s2, s2 * 2, s2 * 2);
+    g.stroke();
+    return;
+  }
+
+  // --- Blur: concentric circles ---
+  if (lowerType.includes('blur')) {
+    g.circle(cx, cy, sz * 0.4);
+    g.stroke();
+    g.setStrokeStyle({ color, width: 1, alpha: 0.5 });
+    g.circle(cx, cy, sz * 0.7);
+    g.stroke();
+    g.setStrokeStyle({ color, width: 0.5, alpha: 0.3 });
+    g.circle(cx, cy, sz);
+    g.stroke();
+    return;
+  }
+
+  // --- Iris circle: circle icon ---
+  if (lowerType.includes('iriscircle')) {
+    g.circle(cx, cy, sz * 0.7);
+    g.stroke();
+    // Small center dot
+    g.circle(cx, cy, 1.5);
+    g.fill({ color, alpha: 0.8 });
+    return;
+  }
+
+  // --- Iris rectangle: rectangle icon ---
+  if (lowerType.includes('irisrectangle')) {
+    g.rect(cx - sz * 0.6, cy - sz * 0.5, sz * 1.2, sz);
+    g.stroke();
+    g.circle(cx, cy, 1.5);
+    g.fill({ color, alpha: 0.8 });
+    return;
+  }
+
+  // --- Flip: rotation arrow ---
+  if (lowerType.includes('flip')) {
+    const isHoriz = lowerType.includes('horizontal');
+    // Half-circle arc (approximated with lines)
+    if (isHoriz) {
+      g.moveTo(cx - sz, cy - 2).lineTo(cx, cy - sz * 0.8).lineTo(cx + sz, cy - 2);
+      g.stroke();
+      // Arrowhead
+      g.moveTo(cx + sz - 3, cy - 5).lineTo(cx + sz, cy - 2).lineTo(cx + sz - 3, cy + 1);
+      g.stroke();
+    } else {
+      g.moveTo(cx - 2, cy - sz).lineTo(cx - sz * 0.8, cy).lineTo(cx - 2, cy + sz);
+      g.stroke();
+      g.moveTo(cx - 5, cy + sz - 3).lineTo(cx - 2, cy + sz).lineTo(cx + 1, cy + sz - 3);
+      g.stroke();
+    }
+    return;
+  }
+
+  // --- Fallback: generic shuffle icon ---
+  g.moveTo(cx - sz, cy - 2).lineTo(cx + sz, cy - 2);
+  g.stroke();
+  g.moveTo(cx + sz - 2, cy - 4).lineTo(cx + sz, cy - 2).lineTo(cx + sz - 2, cy);
+  g.stroke();
+  g.moveTo(cx + sz, cy + 2).lineTo(cx - sz, cy + 2);
+  g.stroke();
+  g.moveTo(cx - sz + 2, cy).lineTo(cx - sz, cy + 2).lineTo(cx - sz + 2, cy + 4);
+  g.stroke();
+}
+
+/**
+ * Draws a subtle background pattern specific to the transition type.
+ */
+function drawTransitionBgPattern(
+  g: Graphics,
+  type: string,
+  w: number,
+  h: number,
+): void {
+  const lowerType = type.toLowerCase();
+
+  // Crossfade/dissolve: diagonal hatching
+  if (lowerType.includes('crossfade') || lowerType === 'dissolve') {
+    g.setStrokeStyle({ color: 0xffffff, width: 0.5, alpha: 0.10 });
+    const step = 8;
+    for (let x = step; x < w; x += step) {
+      g.moveTo(x, 0).lineTo(x - Math.min(step, h), Math.min(step, h));
+      g.stroke();
+    }
+    return;
+  }
+
+  // Fade: vertical gradient bars
+  if (lowerType.includes('fade')) {
+    const bars = Math.floor(w / 6);
+    for (let i = 0; i < bars; i++) {
+      const alpha = 0.02 + (i / bars) * 0.08;
+      g.rect(i * 6, 0, 4, h);
+      g.fill({ color: 0xffffff, alpha });
+    }
+    return;
+  }
+
+  // Wipe/Slide: directional lines
+  if (lowerType.includes('wipe') || lowerType.includes('slide')) {
+    const isVertical = lowerType.includes('up') || lowerType.includes('down');
+    g.setStrokeStyle({ color: 0xffffff, width: 0.5, alpha: 0.08 });
+    if (isVertical) {
+      const step = 6;
+      for (let y = step; y < h; y += step) {
+        g.moveTo(0, y).lineTo(w, y);
+        g.stroke();
+      }
+    } else {
+      const step = 6;
+      for (let x = step; x < w; x += step) {
+        g.moveTo(x, 0).lineTo(x, h);
+        g.stroke();
+      }
+    }
+    return;
+  }
+
+  // Default: subtle diagonal lines
+  g.setStrokeStyle({ color: 0xffffff, width: 0.5, alpha: 0.08 });
+  const step = 10;
+  for (let x = step; x < w; x += step) {
+    g.moveTo(x, 0).lineTo(x - Math.min(step, h), Math.min(step, h));
+    g.stroke();
+  }
+}
+
+// ============================================================
 // COMPONENT
 // ============================================================
 
@@ -209,35 +455,19 @@ export const CanvasTransitionItem = React.memo(function CanvasTransitionItem({
       g.roundRect(w - 3, 0, 3, h, CORNER_RADIUS);
       g.fill({ color: colorScheme.accent, alpha: 0.9 });
 
-      // Shuffle icon (⇄) in center
+      // Type-specific icon in center
       if (w >= MIN_WIDTH_FOR_ICON) {
         const iconX = w >= MIN_WIDTH_FOR_LABEL ? LABEL_PADDING + 1 : w / 2;
         const iconY = h / 2;
-        const sz = Math.min(4, h * 0.2);
+        const sz = Math.min(5, h * 0.22);
+        const iconColor = colorScheme.icon;
 
-        g.setStrokeStyle({ color: colorScheme.icon, width: 1.5, alpha: 0.9 });
-
-        // Top arrow (→)
-        g.moveTo(iconX - sz, iconY - 2).lineTo(iconX + sz, iconY - 2);
-        g.stroke();
-        g.moveTo(iconX + sz - 2, iconY - 4).lineTo(iconX + sz, iconY - 2).lineTo(iconX + sz - 2, iconY);
-        g.stroke();
-
-        // Bottom arrow (←)
-        g.moveTo(iconX + sz, iconY + 2).lineTo(iconX - sz, iconY + 2);
-        g.stroke();
-        g.moveTo(iconX - sz + 2, iconY).lineTo(iconX - sz, iconY + 2).lineTo(iconX - sz + 2, iconY + 4);
-        g.stroke();
+        drawTransitionTypeIcon(g, transition.type, iconX, iconY, sz, iconColor);
       }
 
-      // Subtle diagonal crossfade pattern (visual hint that this is a transition)
+      // Subtle background pattern (type-aware)
       if (w > 24) {
-        g.setStrokeStyle({ color: 0xffffff, width: 0.5, alpha: 0.12 });
-        const step = 8;
-        for (let x = step; x < w; x += step) {
-          g.moveTo(x, 0).lineTo(x - Math.min(step, h), Math.min(step, h));
-          g.stroke();
-        }
+        drawTransitionBgPattern(g, transition.type, w, h);
       }
 
       // Border stroke

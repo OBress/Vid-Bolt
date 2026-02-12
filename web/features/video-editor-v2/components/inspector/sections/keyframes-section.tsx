@@ -2376,7 +2376,7 @@ export const KeyframesSection: React.FC<KeyframesSectionProps> = ({
             return (
               <Fragment key={mask.id}>
                 <div className="flex items-center h-8 bg-muted/20 border-b border-t border-border px-3 gap-2">
-                  <MaskIcon className="h-3.5 w-3.5" style={{ color: maskColor }} />
+                  {React.createElement(MaskIcon, { className: "h-3.5 w-3.5", style: { color: maskColor } })}
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                     {maskName}
                   </span>

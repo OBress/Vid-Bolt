@@ -1,4 +1,4 @@
-import React, { use, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -12,7 +12,6 @@ import { ScrollArea } from "./ui/scroll-area";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import useUploadStore from "@/features/editor/store/use-upload-store";
-import axios from "axios";
 import { Input } from "./ui/input";
 type ModalUploadProps = {
   type?: string;
@@ -50,7 +49,7 @@ const ModalUpload: React.FC<ModalUploadProps> = ({ type = "all" }) => {
   }>({});
   const [videoUrl, setVideoUrl] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
+  const [isUploading, _setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const triggerFileInput = () => {
@@ -120,10 +119,10 @@ const ModalUpload: React.FC<ModalUploadProps> = ({ type = "all" }) => {
     }
   };
 
-  const handleRemoveFile = (id: string, file: File) => {
+  const handleRemoveFile = (id: string, _file: File) => {
     setFiles(files.filter((f) => f.id !== id));
   };
-  function getTypeFromContentType(contentType: string): string {
+  function _getTypeFromContentType(contentType: string): string {
     if (contentType.startsWith("video/")) return "video";
     if (contentType.startsWith("image/")) return "image";
     if (contentType.startsWith("audio/")) return "audio";
@@ -131,7 +130,7 @@ const ModalUpload: React.FC<ModalUploadProps> = ({ type = "all" }) => {
     return "other";
   }
 
-  async function createUpload(uploadData: {
+  async function _createUpload(uploadData: {
     fileName: string;
     filePath: string;
     fileSize: number;

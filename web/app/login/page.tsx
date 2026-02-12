@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ShieldCheck, LogIn, Cpu } from "lucide-react";
+import { ShieldCheck, Cpu } from "lucide-react";
 import { useState } from "react";
 
 export default function LoginPage() {

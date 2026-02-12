@@ -5,12 +5,10 @@
  * and visual prompt generation to produce a complete shot list.
  */
 
-import { WordTimestamp } from "@/types/task";
 import {
   ShotEvent,
   ShotListInput,
   ShotListOutput,
-  ContentType,
 } from "./types";
 import { analyzeContentStructure } from "./analyzer";
 import { segmentTimeline, getSegmentStats } from "./segmenter";

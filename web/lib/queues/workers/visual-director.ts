@@ -24,7 +24,6 @@ import type { ShotPart1 } from './av-script';
 import type {
   EnhancedShot,
   MediaGenerationProgress,
-  VideoProjectMetadata,
 } from '@/types/media-generation';
 import type { AspectRatio } from '@/lib/services/gpu-api-service';
 

@@ -92,7 +92,7 @@ export async function getValidGCPToken(
   const supabase = createServiceClient();
   
   // Check if we have stored tokens
-  const { data: config, error } = await supabase
+  const { data: config, error: _error } = await supabase
     .from("user_gcp_config")
     .select("gcp_refresh_token, gcp_token_expires_at, gcp_access_token")
     .eq("user_id", userId)

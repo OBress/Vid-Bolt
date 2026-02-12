@@ -53,7 +53,6 @@ import {
   GalleryVertical,
   ChevronsUp,
   Volume2,
-  ShapesIcon
 } from "lucide-react";
 
 export type Icon = LucideIcon;

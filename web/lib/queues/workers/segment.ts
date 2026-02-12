@@ -45,7 +45,7 @@ const QUEUE_NAME = 'video-segmentation';
 export async function segmentProcessor(
   job: Job<SegmentVideoJobData>
 ): Promise<SegmentVideoJobResult> {
-  const { userId, videoId, sourceUrl, targetClipDuration } = job.data;
+  const { userId, videoId, sourceUrl, targetClipDuration: _targetClipDuration } = job.data;
   const startTime = Date.now();
   const tempDir = path.join(os.tmpdir(), `segment-${videoId}`);
 
@@ -128,7 +128,7 @@ export async function segmentProcessor(
     };
 
     
-    const { clips, transcription, hadAudioTranscription } = await segmentVideo(
+    const { clips, transcription: _transcription, hadAudioTranscription } = await segmentVideo(
       jobDataWithContext,
       audioBuffer,
       async (stage, progress) => {

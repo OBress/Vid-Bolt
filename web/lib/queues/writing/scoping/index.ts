@@ -11,7 +11,6 @@ import type {
   DurationRange,
   ScriptGenre,
 } from '../types';
-import { DEFAULT_CONTENT_ALLOCATION, GENRE_CONFIG } from '../config';
 import { analyzeContentDensity } from './density-analyzer';
 import { calculateOptimalDuration } from './duration-calculator';
 

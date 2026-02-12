@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -80,7 +80,7 @@ export function Sidebar() {
       setSourceProjectId("default");
       // Navigate to new project
       router.push(`/command-center/media/${newProject.id}`);
-    } catch (err) {
+    } catch (_err) {
       // Error handled in hook
     } finally {
       setCreating(false);

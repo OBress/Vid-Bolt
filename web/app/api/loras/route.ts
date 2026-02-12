@@ -7,7 +7,6 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 
@@ -31,7 +30,7 @@ export type LoraItem = typeof AVAILABLE_LORAS[number];
  * GET /api/loras
  * Returns list of available LORAs for image generation
  */
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     // Auth check
     const cookieStore = await cookies();

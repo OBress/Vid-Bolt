@@ -25,7 +25,7 @@ import type { RelevantAssets } from './beat-writer';
 export function getRelevantAssets(
   beat: Beat,
   registry: AssetRegistry,
-  dossier: ResearchDossier | null
+  _dossier: ResearchDossier | null
 ): RelevantAssets {
   const contentToSearch = beat.contentSummary.toLowerCase();
   
@@ -59,9 +59,9 @@ export function getRelevantAssets(
 export function injectAssetConsistency(
   expandedBeat: ExpandedBeat,
   relevantAssets: RelevantAssets,
-  registry: AssetRegistry
+  _registry: AssetRegistry
 ): ExpandedBeat {
-  let narration = expandedBeat.narration;
+  const narration = expandedBeat.narration;
   const additionalCallouts: ExpandedBeat['visualCallouts'] = [];
 
   // For each character, ensure they're properly referenced

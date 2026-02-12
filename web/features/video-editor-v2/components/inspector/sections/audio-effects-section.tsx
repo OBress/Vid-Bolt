@@ -847,10 +847,10 @@ const EffectRow: React.FC<EffectRowProps> = ({
               )}
             </button>
             
-            <Icon className={cn(
+            {React.createElement(Icon, { className: cn(
               "h-4 w-4",
               effect.enabled ? "text-primary" : "text-muted-foreground"
-            )} />
+            ) })}
             
             <span className={cn(
               "text-sm font-medium flex-1",
@@ -994,7 +994,7 @@ export const AudioEffectsSection: React.FC<AudioEffectsSectionProps> = ({
                         key={type}
                         onClick={() => handleAddEffect(type)}
                       >
-                        <Icon className="h-4 w-4 mr-2" />
+                        {React.createElement(Icon, { className: "h-4 w-4 mr-2" })}
                         {metadata.name}
                       </DropdownMenuItem>
                     );

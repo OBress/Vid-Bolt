@@ -27,7 +27,7 @@ async function ensureTempDir() {
   try {
     await mkdir(TEMP_DIR, { recursive: true });
     log("init", `Temp directory ensured: ${TEMP_DIR}`);
-  } catch (e) {
+  } catch (_e) {
     // Directory may already exist
   }
 }
@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
       try {
         const outputStat = await stat(outputPath);
         log("file", `Output file found: ${outputStat.size} bytes`);
-      } catch (e) {
+      } catch (_e) {
         log("error", "Output file not found!");
         return NextResponse.json(
           { error: "Output file was not created by FFmpeg" },
@@ -292,7 +292,7 @@ export async function POST(request: NextRequest) {
     try {
       const outputStat = await stat(outputPath);
       log("file", `Output file found: ${outputStat.size} bytes`);
-    } catch (e) {
+    } catch (_e) {
       log("error", "Output file not found!");
       return NextResponse.json(
         { error: "Output file was not created by MMM", stdout: result.stdout, stderr: result.stderr },
@@ -357,7 +357,7 @@ export async function POST(request: NextRequest) {
           const { rename } = await import("fs/promises");
           await rename(ffmpegOutputPath, outputPath);
           log("ffmpeg", "Enhanced anti-detection applied successfully");
-        } catch (e) {
+        } catch (_e) {
           log("ffmpeg:warning", "Could not replace output file, using MMM output only");
           await unlink(ffmpegOutputPath).catch(() => {});
         }
@@ -398,7 +398,7 @@ export async function POST(request: NextRequest) {
       if (inputPath) await unlink(inputPath).catch(() => {});
       if (outputPath) await unlink(outputPath).catch(() => {});
       log("cleanup", "Done");
-    } catch (e) {
+    } catch (_e) {
       // Ignore cleanup errors
     }
   }

@@ -215,6 +215,8 @@ export const useVirtualScroll = ({
   const scrollContentRef = useRef<HTMLDivElement | null>(null);
   /** Ref to the markers DOM element for synchronized header scroll */
   const scrollMarkersRef = useRef<HTMLDivElement | null>(null);
+  /** Ref to the canvas container for synchronized counter-transform */
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
 
   /** Timer for flushing live scroll to React state after scroll stops */
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -244,6 +246,10 @@ export const useVirtualScroll = ({
     }
     if (scrollMarkersRef.current) {
       scrollMarkersRef.current.style.transform = `translateX(${-scrollOffsetX}px)`;
+    }
+    // Counter-transform: keep canvas pinned to viewport during active scrolling
+    if (canvasContainerRef.current) {
+      canvasContainerRef.current.style.transform = `translate(${scrollOffsetX}px, ${y}px)`;
     }
   }, [maxScrollX]);
 
@@ -379,6 +385,33 @@ export const useVirtualScroll = ({
     setZoomAndScrollX(newZoom, newScrollX);
   }, [timeToViewportPixels, calcScrollForFixedTime, setZoomAndScrollX]);
 
+  /**
+   * Zoom while keeping a specific time anchored at a given fraction of the scrollbar.
+   * Used by the navigator when dragging scrollbar handles:
+   * - Left handle drag → anchor the right edge time (anchorFraction ~ right edge position)
+   * - Right handle drag → anchor the left edge time (anchorFraction ~ left edge position)
+   *
+   * @param newZoom - The new zoom level
+   * @param anchorTime - A time in seconds that should remain visually fixed
+   * @param anchorViewportFraction - Where in the viewport (0=left edge, 1=right edge) anchorTime should sit
+   */
+  const zoomWithAnchorTime = useCallback((newZoom: number, anchorTime: number, anchorViewportFraction: number) => {
+    const clampedZoom = Math.max(ZOOM_CONSTRAINTS.min, Math.min(ZOOM_CONSTRAINTS.max, newZoom));
+    const newViewportDuration = FIXED_BASE_DURATION / clampedZoom;
+
+    // Calculate start time so that anchorTime sits at the given viewport fraction
+    const newStartTime = anchorTime - anchorViewportFraction * newViewportDuration;
+
+    // Convert to scrollX (0-1)
+    const newScrollableDuration = getScrollableDuration(totalDuration);
+    const newMaxStartTime = Math.max(0, newScrollableDuration - newViewportDuration);
+    const newScrollX = newMaxStartTime > 0
+      ? Math.max(0, Math.min(1, newStartTime / newMaxStartTime))
+      : 0;
+
+    setZoomAndScrollX(clampedZoom, newScrollX);
+  }, [FIXED_BASE_DURATION, totalDuration, getScrollableDuration, setZoomAndScrollX]);
+
   // Scroll to a specific time
   const scrollToTime = useCallback((timeInSeconds: number, centerInViewport = true) => {
     const currentViewportDuration = FIXED_BASE_DURATION / stateRef.current.zoomScale;
@@ -407,12 +440,16 @@ export const useVirtualScroll = ({
 
     // Shift + Wheel = Horizontal scroll
     if (e.shiftKey) {
-      // Scroll by a fraction of the viewport duration per wheel event
-      // Each notch scrolls ~5% of the visible time range for consistent feel
-      const viewportFraction = 0.05;
-      const scrollDelta = Math.sign(e.deltaY) * viewportFraction * (viewportDuration / scrollableDuration);
-      const normalizedDelta = scrollableDuration > viewportDuration ? scrollDelta : 0;
-      setScrollX(scrollX + normalizedDelta);
+      // Use actual delta magnitude for proportional scrolling.
+      // Normalize: a standard mouse notch (~100 deltaY pixels) scrolls ~8% of viewport.
+      // Trackpad fine-grained deltas are naturally smaller, giving smooth results.
+      const PIXELS_PER_VIEWPORT = 1250; // 100 / 0.08 — mouse notch = 8% viewport
+      const delta = e.deltaY / PIXELS_PER_VIEWPORT; // fraction of viewport
+      // Convert viewport-fraction to scroll-range-fraction
+      const scrollRangeFraction = scrollableDuration > viewportDuration
+        ? delta * (viewportDuration / scrollableDuration)
+        : 0;
+      setScrollX(scrollX + scrollRangeFraction);
       return;
     }
 
@@ -483,10 +520,12 @@ export const useVirtualScroll = ({
     timeToViewportPixels,
     calcScrollForFixedTime,
     zoomAtPlayhead,
+    zoomWithAnchorTime,
 
     // DOM refs for direct scroll transform (bypasses React during active scroll)
     scrollContentRef,
     scrollMarkersRef,
+    canvasContainerRef,
   };
 };
 

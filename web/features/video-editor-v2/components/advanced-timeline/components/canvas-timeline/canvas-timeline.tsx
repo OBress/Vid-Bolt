@@ -30,7 +30,7 @@
  * - Keeps all existing business logic untouched (store, hooks, selectors)
  */
 
-import React, { useRef, useMemo, useCallback, useEffect } from 'react';
+import React, { useRef, useMemo, useCallback, useEffect, useState } from 'react';
 import { Container, Graphics } from 'pixi.js';
 import { Application, extend } from '@pixi/react';
 import type { ApplicationRef } from '@pixi/react';
@@ -126,6 +126,8 @@ export interface CanvasTimelineProps {
     clientY: number,
     side: 'left' | 'right',
   ) => void;
+  /** Ref to canvas container for direct DOM scroll counter-transform */
+  canvasContainerRef?: React.MutableRefObject<HTMLDivElement | null>;
 }
 
 // ============================================================
@@ -140,6 +142,9 @@ function CanvasTimelineContent({
   tracks,
   scrollableDuration,
   scrollableWidth,
+  scrollX,
+  scrollY,
+  viewportWidth,
   selectedItemIds,
   currentFrame,
   fps,
@@ -154,7 +159,7 @@ function CanvasTimelineContent({
   onTransitionClick,
   selectedTransitionId,
   onTransitionResizeStart,
-}: Omit<CanvasTimelineProps, 'scrollX' | 'scrollY' | 'zoomScale'>) {
+}: Omit<CanvasTimelineProps, 'zoomScale'> & { viewportWidth: number }) {
   const trackHeight = propTrackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
 
   // Compute total content height for all tracks (including spacers and dividers)
@@ -213,10 +218,17 @@ function CanvasTimelineContent({
     return headers;
   }, [tracks, trackHeight, collapsedGroups]);
 
-  // No internal transform — the parent DOM div in timeline-content.tsx
-  // already applies transform: translate(virtualTransform.x, virtualTransform.y)
+  // SCROLL OFFSET:
+  // The PixiJS canvas is viewport-sized, but items are at absolute pixel positions.
+  // We shift the PixiJS scene by -scrollOffset so items near the current scroll
+  // position land within [0, viewportWidth] and are visible on the canvas.
+  // The CSS counter-transform on the canvas div (see CanvasTimeline) keeps the
+  // canvas pinned to the viewport despite the parent's scroll transform.
+  const scrollOffsetX = scrollX * Math.max(0, scrollableWidth - viewportWidth);
+  const scrollOffsetY = scrollY;
+
   return (
-    <pixiContainer>
+    <pixiContainer x={-scrollOffsetX} y={-scrollOffsetY}>
       {/* Group header bars */}
       {groupHeaders.map(({ group, y }) => {
         const cfg = GROUP_CONFIG[group] || GROUP_CONFIG.video;
@@ -309,45 +321,90 @@ export function CanvasTimeline({
   onTransitionClick,
   selectedTransitionId,
   onTransitionResizeStart,
+  canvasContainerRef,
 }: CanvasTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<ApplicationRef>(null);
 
-  // Keep canvas resolution in sync with display — fixes blurry canvas
-  // after fullscreen toggle or any container resize
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    let debounceTimer: ReturnType<typeof setTimeout>;
-
-    const syncResolution = () => {
-      const app = appRef.current?.getApplication();
-      if (!app?.renderer) return;
-      const dpr = window.devicePixelRatio || 1;
-      // Only update if resolution actually changed
-      if (app.renderer.resolution !== dpr) {
-        app.renderer.resolution = dpr;
+  // Callback ref: assigns both local containerRef AND external canvasContainerRef
+  // so useVirtualScroll can update the canvas counter-transform during active scrolling.
+  const containerRefCallback = useCallback(
+    (node: HTMLDivElement | null) => {
+      (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+      if (canvasContainerRef) {
+        canvasContainerRef.current = node;
       }
-      // Always re-apply size to rebuild framebuffer at correct resolution
-      app.renderer.resize(container.clientWidth, container.clientHeight);
-    };
+    },
+    [canvasContainerRef]
+  );
 
-    const debouncedSync = () => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(syncResolution, 100);
-    };
+  // Measure the VIEWPORT width (the visible scroll container), not the scrollable
+  // content width. The parent `timeline-zoomable-content` can be 100,000+ px wide
+  // due to zoom, but the canvas must only cover the visible viewport to avoid
+  // exceeding GPU texture limits and causing blur.
+  const [viewportSize, setViewportSize] = useState<{ w: number; h: number } | null>(null);
 
-    const ro = new ResizeObserver(debouncedSync);
-    ro.observe(container);
-    document.addEventListener('fullscreenchange', debouncedSync);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    // Find the viewport-sized scroll container (has overflow: hidden)
+    const scrollContainer = el.closest('[data-timeline-scroll-container]') as HTMLElement | null;
+    const target = scrollContainer || el.parentElement;
+    if (!target) return;
+
+    const update = () => {
+      setViewportSize({ w: target.clientWidth, h: target.clientHeight });
+    };
+    update();
+
+    // ResizeObserver: catches layout-driven size changes.
+    // Observe both the scroll container AND the editor root so that any ancestor
+    // layout change (app sidebar toggle, panel resize, etc.) is detected.
+    const ro = new ResizeObserver(update);
+    ro.observe(target);
+    const editorRoot = el.closest('[data-editor-root]') as HTMLElement | null;
+    if (editorRoot) ro.observe(editorRoot);
+
+    // Window resize: browser window resizing, dev tools, tab reshaping.
+    window.addEventListener('resize', update);
+
+    // Fullscreen: explicit listener with RAF for immediate post-reflow measurement.
+    const onFullscreenChange = () => {
+      requestAnimationFrame(update);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+
+    // Transition end: re-measure after CSS transitions complete (e.g. app sidebar
+    // 300ms width transition) so the final settled size is captured exactly.
+    const onTransitionEnd = (e: TransitionEvent) => {
+      if (e.propertyName === 'width' || e.propertyName === 'max-width' || e.propertyName === 'flex') {
+        requestAnimationFrame(update);
+      }
+    };
+    document.addEventListener('transitionend', onTransitionEnd);
 
     return () => {
-      clearTimeout(debounceTimer);
       ro.disconnect();
-      document.removeEventListener('fullscreenchange', debouncedSync);
+      window.removeEventListener('resize', update);
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      document.removeEventListener('transitionend', onTransitionEnd);
     };
   }, []);
+
+  // Force PixiJS renderer to resize when the viewport grows/shrinks
+  // (e.g. fullscreen mode). The `resizeTo` prop only tracks one dimension;
+  // this guarantees the WebGL back buffer matches the measured viewport.
+  useEffect(() => {
+    if (!viewportSize || !appRef.current) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const app = appRef.current as any;
+    try {
+      app.renderer?.resize(viewportSize.w, viewportSize.h);
+    } catch {
+      // Renderer not ready yet — safe to ignore
+    }
+  }, [viewportSize?.w, viewportSize?.h]);
 
   // Professional keyboard shortcuts (JKL shuttle, split, delete, nudge, etc.)
   const { handleKeyDown } = useCanvasKeyboard({
@@ -361,7 +418,7 @@ export function CanvasTimeline({
 
   return (
     <div
-      ref={containerRef}
+      ref={containerRefCallback}
       className="canvas-timeline-container"
       role="application"
       aria-label="Timeline editor"
@@ -369,11 +426,26 @@ export function CanvasTimeline({
       onKeyDown={handleKeyDown}
       onContextMenu={(e) => e.preventDefault()}
       style={{
-        width: '100%',
-        height: '100%',
-        position: 'relative',
+        // Use measured viewport width — NOT 100% which would inherit the
+        // parent's scrollable content width (100,000+ px at high zoom).
+        width: viewportSize ? `${viewportSize.w}px` : '100vw',
+        height: viewportSize ? `${viewportSize.h}px` : '100%',
+        // CRITICAL: position:absolute pins the canvas to the scroll container
+        // (the nearest positioned ancestor), NOT the CSS-transformed parent.
+        // This prevents the parent's scroll transform from moving the canvas
+        // off-screen. PixiJS handles scrolling internally via pixiContainer offset.
+        position: 'sticky',
+        left: 0,
+        top: 0,
+        // Counter-transform: undo the parent's CSS translate so the canvas
+        // stays pinned to the viewport. Uses CSS custom property that gets
+        // updated by both React state AND direct DOM manipulation.
+        transform: `translate(${scrollX * Math.max(0, scrollableWidth - (viewportSize?.w ?? 0))}px, ${scrollY}px)`,
+        willChange: 'transform',
         overflow: 'hidden',
         outline: 'none',
+        flexShrink: 0,
+        zIndex: 1,
       }}
     >
       <Application
@@ -388,6 +460,9 @@ export function CanvasTimeline({
           tracks={tracks}
           scrollableDuration={scrollableDuration}
           scrollableWidth={scrollableWidth}
+          scrollX={scrollX}
+          scrollY={scrollY}
+          viewportWidth={viewportSize?.w ?? 800}
           selectedItemIds={selectedItemIds}
           currentFrame={currentFrame}
           fps={fps}

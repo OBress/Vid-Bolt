@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 
-export async function DELETE(request: NextRequest) {
+export async function DELETE(_request: NextRequest) {
   console.log('[ClearVectorDB] Starting clear request...');
   
   try {

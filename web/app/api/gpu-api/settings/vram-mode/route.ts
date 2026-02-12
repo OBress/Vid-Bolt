@@ -8,7 +8,7 @@ import { callGpuGetVramMode, callGpuSetVramMode, forceUpdateGpuActivity, type Vr
  * 
  * Get current VRAM loading strategy
  */
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     // Auth check
     const cookieStore = await cookies();

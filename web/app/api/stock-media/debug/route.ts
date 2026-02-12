@@ -28,7 +28,7 @@ export async function GET() {
     }
 
     // Get count by source
-    const { data: countData, error: countError } = await supabase
+    const { data: countData, error: _countError } = await supabase
       .from('stock_media')
       .select('source')
       .limit(1000);
@@ -41,7 +41,7 @@ export async function GET() {
     }
 
     // Count entries with embeddings
-    const { data: embeddingData, error: embeddingError } = await supabase
+    const { data: embeddingData, error: _embeddingError } = await supabase
       .from('stock_media')
       .select('id, embedding')
       .not('embedding', 'is', null)

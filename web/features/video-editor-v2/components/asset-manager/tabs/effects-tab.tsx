@@ -684,10 +684,10 @@ const EffectCard: React.FC<EffectCardProps> = ({ item, onSelect, compact = false
         "transition-colors shrink-0",
         compact ? "w-7 h-7" : "w-8 h-8"
       )}>
-        <Icon className={cn(
+        {React.createElement(Icon, { className: cn(
           "text-muted-foreground group-hover:text-primary transition-colors",
           compact ? "h-3.5 w-3.5" : "h-4 w-4"
-        )} />
+        ) })}
       </div>
       <div className="min-w-0 flex-1">
         <p className={cn(
@@ -1157,7 +1157,7 @@ const AudioEffectsContent: React.FC<AudioEffectsContentProps> = ({ searchQuery, 
                         "flex items-center justify-center rounded-md bg-primary/10",
                         "transition-colors shrink-0 w-8 h-8"
                       )}>
-                        <Icon className="h-4 w-4 text-primary" />
+                        {React.createElement(Icon, { className: "h-4 w-4 text-primary" })}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium truncate">

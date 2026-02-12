@@ -204,7 +204,7 @@ export async function PATCH(
 
     // If metadata is being updated, we need to merge it carefully
     // to avoid overwriting existing metadata fields (like audio_chunks wiping outlineOutput)
-    let updateBody = { ...body };
+    const updateBody = { ...body };
     
     if (body.metadata) {
       // Fetch current metadata first

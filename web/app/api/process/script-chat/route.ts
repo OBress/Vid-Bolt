@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
 
     // Build the prompt for the AI - return JSON with rewritten text AND explanation
     const contextText = context && context.length > 0
-      ? `The user has selected the following text to be rewritten:\n${context.map((c: string, i: number) => `"${c}"`).join("\n\n")}\n\n`
+      ? `The user has selected the following text to be rewritten:\n${context.map((c: string, _i: number) => `"${c}"`).join("\n\n")}\n\n`
       : "";
 
     const systemPrompt = `You are a professional script editor. Rewrite the selected text based on the user's instructions.

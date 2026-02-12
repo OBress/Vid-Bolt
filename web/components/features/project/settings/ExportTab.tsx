@@ -11,7 +11,6 @@ import {
   Twitter,
   Music2,
   Share2,
-  Download,
   LinkIcon, // Changed from Link to LinkIcon
   Ghost,
 } from "lucide-react";

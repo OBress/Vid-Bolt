@@ -4,7 +4,6 @@
  * Validates script quality across factual accuracy, consistency, and engagement.
  */
 
-import { generateJSON } from '@/lib/ai/openrouter';
 import type { 
   QualityValidation, 
   ExpandedBeat,
@@ -13,8 +12,7 @@ import type {
   AssetRegistry,
   ScriptGenre,
 } from '../types';
-import { UNIVERSAL_PROMPTS } from '../prompts';
-import { BANNED_PHRASES, QUALITY_THRESHOLDS } from '../config';
+import { BANNED_PHRASES } from '../config';
 import { findBannedPhrases } from '../utils';
 
 // ============================================================================

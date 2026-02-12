@@ -40,7 +40,6 @@ import {
   Layers,
   Trash2,
   Clock,
-  Filter,
   ArrowLeft,
   Music,
   Volume2,
@@ -292,7 +291,7 @@ export function GPUApiTester({
   const [trackedJobs, setTrackedJobs] = useState<Map<string, TrackedJob>>(
     new Map(),
   );
-  const [trackedBatches, setTrackedBatches] = useState<
+  const [_trackedBatches, setTrackedBatches] = useState<
     Map<string, TrackedBatch>
   >(new Map());
   const [queuePanelOpen, setQueuePanelOpen] = useState(false);
@@ -301,7 +300,7 @@ export function GPUApiTester({
   const [batchCount, setBatchCount] = useState(5);
   const [batchVarySeeds, setBatchVarySeeds] = useState(true);
   const [batchJobType, setBatchJobType] = useState<JobType>("image");
-  const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [_batchSubmitting, setBatchSubmitting] = useState(false);
   const [isManualPolling, setIsManualPolling] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
@@ -754,7 +753,7 @@ export function GPUApiTester({
   };
 
   // Submit a single job to the API (internal helper)
-  const submitJobToApi = async (job: TrackedJob) => {
+  const _submitJobToApi = async (job: TrackedJob) => {
     const endpoint =
       job.type === "image"
         ? "/api/gpu-api/test/image"
@@ -1174,7 +1173,7 @@ export function GPUApiTester({
     }
   };
 
-  const handleSwitchMode = async (targetMode: "image" | "video") => {
+  const _handleSwitchMode = async (targetMode: "image" | "video") => {
     setModeSwitching(true);
     setModeStatus("loading");
     try {
@@ -1652,7 +1651,7 @@ export function GPUApiTester({
     </div>
   );
 
-  const calculateDefaultResolutions = (ratio: AspectRatio) => {
+  const _calculateDefaultResolutions = (ratio: AspectRatio) => {
     if (ratio === "9:16") {
       return { width: "1080", height: "1920" };
     }

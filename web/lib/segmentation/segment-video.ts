@@ -11,7 +11,7 @@ import * as os from 'os';
 import { callOpenRouter, type OpenRouterMessage } from '@/lib/ai/openrouter';
 import { hasGroqApiKey, transcribeWithGroq, findSentenceEnds } from './groq-whisper';
 import { extractVideoChunk } from './yt-dlp';
-import { uploadAudioBuffer, getPublicUrl, deleteFile } from '@/lib/services/r2-storage';
+import { uploadAudioBuffer, deleteFile } from '@/lib/services/r2-storage';
 import type {
   DetectedScene,
   SceneAnalysisResult,
@@ -961,7 +961,7 @@ function parseSceneAnalysisResponse(content: string): Omit<SceneAnalysisResult, 
       scenes: normalizedScenes,
       totalDuration: data.totalDuration || 0,
     };
-  } catch (error) {
+  } catch (_error) {
     console.error('[Segment] Failed to parse scene analysis:', cleaned.substring(0, 500));
     throw new Error('Failed to parse scene analysis response');
   }
@@ -1087,7 +1087,7 @@ export function generateClipMetadata(
   scenes: DetectedScene[],
   transcription: TranscriptionResult | null,
   parentVideoId: string,
-  baseR2Path: string
+  _baseR2Path: string
 ): Omit<VideoClip, 'r2Key' | 'thumbnailR2Key' | 'qualityRating'>[] {
   // Track rejection reasons for debugging
   const rejectionReasons: Record<string, number> = {

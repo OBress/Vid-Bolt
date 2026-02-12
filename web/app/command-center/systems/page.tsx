@@ -8,7 +8,7 @@ import { System } from "@/types/system";
 import { SystemCard } from "@/components/features/systems/SystemCard";
 
 export default function SystemsPage() {
-  const [selectedSystem, setSelectedSystem] = useState<System | null>(null);
+  const [_selectedSystem, setSelectedSystem] = useState<System | null>(null);
 
   const systems: System[] = [
     {

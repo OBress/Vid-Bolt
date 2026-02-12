@@ -13,7 +13,6 @@ import type {
   ValyuDeepResearchParams,
   ValyuDeepResearchCreateResponse,
   ValyuDeepResearchResult,
-  DEFAULT_VALYU_CONFIG,
 } from './types';
 
 const VALYU_API_URL = 'https://api.valyu.ai/v1';

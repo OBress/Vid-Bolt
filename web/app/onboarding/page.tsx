@@ -45,7 +45,7 @@ export default function OnboardingPage() {
     reasons: [] as string[],
   });
 
-  const router = useRouter();
+  const _router = useRouter();
 
   // Debounced username validation
   useEffect(() => {

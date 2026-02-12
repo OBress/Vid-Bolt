@@ -307,10 +307,10 @@ const EffectPreview: React.FC<EffectPreviewProps> = ({ type, isHovered }) => {
         );
       default:
         return (
-          <config.icon className={cn(
+          React.createElement(config.icon, { className: cn(
             "w-5 h-5 transition-all duration-300",
             isHovered ? config.accentColor : "text-muted-foreground"
-          )} />
+          ) })
         );
     }
   };
@@ -422,7 +422,7 @@ const CategorySection: React.FC<CategorySectionProps> = ({
           "text-left group"
         )}
       >
-        <Icon className={cn("w-3.5 h-3.5", config.accentColor)} />
+        {React.createElement(Icon, { className: cn("w-3.5 h-3.5", config.accentColor) })}
         <span className="text-[11px] font-medium flex-1 text-foreground/90">
           {config.title}
         </span>

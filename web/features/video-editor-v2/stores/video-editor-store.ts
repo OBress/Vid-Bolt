@@ -712,12 +712,25 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
                 (t) => t.type === type,
               );
 
+              // Find the first available track number (fills gaps from deleted tracks)
+              const prefix = type === "video" ? "V" : "A";
+              const usedNumbers = new Set(
+                existingTracksOfType
+                  .map((t) => {
+                    const match = t.name.match(new RegExp(`^${prefix}(\\d+)$`));
+                    return match ? parseInt(match[1], 10) : null;
+                  })
+                  .filter((n): n is number => n !== null),
+              );
+              let nextNumber = 1;
+              while (usedNumbers.has(nextNumber)) nextNumber++;
+
               const newTrack: TimelineTrack = {
                 id: generateId("track"),
                 type,
                 name:
                   options.name ||
-                  `${type === "video" ? "V" : "A"}${existingTracksOfType.length + 1}`,
+                  `${prefix}${nextNumber}`,
                 order: 0,
                 group: type,
                 locked: options.locked ?? false,

@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       mustInclude, 
       mustAvoid,
       sourcePreferences,
-      stockMediaLevel,
+      _stockMediaLevel,
       // Project settings
       pov,
       protagonistGender,

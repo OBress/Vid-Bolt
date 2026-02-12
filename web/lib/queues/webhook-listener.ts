@@ -84,6 +84,7 @@ export async function waitForWebhookResult(
   console.log(`[WebhookListener] Waiting for webhook result for task ${taskId}`);
   
   return new Promise<WebhookResult>((resolve, reject) => {
+    // eslint-disable-next-line prefer-const
     let timeoutId: NodeJS.Timeout;
     let resolved = false;
     

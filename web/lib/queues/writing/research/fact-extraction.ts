@@ -4,7 +4,7 @@
  * Extracts facts from web search results and assigns confidence levels.
  */
 
-import { generateWithWebSearch, generateJSONWithWebSearch, type UrlCitation } from '@/lib/ai/openrouter';
+import { generateJSONWithWebSearch, type UrlCitation } from '@/lib/ai/openrouter';
 import type { 
   VerifiedFact, 
   AttributableQuote, 
@@ -102,7 +102,7 @@ export async function extractAndVerifyFacts(
     console.log(`[FactExtraction] Processing batch ${batchIndex + 1}/${questionBatches.length}`);
 
     // Build search query from batch questions
-    const searchQuery = batch
+    const _searchQuery = batch
       .flatMap(q => q.searchQueries.slice(0, 2))
       .join('. ');
 

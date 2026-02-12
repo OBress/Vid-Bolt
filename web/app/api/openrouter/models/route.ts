@@ -36,7 +36,7 @@ interface ModelListResponse {
  * GET /api/openrouter/models
  * Fetches available models from OpenRouter API using the user's API key
  */
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     // Get the current user from the session
     const cookieStore = await cookies();

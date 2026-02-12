@@ -157,7 +157,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({
                   "flex items-center justify-center gap-1.5"
                 )}
               >
-                <Icon className="h-3.5 w-3.5" />
+                {React.createElement(Icon, { className: "h-3.5 w-3.5" })}
                 <span className="text-xs">{label}</span>
               </TabsTrigger>
             ))}

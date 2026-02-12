@@ -11,7 +11,6 @@ import {
   generateFCPXML, 
   extractMediaAssets, 
   sanitizeFileName,
-  MediaAsset 
 } from "./fcpxml-generator";
 
 export interface DaVinciExportOptions {

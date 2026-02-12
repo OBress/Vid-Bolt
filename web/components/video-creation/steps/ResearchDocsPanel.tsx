@@ -421,15 +421,15 @@ export function ResearchDocsPanel({ dossier }: ResearchDocsPanelProps) {
                               {"content" in primarySource &&
                                 primarySource.content && (
                                   <p className="text-sm text-neutral-400 italic line-clamp-3">
-                                    "{primarySource.content.substring(0, 200)}
-                                    ..."
+                                    &quot;{primarySource.content.substring(0, 200)}
+                                    ...&quot;
                                   </p>
                                 )}
                               {"excerpt" in primarySource &&
                                 primarySource.excerpt &&
                                 !("content" in primarySource) && (
                                   <p className="text-sm text-neutral-400 italic line-clamp-3">
-                                    "{primarySource.excerpt}"
+                                    &quot;{primarySource.excerpt}&quot;
                                   </p>
                                 )}
                               <div className="flex items-center gap-2 text-xs pt-1">
@@ -481,7 +481,7 @@ export function ResearchDocsPanel({ dossier }: ResearchDocsPanelProps) {
                   className="bg-neutral-800/50 rounded-lg p-3 border border-neutral-700"
                 >
                   <blockquote className="text-sm text-neutral-200 italic border-l-2 border-green-500 pl-3">
-                    "{quote.quote}"
+                    &quot;{quote.quote}&quot;
                   </blockquote>
                   <div className="flex items-center gap-2 mt-2 text-xs text-neutral-400">
                     <span className="font-medium text-green-400">

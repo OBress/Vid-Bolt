@@ -16,7 +16,7 @@ import {
   failStep,
   updateTaskStatus,
 } from '@/lib/queues/shared';
-import { STEP_ORDER, UNIVERSAL_PHASES } from '@/lib/queues/writing/constants';
+import { STEP_ORDER } from '@/lib/queues/writing/constants';
 
 // Phase imports
 import { executeResearchPhase } from '@/lib/queues/writing/research';

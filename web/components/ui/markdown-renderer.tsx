@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
-import { LogsIcon, WorkflowIcon } from "lucide-react";
+import { LogsIcon } from "lucide-react";
 import {
   Accordion,
   AccordionContent,
@@ -125,7 +125,7 @@ const CodeBlock = ({
   children,
   className,
   language,
-  ...rest
+  ..._rest
 }: CodeBlockProps) => {
   const code = typeof children === "string" ? children : String(children);
 
@@ -145,7 +145,7 @@ const CodeBlock = ({
   );
 };
 
-function childrenTakeAllStringContents(element: any): string {
+function _childrenTakeAllStringContents(element: any): string {
   if (typeof element === "string") {
     return element;
   }
@@ -155,10 +155,10 @@ function childrenTakeAllStringContents(element: any): string {
 
     if (Array.isArray(children)) {
       return children
-        .map((child) => childrenTakeAllStringContents(child))
+        .map((child) => _childrenTakeAllStringContents(child))
         .join("");
     }
-    return childrenTakeAllStringContents(children);
+    return _childrenTakeAllStringContents(children);
   }
 
   return "";
@@ -173,7 +173,7 @@ const COMPONENTS = {
   strong: withClass("strong", "font-semibold"),
   a: withClass("a", "text-primary underline underline-offset-2"),
   blockquote: withClass("blockquote", "border-l-2 border-primary pl-4"),
-  code: ({ children, className, node, ...rest }: any) => {
+  code: ({ children, className, _node, ...rest }: any) => {
     const match = /language-(\w+)/.exec(className || "");
     const language = match ? match[1].toLowerCase() : undefined;
 
@@ -234,9 +234,8 @@ const COMPONENTS = {
 };
 
 function withClass(Tag: keyof JSX.IntrinsicElements, classes: string) {
-  const Component = ({ node, ...props }: any) => (
-    <Tag className={classes} {...props} />
-  );
+  const Component = ({ _node, ...props }: any) =>
+    React.createElement(Tag, { className: classes, ...props });
   Component.displayName = Tag;
   return Component;
 }

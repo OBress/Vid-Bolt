@@ -12,7 +12,7 @@
  *   {userId}/gpu-api-test/
  */
 
-import { S3Client, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // ============================================================================
@@ -732,7 +732,7 @@ export function getKeyFromUrl(url: string): string {
     const urlObj = new URL(url);
     // Remove leading slash from pathname
     return urlObj.pathname.substring(1);
-  } catch (e) {
+  } catch (_e) {
     // If URL parsing fails or other error, return original as fallback
     // assuming it might be the key itself
     return url;

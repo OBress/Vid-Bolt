@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Parse request body
-    const { base64, projectId, filename } = await request.json();
+    const { base64, projectId, _filename } = await request.json();
 
     if (!base64) {
       return NextResponse.json(

@@ -80,8 +80,8 @@ async function resetStepData(
   };
 
   // Build the updates based on which step we're resetting
-  let dbUpdates: Record<string, any> = {};
-  let metadataUpdates: Record<string, any> = { ...currentMetadata };
+  const dbUpdates: Record<string, any> = {};
+  const metadataUpdates: Record<string, any> = { ...currentMetadata };
 
   try {
     switch (fromStep) {
@@ -127,7 +127,7 @@ async function resetStepData(
                       const { deleteFile } = await import("@/lib/services/r2-storage");
                       await deleteFile(entry.r2_key);
                       result.r2FilesDeleted++;
-                    } catch (e) {
+                    } catch (_e) {
                       // Ignore individual delete errors
                     }
                   }
@@ -292,7 +292,7 @@ async function resetStepData(
                     try {
                       await deleteFile(entry.r2_key);
                       result.r2FilesDeleted++;
-                    } catch (e) {
+                    } catch (_e) {
                       // Ignore individual delete errors (may already be deleted)
                     }
                   }
@@ -396,7 +396,7 @@ async function resetStepData(
                     try {
                       await deleteFile(entry.r2_key);
                       result.r2FilesDeleted++;
-                    } catch (e) {
+                    } catch (_e) {
                       // Ignore individual delete errors (may already be deleted)
                     }
                   }

@@ -498,7 +498,7 @@ Return valid JSON:
   "estimated_render_time_ms": 500
 }`;
 
-const SFX_DIRECTOR_SYSTEM_PROMPT = `You enhance video experiences through thoughtful audio design.
+const _SFX_DIRECTOR_SYSTEM_PROMPT = `You enhance video experiences through thoughtful audio design.
 
 ## YOUR ROLE
 Sound effects should **enhance** the viewer experience—not distract from it.
@@ -636,7 +636,7 @@ export async function routeToAgent(
   mediaType: 'image' | 'video' | 'motiongraphic' | 'edit',
   context: AgentContext,
   inputImageUrl?: string,
-  compositionSpec?: MotionGraphicPromptOutput
+  _compositionSpec?: MotionGraphicPromptOutput
 ): Promise<ImageGenerationOutput | ImageEditOutput | VideoCreationOutput | MotionGraphicPromptOutput | RemotionCodeOutput> {
   const formattedContext = formatContextForAgent(context);
   

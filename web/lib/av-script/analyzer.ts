@@ -94,7 +94,6 @@ function detectOrdinalLists(words: string[]): ListSpan[] {
   if (ordinalIndices.length >= 2) {
     let listStart = ordinalIndices[0];
     let items: Array<{ start_index: number; end_index: number }> = [];
-    let lastOrdinalIndex = ordinalIndices[0];
     
     for (let i = 0; i < ordinalIndices.length; i++) {
       const currentIndex = ordinalIndices[i];
@@ -124,7 +123,6 @@ function detectOrdinalLists(words: string[]): ListSpan[] {
         listStart = nextIndex;
       }
       
-      lastOrdinalIndex = currentIndex;
     }
     
     // Save final list if we have items
@@ -218,7 +216,7 @@ function detectCommaSeriesLists(
  */
 function detectParallelStructureLists(
   words: string[],
-  wordTimestamps: WordTimestamp[]
+  _wordTimestamps: WordTimestamp[]
 ): ListSpan[] {
   const lists: ListSpan[] = [];
   
@@ -283,10 +281,10 @@ function detectParallelStructureLists(
  */
 export function detectComparisons(
   words: string[],
-  wordTimestamps: WordTimestamp[]
+  _wordTimestamps: WordTimestamp[]
 ): ComparisonSpan[] {
   const comparisons: ComparisonSpan[] = [];
-  const text = words.join(' ');
+  const _text = words.join(' ');
   
   // Look for explicit comparison markers
   for (let i = 0; i < words.length - 5; i++) {
@@ -345,7 +343,7 @@ export function detectComparisons(
  */
 export function detectTransitions(
   words: string[],
-  wordTimestamps: WordTimestamp[]
+  _wordTimestamps: WordTimestamp[]
 ): TransitionSpan[] {
   const transitions: TransitionSpan[] = [];
   
@@ -382,7 +380,7 @@ export function detectTransitions(
  */
 export function detectEmotionalBeats(
   words: string[],
-  wordTimestamps: WordTimestamp[]
+  _wordTimestamps: WordTimestamp[]
 ): EmotionalBeatSpan[] {
   const beats: EmotionalBeatSpan[] = [];
   

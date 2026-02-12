@@ -32,7 +32,7 @@ console.log('  PEXELS_API_KEY:', process.env.PEXELS_API_KEY ? 'âœ“ present' : 'â
 
 import { Worker, Processor } from 'bullmq';
 import { getRedisConnection, closeRedisConnection, isRedisReady } from './redis';
-import { allQueues, closeAllQueues, gpuShutdownCheckQueue } from './queues';
+import { closeAllQueues, gpuShutdownCheckQueue } from './queues';
 import { 
   writingProcessor, 
   universalScriptProcessor,

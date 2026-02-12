@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ArrowRight, AlertTriangle, Trash2 } from "lucide-react";
+import { ArrowRight, AlertTriangle, Trash2 } from "lucide-react";
 
 interface StepNavigationConfirmDialogProps {
   isOpen: boolean;
@@ -67,7 +67,7 @@ export function StepNavigationConfirmDialog({
                   <div className="bg-red-950/50 border border-red-800/50 rounded-lg p-3 space-y-2">
                     <p className="text-red-400 font-medium text-sm flex items-center gap-2">
                       <Trash2 className="w-4 h-4" />
-                      Your progress on "{currentStepName}" will be DELETED:
+                      Your progress on &quot;{currentStepName}&quot; will be DELETED:
                     </p>
                     <ul className="text-sm text-red-300/80 space-y-1 ml-6 list-disc">
                       {resetWarning ? (

@@ -3,7 +3,6 @@ import {
   FC,
   useEffect,
   useRef,
-  MutableRefObject,
   MouseEvent,
   TouchEvent
 } from "react";

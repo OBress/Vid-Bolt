@@ -1,7 +1,6 @@
 "use client";
 
-import { ArrowRight, Clapperboard } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Clapperboard } from "lucide-react";
 import Editor from "@/features/editor";
 import type {
   AudioChunk,
@@ -29,9 +28,9 @@ export function Step7Editor({
   audioChunks,
   shotList,
   generatedMedia,
-  onContinue,
+  onContinue: _onContinue,
   isLocked,
-  lockedMessage,
+  lockedMessage: _lockedMessage,
 }: Step7EditorProps) {
   // Debug logging
   console.log("[Step7Editor Debug] Props received:", {

@@ -13,7 +13,7 @@ import type {
 } from '../types';
 import { GENRE_CONFIG } from '../config';
 
-import { decomposeTopicIntoQuestions, type ResearchQuestion } from './topic-decomposition';
+import { decomposeTopicIntoQuestions } from './topic-decomposition';
 import { extractAndVerifyFacts } from './fact-extraction';
 import { assembleDossier } from './dossier';
 import { performValyuResearch } from './valyu-research-provider';

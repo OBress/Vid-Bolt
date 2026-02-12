@@ -3,6 +3,18 @@ import { TrackWithClips as TimelineTrackType, TrackType } from '../types';
 import { TIMELINE_CONSTANTS } from '../constants';
 import { GripVertical, Trash2, Eye, EyeOff, Lock, Unlock, Volume2, VolumeX, Plus, ChevronDown, ChevronRight } from 'lucide-react';
 import type { TrackGroup } from '../../../types/timeline-v2';
+import {
+  AlertDialog,
+  AlertDialogTrigger,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '../../ui/alert-dialog';
+import { buttonVariants } from '../../ui/button';
 
 // ============================================================
 // GROUP CONFIGURATION
@@ -80,7 +92,7 @@ interface TimelineTrackHandlesProps {
   onToggleVisibility?: (trackId: string) => void;
   onToggleMute?: (trackId: string) => void;
   onToggleSolo?: (trackId: string) => void;
-  onAddTrack?: (type: TrackType) => void;
+  onAddTrack?: (type: TrackType, group?: TrackGroup) => void;
   enableTrackDrag?: boolean;
   enableTrackDelete?: boolean;
   scrollY?: number; // Virtual scroll Y offset (pixels)
@@ -214,8 +226,8 @@ export const TimelineTrackHandles: React.FC<TimelineTrackHandlesProps> = ({
       />
       
       {/* Track handles with virtual scroll */}
-      <div className="flex-1 overflow-hidden track-handles-scroll">
-        <div style={{ transform: `translateY(${-scrollY}px)` }}>
+      <div className="flex-1 overflow-hidden track-handles-scroll" style={{ overflowAnchor: 'none' }}>
+        <div style={{ transform: `translateY(${-scrollY}px)`, overflowAnchor: 'none' }}>
 
           {GROUP_ORDER.map(groupKey => {
             const config = GROUP_CONFIG[groupKey];
@@ -263,7 +275,7 @@ export const TimelineTrackHandles: React.FC<TimelineTrackHandlesProps> = ({
                   <button
                     type="button"
                     className={`w-4 h-4 inline-flex items-center justify-center rounded hover:bg-white/10 ${config.textClass} ${trackCount > 0 ? '' : 'ml-auto'}`}
-                    onClick={() => onAddTrack?.(config.trackType)}
+                    onClick={() => onAddTrack?.(config.trackType, groupKey)}
                     title={config.addLabel}
                   >
                     <Plus className="w-3 h-3" />
@@ -350,14 +362,34 @@ export const TimelineTrackHandles: React.FC<TimelineTrackHandlesProps> = ({
 
                       {/* Delete track */}
                       {enableTrackDelete && (
-                        <button
-                          type="button"
-                          className="w-5 h-5 inline-flex items-center justify-center rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-destructive"
-                          onClick={() => onTrackDelete?.(track.id)}
-                          title="Delete track"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <button
+                              type="button"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-destructive"
+                              title="Delete track"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete Track</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Are you sure you want to delete &ldquo;{track.name}&rdquo;? All clips on this track will also be removed. This action cannot be undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>No</AlertDialogCancel>
+                              <AlertDialogAction
+                                className={buttonVariants({ variant: 'destructive' })}
+                                onClick={() => onTrackDelete?.(track.id)}
+                              >
+                                Yes, Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       )}
                     </div>
                   );

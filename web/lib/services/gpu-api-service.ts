@@ -195,7 +195,7 @@ const CACHE_TTL_MS = 30000; // 30 second cache
  * Get the GPU API URL from Supabase user_gcp_config (for dynamic cloud VMs)
  * Falls back to GPU_API_URL env var if no config found
  */
-export async function fetchDynamicGpuApiUrl(userId?: string): Promise<string> {
+export async function fetchDynamicGpuApiUrl(_userId?: string): Promise<string> {
   // Return cached value if still valid
   if (cachedGpuApiUrl && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
     return cachedGpuApiUrl;
@@ -232,7 +232,7 @@ export async function fetchDynamicGpuApiUrl(userId?: string): Promise<string> {
       console.log(`[GPUApiService] Using dynamic GPU URL: ${cachedGpuApiUrl}`);
       return cachedGpuApiUrl;
     }
-  } catch (err) {
+  } catch (_err) {
     console.log(`[GPUApiService] Failed to fetch dynamic GPU URL, using fallback`);
   }
 
@@ -294,7 +294,7 @@ async function updateGpuActivity(): Promise<void> {
     if (error) {
       console.log(`[GPUApiService] Failed to update activity: ${error.message}`);
     }
-  } catch (err) {
+  } catch (_err) {
     // Don't fail the GPU call if activity tracking fails
     console.log(`[GPUApiService] Activity tracking error (non-fatal)`);
   }
@@ -325,7 +325,7 @@ export async function forceUpdateGpuActivity(): Promise<void> {
     } else {
       console.log(`[GPUApiService] Force updated GPU activity timestamp`);
     }
-  } catch (err) {
+  } catch (_err) {
     console.log(`[GPUApiService] Force activity tracking error (non-fatal)`);
   }
 }

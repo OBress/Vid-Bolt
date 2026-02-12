@@ -31,7 +31,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Image as ImageIcon,
-  FileText,
   List,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
@@ -231,7 +230,7 @@ export function StockScraperTester({
   const [queryGenResult, setQueryGenResult] = useState<any | null>(null);
   const [isGeneratingQueries, setIsGeneratingQueries] = useState(false);
   const [queryGenError, setQueryGenError] = useState<string | null>(null);
-  const [queryGenVideoId, setQueryGenVideoId] = useState(`test-${Date.now()}`);
+  const [queryGenVideoId, _setQueryGenVideoId] = useState(`test-${Date.now()}`);
 
   // Script Generation Form State
   const [qgTopic, setQgTopic] = useState(
@@ -262,7 +261,7 @@ export function StockScraperTester({
   const [scriptCurrentPhase, setScriptCurrentPhase] = useState<string | null>(
     null,
   );
-  const [scriptStatus, setScriptStatus] = useState<string>("idle");
+  const [_scriptStatus, setScriptStatus] = useState<string>("idle");
 
   // Supabase client for polling
   const supabase = createBrowserClient(
@@ -913,7 +912,7 @@ export function StockScraperTester({
                 } else {
                   alert(`Clear failed: ${data.error}`);
                 }
-              } catch (e) {
+              } catch (_e) {
                 alert("Clear request failed");
               } finally {
                 setIsClearingR2(false);
@@ -954,7 +953,7 @@ export function StockScraperTester({
                 } else {
                   alert(`Clear failed: ${data.error}`);
                 }
-              } catch (e) {
+              } catch (_e) {
                 alert("Clear request failed");
               } finally {
                 setIsClearingVectorDB(false);
@@ -985,7 +984,7 @@ export function StockScraperTester({
                 } else {
                   alert(`Seeding failed: ${data.error}`);
                 }
-              } catch (e) {
+              } catch (_e) {
                 alert("Seeding request failed completely.");
               }
             }}
@@ -1794,12 +1793,12 @@ export function StockScraperTester({
                                     (r as any).existingAsset?.metadata
                                       ?.title && (
                                       <span className="text-blue-300 ml-1">
-                                        → matches "
+                                        → matches &quot;
                                         {
                                           (r as any).existingAsset.metadata
                                             .title
                                         }
-                                        "
+                                        &quot;
                                       </span>
                                     )}
                                 </li>
@@ -2177,7 +2176,7 @@ export function StockScraperTester({
                           const res = await fetch("/api/check-ytdlp");
                           const data = await res.json();
                           setYtdlpStatus(data);
-                        } catch (err) {
+                        } catch (_err) {
                           setYtdlpStatus({ error: "Failed to check" });
                         } finally {
                           setIsCheckingYtdlp(false);
@@ -3107,7 +3106,7 @@ export function StockScraperTester({
 
                 {!debugData && !isLoadingDebug && !debugError && (
                   <div className="text-center text-neutral-500 py-12">
-                    Click "Load DB Entries" to inspect the stock_media table
+                    Click &quot;Load DB Entries&quot; to inspect the stock_media table
                   </div>
                 )}
               </div>
@@ -3460,7 +3459,7 @@ export function StockScraperTester({
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="flex-1 min-w-0">
                                       <div className="font-medium text-white text-sm truncate">
-                                        "{q.query}"
+                                        &quot;{q.query}&quot;
                                       </div>
                                       <div className="text-xs text-neutral-500 mt-1 flex items-center gap-3">
                                         <span>Beat {q.context?.beatIndex}</span>

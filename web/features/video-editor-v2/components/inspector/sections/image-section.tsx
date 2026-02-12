@@ -98,7 +98,7 @@ const FilterControl: React.FC<FilterControlProps> = ({
     <div className="space-y-1">
       <div className="flex items-center justify-between">
         <Label className="text-xs text-muted-foreground flex items-center gap-1">
-          <Icon className="h-3 w-3" />
+          {React.createElement(Icon, { className: "h-3 w-3" })}
           {label}
         </Label>
         <span className={cn(

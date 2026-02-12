@@ -66,7 +66,7 @@ export interface BeatExpansionContext {
 export async function expandSingleBeat(
   context: BeatExpansionContext
 ): Promise<ExpandedBeat> {
-  const { beat, beatIndex, totalBeats, dossier, bannedPhrases, genre, spine, allPreviousBeats, userId, continuityState } = context;
+  const { beat, beatIndex, totalBeats, dossier: _dossier, bannedPhrases: _bannedPhrases, genre, spine, allPreviousBeats, userId, continuityState } = context;
   const enableQualityReview = context.enableQualityReview !== false;
 
   // Use dynamic targetWords from spine if available, otherwise calculate from duration

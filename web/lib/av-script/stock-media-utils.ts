@@ -251,7 +251,7 @@ export async function searchAndStoreImages(
         });
 
         console.log(`[StockMediaUtils] Stored image: ${imageId} (${classification?.namedEntities?.length || 0} entities)`);
-      } catch (err) {
+      } catch (_err) {
         failed++;
         // Continue to next image on any error
       }

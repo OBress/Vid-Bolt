@@ -12,9 +12,6 @@ import type {
   VerifiedFact,
   Theory,
   ResearchGap,
-  NarrativeContext,
-  KeyDevelopment,
-  KeyEntityV2,
 } from '../types';
 import { UNIVERSAL_PROMPTS } from '../prompts';
 import { calculateOverallConfidence } from '../utils';

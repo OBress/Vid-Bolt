@@ -203,7 +203,7 @@ const TransitionCard: React.FC<TransitionCardProps> = ({ preset, onSelect }) => 
     >
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-md bg-muted flex items-center justify-center shrink-0">
-          <Icon className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+          {React.createElement(Icon, { className: "h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" })}
         </div>
         <div className="min-w-0">
           <p className="text-sm font-medium truncate">{preset.name}</p>

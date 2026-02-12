@@ -61,7 +61,7 @@ const AutosizeInput: React.FC<AutosizeInputProps> = (props) => {
     inputClassName,
     id,
     minWidth = 1,
-    injectStyles = true,
+    injectStyles: _injectStyles = true,
     onAutosize,
     extraWidth,
     inputRef,

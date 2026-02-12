@@ -51,16 +51,16 @@ interface Step6SceneReviewProps {
 
 export function Step6SceneReview({
   videoId,
-  projectId,
+  projectId: _projectId,
   shots = [],
-  outlineAssets,
+  outlineAssets: _outlineAssets,
   generatedMedia = [],
   gpuEnabled = true,
   onUpdateMedia,
-  onContinue,
+  onContinue: _onContinue,
   onBack,
-  isLocked,
-  lockedMessage,
+  isLocked: _isLocked,
+  lockedMessage: _lockedMessage,
 }: Step6SceneReviewProps) {
   // =========================================================================
   // STATE

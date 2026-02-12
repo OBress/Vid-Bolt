@@ -96,7 +96,7 @@ export function WizardProgress({
               gridTemplateColumns: `repeat(${stepCount}, minmax(0, 1fr))`,
             }}
           >
-            {steps.map((step, index) => {
+            {steps.map((step, _index) => {
               const isReached = step.id <= maxStepReached;
               const isCompleted = currentStep > step.id && isReached;
               const isCurrent = currentStep === step.id;

@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } from '@/lib/services/r2-storage';
 
-export async function DELETE(request: NextRequest) {
+export async function DELETE(_request: NextRequest) {
   console.log('[ClearStockMedia] Starting clear request...');
   
   try {

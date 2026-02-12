@@ -5,7 +5,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import {
-  Sparkles,
   Image,
   Film,
   Layers,
@@ -47,7 +46,7 @@ export function SceneReviewSidebar({
   mediaMap,
   pendingChanges,
   generatingShots,
-  onGenerateAll,
+  onGenerateAll: _onGenerateAll,
   onSaveAll,
   isSaving = false,
   className,

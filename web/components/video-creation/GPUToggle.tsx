@@ -1,6 +1,6 @@
 "use client";
 
-import { Cpu, CpuIcon } from "lucide-react";
+import { CpuIcon } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,

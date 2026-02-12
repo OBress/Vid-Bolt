@@ -6,7 +6,6 @@ import {
   FileText,
   Video,
   Cpu,
-  ArrowLeft,
   Download,
   Layers,
   Film,

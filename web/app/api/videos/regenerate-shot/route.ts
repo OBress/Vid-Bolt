@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { buildAgentContext, routeToAgent, type AgentContext } from '@/lib/av-script/agent-prompts';
+import { buildAgentContext, routeToAgent } from '@/lib/av-script/agent-prompts';
 
 interface RegenerateRequest {
   videoId: string;

@@ -403,7 +403,7 @@ export function extractAndEnsureIcons(code: string): { icons: string[]; code: st
     ? `// ICONS: ${allIcons.join(', ')}\n`
     : `// ICONS: none\n`;
   
-  let codeWithoutComment = code.replace(/^\/\/\s*ICONS:.*$/m, '').trim();
+  const codeWithoutComment = code.replace(/^\/\/\s*ICONS:.*$/m, '').trim();
   
   const finalCode = iconsComment + codeWithoutComment;
   

@@ -271,7 +271,7 @@ export async function processGpuBatchGeneration(
 
   // Per-item callback wrapper that accumulates across sub-batches
   const imageItemCallback = onItemComplete
-    ? (event: ItemCompleteEvent) => {
+    ? (_event: ItemCompleteEvent) => {
         imageItemsCompleted++;
         onItemComplete({ completed: imageItemsCompleted, total: totalImageCount, mediaType: 'image' });
       }

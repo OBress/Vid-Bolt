@@ -45,7 +45,7 @@ interface CleaningResult {
 export function AudioCleaningTester({
   isOpen,
   onClose,
-  inline = false,
+  inline: _inline = false,
 }: AudioCleaningTesterProps) {
   const [file, setFile] = useState<File | null>(null);
   const [level, setLevel] = useState<CleaningLevel>("paranoid");

@@ -36,9 +36,6 @@ import {
   buildCharacterPrompt,
   buildLocationPrompt,
   buildObjectPrompt,
-  buildCharacterNegativePrompt,
-  buildLocationNegativePrompt,
-  buildObjectNegativePrompt,
 } from '@/lib/av-script/asset-prompt-builder';
 import type {
   CharacterProfile,

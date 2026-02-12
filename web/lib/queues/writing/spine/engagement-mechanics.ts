@@ -4,8 +4,8 @@
  * Manages open/close loops, pattern interrupts, callbacks, and energy curve.
  */
 
-import type { Beat, BeatType, EngagementMarkers } from '../types';
-import { ENGAGEMENT_TIMING, QUALITY_THRESHOLDS } from '../config';
+import type { Beat } from '../types';
+import { ENGAGEMENT_TIMING } from '../config';
 import type { BeatSpec } from './beat-types';
 
 // ============================================================================

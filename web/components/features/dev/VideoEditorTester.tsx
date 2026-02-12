@@ -259,7 +259,7 @@ function StressTestPopover() {
 export function VideoEditorTester({
   isOpen,
   onClose,
-  inline = false,
+  inline: _inline = false,
 }: VideoEditorTesterProps) {
   const { isFocusMode, toggleFocusMode, exitFocusMode } = useFocusMode();
 

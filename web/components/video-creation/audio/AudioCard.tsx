@@ -58,7 +58,7 @@ export function AudioCard({
 
           {/* Content Preview */}
           <p className="text-sm text-neutral-400 leading-relaxed line-clamp-4">
-            "{chunk.text}"
+            &quot;{chunk.text}&quot;
           </p>
 
           {/* Click hint */}
@@ -146,7 +146,7 @@ export function AudioCard({
                 isActive ? "text-lg text-white" : "text-sm text-neutral-400"
               }`}
             >
-              "{chunk.text}"
+              &quot;{chunk.text}&quot;
             </p>
           )}
         </div>

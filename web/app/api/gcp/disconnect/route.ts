@@ -8,7 +8,7 @@ import { clearStoredTokens } from "@/lib/gcp/token-refresh";
  * Disconnects the user's GCP account by clearing stored tokens.
  * This is a server-side operation to ensure tokens are properly removed.
  */
-export async function POST(req: NextRequest) {
+export async function POST(_req: NextRequest) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
 

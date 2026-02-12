@@ -179,7 +179,7 @@ export async function POST(request: NextRequest) {
     // Use a vision-capable model — fallback to a known one if the selected model doesn't support vision
     const visionModel = getVisionCapableModel(model);
 
-    const imageContent = screenshots.map((screenshot, i) => ({
+    const imageContent = screenshots.map((screenshot, _i) => ({
       type: 'image_url' as const,
       image_url: {
         url: screenshot, // base64 data URL

@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
@@ -8,6 +9,18 @@ import { Copy, Lock, Clock, AlertOctagon } from "lucide-react";
 import { toast } from "sonner";
 
 export default function WaitlistPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-black flex items-center justify-center text-neutral-500">
+        Loading status...
+      </div>
+    }>
+      <WaitlistContent />
+    </Suspense>
+  );
+}
+
+function WaitlistContent() {
   const { profile, loading } = useUserProfile();
   const supabase = createClient();
   const router = useRouter();

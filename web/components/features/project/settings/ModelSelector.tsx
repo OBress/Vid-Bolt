@@ -16,7 +16,6 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
-  Zap,
   DollarSign,
   Hash,
 } from "lucide-react";
@@ -103,7 +102,7 @@ export function ModelSelector({
       }
 
       setModels(data.models || []);
-    } catch (err) {
+    } catch (_err) {
       setError("Failed to connect to server");
     } finally {
       setLoading(false);

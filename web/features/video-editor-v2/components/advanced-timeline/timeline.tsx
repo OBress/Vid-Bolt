@@ -163,14 +163,35 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     updateDimensions();
     window.addEventListener('resize', updateDimensions);
     
-    // Also observe the container element
+    // ResizeObserver: catches layout-driven size changes.
+    // Observe both the container AND the editor root so that any ancestor
+    // layout change (app sidebar toggle, panel resize, etc.) is detected.
     const observer = new ResizeObserver(updateDimensions);
     if (timelineContainerRef.current) {
       observer.observe(timelineContainerRef.current);
+      const editorRoot = timelineContainerRef.current.closest('[data-editor-root]') as HTMLElement | null;
+      if (editorRoot) observer.observe(editorRoot);
     }
+
+    // Fullscreen: explicit listener with RAF for immediate post-reflow measurement.
+    const onFullscreenChange = () => {
+      requestAnimationFrame(updateDimensions);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+
+    // Transition end: re-measure after CSS transitions complete (e.g. app sidebar
+    // 300ms width transition) so the final settled size is captured exactly.
+    const onTransitionEnd = (e: TransitionEvent) => {
+      if (e.propertyName === 'width' || e.propertyName === 'max-width' || e.propertyName === 'flex') {
+        requestAnimationFrame(updateDimensions);
+      }
+    };
+    document.addEventListener('transitionend', onTransitionEnd);
     
     return () => {
       window.removeEventListener('resize', updateDimensions);
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      document.removeEventListener('transitionend', onTransitionEnd);
       observer.disconnect();
     };
   }, []);
@@ -252,12 +273,14 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     getVisibleTimeRange,
     getContentTransform,
     zoomAtPlayhead,
+    zoomWithAnchorTime,
     handleWheel: handleVirtualWheel,
     reset: resetZoom,
     zoomToFit,
     // DOM refs for direct scroll transform
     scrollContentRef,
     scrollMarkersRef,
+    canvasContainerRef,
   } = useVirtualScroll({
     totalDuration: compositionDuration, // Use computed duration that includes all content
     containerWidth,
@@ -663,6 +686,11 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     zoomAtPlayhead(newZoom, playheadTime);
   }, [currentFrame, fps, zoomAtPlayhead]);
 
+  // Zoom handler for navigator handle drags — anchors a specific time at a viewport fraction
+  const handleNavigatorZoomWithAnchor = useCallback((newZoom: number, anchorTime: number, anchorViewportFraction: number) => {
+    zoomWithAnchorTime(newZoom, anchorTime, anchorViewportFraction);
+  }, [zoomWithAnchorTime]);
+
   // Clear the CSS custom property for timeline marker position during playback
   // This allows the marker to move dynamically with currentFrame during playback
   useEffect(() => {
@@ -761,6 +789,7 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
             // DOM refs for direct scroll transform
             scrollContentRef={scrollContentRef}
             scrollMarkersRef={scrollMarkersRef}
+            canvasContainerRef={canvasContainerRef}
             // Other props
             onFrameChange={onFrameChange}
             onItemSelect={onItemSelect}
@@ -867,6 +896,7 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
         onScrollChange={handleNavigatorScrollChange}
         zoomScale={zoomScale}
         onZoomAtPlayhead={handleNavigatorZoomAtPlayhead}
+        onZoomWithAnchor={handleNavigatorZoomWithAnchor}
         viewportDuration={viewportDuration}
         scrollableDuration={scrollableDuration}
         minZoom={ZOOM_CONSTRAINTS.min}

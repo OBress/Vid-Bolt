@@ -12,10 +12,8 @@ import type {
   ResearchDossier, 
   DurationDecision,
   ScriptGenre,
-  EngagementMarkers,
 } from '../types';
 import { UNIVERSAL_PROMPTS } from '../prompts';
-import { ENGAGEMENT_TIMING, BEAT_DURATION } from '../config';
 import { getGenreTemplate, type GenreTemplate } from './genre-templates';
 import { 
   validateEngagementMechanics, 
@@ -214,7 +212,7 @@ Determine the optimal number of sections based on the story's natural structure.
 /**
  * Generate fallback beat structure if AI fails
  */
-function generateFallbackBeats(beatCount: number, genre: ScriptGenre): BeatSpec[] {
+function generateFallbackBeats(beatCount: number, _genre: ScriptGenre): BeatSpec[] {
   const beats: BeatSpec[] = [];
   
   for (let i = 0; i < beatCount; i++) {
@@ -289,7 +287,7 @@ function createBeatsWithTiming(
  */
 function buildSections(
   beats: Beat[],
-  genreTemplate: GenreTemplate
+  _genreTemplate: GenreTemplate
 ): Spine['sections'] {
   const sectionMap = new Map<string, { start: number; end: number }>();
 

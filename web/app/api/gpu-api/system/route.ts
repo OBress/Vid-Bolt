@@ -8,7 +8,7 @@ import { callGpuSystemStatus } from "@/lib/services/gpu-api-service";
  * 
  * Proxy to GPU API system status endpoint.
  */
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   // Get user from session for auth check
   const cookieStore = await cookies();
   const supabaseAuth = createServerClient(

@@ -12,7 +12,6 @@ import type {
   ResearchDossier,
   DurationDecision,
   QualityValidation,
-  BeatType,
 } from '../types';
 
 // ============================================================================
@@ -155,8 +154,8 @@ export function formatAsSRT(
     
     if (!timing) continue;
 
-    const startTime = formatSRTTime(timing.startSeconds);
-    const endTime = formatSRTTime(timing.endSeconds);
+    const _startTime = formatSRTTime(timing.startSeconds);
+    const _endTime = formatSRTTime(timing.endSeconds);
     
     // Split narration into chunks of ~10 words for subtitles
     const words = beat.narration.replace(/\[(CHAR|LOC|OBJ)-\d{3}\]/g, '').split(/\s+/);

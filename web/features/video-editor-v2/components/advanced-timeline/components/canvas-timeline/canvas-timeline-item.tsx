@@ -29,8 +29,6 @@ import {
   getItemRect,
   truncateLabel,
 } from './canvas-timeline-utils';
-import { CanvasWaveform } from './canvas-waveform';
-import { CanvasThumbnails } from './canvas-thumbnails';
 import type { TimelineItem } from '../../../../stores/memoized-selectors';
 import { TIMELINE_CONSTANTS } from '../../constants';
 
@@ -266,6 +264,65 @@ function drawBadgeIcon(g: Graphics, x: number, y: number, type: string) {
   }
 }
 
+
+
+// ============================================================
+// EFFECT PATTERN DRAWING
+// ============================================================
+
+/**
+ * Draws subtle background patterns for effect/shape clips.
+ * Makes effect clips visually distinct from plain media clips.
+ */
+function drawEffectPattern(
+  g: Graphics,
+  w: number,
+  h: number,
+  effectLabel?: string,
+): void {
+  if (w < 20 || h < 10) return;
+
+  const label = (effectLabel || '').toLowerCase();
+
+  // Color grade — horizontal gradient bands
+  if (label.includes('color') || label.includes('grade') || label.includes('lut')) {
+    const bands = 6;
+    const bandH = h / bands;
+    for (let i = 0; i < bands; i++) {
+      // Warm-to-cool progression
+      const hue = (i / bands) * 0.3;
+      const r = Math.floor(200 * (1 - hue));
+      const b = Math.floor(200 * hue);
+      const color = (r << 16) | (100 << 8) | b;
+      g.rect(ACCENT_BAR_WIDTH + 4, i * bandH, w - ACCENT_BAR_WIDTH - 8, bandH);
+      g.fill({ color, alpha: 0.08 });
+    }
+    return;
+  }
+
+  // Blur/Sharpen — soft diagonal lines
+  if (label.includes('blur') || label.includes('sharpen') || label.includes('defocus')) {
+    g.setStrokeStyle({ color: 0xffffff, width: 1, alpha: 0.08 });
+    const step = 10;
+    for (let x = step; x < w + h; x += step) {
+      g.moveTo(Math.max(0, x), 0)
+       .lineTo(Math.max(0, x - h), Math.min(h, x));
+      g.stroke();
+    }
+    return;
+  }
+
+  // Default effect — diamond/sparkle pattern
+  const spacing = 16;
+  for (let x = ACCENT_BAR_WIDTH + spacing; x < w - 4; x += spacing) {
+    for (let y = spacing / 2; y < h - 4; y += spacing) {
+      const s = 2;
+      g.moveTo(x, y - s).lineTo(x + s, y).lineTo(x, y + s).lineTo(x - s, y).closePath();
+      g.fill({ color: 0xffffff, alpha: 0.06 });
+    }
+  }
+}
+
 // ============================================================
 // COMPONENT
 // ============================================================
@@ -296,6 +353,8 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
     () => getItemRect(item, totalDuration, totalWidth, trackHeight, itemHeight),
     [item.start, item.end, totalDuration, totalWidth, trackHeight, itemHeight],
   );
+
+
 
   // Resolve colors
   const baseColor = useMemo(() => hexToPixiColor(item.color || '#3b82f6'), [item.color]);
@@ -765,46 +824,29 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
       {/* Main item body */}
       <pixiGraphics draw={drawBody} />
 
-      {/* Video thumbnail strip */}
-      {item.type === 'video' && item.data && item.data.spriteUrl && item.data.rectForTime && (
-        <CanvasThumbnails
-          spriteUrl={item.data.spriteUrl}
-          rectForTime={item.data.rectForTime}
-          itemWidth={rect.width}
-          itemHeight={rect.height}
-          start={item.start}
-          end={item.end}
-          mediaStart={item.mediaStart ?? 0}
-          intervalSec={item.data.intervalSec ?? 5}
-          fps={item.data.fps ?? 30}
-        />
+      {/* Audio faux waveform — lightweight sine-wave bars for visual identification */}
+      {item.type === 'audio' && (
+        <pixiGraphics draw={(g: Graphics) => {
+          g.clear();
+          if (rect.width < 20) return;
+          const barW = 2;
+          const gap = 3;
+          const maxH = rect.height * 0.4;
+          const baseY = rect.height / 2;
+          for (let x = ACCENT_BAR_WIDTH + 8; x < rect.width - 4; x += barW + gap) {
+            const h = maxH * (0.3 + 0.7 * Math.abs(Math.sin(x * 0.15)));
+            g.rect(x, baseY - h / 2, barW, h);
+            g.fill({ color: 0xffffff, alpha: 0.15 });
+          }
+        }} />
       )}
 
-      {/* Audio waveform overlay (real or faux) */}
-      {item.type === 'audio' && (
-        item.data?.waveformData?.peaks?.length > 0 ? (
-          <CanvasWaveform
-            peaks={item.data!.waveformData.peaks}
-            width={rect.width}
-            height={rect.height}
-          />
-        ) : (
-          <pixiGraphics draw={(g: Graphics) => {
-            g.clear();
-            if (rect.width < 20) return;
-            // Faux waveform: sine-wave-like bars to visually identify audio
-            const barW = 2;
-            const gap = 3;
-            const maxH = rect.height * 0.4;
-            const baseY = rect.height / 2;
-            for (let x = ACCENT_BAR_WIDTH + 8; x < rect.width - 4; x += barW + gap) {
-              // Pseudo-random height from position
-              const h = maxH * (0.3 + 0.7 * Math.abs(Math.sin(x * 0.15)));
-              g.rect(x, baseY - h / 2, barW, h);
-              g.fill({ color: 0xffffff, alpha: 0.15 });
-            }
-          }} />
-        )
+      {/* Effect/shape clip background pattern */}
+      {(item.type === 'shape' || item.type === 'effect') && (
+        <pixiGraphics draw={(g: Graphics) => {
+          g.clear();
+          drawEffectPattern(g, rect.width, rect.height, item.label);
+        }} />
       )}
 
       {/* Transition, fade, keyframe overlays */}
@@ -816,16 +858,37 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
       {/* Status badges */}
       <pixiGraphics draw={drawBadges} />
 
-      {/* Label text */}
-      {displayLabel && (
-        <pixiText
-          text={displayLabel}
-          style={getLabelStyle(LABEL_FONT_SIZE)}
-          x={ACCENT_BAR_WIDTH + TYPE_ICON_SIZE + TYPE_ICON_MARGIN + LABEL_PADDING + (linkGroupColor ? BADGE_SIZE + BADGE_MARGIN + 2 : 0)}
-          y={(rect.height - LABEL_FONT_SIZE) / 2}
-          alpha={0.9}
-        />
-      )}
+      {/* Label text with dark backdrop for readability over waveforms/thumbnails */}
+      {displayLabel && (() => {
+        const labelX = ACCENT_BAR_WIDTH + TYPE_ICON_SIZE + TYPE_ICON_MARGIN + LABEL_PADDING + (linkGroupColor ? BADGE_SIZE + BADGE_MARGIN + 2 : 0);
+        const labelY = (rect.height - LABEL_FONT_SIZE) / 2;
+        // Estimate text width: ~6px per character at 11px font size
+        const estimatedTextWidth = Math.min(displayLabel.length * 6, rect.width - labelX - 4);
+        const backdropPadX = 3;
+        const backdropPadY = 2;
+        return (
+          <>
+            <pixiGraphics draw={(g: Graphics) => {
+              g.clear();
+              g.roundRect(
+                labelX - backdropPadX,
+                labelY - backdropPadY,
+                estimatedTextWidth + backdropPadX * 2,
+                LABEL_FONT_SIZE + backdropPadY * 2,
+                3,
+              );
+              g.fill({ color: 0x000000, alpha: 0.4 });
+            }} />
+            <pixiText
+              text={displayLabel}
+              style={getLabelStyle(LABEL_FONT_SIZE)}
+              x={labelX}
+              y={labelY}
+              alpha={0.95}
+            />
+          </>
+        );
+      })()}
     </pixiContainer>
   );
 });
