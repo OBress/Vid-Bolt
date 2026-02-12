@@ -202,6 +202,8 @@ export interface TimelineContentProps {
   onEffectDrop?: (params: any) => void;
   // Composition editor
   onOpenCompositionEditor?: (itemId: string) => void;
+  // Track group collapse
+  collapsedGroups?: Set<string>;
 }
 
 /**

@@ -44,72 +44,127 @@ export function xToTime(
   return (x / totalWidth) * totalDuration;
 }
 
-// ============================================================
-// LAYOUT HELPERS
-// ============================================================
+/**
+ * Ordered list of track groups (top → bottom).
+ * Must match GROUP_ORDER in timeline-track-handles.tsx.
+ */
+const GROUP_ORDER: string[] = ['video', 'overlays', 'text', 'effects', 'audio'];
+
+/** Height of each group header bar in pixels */
+const GROUP_HEADER_HEIGHT = 24;
+
+/**
+ * Resolve the effective group for a track.
+ * Falls back to 'video' for video-type tracks and 'audio' for audio-type tracks.
+ */
+function resolveGroup(track: { type: string; group?: string }): string {
+  return track.group || (track.type === 'audio' ? 'audio' : 'video');
+}
+
+/**
+ * Count how many distinct groups have visible headers.
+ * All groups are always shown.
+ */
+function countVisibleGroupHeaders(
+  tracks: ReadonlyArray<{ type: string; group?: string }>,
+): number {
+  return GROUP_ORDER.length;
+}
+
+/**
+ * Build a map of group → sorted track indices for a given tracks array.
+ * Returns groups in GROUP_ORDER and only includes groups that have tracks
+ * OR are 'video'/'audio' (always shown).
+ */
+function buildGroupLayout(
+  tracks: ReadonlyArray<{ type: string; group?: string }>,
+): Array<{ group: string; trackIndices: number[] }> {
+  const byGroup = new Map<string, number[]>();
+  for (const g of GROUP_ORDER) byGroup.set(g, []);
+
+  for (let i = 0; i < tracks.length; i++) {
+    const g = resolveGroup(tracks[i]);
+    const list = byGroup.get(g);
+    if (list) list.push(i);
+    else byGroup.get('video')!.push(i); // unknown group → video
+  }
+
+  const result: Array<{ group: string; trackIndices: number[] }> = [];
+  for (const g of GROUP_ORDER) {
+    const indices = byGroup.get(g)!;
+    // Always include all groups
+    result.push({ group: g, trackIndices: indices });
+  }
+  return result;
+}
 
 /**
  * Get the vertical Y offset for a given track index.
- * Accounts for the top spacer (Add Video Track button = 28px)
- * and the divider between video/audio sections.
+ * Accounts for group header bars (24px each) rendered before each group section.
+ * When a group is collapsed, its tracks are hidden but the header remains.
  *
- * @param trackIndex  Zero-based index of the track in the sorted tracks array
- * @param trackHeight Height of each track row in pixels
- * @param tracks      Array of tracks (used to detect video→audio boundary)
- * @returns           Y offset in pixels for this track's container
+ * @param trackIndex      Zero-based index of the track in the sorted tracks array
+ * @param trackHeight     Height of each track row in pixels
+ * @param tracks          Array of tracks (used to detect group boundaries)
+ * @param collapsedGroups Optional set of collapsed group names
+ * @returns               Y offset in pixels for this track's container
  */
 export function getTrackYOffset(
   trackIndex: number,
   trackHeight: number,
-  tracks: ReadonlyArray<{ type: string }>,
+  tracks: ReadonlyArray<{ type: string; group?: string }>,
+  collapsedGroups?: Set<string>,
 ): number {
-  const ADD_VIDEO_BUTTON_HEIGHT = 28; // Matches h-7 spacer in DOM version
-  const DIVIDER_HEIGHT = trackHeight / 2; // Half-track divider between video/audio
+  const layout = buildGroupLayout(tracks);
+  let y = 0;
 
-  let y = ADD_VIDEO_BUTTON_HEIGHT;
+  for (const { group, trackIndices } of layout) {
+    // Group header always renders
+    y += GROUP_HEADER_HEIGHT;
 
-  for (let i = 0; i < trackIndex; i++) {
-    y += trackHeight;
+    const isCollapsed = collapsedGroups?.has(group) ?? false;
 
-    // Add divider height if transitioning from video to audio
-    if (i + 1 < tracks.length && tracks[i].type === 'video' && tracks[i + 1].type === 'audio') {
-      y += DIVIDER_HEIGHT;
+    if (isCollapsed) {
+      // Collapsed: tracks hidden, but check if target is here (shouldn't render but return safe y)
+      if (trackIndices.includes(trackIndex)) return y;
+      continue;
+    }
+
+    for (const idx of trackIndices) {
+      if (idx === trackIndex) return y;
+      y += trackHeight;
     }
   }
 
+  // Fallback (trackIndex out of range)
   return y;
 }
 
 /**
- * Compute the total content height for all tracks.
+ * Compute the total content height for all tracks including group headers.
+ * Collapsed groups contribute only their header height (tracks hidden).
  *
- * @param tracks      Array of tracks
- * @param trackHeight Height of each track row
- * @returns           Total content height in pixels
+ * @param tracks          Array of tracks
+ * @param trackHeight     Height of each track row
+ * @param collapsedGroups Optional set of collapsed group names
+ * @returns               Total content height in pixels
  */
 export function getTotalContentHeight(
-  tracks: ReadonlyArray<{ type: string }>,
+  tracks: ReadonlyArray<{ type: string; group?: string }>,
   trackHeight: number,
+  collapsedGroups?: Set<string>,
 ): number {
-  const ADD_VIDEO_BUTTON_HEIGHT = 28;
-  const DIVIDER_HEIGHT = trackHeight / 2;
+  const layout = buildGroupLayout(tracks);
   const BOTTOM_SPACER = trackHeight / 2;
 
-  let height = ADD_VIDEO_BUTTON_HEIGHT;
+  let height = 0;
 
-  for (let i = 0; i < tracks.length; i++) {
-    height += trackHeight;
-
-    // Divider between video and audio sections
-    if (i + 1 < tracks.length && tracks[i].type === 'video' && tracks[i + 1].type === 'audio') {
-      height += DIVIDER_HEIGHT;
+  for (const { group, trackIndices } of layout) {
+    height += GROUP_HEADER_HEIGHT;
+    const isCollapsed = collapsedGroups?.has(group) ?? false;
+    if (!isCollapsed) {
+      height += trackIndices.length * trackHeight;
     }
-  }
-
-  // Bottom spacer (for "Add Audio Track" or visual comfort)
-  const hasAudioTracks = tracks.some(t => t.type === 'audio');
-  if (!hasAudioTracks) {
-    height += DIVIDER_HEIGHT;
   }
 
   height += BOTTOM_SPACER;

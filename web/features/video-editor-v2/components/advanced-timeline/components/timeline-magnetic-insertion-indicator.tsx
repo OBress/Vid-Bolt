@@ -1,7 +1,9 @@
 import React from 'react';
+import { getTrackYOffset } from './canvas-timeline/canvas-timeline-utils';
 
 interface TrackInfo {
-  type: 'video' | 'audio';
+  type: string;
+  group?: string;
 }
 
 interface TimelineMagneticInsertionIndicatorProps {
@@ -30,31 +32,18 @@ const formatTimecode = (seconds: number): string => {
 };
 
 /**
- * Calculate the Y position of a track, accounting for the divider between video and audio tracks
+ * Calculate the Y position of a track using group-aware positioning
  */
 const calculateTrackTopPosition = (
   trackIndex: number, 
   trackHeight: number, 
-  headerOffset: number,
   tracks?: TrackInfo[]
 ): number => {
-  let position = headerOffset;
-  
-  if (!tracks) {
-    // Fallback: simple calculation without divider
-    return position + (trackIndex * trackHeight);
+  if (!tracks || tracks.length === 0) {
+    // Fallback: simple calculation
+    return trackIndex * trackHeight;
   }
-  
-  // Calculate position accounting for the video/audio divider
-  for (let i = 0; i < trackIndex; i++) {
-    position += trackHeight;
-    // Add divider height if transitioning from video to audio
-    if (i < tracks.length - 1 && tracks[i].type === 'video' && tracks[i + 1].type === 'audio') {
-      position += trackHeight / 2; // Divider is half track height
-    }
-  }
-  
-  return position;
+  return getTrackYOffset(trackIndex, trackHeight, tracks);
 };
 
 /**
@@ -74,8 +63,6 @@ export const TimelineMagneticInsertionIndicator: React.FC<TimelineMagneticInsert
   // Calculate horizontal position as percentage
   const leftPercentage = (insertionStart / totalDuration) * 100;
   
-  const headerOffset = 28; // "Add Video Track" button height
-  
   // Determine if this is cross-track snapping (snapping to a different track)
   const isCrossTrack = snappedToTrackIndex !== undefined && snappedToTrackIndex !== trackIndex;
   
@@ -88,12 +75,12 @@ export const TimelineMagneticInsertionIndicator: React.FC<TimelineMagneticInsert
     const minTrack = Math.min(trackIndex, snappedToTrackIndex);
     const maxTrack = Math.max(trackIndex, snappedToTrackIndex);
     
-    topPosition = calculateTrackTopPosition(minTrack, trackHeight, headerOffset, tracks);
-    const bottomPosition = calculateTrackTopPosition(maxTrack, trackHeight, headerOffset, tracks) + trackHeight;
+    topPosition = calculateTrackTopPosition(minTrack, trackHeight, tracks);
+    const bottomPosition = calculateTrackTopPosition(maxTrack, trackHeight, tracks) + trackHeight;
     lineHeight = bottomPosition - topPosition;
   } else {
     // Single track snap - just show on that track
-    topPosition = calculateTrackTopPosition(trackIndex, trackHeight, headerOffset, tracks);
+    topPosition = calculateTrackTopPosition(trackIndex, trackHeight, tracks);
     lineHeight = trackHeight;
   }
 

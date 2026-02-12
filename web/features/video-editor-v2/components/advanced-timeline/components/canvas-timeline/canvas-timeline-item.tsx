@@ -162,6 +162,8 @@ export interface CanvasTimelineItemProps {
   ) => void;
   /** Callback for right-click context menu */
   onContextMenu?: (data: CanvasContextMenuData) => void;
+  /** Callback when user clicks on a transition zone */
+  onTransitionClick?: (transitionId: string) => void;
 }
 
 // ============================================================
@@ -284,6 +286,7 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
   onSelectionChange,
   onDragStart,
   onContextMenu,
+  onTransitionClick,
 }: CanvasTimelineItemProps) {
   const itemHeight = TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT;
   const [isHovering, setIsHovering] = useState(false);
@@ -565,26 +568,8 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
       const pxPerSec = rect.width / duration;
 
       // --- Transition indicators ---
-      if (item.inTransition) {
-        const tDur = (item.inTransition.endTime ?? item.start) - (item.inTransition.startTime ?? item.start);
-        const tW = Math.max(4, Math.min(tDur * pxPerSec, rect.width * 0.4));
-        // Gradient overlay at left edge
-        g.rect(0, 0, tW, rect.height);
-        g.fill({ color: 0x3b82f6, alpha: 0.25 });
-        // Diagonal line
-        g.moveTo(tW, 0).lineTo(0, rect.height);
-        g.stroke({ color: 0x3b82f6, width: 1.5, alpha: 0.6 });
-      }
-
-      if (item.outTransition) {
-        const tDur = (item.outTransition.endTime ?? item.end) - (item.outTransition.startTime ?? item.end);
-        const tW = Math.max(4, Math.min(Math.abs(tDur) * pxPerSec, rect.width * 0.4));
-        const startX = rect.width - tW;
-        g.rect(startX, 0, tW, rect.height);
-        g.fill({ color: 0x3b82f6, alpha: 0.25 });
-        g.moveTo(startX, 0).lineTo(rect.width, rect.height);
-        g.stroke({ color: 0x3b82f6, width: 1.5, alpha: 0.6 });
-      }
+      // Transitions are now rendered as separate CanvasTransitionItem elements
+      // by the track component. No in-clip rendering needed.
 
       // --- Fade overlays ---
       const fadeIn = item.data?.styles?.fadeIn ?? 0;
@@ -631,7 +616,7 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
         }
       }
     },
-    [item.start, item.end, item.inTransition, item.outTransition, item.data?.styles?.fadeIn, item.data?.styles?.fadeOut, item.data?.keyframes, rect.width, rect.height],
+    [item.start, item.end, item.data?.styles?.fadeIn, item.data?.styles?.fadeOut, item.data?.keyframes, rect.width, rect.height],
   );
 
   // ========================================
@@ -664,6 +649,10 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
       // Splitting mode: don't handle drag
       if (splittingEnabled) return;
 
+      // Get local click position for action detection
+      const localPos = e.data?.getLocalPosition?.(e.currentTarget);
+      const localX = localPos?.x ?? 0;
+
       // Shift+click → multi-select
       if (shiftKey && onSelectionChange) {
         onSelectionChange(item.id, true);
@@ -683,8 +672,7 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
       if (!onDragStart) return;
 
       // Determine action from click position within the item
-      const localPos = e.data?.getLocalPosition?.(e.currentTarget);
-      const localX = localPos?.x ?? 0;
+      // (localPos and localX already computed above for transition detection)
       const action = getActionFromPosition(localX, rect.width);
 
       // Get screen coordinates for the drag system

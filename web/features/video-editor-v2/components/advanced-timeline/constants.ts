@@ -7,6 +7,9 @@ export const TIMELINE_CONSTANTS = {
   TRACK_HEIGHT: 48, // Height of each track row
 
   TRACK_ITEM_HEIGHT: 40, // Height of each track item
+
+  // Group header height - section dividers between track groups (Video, Audio, Text, etc.)
+  GROUP_HEADER_HEIGHT: 24, // Height of each group header bar
   
   // Row handles width - increased to fit track name + controls (like Premiere Pro)
   HANDLE_WIDTH: 130, // Width of row handles column

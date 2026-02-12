@@ -288,9 +288,81 @@ export async function populateStressTest(
     trackOrder.push(id);
   }
 
+  // ── 3b. Create text tracks (only in heavy/extreme when addTextOverlays is true) ──
+  let numTextTracks = 0;
+  if (dc.addTextOverlays) {
+    numTextTracks = Math.min(2, Math.max(1, Math.floor(config.videoTracks / 2)));
+    for (let i = 0; i < numTextTracks; i++) {
+      const id = generateId("track-t");
+      tracks[id] = {
+        id,
+        name: `T${i + 1}`,
+        type: "video", // text tracks use 'video' track type but 'text' group
+        order: config.videoTracks + config.audioTracks + i,
+        group: "text",
+        locked: false,
+        visible: true,
+        muted: false,
+        allowOverlap: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      trackOrder.push(id);
+    }
+  }
+
+  // ── 3c. Create overlay tracks (only in heavy/extreme when addTextOverlays is true) ──
+  let numOverlayTracks = 0;
+  if (dc.addTextOverlays) {
+    numOverlayTracks = 1;
+    for (let i = 0; i < numOverlayTracks; i++) {
+      const id = generateId("track-o");
+      tracks[id] = {
+        id,
+        name: `OL${i + 1}`,
+        type: "video", // overlay tracks use 'video' track type but 'overlays' group
+        order: config.videoTracks + config.audioTracks + numTextTracks + i,
+        group: "overlays",
+        locked: false,
+        visible: true,
+        muted: false,
+        allowOverlap: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      trackOrder.push(id);
+    }
+  }
+
+  // ── 3d. Create effects tracks (when addEffects is true — medium/heavy/extreme) ──
+  let numEffectsTracks = 0;
+  if (dc.addEffects) {
+    numEffectsTracks = 1;
+    for (let i = 0; i < numEffectsTracks; i++) {
+      const id = generateId("track-e");
+      tracks[id] = {
+        id,
+        name: `FX${i + 1}`,
+        type: "video", // effects tracks use 'video' track type but 'effects' group
+        order: config.videoTracks + config.audioTracks + numTextTracks + numOverlayTracks + i,
+        group: "effects",
+        locked: false,
+        visible: true,
+        muted: false,
+        allowOverlap: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      trackOrder.push(id);
+    }
+  }
+
   // ── 4. Populate each track with clips ──
-  const videoTrackIds = trackOrder.filter((id) => tracks[id].type === "video");
-  const audioTrackIds = trackOrder.filter((id) => tracks[id].type === "audio");
+  const videoTrackIds = trackOrder.filter((id) => tracks[id].group === "video");
+  const audioTrackIds = trackOrder.filter((id) => tracks[id].group === "audio");
+  const textTrackIds = trackOrder.filter((id) => tracks[id].group === "text");
+  const overlayTrackIds = trackOrder.filter((id) => tracks[id].group === "overlays");
+  const effectsTrackIds = trackOrder.filter((id) => tracks[id].group === "effects");
 
   // Helper to generate clips for a track
   function fillTrackWithClips(
@@ -437,6 +509,133 @@ export async function populateStressTest(
   // Fill audio tracks
   for (let i = 0; i < audioTrackIds.length; i++) {
     trackClipIds[audioTrackIds[i]] = fillTrackWithClips(audioTrackIds[i], "audio", i);
+  }
+
+  // Fill text tracks with text clips (sparse — every few seconds)
+  for (let i = 0; i < textTrackIds.length; i++) {
+    const trackId = textTrackIds[i];
+    const clipIds: string[] = [];
+    let cursor = randomBetween(1, 5); // Start offset
+    let clipIndex = 0;
+
+    while (cursor < config.durationSeconds * 0.8) { // Only fill 80% so it's sparse
+      const clipDuration = randomBetween(2, 6); // Text clips: 2-6 seconds
+      const clipId = generateId("clip");
+      clips[clipId] = {
+        id: clipId,
+        trackId,
+        startTime: cursor,
+        duration: clipDuration,
+        type: "text",
+        sourceId: `text-${clipIndex}`,
+        label: pickFromPool(TEXT_LABELS, clipIndex),
+        transform: {
+          x: 960 - 300,
+          y: 800,
+          width: 600,
+          height: 80,
+          rotation: 0,
+          opacity: 0.95,
+        },
+        text: {
+          text: pickFromPool(TEXT_LABELS, clipIndex),
+          fontFamily: "Inter",
+          fontSize: 36,
+          color: "#ffffff",
+          backgroundColor: "rgba(0,0,0,0.6)",
+          textAlign: "center",
+        },
+        createdAt: now,
+        updatedAt: now,
+      };
+      clipIds.push(clipId);
+      cursor += clipDuration + randomBetween(3, 10); // Gap between text clips
+      clipIndex++;
+    }
+    trackClipIds[trackId] = clipIds;
+  }
+
+  // Fill overlay tracks with image clips (sparse — watermarks/stickers)
+  for (let i = 0; i < overlayTrackIds.length; i++) {
+    const trackId = overlayTrackIds[i];
+    const clipIds: string[] = [];
+    let cursor = randomBetween(0, 3);
+    let clipIndex = 0;
+
+    while (cursor < config.durationSeconds * 0.7) {
+      const clipDuration = randomBetween(5, 15); // Overlays: 5-15 seconds
+      const clipId = generateId("clip");
+      const src: string = images.length > 0
+        ? pickFromPool(images, clipIndex).url
+        : pickFromPool(FALLBACK_IMAGES, clipIndex);
+      clips[clipId] = {
+        id: clipId,
+        trackId,
+        startTime: cursor,
+        duration: clipDuration,
+        type: "image",
+        sourceId: src,
+        label: `Overlay ${clipIndex + 1}`,
+        data: { src },
+        transform: {
+          x: randomBetween(100, 1600),
+          y: randomBetween(100, 900),
+          width: randomBetween(100, 300),
+          height: randomBetween(100, 300),
+          rotation: 0,
+          opacity: randomBetween(0.5, 1.0),
+        },
+        createdAt: now,
+        updatedAt: now,
+      };
+      clipIds.push(clipId);
+      cursor += clipDuration + randomBetween(5, 20); // Larger gaps for overlays
+      clipIndex++;
+    }
+    trackClipIds[trackId] = clipIds;
+  }
+
+  // Fill effects tracks with adjustment clips (sparse — color grades/filters)
+  const EFFECT_NAMES = [
+    "Color Grade - Cinematic", "Warm Tones", "Cool Shadows", "Film Grain",
+    "Vignette", "LUT - Orange & Teal", "Bloom", "Sharpen", "Desaturate",
+    "Vintage Film", "HDR Effect", "Glow", "Contrast Boost", "Matte Look",
+  ];
+  for (let i = 0; i < effectsTrackIds.length; i++) {
+    const trackId = effectsTrackIds[i];
+    const clipIds: string[] = [];
+    let cursor = 0;
+    let clipIndex = 0;
+
+    while (cursor < config.durationSeconds) {
+      // Effects clips cover longer spans (10-30s) with small gaps
+      const clipDuration = randomBetween(10, 30);
+      const clipId = generateId("clip");
+      clips[clipId] = {
+        id: clipId,
+        trackId,
+        startTime: cursor,
+        duration: Math.min(clipDuration, config.durationSeconds - cursor),
+        type: "shape", // effects clips render as transparent shape overlays (adjustment layers)
+        sourceId: `effect-adj-${clipIndex}`,
+        label: pickFromPool(EFFECT_NAMES, clipIndex),
+        data: { shapeType: "rectangle", fill: "transparent" },
+        transform: {
+          x: 0,
+          y: 0,
+          width: 1920,
+          height: 1080,
+          rotation: 0,
+          opacity: 1,
+        },
+        createdAt: now,
+        updatedAt: now,
+      };
+      clipIds.push(clipId);
+      cursor += clipDuration + randomBetween(2, 8);
+      clipIndex++;
+    }
+    trackClipIds[trackId] = clipIds;
   }
 
   // ── 5. Add transitions ──

@@ -29,7 +29,7 @@ import type { Mask } from './masks';
 // ============================================================
 
 export type TrackType = 'video' | 'audio';
-export type TrackGroup = 'video' | 'audio';
+export type TrackGroup = 'video' | 'audio' | 'text' | 'effects' | 'overlays';
 
 /**
  * Edit modes for timeline operations (like Premiere Pro)

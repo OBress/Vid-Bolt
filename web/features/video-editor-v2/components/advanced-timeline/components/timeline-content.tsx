@@ -27,7 +27,7 @@ import { useTimelineDragAndDrop } from '../hooks/use-timeline-drag-and-drop';
 import { useMediaDrop } from '../hooks/use-media-drop';
 import { useMarqueeSelection } from '../hooks/use-marquee-selection';
 import { useTimelineZoomSelection } from '../hooks/use-timeline-zoom-selection';
-import { useVideoEditorStore, selectDragState, selectDragVisuals, getCurrentDrag, endDrag } from '../../../stores/video-editor-store';
+import { useVideoEditorStore, selectDragState, selectDragVisuals, getCurrentDrag, endDrag, selectSelectedTransitionId } from '../../../stores/video-editor-store';
 import { TIMELINE_CONSTANTS, VIRTUAL_SCROLL_CONSTANTS } from '../constants';
 import { ScrollStateProvider } from '../contexts/scroll-state-context';
 
@@ -100,10 +100,17 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
   onEffectDrop,
   // Composition editor
   onOpenCompositionEditor,
+  // Track group collapse
+  collapsedGroups,
 }) => {
   // Check if we're using virtual scroll (new system) or native scroll (legacy)
   const useVirtualScroll = onScrollXChange !== undefined;
   const currentTime = currentFrame / fps;
+
+  // Transition selection: call store directly (transition-manager is a no-op stub)
+  const handleTransitionClick = useCallback((transitionId: string) => {
+    useVideoEditorStore.getState().selectTransition(transitionId);
+  }, []);
   
   // Track container width for Premiere Pro-style scaling
   const [containerWidth, setContainerWidth] = useState(1000); // Default fallback
@@ -197,6 +204,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
   // Get state from unified video editor store using individual selectors (performance optimized)
   const dragState = useVideoEditorStore(selectDragState);
   const dragVisuals = useVideoEditorStore(selectDragVisuals);
+  const selectedTransitionId = useVideoEditorStore(selectSelectedTransitionId);
   
   // Extract visual state
   const ghostElements = dragVisuals?.ghostElements ?? null;
@@ -980,6 +988,9 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
             onDragStart={handleCanvasDragStart}
             onContextMenu={handleCanvasContextMenu}
             onTimeClick={handleTimeClick}
+            collapsedGroups={collapsedGroups}
+            onTransitionClick={handleTransitionClick}
+            selectedTransitionId={selectedTransitionId}
           />
 
           {/* Canvas Context Menu — DOM portal positioned at right-click coords */}

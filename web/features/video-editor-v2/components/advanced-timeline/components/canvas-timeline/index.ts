@@ -15,6 +15,9 @@ export type { CanvasTimelineTrackProps } from './canvas-timeline-track';
 export { CanvasTimelineItem } from './canvas-timeline-item';
 export type { CanvasTimelineItemProps, CanvasContextMenuData } from './canvas-timeline-item';
 
+export { CanvasTransitionItem } from './canvas-transition-item';
+export type { CanvasTransitionItemProps } from './canvas-transition-item';
+
 export { CanvasContextMenu } from './canvas-context-menu';
 export type { CanvasContextMenuProps } from './canvas-context-menu';
 

@@ -30,9 +30,10 @@
  * - Keeps all existing business logic untouched (store, hooks, selectors)
  */
 
-import React, { useRef, useMemo, useCallback } from 'react';
+import React, { useRef, useMemo, useCallback, useEffect } from 'react';
 import { Container, Graphics } from 'pixi.js';
 import { Application, extend } from '@pixi/react';
+import type { ApplicationRef } from '@pixi/react';
 import { CanvasTimelineTrack } from './canvas-timeline-track';
 import { CanvasPlayhead } from './canvas-playhead';
 import {
@@ -53,8 +54,17 @@ extend({ Container, Graphics });
 // ============================================================
 
 const CANVAS_BG = 0x0a0a0a; // Near-black background (matches neutral-950)
-const ADD_BUTTON_HEIGHT = 28; // Matches h-7 Add Video Track spacer
-const DIVIDER_BG = 0x262626; // neutral-800
+const GROUP_HEADER_HEIGHT = 24; // Must match canvas-timeline-utils.ts
+
+/** Visual config for each group header in the canvas */
+const GROUP_CONFIG: Record<string, { accentColor: number; bgColor: number; label: string }> = {
+  video:    { accentColor: 0x0891b2, bgColor: 0x0f1717, label: '🎬 VIDEO' },
+  overlays: { accentColor: 0x7c3aed, bgColor: 0x13101a, label: '🎭 OVERLAYS' },
+  text:     { accentColor: 0xd97706, bgColor: 0x1a1508, label: '✏️ TEXT' },
+  effects:  { accentColor: 0x9333ea, bgColor: 0x150f1a, label: '✨ EFFECTS' },
+  audio:    { accentColor: 0x16a34a, bgColor: 0x0f1a14, label: '🔊 AUDIO' },
+};
+const GROUP_ORDER: string[] = ['video', 'overlays', 'text', 'effects', 'audio'];
 
 // ============================================================
 // TYPES
@@ -103,6 +113,19 @@ export interface CanvasTimelineProps {
   onZoomChange?: (delta: number) => void;
   /** Callback to zoom timeline to fit entire duration */
   onZoomToFit?: () => void;
+  /** Set of collapsed track group names */
+  collapsedGroups?: Set<string>;
+  /** Callback when user clicks on a transition zone */
+  onTransitionClick?: (transitionId: string) => void;
+  /** Currently selected transition ID */
+  selectedTransitionId?: string | null;
+  /** Callback when user starts resizing a transition */
+  onTransitionResizeStart?: (
+    transitionId: string,
+    clientX: number,
+    clientY: number,
+    side: 'left' | 'right',
+  ) => void;
 }
 
 // ============================================================
@@ -127,13 +150,17 @@ function CanvasTimelineContent({
   onDragStart,
   onContextMenu,
   onTimeClick,
+  collapsedGroups,
+  onTransitionClick,
+  selectedTransitionId,
+  onTransitionResizeStart,
 }: Omit<CanvasTimelineProps, 'scrollX' | 'scrollY' | 'zoomScale'>) {
   const trackHeight = propTrackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
 
   // Compute total content height for all tracks (including spacers and dividers)
   const contentHeight = useMemo(
-    () => getTotalContentHeight(tracks, trackHeight),
-    [tracks, trackHeight],
+    () => getTotalContentHeight(tracks, trackHeight, collapsedGroups),
+    [tracks, trackHeight, collapsedGroups],
   );
 
   // Compute playhead X position
@@ -143,130 +170,107 @@ function CanvasTimelineContent({
     return timeToX(currentTime, scrollableDuration, scrollableWidth);
   }, [currentFrame, fps, scrollableDuration, scrollableWidth]);
 
-  // Compute track Y positions and detect video/audio dividers
+  // Compute track Y positions (only for non-collapsed groups)
   const trackLayouts = useMemo(() => {
-    const layouts: Array<{
-      track: TrackWithClips;
-      y: number;
-      showDividerBefore: boolean;
-    }> = [];
-
+    const layouts: Array<{ track: TrackWithClips; y: number; index: number }> = [];
     for (let i = 0; i < tracks.length; i++) {
-      const previousTrack = i > 0 ? tracks[i - 1] : null;
-      const showDividerBefore = previousTrack?.type === 'video' && tracks[i].type === 'audio';
-
+      // Determine group for this track
+      const group = tracks[i].group || (tracks[i].type === 'audio' ? 'audio' : 'video');
+      if (collapsedGroups?.has(group)) continue; // skip collapsed
       layouts.push({
         track: tracks[i],
-        y: getTrackYOffset(i, trackHeight, tracks),
-        showDividerBefore,
+        y: getTrackYOffset(i, trackHeight, tracks, collapsedGroups),
+        index: i,
       });
     }
-
     return layouts;
-  }, [tracks, trackHeight]);
+  }, [tracks, trackHeight, collapsedGroups]);
 
-  // Draw the top spacer (Add Video Track button area)
-  const drawTopSpacer = useCallback(
-    (g: Graphics) => {
-      g.clear();
-      g.rect(0, 0, scrollableWidth, ADD_BUTTON_HEIGHT);
-      g.fill({ color: 0x171717 }); // neutral-900
+  // Compute group header positions
+  const groupHeaders = useMemo(() => {
+    // Build group layout (same logic as utils)
+    const byGroup = new Map<string, number[]>();
+    for (const g of GROUP_ORDER) byGroup.set(g, []);
+    for (let i = 0; i < tracks.length; i++) {
+      const g = tracks[i].group || (tracks[i].type === 'audio' ? 'audio' : 'video');
+      const list = byGroup.get(g);
+      if (list) list.push(i);
+      else byGroup.get('video')!.push(i);
+    }
 
-      // Bottom border
-      g.moveTo(0, ADD_BUTTON_HEIGHT - 0.5);
-      g.lineTo(scrollableWidth, ADD_BUTTON_HEIGHT - 0.5);
-      g.stroke({ color: 0x404040, width: 1, alpha: 0.8 }); // neutral-700
-    },
-    [scrollableWidth],
-  );
-
-  // Draw section dividers between video and audio tracks
-  const drawDivider = useCallback(
-    (g: Graphics) => {
-      g.clear();
-      const dividerHeight = trackHeight / 2;
-      g.rect(0, 0, scrollableWidth, dividerHeight);
-      g.fill({ color: DIVIDER_BG });
-
-      // Bottom border
-      g.moveTo(0, dividerHeight - 0.5);
-      g.lineTo(scrollableWidth, dividerHeight - 0.5);
-      g.stroke({ color: 0x404040, width: 1, alpha: 0.8 });
-    },
-    [scrollableWidth, trackHeight],
-  );
-
-  // Draw hidden audio divider at bottom (when no audio tracks)
-  const hasAudioTracks = useMemo(
-    () => tracks.some(t => t.type === 'audio'),
-    [tracks],
-  );
-
-  // Bottom spacer Y position
-  const bottomSpacerY = useMemo(
-    () =>
-      tracks.length > 0
-        ? getTrackYOffset(tracks.length, trackHeight, tracks)
-        : ADD_BUTTON_HEIGHT,
-    [tracks, trackHeight],
-  );
-
-  const drawBottomSpacer = useCallback(
-    (g: Graphics) => {
-      g.clear();
-      const spacerHeight = trackHeight / 2;
-      g.rect(0, 0, scrollableWidth, spacerHeight);
-      g.fill({ color: 0x000000 }); // black
-    },
-    [scrollableWidth, trackHeight],
-  );
+    const headers: Array<{ group: string; y: number }> = [];
+    let y = 0;
+    for (const g of GROUP_ORDER) {
+      const indices = byGroup.get(g)!;
+      // Always show all group categories
+      headers.push({ group: g, y });
+      y += GROUP_HEADER_HEIGHT;
+      // Only add track heights if group is NOT collapsed
+      if (!collapsedGroups?.has(g)) {
+        y += indices.length * trackHeight;
+      }
+    }
+    return headers;
+  }, [tracks, trackHeight, collapsedGroups]);
 
   // No internal transform — the parent DOM div in timeline-content.tsx
   // already applies transform: translate(virtualTransform.x, virtualTransform.y)
-  // which moves the entire canvas element. Items are at absolute positions.
   return (
     <pixiContainer>
-      {/* Top spacer (Add Video Track button area) */}
-      <pixiGraphics draw={drawTopSpacer} />
+      {/* Group header bars */}
+      {groupHeaders.map(({ group, y }) => {
+        const cfg = GROUP_CONFIG[group] || GROUP_CONFIG.video;
+        return (
+          <pixiGraphics
+            key={`header-${group}`}
+            y={y}
+            draw={(g: Graphics) => {
+              g.clear();
+              // Background fill
+              g.rect(0, 0, scrollableWidth, GROUP_HEADER_HEIGHT);
+              g.fill({ color: cfg.bgColor });
+              // Left accent bar (3px)
+              g.rect(0, 0, 3, GROUP_HEADER_HEIGHT);
+              g.fill({ color: cfg.accentColor, alpha: 0.9 });
+              // Bottom border
+              g.moveTo(0, GROUP_HEADER_HEIGHT - 0.5);
+              g.lineTo(scrollableWidth, GROUP_HEADER_HEIGHT - 0.5);
+              g.stroke({ color: 0x333333, width: 1, alpha: 0.6 });
+            }}
+          />
+        );
+      })}
 
       {/* Tracks */}
-      {trackLayouts.map(({ track, y, showDividerBefore }) => (
-        <React.Fragment key={track.id}>
-          {/* Video/Audio divider */}
-          {showDividerBefore && (
-            <pixiGraphics
-              draw={drawDivider}
-              y={y - trackHeight / 2}
-            />
-          )}
-
-          <CanvasTimelineTrack
-            track={track}
-            y={y}
-            totalDuration={scrollableDuration}
-            totalWidth={scrollableWidth}
-            trackHeight={trackHeight}
-            selectedItemIds={selectedItemIds}
-            splittingEnabled={splittingEnabled}
-            onItemSelect={onItemSelect}
-            onSelectionChange={onSelectionChange}
-            onDragStart={onDragStart}
-            onContextMenu={onContextMenu}
-            onTimeClick={onTimeClick}
-          />
-        </React.Fragment>
+      {trackLayouts.map(({ track, y }) => (
+        <CanvasTimelineTrack
+          key={track.id}
+          track={track}
+          y={y}
+          totalDuration={scrollableDuration}
+          totalWidth={scrollableWidth}
+          trackHeight={trackHeight}
+          selectedItemIds={selectedItemIds}
+          splittingEnabled={splittingEnabled}
+          onItemSelect={onItemSelect}
+          onSelectionChange={onSelectionChange}
+          onDragStart={onDragStart}
+          onContextMenu={onContextMenu}
+          onTimeClick={onTimeClick}
+          onTransitionClick={onTransitionClick}
+          selectedTransitionId={selectedTransitionId}
+          onTransitionResizeStart={onTransitionResizeStart}
+        />
       ))}
 
-      {/* Bottom spacer for audio section */}
-      {!hasAudioTracks && (
-        <pixiGraphics
-          draw={drawDivider}
-          y={bottomSpacerY}
-        />
-      )}
+      {/* Bottom spacer */}
       <pixiGraphics
-        draw={drawBottomSpacer}
-        y={bottomSpacerY + (!hasAudioTracks ? trackHeight / 2 : 0)}
+        y={contentHeight - trackHeight / 2}
+        draw={(g: Graphics) => {
+          g.clear();
+          g.rect(0, 0, scrollableWidth, trackHeight / 2);
+          g.fill({ color: 0x000000 });
+        }}
       />
 
       {/* Playhead line (rendered on top of all tracks) */}
@@ -301,8 +305,49 @@ export function CanvasTimeline({
   onTimeClick,
   onZoomChange,
   onZoomToFit,
+  collapsedGroups,
+  onTransitionClick,
+  selectedTransitionId,
+  onTransitionResizeStart,
 }: CanvasTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const appRef = useRef<ApplicationRef>(null);
+
+  // Keep canvas resolution in sync with display — fixes blurry canvas
+  // after fullscreen toggle or any container resize
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout>;
+
+    const syncResolution = () => {
+      const app = appRef.current?.getApplication();
+      if (!app?.renderer) return;
+      const dpr = window.devicePixelRatio || 1;
+      // Only update if resolution actually changed
+      if (app.renderer.resolution !== dpr) {
+        app.renderer.resolution = dpr;
+      }
+      // Always re-apply size to rebuild framebuffer at correct resolution
+      app.renderer.resize(container.clientWidth, container.clientHeight);
+    };
+
+    const debouncedSync = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(syncResolution, 100);
+    };
+
+    const ro = new ResizeObserver(debouncedSync);
+    ro.observe(container);
+    document.addEventListener('fullscreenchange', debouncedSync);
+
+    return () => {
+      clearTimeout(debounceTimer);
+      ro.disconnect();
+      document.removeEventListener('fullscreenchange', debouncedSync);
+    };
+  }, []);
 
   // Professional keyboard shortcuts (JKL shuttle, split, delete, nudge, etc.)
   const { handleKeyDown } = useCanvasKeyboard({
@@ -332,6 +377,7 @@ export function CanvasTimeline({
       }}
     >
       <Application
+        ref={appRef}
         resizeTo={containerRef}
         background={CANVAS_BG}
         antialias
@@ -352,6 +398,10 @@ export function CanvasTimeline({
           onDragStart={onDragStart}
           onContextMenu={onContextMenu}
           onTimeClick={onTimeClick}
+          collapsedGroups={collapsedGroups}
+          onTransitionClick={onTransitionClick}
+          selectedTransitionId={selectedTransitionId}
+          onTransitionResizeStart={onTransitionResizeStart}
         />
       </Application>
 

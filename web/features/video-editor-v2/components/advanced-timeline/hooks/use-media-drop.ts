@@ -17,6 +17,7 @@ import { useCallback, useRef, useMemo } from 'react';
 import { TrackWithClips, TimelineItem, isVideoTrackItem, isAudioTrackItem } from '../types';
 import { TIMELINE_CONSTANTS, SNAPPING_CONFIG } from '../constants';
 import { getCurrentDrag, useVideoEditorStore, endDrag, type UnifiedDragState } from '../../../stores/video-editor-store';
+import { getTrackYOffset } from '../components/canvas-timeline/canvas-timeline-utils';
 
 // ============================================================
 // TYPES
@@ -81,7 +82,7 @@ const SNAP_THRESHOLD = 0.15; // seconds - snap within this distance of an edge
 const TRACK_INSERTION_THRESHOLD = 8; // pixels - detect insertion zone near track boundaries
 const DEFAULT_IMAGE_DURATION = 5; // seconds
 const DEFAULT_VIDEO_DURATION = 10; // seconds
-const SPACER_HEIGHT = 28; // Height of "Add Track" button spacer
+const SPACER_HEIGHT = 0; // Group headers are now included inside getTrackYOffset
 
 // ============================================================
 // UTILITY FUNCTIONS
@@ -257,13 +258,12 @@ const detectInsertionZone = (
   tracks: TrackWithClips[],
   trackHeight: number
 ): number | null => {
-  const adjustedY = relativeY - SPACER_HEIGHT;
-  if (adjustedY < 0) return null;
-  
-  // Check boundaries between tracks
+  // Use group-aware Y positioning
   for (let i = 0; i <= tracks.length; i++) {
-    const boundaryY = i * trackHeight;
-    const distanceToBoundary = Math.abs(adjustedY - boundaryY);
+    const boundaryY = i < tracks.length
+      ? getTrackYOffset(i, trackHeight, tracks)
+      : getTrackYOffset(tracks.length - 1, trackHeight, tracks) + trackHeight;
+    const distanceToBoundary = Math.abs(relativeY - boundaryY);
     
     if (distanceToBoundary <= TRACK_INSERTION_THRESHOLD) {
       return i;
@@ -408,12 +408,20 @@ export const useMediaDrop = ({
     // Ensure we don't go before timeline start
     startTime = Math.max(0, startTime);
     
-    // Calculate track index from Y position
-    const adjustedY = Math.max(0, relativeY - SPACER_HEIGHT);
-    const hoverTrackIndex = Math.max(
-      0,
-      Math.min(tracks.length - 1, Math.floor(adjustedY / trackHeight))
-    );
+    // Calculate track index from Y position using group-aware positioning
+    // Find the track whose Y range contains the cursor
+    let hoverTrackIndex = 0;
+    for (let i = 0; i < tracks.length; i++) {
+      const trackY = getTrackYOffset(i, trackHeight, tracks);
+      if (relativeY >= trackY && relativeY < trackY + trackHeight) {
+        hoverTrackIndex = i;
+        break;
+      }
+      // If we're past this track, it might be the last one
+      if (i === tracks.length - 1) {
+        hoverTrackIndex = relativeY >= trackY ? i : Math.max(0, i - 1);
+      }
+    }
     
     // Determine if we're in a track insertion zone
     // Disable insertion when position was clamped from outside bounds

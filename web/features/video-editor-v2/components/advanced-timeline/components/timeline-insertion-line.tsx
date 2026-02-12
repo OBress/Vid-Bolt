@@ -1,11 +1,13 @@
 import React from 'react';
 import { TIMELINE_CONSTANTS } from '../constants';
 import { Plus } from 'lucide-react';
+import { getTrackYOffset } from './canvas-timeline/canvas-timeline-utils';
 
 interface TimelineInsertionLineProps {
   insertionIndex: number | null;
   trackCount: number;
   trackHeight?: number;
+  tracks?: ReadonlyArray<{ type: string; group?: string }>;
 }
 
 /**
@@ -16,15 +18,18 @@ export const TimelineInsertionLine: React.FC<TimelineInsertionLineProps> = ({
   insertionIndex,
   trackCount,
   trackHeight = TIMELINE_CONSTANTS.TRACK_HEIGHT,
+  tracks,
 }) => {
   if (insertionIndex === null) {
     return null;
   }
 
-  // Position the line at the BOUNDARY between tracks
-  // Account for the "Add Video Track" button offset (h-7 = 28px)
-  const headerOffset = 28;
-  const topPosition = headerOffset + (insertionIndex * trackHeight);
+  // Position using group-aware Y calculation
+  const topPosition = tracks && tracks.length > 0
+    ? (insertionIndex < tracks.length
+        ? getTrackYOffset(insertionIndex, trackHeight, tracks)
+        : getTrackYOffset(tracks.length - 1, trackHeight, tracks) + trackHeight)
+    : insertionIndex * trackHeight;
 
   return (
     <>

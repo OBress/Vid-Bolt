@@ -615,6 +615,9 @@ export const MediaTab: React.FC = () => {
 
   // Filter items based on active filter
   const filteredItems = useMemo(() => {
+    // Type priority for "all" view: video first, then images, then audio
+    const TYPE_PRIORITY: Record<string, number> = { video: 0, image: 1, audio: 2 };
+
     switch (activeFilter) {
       case "images":
         return allMediaItems.filter((item) => item.type === "image");
@@ -627,7 +630,10 @@ export const MediaTab: React.FC = () => {
       case "ai":
         return allMediaItems.filter((item) => item.isAiGenerated);
       default:
-        return allMediaItems;
+        // Sort by type priority: videos → images → audio
+        return [...allMediaItems].sort(
+          (a, b) => (TYPE_PRIORITY[a.type] ?? 9) - (TYPE_PRIORITY[b.type] ?? 9)
+        );
     }
   }, [allMediaItems, activeFilter]);
 

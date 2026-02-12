@@ -16,8 +16,10 @@ import {
 } from './hooks';
 import { TimelineProps, TimelineRef, TimelineItem } from './types';
 import { clearTimelineMarkerPosition } from './utils';
+import { getTotalContentHeight } from './components/canvas-timeline/canvas-timeline-utils';
 import { ZOOM_CONSTRAINTS, TIMELINE_CONSTANTS } from './constants';
 import { useVideoEditorStore, selectDragType } from '../../stores/video-editor-store';
+import type { TrackGroup } from '../../types/timeline-v2';
 
 /**
  * Timeline Component with Comprehensive Theming Support
@@ -109,6 +111,17 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
   
   // Local collapse state - managed locally but reported to parent
   const [isCollapsed, setIsCollapsed] = useState(false);
+  
+  // Track group collapse state — shared between handles + canvas
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<TrackGroup>>(new Set());
+  const handleToggleGroupCollapse = useCallback((group: TrackGroup) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      return next;
+    });
+  }, []);
   
   // Toggle collapse handler
   const handleToggleCollapse = useCallback(() => {
@@ -214,34 +227,11 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
   }, [tracks, totalDuration]);
   
   // Calculate content height for vertical scroll bounds
-  // Includes: Add Video Track button (28px) + all tracks + dividers + Add Audio Track button + bottom spacer
+  // Uses centralized function that accounts for group headers
   const contentHeight = useMemo(() => {
     const trackHeightValue = trackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
-    const addVideoButtonHeight = 28; // h-7 = 28px
-    const addAudioButtonHeight = trackHeightValue / 2; // Half track height
-    const bottomSpacerHeight = trackHeightValue / 2; // Half track height for visual comfort
-    const hasVideoTracks = tracks.some(t => t.type === 'video');
-    const hasAudioTracks = tracks.some(t => t.type === 'audio');
-    
-    // Calculate total: Add Video button + all tracks + divider (if mixed) + bottom audio button (if no audio tracks) + bottom spacer
-    let height = addVideoButtonHeight; // Add Video Track button
-    height += tracks.length * trackHeightValue; // All tracks
-    
-    // Add divider between video and audio tracks
-    if (hasVideoTracks && hasAudioTracks) {
-      height += addAudioButtonHeight; // The "Add Audio Track" button between sections
-    }
-    
-    // Add bottom audio button if no audio tracks
-    if (!hasAudioTracks) {
-      height += addAudioButtonHeight;
-    }
-    
-    // Add bottom padding spacer
-    height += bottomSpacerHeight;
-    
-    return height;
-  }, [tracks, trackHeight]);
+    return getTotalContentHeight(tracks, trackHeightValue, collapsedGroups);
+  }, [tracks, trackHeight, collapsedGroups]);
   
   // VIRTUAL SCROLL: Single source of truth for scroll and zoom
   // No native browser scroll - uses CSS transforms for positioning
@@ -748,6 +738,8 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
             enableTrackDrag={enableTrackDrag}
             enableTrackDelete={enableTrackDelete}
             scrollY={scrollY}
+            collapsedGroups={collapsedGroups}
+            onToggleGroupCollapse={handleToggleGroupCollapse}
           />
         </div>
         
@@ -816,6 +808,7 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
             onZoomToRange={zoomToRange}
             onEffectDrop={onEffectDrop}
             onOpenCompositionEditor={onOpenCompositionEditor}
+            collapsedGroups={collapsedGroups}
           />
           
           {/* Vertical scroll indicator - only show when content exceeds viewport */}

@@ -9,6 +9,7 @@
  * Responsibilities:
  * - Draws track background and bottom border
  * - Renders all items within the track via CanvasTimelineItem
+ * - Renders transitions as separate elements via CanvasTransitionItem
  * - Handles click on empty track area (move playhead)
  * - Forwards interaction callbacks to items (drag, select, context menu)
  */
@@ -17,8 +18,10 @@ import React, { useCallback, useMemo } from 'react';
 import { Graphics, Container } from 'pixi.js';
 import { extend } from '@pixi/react';
 import { CanvasTimelineItem } from './canvas-timeline-item';
+import { CanvasTransitionItem } from './canvas-transition-item';
 import type { CanvasContextMenuData } from './canvas-timeline-item';
 import type { TrackWithClips, TimelineItem } from '../../../../stores/memoized-selectors';
+import type { TransitionEntity } from '../../../../types/timeline-v2';
 import { TIMELINE_CONSTANTS } from '../../constants';
 
 extend({ Container, Graphics });
@@ -27,8 +30,14 @@ extend({ Container, Graphics });
 // CONSTANTS
 // ============================================================
 
-const TRACK_BG_VIDEO = 0x171717; // neutral-900
-const TRACK_BG_AUDIO = 0x0f1a14; // subtle green-tinted dark (separates audio from video)
+const TRACK_BG_DEFAULT = 0x171717; // neutral-900 (fallback)
+const GROUP_BG_COLORS: Record<string, number> = {
+  video:    0x171717, // neutral-900
+  overlays: 0x13101a, // subtle violet-tinted
+  text:     0x1a1508, // subtle amber-tinted
+  effects:  0x150f1a, // subtle purple-tinted
+  audio:    0x0f1a14, // subtle green-tinted
+};
 const TRACK_BORDER_COLOR = 0x404040; // neutral-700
 const TRACK_BORDER_ALPHA = 0.8;
 
@@ -49,6 +58,8 @@ export interface CanvasTimelineTrackProps {
   trackHeight: number;
   /** Currently selected item IDs */
   selectedItemIds: string[];
+  /** Currently selected transition ID */
+  selectedTransitionId?: string | null;
   /** Whether splitting mode is active */
   splittingEnabled?: boolean;
   /** Callback when an item is selected */
@@ -67,6 +78,15 @@ export interface CanvasTimelineTrackProps {
   onContextMenu?: (data: CanvasContextMenuData) => void;
   /** Callback when empty track area is clicked (for playhead) */
   onTimeClick?: (timeInSeconds: number) => void;
+  /** Callback when user clicks on a transition zone */
+  onTransitionClick?: (transitionId: string) => void;
+  /** Callback when user starts resizing a transition */
+  onTransitionResizeStart?: (
+    transitionId: string,
+    clientX: number,
+    clientY: number,
+    side: 'left' | 'right',
+  ) => void;
 }
 
 // ============================================================
@@ -80,12 +100,15 @@ export const CanvasTimelineTrack = React.memo(function CanvasTimelineTrack({
   totalWidth,
   trackHeight,
   selectedItemIds,
+  selectedTransitionId,
   splittingEnabled = false,
   onItemSelect,
   onSelectionChange,
   onDragStart,
   onContextMenu,
   onTimeClick,
+  onTransitionClick,
+  onTransitionResizeStart,
 }: CanvasTimelineTrackProps) {
   const selectedSet = useMemo(
     () => new Set(selectedItemIds),
@@ -98,13 +121,28 @@ export const CanvasTimelineTrack = React.memo(function CanvasTimelineTrack({
   const trackHidden = !track.visible;
   const trackMuted = !!track.muted;
 
+  // Extract unique transitions from track items (deduped by transition ID)
+  const trackTransitions = useMemo(() => {
+    const seen = new Map<string, TransitionEntity>();
+    for (const item of track.items) {
+      if (item.inTransition && !seen.has(item.inTransition.id)) {
+        seen.set(item.inTransition.id, item.inTransition);
+      }
+      if (item.outTransition && !seen.has(item.outTransition.id)) {
+        seen.set(item.outTransition.id, item.outTransition);
+      }
+    }
+    return Array.from(seen.values());
+  }, [track.items]);
+
   // Draw track background + bottom border
   const drawTrackBg = useCallback(
     (g: Graphics) => {
       g.clear();
 
-      // Background
-      const bgColor = track.type === 'audio' ? TRACK_BG_AUDIO : TRACK_BG_VIDEO;
+      // Background — resolve from track.group (or fallback to type)
+      const group = track.group || (track.type === 'audio' ? 'audio' : 'video');
+      const bgColor = GROUP_BG_COLORS[group] || TRACK_BG_DEFAULT;
       g.rect(0, 0, totalWidth, trackHeight);
       g.fill({ color: bgColor });
 
@@ -162,6 +200,22 @@ export const CanvasTimelineTrack = React.memo(function CanvasTimelineTrack({
           onSelectionChange={onSelectionChange}
           onDragStart={onDragStart}
           onContextMenu={onContextMenu}
+          onTransitionClick={onTransitionClick}
+        />
+      ))}
+
+      {/* Transitions — rendered on top of clips as separate elements */}
+      {trackTransitions.map((transition) => (
+        <CanvasTransitionItem
+          key={`transition-${transition.id}`}
+          transition={transition}
+          totalDuration={totalDuration}
+          totalWidth={totalWidth}
+          trackHeight={trackHeight}
+          isSelected={selectedTransitionId === transition.id}
+          isLocked={isLocked}
+          onTransitionClick={onTransitionClick}
+          onResizeStart={onTransitionResizeStart}
         />
       ))}
     </pixiContainer>

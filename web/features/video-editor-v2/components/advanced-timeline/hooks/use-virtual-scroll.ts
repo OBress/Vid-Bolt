@@ -220,12 +220,17 @@ export const useVirtualScroll = ({
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** rAF handle for batching direct DOM updates */
   const scrollRafRef = useRef<number | null>(null);
+  /** Interval for periodic React state flush during active scrolling.
+   *  This ensures virtualizedTracks recomputes so newly-visible items mount. */
+  const scrollFlushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const SCROLL_FLUSH_INTERVAL_MS = 200;
 
   /** Cleanup on unmount */
   useEffect(() => {
     return () => {
       if (scrollIdleTimerRef.current !== null) clearTimeout(scrollIdleTimerRef.current);
       if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+      if (scrollFlushIntervalRef.current !== null) clearInterval(scrollFlushIntervalRef.current);
     };
   }, []);
 
@@ -242,9 +247,30 @@ export const useVirtualScroll = ({
     }
   }, [maxScrollX]);
 
+  /** Start periodic React state flush if not already running */
+  const startPeriodicFlush = useCallback(() => {
+    if (scrollFlushIntervalRef.current !== null) return;
+    scrollFlushIntervalRef.current = setInterval(() => {
+      const { x, y } = liveScrollRef.current;
+      setState(prev => {
+        if (Math.abs(prev.scrollX - x) < 0.0001 && Math.abs(prev.scrollY - y) < 0.0001) return prev;
+        return { ...prev, scrollX: x, scrollY: y };
+      });
+    }, SCROLL_FLUSH_INTERVAL_MS);
+  }, [SCROLL_FLUSH_INTERVAL_MS]);
+
+  /** Stop periodic flush */
+  const stopPeriodicFlush = useCallback(() => {
+    if (scrollFlushIntervalRef.current !== null) {
+      clearInterval(scrollFlushIntervalRef.current);
+      scrollFlushIntervalRef.current = null;
+    }
+  }, []);
+
   /** Flush live scroll ref to React state (called when scroll stops) */
   const flushScrollToState = useCallback(() => {
     scrollIdleTimerRef.current = null;
+    stopPeriodicFlush();
     const { x, y } = liveScrollRef.current;
     setState(prev => {
       // Only update if values actually changed
@@ -253,7 +279,7 @@ export const useVirtualScroll = ({
       }
       return { ...prev, scrollX: x, scrollY: y };
     });
-  }, []);
+  }, [stopPeriodicFlush]);
 
   /** Duration (ms) of scroll inactivity before flushing to React state */
   const SCROLL_IDLE_MS = 150;
@@ -270,10 +296,13 @@ export const useVirtualScroll = ({
       scrollRafRef.current = requestAnimationFrame(applyDOMTransform);
     }
 
-    // Reset idle timer — flush to React state only after scrolling stops
+    // Start periodic virtualization refresh so newly-visible items mount during scroll
+    startPeriodicFlush();
+
+    // Reset idle timer — final flush to React state after scrolling stops
     if (scrollIdleTimerRef.current !== null) clearTimeout(scrollIdleTimerRef.current);
     scrollIdleTimerRef.current = setTimeout(flushScrollToState, SCROLL_IDLE_MS);
-  }, [applyDOMTransform, flushScrollToState]);
+  }, [applyDOMTransform, flushScrollToState, startPeriodicFlush]);
 
   // Set horizontal scroll with IMMEDIATE React state update (no deferral).
   // Use this for UI controls like the navigator scrollbar where the control's
@@ -304,10 +333,13 @@ export const useVirtualScroll = ({
       scrollRafRef.current = requestAnimationFrame(applyDOMTransform);
     }
 
+    // Start periodic virtualization refresh so newly-visible items mount during scroll
+    startPeriodicFlush();
+
     // Reset idle timer
     if (scrollIdleTimerRef.current !== null) clearTimeout(scrollIdleTimerRef.current);
     scrollIdleTimerRef.current = setTimeout(flushScrollToState, SCROLL_IDLE_MS);
-  }, [maxScrollY, applyDOMTransform, flushScrollToState]);
+  }, [maxScrollY, applyDOMTransform, flushScrollToState, startPeriodicFlush]);
 
   // Set zoom level
   const setZoomScale = useCallback((zoomScale: number) => {

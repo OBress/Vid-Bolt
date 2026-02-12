@@ -20,6 +20,7 @@ import {
   Bot,
   Wand2,
   ChevronRight,
+  ChevronDown,
   AlertCircle,
   RefreshCw,
   PanelLeftClose,
@@ -29,8 +30,8 @@ import {
   Code,
 } from "lucide-react";
 import { useAISettingsStore } from "../../../stores/ai-settings-store";
-// TODO: useUserSettings not available in Vid-Bolt
-// import { useUserSettings } from "@/hooks/use-settings";
+import { useApiKeys } from "@/hooks/use-api-keys";
+import { ModelSelectorDialog, getModelDisplayName } from "../../asset-manager/components/model-selector-dialog";
 import { useMotionGraphicsGeneration } from "../../../hooks/use-motion-graphics-generation";
 
 // ==========================================
@@ -132,6 +133,7 @@ const QUICK_PROMPTS = [
 export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
   const [inputValue, setInputValue] = useState('');
   const [chatMessages, setChatMessages] = useState<ExtendedChatMessage[]>([]);
+  const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -148,11 +150,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
   const setRenderMode = useCompositionEditorStore((state) => state.setRenderMode);
 
   // AI Settings
-  const { selectedModelId } = useAISettingsStore();
-  // TODO: useUserSettings not available in Vid-Bolt
-  // const { data: userSettings } = useUserSettings();
-  const userSettings: any = null;
-  const hasApiKey = Boolean(userSettings?.openrouter_key);
+  const { selectedModelId, setSelectedModelId } = useAISettingsStore();
+  const { availability: apiKeyAvailability } = useApiKeys();
+  const hasApiKey = apiKeyAvailability.openrouter_key;
 
   // Generation hook
   const {
@@ -230,10 +230,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
       isStreaming: true,
     });
 
-    // Get the API key from user settings
-    const apiKey = userSettings?.openrouter_key || '';
-    
-    if (!apiKey) {
+    // API key check - the backend will fetch the key from the database
+    // We pass an empty string here; the backend endpoint retrieves it from user_api_keys
+    if (!hasApiKey) {
       updateMessage(assistantMessageId, {
         content: 'Please configure your OpenRouter API key in Settings to use AI features.',
         isStreaming: false,
@@ -241,6 +240,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
       });
       return;
     }
+    const apiKey = ''; // Backend retrieves from DB via Supabase session
 
     // Determine if this is a follow-up edit
     const isFollowUp = !!generatedCode;
@@ -317,7 +317,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
     inputValue, 
     isGenerating, 
     composition, 
-    userSettings,
+    hasApiKey,
     selectedModelId,
     generatedCode,
     conversationHistory,
@@ -406,15 +406,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
         </div>
       )}
 
-      {/* Model indicator */}
+      {/* Model selector */}
       <div className="shrink-0 px-3 py-1.5 border-b border-border bg-muted/20">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Cpu className="h-3 w-3" />
-          <span className="truncate">
-            {hasApiKey ? selectedModelId.split('/').pop() : 'No API key configured'}
+        <button
+          onClick={() => setModelDialogOpen(true)}
+          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs bg-muted/50 hover:bg-muted transition-colors truncate w-full"
+          title={`Model: ${selectedModelId}`}
+        >
+          <Cpu className="h-3 w-3 text-muted-foreground shrink-0" />
+          <span className="truncate flex-1 text-left">
+            {hasApiKey ? getModelDisplayName(selectedModelId) : 'No API key configured'}
           </span>
-          {hasApiKey && <div className="h-1.5 w-1.5 rounded-full bg-green-500" />}
-        </div>
+          {hasApiKey && <div className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />}
+          <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
+        </button>
       </div>
 
       {/* Chat messages */}
@@ -508,6 +513,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose }) => {
           </div>
         )}
       </div>
+
+      {/* Model Selector Dialog */}
+      <ModelSelectorDialog
+        open={modelDialogOpen}
+        onOpenChange={setModelDialogOpen}
+        onSelectModel={(modelId) => setSelectedModelId(modelId)}
+        selectedModelId={selectedModelId}
+      />
     </div>
   );
 };

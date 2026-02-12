@@ -23,6 +23,10 @@
 14. [Undo/Redo History Optimizations](#14-undoredo-history-optimizations)
 15. [Persistence Optimizations](#15-persistence-optimizations)
 16. [Event Handling Optimizations](#16-event-handling-optimizations)
+17. [Remotion Layer Rendering Pipeline](#17-remotion-layer-rendering-pipeline)
+18. [Selection Performance Optimizations](#18-selection-performance-optimizations)
+19. [CSS/DOM Performance Optimizations](#19-cssdom-performance-optimizations)
+20. [Canvas Timeline Optimizations](#20-canvas-timeline-optimizations)
 
 ---
 
@@ -268,6 +272,33 @@ player.addEventListener("frameupdate", handleFrameUpdate);
 
 > **Benefit:** Replaces a `requestAnimationFrame` polling loop that ran continuously (even when idle) with Remotion's event-based update that only fires when the frame actually changes. Eliminates idle CPU usage.
 
+### 3.4 Selection-Decoupled Rendering (VideoPlayer ↔ SortedOutlines)
+
+**Files:**
+
+- [video-player.tsx](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/features/video-editor-v2/components/core/video-player.tsx)
+- [sorted-outlines.tsx](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/features/video-editor-v2/components/selection/sorted-outlines.tsx)
+- [main.tsx](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/features/video-editor-v2/utils/remotion/main.tsx)
+
+The canvas selection outlines (blue border + resize handles on the selected clip) are rendered by `SortedOutlines` inside Remotion's `Main` component. Previously, `selectedOverlayId` was prop-drilled through the chain:
+
+```
+VideoPlayer (Zustand subscription) → editorInputProps → Main → SortedOutlines
+```
+
+This caused `VideoPlayer` to re-render on every selection change, running ~15+ `useMemo`/`useCallback` hooks and re-rendering the entire Remotion `Player` JSX tree.
+
+**The fix:** `SortedOutlines` now reads `selectedOverlayId` directly from the Zustand store:
+
+```typescript
+// sorted-outlines.tsx
+const selectedOverlayId = useVideoEditorStore(selectSelectedOverlayId);
+```
+
+This eliminates `selectedOverlayId` from the `VideoPlayer → Main → SortedOutlines` prop chain entirely. `VideoPlayer` no longer subscribes to selection state, and `SortedOutlines` always gets the fresh value (fixing a prior stale-value bug where the memoized `editorInputProps` excluded `selectedOverlayId` from its dependency array).
+
+> **Benefit:** Clicking a timeline clip no longer re-renders `VideoPlayer` or the Remotion `Player` component. Only `SortedOutlines` (a lightweight component rendering outlines and handles) re-renders — a ~10-100× reduction in work for selection interactions.
+
 ---
 
 ## 4. Timeline Virtualization
@@ -341,6 +372,75 @@ style={{
 ```
 
 > **Benefit:** Transform-based scrolling uses GPU compositing (no layout recalculation), making panning/zooming silky smooth. Native scrolling would trigger expensive layout and paint operations.
+
+### 4.4 Deferred Mount Lazy Loading
+
+**File:** [timeline-item-content.tsx](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/features/video-editor-v2/components/advanced-timeline/components/timeline-item/timeline-item-content.tsx)
+
+```typescript
+// Deferred mount: skip heavy work for first 150ms after mount
+const [isSettled, setIsSettled] = useState(false);
+useEffect(() => {
+  const timer = setTimeout(() => setIsSettled(true), 150);
+  return () => clearTimeout(timer);
+}, []);
+
+// Hooks receive null/undefined params until settled — no expensive work triggered
+const waveformResult = useWaveformProcessor(
+  type === TrackItemType.AUDIO && data?.src && isSettled ? data.src : undefined,
+  audioContentStart, end - start
+);
+
+const thumbnailResult = useThumbnailGenerator(
+  type === TrackItemType.VIDEO && isSettled
+    ? { videoId: data?.content, videoSrc: data?.src || data?.originalUrl, ... }
+    : { videoId: null, videoSrc: null, ... }
+);
+```
+
+**How it works:**
+
+- When virtualization scrolls an item into view, the component mounts but `isSettled = false`
+- Expensive hooks (`useWaveformProcessor`, `useThumbnailGenerator`) receive null parameters and skip all work
+- After 150ms, `isSettled` flips to `true` and the hooks begin loading
+- Items that mount and unmount during fast scrolling (<150ms) **never trigger expensive work at all**
+
+> **Benefit:** Fast scrolling no longer triggers audio decoding, sprite sheet loading, or ResizeObserver callbacks for transient items. Only items that remain in the viewport for 150ms+ load their media, dramatically reducing main-thread work during scroll.
+
+### 4.5 Viewport-Relative Shift+Scroll
+
+**File:** [use-virtual-scroll.ts](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/features/video-editor-v2/components/advanced-timeline/hooks/use-virtual-scroll.ts)
+
+```typescript
+if (e.shiftKey) {
+  const viewportFraction = 0.05;
+  const scrollDelta =
+    Math.sign(e.deltaY) *
+    viewportFraction *
+    (viewportDuration / scrollableDuration);
+  const normalizedDelta =
+    scrollableDuration > viewportDuration ? scrollDelta : 0;
+  setScrollX(scrollX + normalizedDelta);
+}
+```
+
+> **Benefit:** Each Shift+wheel notch scrolls a consistent 5% of the visible time range regardless of timeline length. The previous implementation divided by `maxScrollX` (pixels), which made scroll speed inversely proportional to timeline length — a 10-minute timeline was 90× slower to scroll than a 1-minute timeline.
+
+### 4.6 Virtual Scroll Overflow Isolation
+
+**Files:** [styles.css](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/features/video-editor-v2/styles.css), [timeline-content.tsx](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/features/video-editor-v2/components/advanced-timeline/components/timeline-content.tsx)
+
+The timeline tracks scroll container uses `overflow: hidden` on all axes:
+
+```css
+.timeline-tracks-scroll-container {
+  overflow: hidden !important;
+}
+```
+
+Since virtual scroll positions all content via CSS `transform: translate(...)`, no native browser scrolling is needed. Setting `overflow: hidden` prevents the browser from rendering native scrollbars (which were redundant alongside the custom `TimelineNavigatorV2`) and avoids the browser performing any scroll-related layout calculations on the wide content div.
+
+> **Benefit:** Eliminates duplicate scrollbars and prevents the browser from computing scroll positions for a 90,000px+ wide content div. All scrolling is handled by lightweight state updates (`scrollX: 0-1`) and GPU-composited transforms.
 
 ---
 
@@ -1044,18 +1144,712 @@ handleDragRef.current(clampedX, clampedY);
 
 ---
 
+---
+
+## 17. Multi-Tier Lazy Loading (Timeline Scroll Performance)
+
+**Files:** `timeline-item-content.tsx`, `timeline-item-skeleton.tsx`, `timeline-item-content-factory.tsx`
+
+Timeline items use a **3-phase progressive loading system** that delivers instant scrolling regardless of clip count:
+
+### Phase 0 — Skeleton (0ms, during active scroll)
+
+When items first mount or while the user is actively scrolling, a zero-cost skeleton component renders:
+
+- Simple colored div with clip label + type icon (🎥, 🔊, Aa, etc.)
+- **No hooks, no state, no effects, no Zustand subscriptions, no ResizeObserver**
+- Mounts/unmounts in <1ms
+- Uses `contain: strict` CSS for rendering isolation
+
+### Phase 1 — Basic Content (scroll-stop + 100ms)
+
+After the `ScrollStateContext` signals scroll has stopped and a 100ms settle delay passes:
+
+- Full `TimelineItemContentFactory` renders (labels, badges, effects indicators, resize handles)
+- `ResizeObserver` attaches for dimension measurement
+- No expensive media processing yet
+
+### Phase 2 — Full Content (via requestIdleCallback)
+
+After Phase 1 completes, expensive hooks fire during browser idle time:
+
+- `useWaveformProcessor` generates audio waveforms
+- `useThumbnailGenerator` generates video sprite sheets
+- Uses `requestIdleCallback` with 500ms deadline to never block the main thread
+- `hasFullyLoadedRef` prevents re-skeletonizing on subsequent scrolls after full load
+
+**Key design:** Items never regress to skeleton once fully loaded (`hasFullyLoadedRef`). The inner `TimelineItemContentInner` component separates expensive hooks from the phase-management component, ensuring Phase 0 never mounts those hooks at all.
+
+---
+
+## 18. Ref-Based Immediate Scroll (Zero React Work During Scroll)
+
+**File:** `use-virtual-scroll.ts`
+
+Scroll position updates **completely bypass React** during active scrolling. Instead of triggering `setState` (which causes full React reconciliation of the massive `TimelineContent` tree), `setScrollX` and `setScrollY` update a ref and mutate the DOM directly:
+
+```typescript
+const setScrollX = useCallback(
+  (scrollX: number) => {
+    liveScrollRef.current.x = clamped; // Update ref (no React!)
+    stateRef.current = { ...stateRef.current, scrollX: clamped };
+    if (scrollRafRef.current === null) {
+      scrollRafRef.current = requestAnimationFrame(applyDOMTransform); // Direct DOM
+    }
+    // Periodic flush so virtualizedTracks recomputes during scroll
+    startPeriodicFlush();
+    // Final flush to React state when scrolling stops (150ms idle)
+    if (scrollIdleTimerRef.current !== null)
+      clearTimeout(scrollIdleTimerRef.current);
+    scrollIdleTimerRef.current = setTimeout(flushScrollToState, 150);
+  },
+  [applyDOMTransform, flushScrollToState, startPeriodicFlush],
+);
+```
+
+`applyDOMTransform` directly sets `element.style.transform` on both the content div and markers div via `scrollContentRef` and `scrollMarkersRef`:
+
+- **During active scroll:** Near-zero React renders. CSS transform moves content at 60fps via rAF + direct DOM mutation. A periodic flush (every 200ms) updates React state so `virtualizedTracks` can recompute and mount newly-visible items.
+- **On scroll stop (150ms idle):** `flushScrollToState` fires once → stops periodic flush → `setState` → React catches up → final `virtualizedTracks` recompute.
+- Content div and markers header both receive refs for synchronized direct-DOM scroll.
+
+### 18.1 Periodic Virtualization Flush (During Active Scroll)
+
+**Problem:** The ref-based scroll system deferred all React state updates until scrolling stopped (150ms idle). This meant `virtualizedTracks` in `timeline-content.tsx` — which filters track items to only those in the visible viewport — never recomputed during active scrolling. Items beyond the initial viewport buffer stayed invisible until the user stopped scrolling.
+
+**Fix:** Added a periodic `setInterval` (200ms) that flushes live scroll position to React state during active scrolling:
+
+```typescript
+const startPeriodicFlush = useCallback(() => {
+  if (scrollFlushIntervalRef.current !== null) return; // Already running
+  scrollFlushIntervalRef.current = setInterval(() => {
+    const { x, y } = liveScrollRef.current;
+    setState((prev) => {
+      if (
+        Math.abs(prev.scrollX - x) < 0.0001 &&
+        Math.abs(prev.scrollY - y) < 0.0001
+      )
+        return prev;
+      return { ...prev, scrollX: x, scrollY: y };
+    });
+  }, 200); // Every 200ms
+}, []);
+```
+
+- **Starts** when `setScrollX` or `setScrollY` is called (i.e., user begins scrolling)
+- **Stops** when `flushScrollToState` fires (scrolling has stopped for 150ms)
+- **No-op guard** prevents multiple intervals from stacking
+- React state updates every ~200ms, triggering `virtualizedTracks` to re-filter and mount/unmount items as the viewport slides
+
+> **Benefit:** Items now appear within ~200ms of scrolling into the viewport, while still avoiding per-frame React reconciliation (the DOM transform remains ref-based at 60fps). This balances scrolling smoothness with virtualization correctness.
+
+---
+
+## 19. Scroll State Context (Isolated Scroll Signals)
+
+**Files:** `scroll-state-context.tsx`, `use-scroll-velocity.ts`
+
+Scroll velocity tracking and `isScrolling` / `isRapidScrolling` signals are provided via **React context** (not Zustand) for two reasons:
+
+1. **Isolation:** Scroll state changes extremely frequently — using Zustand would trigger the global middleware stack (mutative, temporal, persist) on every scroll
+2. **Scope:** Only timeline-internal components need scroll state; global store consumers don't
+
+`useScrollVelocity` hook:
+
+- Tracks `scrollX` deltas via `useEffect` to compute velocity
+- `isScrolling = true` on any movement, reverts to `false` after 150ms idle (debounced `setTimeout`)
+- `isRapidScrolling = true` when delta exceeds 0.008 normalized units/sample
+- `ScrollStateProvider` wraps the timeline tracks area in `timeline-content.tsx`
+
+---
+
+## 20. Lazy Zustand Subscriptions (Timeline Items)
+
+**File:** `timeline-item.tsx`
+
+During fast scrolling, `TimelineItem` components mount and unmount within <100ms. Each mount previously created 3 Zustand subscriptions (`selectEditMode`, `selectDragState`, `selectDragVisuals`), causing significant subscribe/unsubscribe churn.
+
+**Optimization:** Subscriptions are **deferred for 100ms after mount**:
+
+```typescript
+const [isStoreSubscribed, setIsStoreSubscribed] = React.useState(false);
+React.useEffect(() => {
+  const timer = setTimeout(() => setIsStoreSubscribed(true), 100);
+  return () => clearTimeout(timer);
+}, []);
+
+const editMode = useTypedStore(
+  isStoreSubscribed ? selectEditMode : () => getTypedState().editMode,
+);
+```
+
+- Before 100ms: selectors read from `getTypedState()` (one-shot, zero subscription cost)
+- After 100ms: normal reactive subscriptions activate
+- Items that unmount within 100ms (scrolled away) never pay subscription setup/teardown cost
+- Combined with Phase 0 skeleton rendering, this means scrolling items have near-zero mount cost
+
+---
+
+## 21. Component-Level Lazy Loading (React.lazy + Suspense)
+
+Imports across the editor tree are converted from static `import { X } from '...'` to `React.lazy(() => import('...'))`, splitting each panel/section/tab into its own webpack chunk. Only the **currently active** component is loaded and mounted.
+
+### Files & Scope
+
+| File                  | Items Lazy-Loaded                                                                                                                                                                              | Est. Deferred Code |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `editor-panels.tsx`   | 10 overlay panels (Video, Text, Audio, Captions, Image, LocalMedia, Stickers, Templates, Transitions, Settings)                                                                                | ~300KB+            |
+| `inspector-panel.tsx` | 14 inspector sections + AudioInspector (Transform, Appearance, Effects, Masks, Keyframes, ColorGrading, Text, Video, Image, Audio, Shape, MotionGraphics, TransitionInspector, AudioInspector) | ~500KB+            |
+| `asset-manager.tsx`   | 5 tabs (Media, Text, Shapes, Effects, MotionGraphics)                                                                                                                                          | ~180KB+            |
+| `editor-v2.tsx`       | CompositionEditor (full sub-application)                                                                                                                                                       | ~24KB+             |
+
+### Pattern
+
+**Named exports** (most components):
+
+```ts
+const TransformSection = React.lazy(() =>
+  import("./sections/transform-section").then((m) => ({
+    default: m.TransformSection,
+  })),
+);
+```
+
+**Default exports** (SoundsOverlayPanel, AudioInspector, etc.):
+
+```ts
+const AudioInspector = React.lazy(() => import("./audio-inspector"));
+```
+
+### Suspense Boundaries & Fallbacks
+
+Each lazy-loaded region is wrapped in `<React.Suspense>` with a context-appropriate skeleton:
+
+- **PanelSkeleton** — shimmer bars mimicking a panel layout (EditorPanels)
+- **InspectorSkeleton** — shimmer bars mimicking inspector sections (InspectorPanel)
+- **TabSkeleton** — shimmer grid mimicking media thumbnails (AssetManager)
+- **Fullscreen spinner** — centered spinner for the CompositionEditor overlay
+
+### Performance Impact
+
+- **Initial JS parse/compile** — reduced by ~1MB+ of deferred chunks
+- **First panel switch** — 50–150ms chunk load (then cached)
+- **Subsequent switches** — instant (chunk in memory)
+- **No functionality loss** — identical behavior, just loaded on-demand
+
+---
+
+## 17. Remotion Layer Rendering Pipeline
+
+**File:** [layer.tsx](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/features/video-editor-v2/utils/remotion/layer.tsx)
+
+The Remotion `Layer` component is the most performance-critical component in the editor — it renders every overlay (video, image, text, audio, shape, caption, motion graphic) on every frame. Three targeted optimizations reduce wasted work in this hot path.
+
+### Rendering Pipeline Flow
+
+```
+selectOverlays (reselect) — only recomputes when clips/tracks/transitions/fps change
+  ↓
+VideoPlayer — does NOT re-render on every frame
+  ↓ (passes overlays via inputProps)
+Main — calls useCurrentFrame() → re-renders EVERY FRAME
+  ↓ (creates visibleOverlays with useMemo([overlays, frame]))
+Layer (memo + areLayerPropsEqual) — receives overlay + allOverlays as props
+  ↓
+areLayerPropsEqual runs per Layer per frame
+  ↓
+If returns true  → Layer STILL re-renders via useCurrentFrame() context
+If returns false → Layer re-renders TWICE (context + parent prop-change)
+```
+
+> **Key insight:** `React.memo` does NOT block context-triggered re-renders. Since `Layer` calls `useCurrentFrame()`, it re-renders every frame regardless of what `areLayerPropsEqual` returns. The comparator only controls whether the parent's prop-change ALSO triggers a re-render (causing a duplicate).
+
+### 17.1 Keyframe Re-render Deduplication
+
+Previously, any overlay with active keyframes forced `areLayerPropsEqual` to return `false` unconditionally:
+
+```typescript
+// OLD: Caused duplicate re-render per frame per keyframed overlay
+const nextKeyframes = (next as any).keyframes;
+if (nextKeyframes && Array.isArray(nextKeyframes)) {
+  const hasActiveKeyframes = nextKeyframes.some(
+    (pk: any) => pk.enabled && pk.keyframes && pk.keyframes.length > 0,
+  );
+  if (hasActiveKeyframes) {
+    return false; // Forces re-render from parent
+  }
+}
+```
+
+This caused every keyframed overlay to re-render **twice** per frame:
+
+1. Once from Remotion's `useCurrentFrame()` context change (unavoidable, runs hooks)
+2. Once from the parent's prop-based re-render (because comparator said props changed)
+
+**Fix:** Removed the unconditional bail-out. The comparator now falls through to compare actual overlay data. Since overlay references are stable during playback (from memoized `selectOverlays`), the comparator returns `true`, and only the context-triggered re-render fires. The hooks (`useKeyframedTransform`, etc.) still execute on that single re-render.
+
+> **Impact:** For N keyframed overlays at 30fps, eliminates N×30 duplicate re-renders per second.
+
+### 17.2 Shallow Comparison in areLayerPropsEqual
+
+The comparator previously used `JSON.stringify` at 7 sites (masks, effects, audioEffects, styles, greenscreen, keyframes, transitions) for deep comparison:
+
+```typescript
+// OLD: O(serialize_size) per property per overlay
+if (prevMasks !== nextMasks) {
+  if (JSON.stringify(prevMasks) !== JSON.stringify(nextMasks)) {
+    return false;
+  }
+}
+```
+
+While guarded by reference checks (so they don't fire during pure playback), they fire during editing operations when `selectOverlays` recomputes and produces new overlay object references.
+
+**Fix:** Replaced with `shallowArrayEqual` (for arrays: masks, effects, audioEffects, keyframes) and `shallowObjectEqual` (for objects: styles, greenscreen, inTransition, outTransition):
+
+```typescript
+// NEW: O(keys) comparison — handles common case of same item references
+function shallowArrayEqual(
+  a: any[] | undefined | null,
+  b: any[] | undefined | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function shallowObjectEqual(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+```
+
+> **Impact:** During editing with 20+ overlays, replaces O(n×serialize_size) stringify with O(keys) shallow comparison. For style objects (~10 keys), this is ~10× faster. Safe: never misses real changes (false positives just cause a re-render that would have happened anyway).
+
+### 17.3 Memoized renderContent
+
+The Layer component previously created new JSX elements (`<LayerContent>`, `<TrackMatteLayer>`) via a `renderContent()` function on every render:
+
+```typescript
+// OLD: New elements created on every context-triggered re-render
+const renderContent = () => {
+  const content = <LayerContent overlay={overlay} ... />;
+  if (trackMatte && matteSourceOverlay) {
+    return <TrackMatteLayer ...>{content}</TrackMatteLayer>;
+  }
+  return content;
+};
+```
+
+**Fix:** Replaced with `useMemo` so the JSX subtree is cached:
+
+```typescript
+// NEW: Cached — React reconciler sees same element refs and skips subtree diff
+const renderedContent = useMemo(() => {
+  const content = <LayerContent overlay={overlay} ... />;
+  if (trackMatte && matteSourceOverlay) {
+    return <TrackMatteLayer ...>{content}</TrackMatteLayer>;
+  }
+  return content;
+}, [overlay, isEditing, baseUrl, fontInfos, trackMatte, matteSourceOverlay]);
+```
+
+During playback, `overlay` reference is stable (from memoized `selectOverlays`), so `useMemo` returns cached JSX. React's reconciler sees the same element references and skips diffing the entire `LayerContent` subtree.
+
+> **Impact:** Avoids re-creating and re-diffing the entire layer content subtree (which dispatches to video/image/text/audio/caption/shape components) on every context-triggered re-render.
+
+---
+
 ## Summary
 
 The Video Editor V2 employs a **layered optimization strategy** touching every level of the stack:
 
-| Layer           | Key Techniques                                                                                           |
-| --------------- | -------------------------------------------------------------------------------------------------------- |
-| **State**       | Normalized data, memoized selectors (reselect), shallow comparisons, cached actions, partialized history |
-| **React**       | `React.memo` with custom comparators, stable callback refs, atomic selectors, conditional rendering      |
-| **DOM**         | Virtualization (timeline + overlays), CSS containment, `content-visibility`, GPU-composited transforms   |
-| **Computation** | Web Workers (effects + Babel), WebGL shaders, split update rates, RAF throttling                         |
-| **Audio**       | Singleton context, effect caching, resource lifecycle management, offline rendering                      |
-| **Storage**     | IndexedDB with auto-purge, sprite caching, fetch deduplication, blob URL management                      |
-| **Rendering**   | Adaptive quality, deterministic noise, box blur approximation, conditional canvas processing             |
+| Layer            | Key Techniques                                                                                                                                                             |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **State**        | Normalized data, memoized selectors (reselect), shallow comparisons, cached actions, partialized history, lazy subscriptions                                               |
+| **React**        | `React.memo` with custom comparators, stable callback refs, atomic selectors, conditional rendering, `useDeferredValue`                                                    |
+| **DOM**          | Virtualization (timeline + overlays), CSS containment, multi-tier lazy loading (skeleton → basic → full), GPU-composited transforms                                        |
+| **Lazy Loading** | `React.lazy` + `Suspense` for 30+ panels/sections/tabs, skeleton fallbacks, deferred chunk loading, composition editor on-demand                                           |
+| **Scroll**       | rAF-coalesced state updates, scroll-velocity-aware rendering, isolated scroll context, deferred mount phases, periodic virtualization flush during active scroll           |
+| **Computation**  | Web Workers (effects + Babel), WebGL shaders, split update rates, RAF throttling, requestIdleCallback for heavy content                                                    |
+| **Audio**        | Singleton context, effect caching, resource lifecycle management, offline rendering                                                                                        |
+| **Storage**      | IndexedDB with auto-purge, sprite caching, fetch deduplication, blob URL management                                                                                        |
+| **Rendering**    | Adaptive quality, deterministic noise, box blur approximation, conditional canvas processing, Layer re-render deduplication, shallow prop comparison, memoized content JSX |
+| **Selection**    | Per-track memo comparison, O(1) reverse clip lookup, direct store index access, ref-based callback decoupling                                                              |
 
-These optimizations work together to achieve commercial-grade performance — the editor handles 50+ clips across multiple tracks with real-time effects, maintaining responsive scrubbing (<50ms frame times) and smooth 60fps playback.
+These optimizations work together to achieve commercial-grade performance — the editor handles 50+ clips across multiple tracks with real-time effects, maintaining responsive scrubbing (<50ms frame times) and smooth 60fps playback. Timeline scrolling is instant regardless of clip count, with progressive content loading during idle time.
+
+---
+
+## 18. Selection Performance Optimizations
+
+Optimizations targeting the click-to-selection-to-inspector-render path, eliminating O(N) operations and unnecessary re-renders when selecting clips.
+
+### 18.1 Per-Track Selection Memo Comparison
+
+**File:** `components/advanced-timeline/components/timeline-track.tsx` — `MemoizedTimelineTrack`
+
+**Problem:** The `MemoizedTimelineTrack` comparison function compared the full `selectedItemIds` array. When any clip was selected, the array reference and content changed, causing **every track** to bust its memo and re-render — even tracks with zero selection state change.
+
+With 10 tracks × 50 items = 500 elements being mapped and reconciled per selection click.
+
+**Fix:** Instead of comparing the full `selectedItemIds` array, we now only check whether items **in this specific track** changed their selection status:
+
+```typescript
+// BEFORE: Compared full array — busted ALL tracks
+const prevIds = prevProps.selectedItemIds || [];
+const nextIds = nextProps.selectedItemIds || [];
+if (prevIds.length !== nextIds.length) return false;
+for (let i = 0; i < prevIds.length; i++) {
+  if (prevIds[i] !== nextIds[i]) return false;
+}
+
+// AFTER: Per-track check — only busts affected tracks
+const prevSelSet = new Set(prevProps.selectedItemIds || []);
+const nextSelSet = new Set(nextProps.selectedItemIds || []);
+const trackItems = nextProps.track.items;
+for (let i = 0; i < trackItems.length; i++) {
+  const itemId = trackItems[i].id;
+  if (prevSelSet.has(itemId) !== nextSelSet.has(itemId)) return false;
+}
+```
+
+> **Impact:** Reduces track re-renders from O(allTracks) to O(affectedTracks) — typically 1-2 tracks instead of all 10+.
+
+### 18.2 O(1) handleChangeOverlay Reverse Lookup
+
+**File:** `components/inspector/inspector-panel.tsx` — `handleChangeOverlay`
+
+**Problem:** Every property edit in the inspector triggered:
+
+1. `Object.values(state.clips)` — O(N) array materialization
+2. `.find()` with `parseInt` + regex — O(N) linear scan per clip
+3. `Object.values(state.tracks)` — O(N) array materialization
+4. `.find()` for track — O(N) linear scan
+
+Total: O(4N) per property change.
+
+**Fix:** Use `activeClipRef` (a ref tracking the currently selected clip) for O(1) reverse lookup, and direct `state.tracks[clip.trackId]` for O(1) track access:
+
+```typescript
+// BEFORE: O(N) materialization + linear scan with regex
+const timelineClips = Object.values(state.clips);
+const clip = timelineClips.find((c) => {
+  const clipNumericId = parseInt(c.id.replace(/\D/g, ""), 10) || 0;
+  return clipNumericId === id;
+});
+const track = Object.values(state.tracks).find((t) => t.id === clip.trackId);
+
+// AFTER: O(1) direct lookups
+const clip =
+  activeClipRef.current &&
+  (parseInt(activeClipRef.current.id.replace(/\D/g, ""), 10) || 0) === id
+    ? activeClipRef.current
+    : null;
+const track = state.tracks[clip.trackId];
+```
+
+> **Impact:** Eliminates O(4N) operations per inspector property edit, making edits instant regardless of clip count.
+
+### 18.3 Debug Log Removal from Hot Path
+
+**File:** `components/inspector/inspector-panel.tsx`
+
+**Problem:** Unconditional `console.log` calls in the render path constructed objects on every render:
+
+- Transition selection debug log (fires every render when a transition is selected)
+- Motion graphics debug log (fires every render when a motion graphics clip is selected)
+- Speed change debug log (fires on every speed edit)
+
+**Fix:** Removed all three debug logs from the hot path.
+
+> **Impact:** Eliminates object allocation and string serialization overhead during rendering.
+
+### 18.4 Transition Lookup Pre-Computation — O(N×M) → O(N+M)
+
+**Files:**
+
+- `utils/clip-to-render-adapter.ts` — `buildTransitionLookup()`, `clipToOverlay()`, `clipsToOverlaysWithTracks()`, `clipsToRenderClips()`
+- `components/inspector/inspector-panel.tsx` — `activeOverlay` useMemo, `handleChangeOverlay`
+
+**Problem:** `getClipTransitionsPure()` performs `Object.values(transitions).forEach(...)` — an O(M) linear scan over all transitions. It was called **once per clip** from `clipToOverlay()` inside batch functions like `clipsToOverlaysWithTracks()`, creating an **O(N × M)** bottleneck.
+
+Chrome DevTools profiler confirmed this consumed **10,807ms of self time (65.3%)** during a clip interaction under stress conditions (50+ clips), producing an **INP of 11,808ms**.
+
+**Fix:** Introduced `buildTransitionLookup()` — a function that pre-builds a `Map<clipId, {inTransition, outTransition}>` in a **single O(M) pass**. The map is built once before the clip loop, and each clip performs an **O(1) `Map.get()`** instead of a full O(M) scan:
+
+```typescript
+// BEFORE: O(N × M) — getClipTransitionsPure called N times, each scanning M transitions
+for (const clip of clips) {
+  const overlay = clipToOverlay(clip, fps, trackIndex, transitions);
+  // internally: getClipTransitionsPure(clip.id, transitions) → O(M) forEach
+}
+
+// AFTER: O(N + M) — build map once O(M), then O(1) per clip
+const transitionLookup = buildTransitionLookup(transitions); // O(M) once
+for (const clip of clips) {
+  const overlay = clipToOverlay(
+    clip,
+    fps,
+    trackIndex,
+    transitions,
+    transitionLookup,
+  );
+  // internally: transitionLookup.get(clip.id) → O(1)
+}
+```
+
+`clipToOverlay()` accepts an optional `prebuiltLookup` parameter — when provided, it skips `getClipTransitionsPure` entirely. When not provided (single-clip use), it falls back to the O(M) scan for backward compatibility.
+
+Applied to all batch call sites:
+
+- `clipsToOverlaysWithTracks()` — feeds the Remotion rendering pipeline via `selectOverlays`
+- `clipsToRenderClips()` — feeds the render clip pipeline
+- `inspector-panel.tsx` — `activeOverlay` computation and `handleChangeOverlay`
+
+**Measured Results:**
+
+| Metric                             | Before    | After    | Improvement              |
+| ---------------------------------- | --------- | -------- | ------------------------ |
+| INP (Interaction to Next Paint)    | 11,808 ms | 872 ms   | **13.5× faster**         |
+| `getClipTransitionsPure` self time | 10,807 ms | ~0 ms    | Eliminated from hot path |
+| Complexity per batch operation     | O(N × M)  | O(N + M) | Algorithmic fix          |
+
+> **Impact:** The single largest performance fix in the editor — reduced INP by 13.5× under stress conditions. The algorithmic improvement from O(N×M) to O(N+M) means performance scales linearly with content rather than quadratically.
+
+---
+
+## 19. CSS/DOM Performance Optimizations
+
+After resolving the JavaScript bottlenecks in Section 18, the profiler revealed the performance bottleneck had shifted from JS to CSS/DOM rendering:
+
+| Metric             | Before (§18.4)               | After (§19)                  | Improvement                               |
+| ------------------ | ---------------------------- | ---------------------------- | ----------------------------------------- |
+| INP                | 872 ms                       | **128 ms**                   | **6.8× faster** — now in "good" threshold |
+| Recalculate style  | 7,283 ms                     | 6,947 ms                     | Reduced                                   |
+| Event: pointerover | 634 ms self / 5,954 ms total | 408 ms self / 2,648 ms total | **2.2× less pointer overhead**            |
+
+### 19.1 Shared ContextMenu — O(N) Radix Instances → O(1)
+
+**Files:**
+
+- `components/advanced-timeline/components/timeline-item.tsx` — removed per-item `<ContextMenu>` wrapper
+- `components/advanced-timeline/components/timeline-track.tsx` — added single shared `<ContextMenu>` per track
+
+**Problem:** Each of 50+ `TimelineItem` components was individually wrapped in a Radix `<ContextMenu>` + `<ContextMenuTrigger>`. Every instance created:
+
+- A React context provider tree
+- Event listeners on the trigger element
+- Internal Radix state management
+- Hidden DOM nodes for the menu portal
+
+This created **O(N)** overhead where N = number of timeline items, contributing heavily to "Recalculate style" and pointer event costs.
+
+**Fix:** Lifted the context menu to the `TimelineTrack` level:
+
+1. Removed `<ContextMenu>` + `<ContextMenuTrigger>` from each `TimelineItem`
+2. Added `onContextMenuRequest` callback prop — items pass their menu data (handlers, labels, state) to the parent on right-click
+3. One `<ContextMenu>` wraps the entire track div, with a `<TimelineItemContextMenu>` that reads from the most recently right-clicked item's data
+4. The native `contextmenu` event bubbles from the item through the track's `<ContextMenuTrigger>`, opening the shared menu
+
+```typescript
+// BEFORE: O(N) Radix instances — each item renders its own ContextMenu
+<ContextMenu onOpenChange={onContextMenuOpenChange}>
+  <ContextMenuTrigger asChild>
+    <div>{/* item content */}</div>
+  </ContextMenuTrigger>
+  <TimelineItemContextMenu ... />
+</ContextMenu>
+
+// AFTER: O(1) — one shared ContextMenu per track
+// In TimelineItem: just set data and let event bubble
+const handleContextMenu = (e: React.MouseEvent) => {
+  onContextMenuRequest?.({ itemId, handlers, labels });
+  // Event bubbles to track-level <ContextMenuTrigger>
+};
+
+// In TimelineTrack: single shared instance
+<ContextMenu>
+  <ContextMenuTrigger asChild>{trackContent}</ContextMenuTrigger>
+  <TimelineItemContextMenu {...contextMenuData} />
+</ContextMenu>
+```
+
+> **Impact:** Eliminates ~50 Radix ContextMenu provider trees, event listener sets, and hidden DOM nodes. Reduces DOM node count and style recalculation scope.
+
+### 19.2 CSS Hover & Transition Removal
+
+**File:** `components/advanced-timeline/components/timeline-item.tsx`
+
+**Problem:** Each timeline item had:
+
+- `shadow-sm hover:shadow-md` — `box-shadow` changes on hover trigger paint for every item under the cursor
+- `transition: 'opacity 0.1s ease-out'` — forces the browser to create a compositing layer per item
+
+With 50+ items, pointer movement caused cascading paint operations.
+
+**Fix:** Removed both `shadow-sm hover:shadow-md` from the className and the CSS `transition` property. Opacity changes are rare (only on locked/hidden tracks) and don't need animation.
+
+> **Impact:** Reduces paint operations during pointer movement. The "Event: pointerover" self time dropped from 634ms to 408ms.
+
+### 19.3 CSS Containment Upgrade — `layout style` → `strict`
+
+**Files:**
+
+- `components/advanced-timeline/components/timeline-item.tsx`
+- `components/advanced-timeline/components/timeline-track.tsx`
+
+**Problem:** Both timeline items and tracks used `contain: 'layout style'`, which isolates layout and style calculations but doesn't isolate paint or size.
+
+**Fix:** Upgraded to `contain: 'strict'` (equivalent to `size layout paint style`) on both items and tracks. This is safe because:
+
+- Items have explicit `width` (percentage) and `height` (`var(--timeline-item-height, 40px)`)
+- Tracks have explicit `height` (`var(--timeline-track-height, 48px)`)
+
+> **Impact:** The browser can now skip painting off-screen items entirely and doesn't cascade style recalculations across sibling items or tracks.
+
+### 19.4 MasksSection Subscription Fix
+
+**File:** `components/inspector/sections/masks-section.tsx`
+
+**Problem:** `MasksSection` subscribed to `Object.values(state.clips)` directly, which creates a new array on every store change — triggering unnecessary re-renders and recomputing `clipToOverlay()` for every clip.
+
+**Fix:** Subscribe to `state.clips` (the stable record reference) and derive overlays in `useMemo`:
+
+```typescript
+// BEFORE: new array on every store change → re-render every time
+const clips = useVideoEditorStore((state) => Object.values(state.clips));
+const overlays = clips.map((clip) => clipToOverlay(clip, fps));
+
+// AFTER: stable reference → only re-renders when clips actually change
+const clipsRecord = useVideoEditorStore((state) => state.clips);
+const overlays = useMemo(
+  () => Object.values(clipsRecord).map((clip) => clipToOverlay(clip, fps)),
+  [clipsRecord, fps],
+);
+```
+
+> **Impact:** Prevents unnecessary re-renders of the MasksSection panel when unrelated store state changes (e.g., playback position, selection).
+
+---
+
+## 20. Canvas Timeline Optimizations
+
+The canvas timeline replaces the DOM-based track/item rendering tree with a PixiJS (WebGL) renderer. Instead of 1,250+ DOM nodes, the entire timeline is one `<canvas>` element — eliminating Recalculate Style entirely.
+
+### 20.1 GPU-Accelerated Rendering (PixiJS)
+
+**Files:** `canvas-timeline.tsx`, `canvas-timeline-track.tsx`, `canvas-timeline-item.tsx`
+
+All timeline items are rendered as PixiJS `Graphics` draw calls (rounded rectangles, text, lines) on a single WebGL canvas. The GPU batches all draw commands into one pass — the cost of rendering 100 vs 1,000 items is nearly identical.
+
+| Metric               | DOM Timeline | Canvas Timeline        |
+| -------------------- | ------------ | ---------------------- |
+| DOM nodes (50 items) | ~1,250       | **1** (canvas element) |
+| Recalculate Style    | 5,602ms      | **0ms**                |
+| Re-render on scroll  | ~50-200ms    | **~0.5ms**             |
+| Memory per item      | ~2-5KB       | ~200 bytes             |
+
+### 20.2 React.memo on Canvas Components
+
+**Files:** `canvas-timeline-item.tsx`, `canvas-timeline-track.tsx`
+
+Both components are wrapped in `React.memo`:
+
+```typescript
+export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({ ... }) { ... });
+export const CanvasTimelineTrack = React.memo(function CanvasTimelineTrack({ ... }) { ... });
+```
+
+> **Benefit:** Prevents re-renders of items/tracks when only sibling items change or when rapidly-changing props (like `currentFrame`) update. Combined with PixiJS's declarative `@pixi/react` bindings, only visually-changed items trigger GPU draw call updates.
+
+### 20.3 Professional Keyboard Shortcuts (getState Pattern)
+
+**File:** `use-canvas-keyboard.ts`
+
+All keyboard shortcuts read store state via `useVideoEditorStore.getState()` inside the callback body — not via subscriptions:
+
+```typescript
+const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+  const state = useVideoEditorStore.getState(); // No subscription, no re-render
+  const { splitClip, deleteClips, togglePlayPause, ... } = state;
+  // ...
+}, [tracks, selectedItemIds]); // Minimal deps
+```
+
+> **Benefit:** The callback itself never causes component re-renders. It reads fresh state on-demand. This pattern is critical for the 30+ keyboard shortcuts — subscribing to `clips`, `playback`, `selection`, etc. would cause the containing component to re-render on every scrub/selection/edit.
+
+**Shortcuts implemented:** JKL shuttle (1×→2×→4×→8×), frame stepping (←/→, ±1/±10 frames), edit point navigation (↑/↓), split at playhead (C/Ctrl+K), trim to playhead (Q/W), clip nudge (,/. ±1/±10 frames), duplicate (D), copy/paste/cut (Ctrl+C/V/X with relative offset preservation), select all (Ctrl+A), tool switching (V/B), snapping toggle (S/N), link/unlink (Ctrl+L), zoom (+/-/Shift+Z), undo/redo (Ctrl+Z/Y).
+
+### 20.4 Playhead Auto-Scroll (RAF-Based)
+
+**File:** `use-auto-scroll.ts`
+
+During playback, a `requestAnimationFrame` loop monitors the playhead pixel position and smooth-scrolls the viewport:
+
+```typescript
+const newScrollX =
+  lastScrollRef.current + (targetScrollX - lastScrollRef.current) * SCROLL_LERP;
+```
+
+- **Lerp factor (0.12)** — smooth interpolation, not jarring jumps
+- **Subscribes to `playback.isPlaying`** via `subscribeWithSelector` — starts/stops the RAF loop automatically
+- **Edge margin detection** — only scrolls when playhead approaches viewport edges (60px margin)
+
+> **Benefit:** No React re-renders during auto-scroll — all state lives in refs, updates happen imperatively via the `onScrollChange` callback. The RAF loop self-terminates when playback stops.
+
+### 20.5 ARIA Accessibility Mirror
+
+**File:** `canvas-timeline-aria.tsx`
+
+A hidden DOM `<ul role="listbox">` mirrors the canvas state for screen readers:
+
+```tsx
+<div style={VISUALLY_HIDDEN_STYLE} role="region" aria-label="Timeline items">
+  <ul role="listbox" aria-label="Timeline clips" aria-multiselectable="true">
+    {items.map((item) => (
+      <li role="option" aria-selected={item.selected} aria-label={item.label} />
+    ))}
+  </ul>
+</div>
+```
+
+**Optimizations:**
+
+- `useMemo` derivation from `tracks` + `selectedItemIds` — zero overhead during playback
+- Visually hidden via `clip: rect(0, 0, 0, 0)` — no layout/paint cost
+- Only re-renders when selection or track data changes — not on scroll/zoom/playback
+
+> **Benefit:** Screen readers (NVDA, VoiceOver) can navigate timeline clips via standard listbox patterns. The canvas container itself has `role="application"`, `aria-label="Timeline editor"`, and `tabIndex={0}` for focus management.
+
+### 20.6 In-Memory Clipboard
+
+**File:** `use-canvas-keyboard.ts` (inline), `use-clipboard.ts` (standalone)
+
+Clip copy/paste uses an in-memory buffer rather than the OS clipboard:
+
+```typescript
+// Copy: store relative offsets from earliest selected clip
+clipboardRef.current = selectedItemIds.map((id) => ({
+  clipId: id,
+  trackId: clip.trackId,
+  offset: clip.startTime - earliest,
+}));
+
+// Paste: duplicate + reposition at playhead
+const newId = duplicateClip(entry.clipId);
+moveClip(newId, entry.trackId, currentTime + entry.offset);
+```
+
+> **Benefit:** Multi-clip paste preserves relative timing. No serialization overhead (refs hold plain objects). IDs are regenerated via `duplicateClip` — no ID collisions.
