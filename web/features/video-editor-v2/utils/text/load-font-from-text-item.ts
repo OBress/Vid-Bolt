@@ -238,6 +238,23 @@ export const loadFontFromTextItem = async (item: LoadFontInfo): Promise<void> =>
       }
     }
 
+    // Validate weight against available weights in fontInfo
+    const variantWeights = fontInfo.fonts?.[variant];
+    const availableWeights = variantWeights ? Object.keys(variantWeights) : [];
+    if (availableWeights.length > 0 && !availableWeights.includes(fontWeight)) {
+      const numericWeight = parseInt(fontWeight, 10);
+      const closest = availableWeights
+        .map(w => parseInt(w, 10))
+        .filter(w => !isNaN(w))
+        .sort((a, b) => Math.abs(a - numericWeight) - Math.abs(b - numericWeight))[0];
+      if (closest !== undefined) {
+        console.warn(
+          `[loadFontFromTextItem] Weight ${fontWeight} not available for ${item.fontFamily} (available: ${availableWeights.join(', ')}), using closest: ${closest}`
+        );
+        fontWeight = String(closest);
+      }
+    }
+
     // Load font with specific weight
     await loadFontFromInfo(fontInfo, variant, {
       weights: [fontWeight],

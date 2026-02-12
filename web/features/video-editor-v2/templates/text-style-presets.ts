@@ -82,7 +82,7 @@ export const TEXT_STYLE_PRESETS: TextStylePreset[] = [
     description: 'Thick stroke with transparent fill',
     styles: {
       fontSize: '80px',
-      fontWeight: '900',
+      fontWeight: '700',
       fontFamily: 'Oswald',
       color: 'transparent',
       textAlign: 'center',
@@ -195,7 +195,7 @@ export const TEXT_STYLE_PRESETS: TextStylePreset[] = [
     description: 'Thick stroke for visibility',
     styles: {
       fontSize: '38px',
-      fontWeight: '800',
+      fontWeight: '700',
       fontFamily: 'Oswald',
       color: '#ffffff',
       textAlign: 'left',
@@ -321,7 +321,7 @@ export const TEXT_STYLE_PRESETS: TextStylePreset[] = [
     description: 'High contrast with glow',
     styles: {
       fontSize: '64px',
-      fontWeight: '900',
+      fontWeight: '700',
       fontFamily: 'Oswald',
       color: '#ffff00',
       textAlign: 'center',
@@ -347,7 +347,7 @@ export const TEXT_STYLE_PRESETS: TextStylePreset[] = [
     description: 'RGB split shadow effect',
     styles: {
       fontSize: '56px',
-      fontWeight: '900',
+      fontWeight: '700',
       fontFamily: 'Roboto Mono',
       color: '#ffffff',
       textAlign: 'center',
@@ -417,7 +417,7 @@ export const TEXT_STYLE_PRESETS: TextStylePreset[] = [
     description: 'Orange/red gradient with intense glow',
     styles: {
       fontSize: '64px',
-      fontWeight: '900',
+      fontWeight: '700',
       fontFamily: 'Oswald',
       textAlign: 'center',
       textGradient: {

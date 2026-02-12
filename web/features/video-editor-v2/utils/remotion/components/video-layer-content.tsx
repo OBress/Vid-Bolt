@@ -368,6 +368,13 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
 
   // Convert videoStartTime from seconds to frames for OffthreadVideo
   const startFromFrames = Math.round((overlay.videoStartTime || 0) * FPS);
+
+  // Handle video playback errors gracefully
+  // Prevents Remotion's internal "Error occurred in video" console error
+  // and handles MEDIA_ELEMENT_ERROR format errors
+  const handleVideoError = useCallback((error: Error) => {
+    console.warn(`[VideoLayerContent] Video playback error for "${overlay.src}":`, error.message);
+  }, [overlay.src]);
   
   // If greenscreen removal is enabled, use canvas-based rendering
   if (overlay.greenscreen?.enabled) {
@@ -389,6 +396,7 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
             src={videoSrc}
             startFrom={startFromFrames}
             pauseWhenBuffering
+            onError={handleVideoError}
             style={{ 
               ...videoStyle,
               position: 'absolute',
@@ -437,6 +445,7 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
         src={videoSrc}
         startFrom={startFromFrames}
         pauseWhenBuffering
+        onError={handleVideoError}
         style={videoStyle}
         volume={overlay.styles.volume ?? 1}
         playbackRate={overlay.speed ?? 1}
