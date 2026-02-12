@@ -11,6 +11,7 @@ tags: charts, data, visualization, bar-chart, pie-chart, graphs, statistics, pro
 Stagger bar entrances with 3-5 frame delays and use spring() for organic growth.
 
 **Incorrect (all bars animate together):**
+
 ```tsx
 const bars = data.map((item, i) => {
   const height = spring({ frame, fps });
@@ -19,6 +20,7 @@ const bars = data.map((item, i) => {
 ```
 
 **Correct (staggered entrances):**
+
 ```tsx
 const STAGGER_DELAY = 5;
 
@@ -27,7 +29,7 @@ const bars = data.map((item, i) => {
   const progress = spring({
     frame: frame - delay,
     fps,
-    config: { damping: 18, stiffness: 80 }
+    config: { damping: 18, stiffness: 80 },
   });
   const height = progress * item.value;
   return <div style={{ height }} />;
@@ -39,26 +41,40 @@ const bars = data.map((item, i) => {
 Charts without axis labels are hard to read.
 
 **Incorrect (no axis):**
+
 ```tsx
-<div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-  {bars}
-</div>
+<div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>{bars}</div>
 ```
 
 **Correct (with Y-axis):**
+
 ```tsx
 const yAxisSteps = [0, 25, 50, 75, 100];
 
-<div style={{ display: 'flex' }}>
-  <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', paddingRight: 8 }}>
-    {yAxisSteps.reverse().map(step => (
-      <span style={{ fontSize: 12, color: '#888' }}>{step}</span>
+<div style={{ display: "flex" }}>
+  <div
+    style={{
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "space-between",
+      paddingRight: 8,
+    }}
+  >
+    {yAxisSteps.reverse().map((step) => (
+      <span style={{ fontSize: 12, color: "#888" }}>{step}</span>
     ))}
   </div>
-  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, borderLeft: '1px solid #333' }}>
+  <div
+    style={{
+      display: "flex",
+      alignItems: "flex-end",
+      gap: 8,
+      borderLeft: "1px solid #333",
+    }}
+  >
     {bars}
   </div>
-</div>
+</div>;
 ```
 
 ## Value Labels
@@ -68,20 +84,28 @@ Show values inside or above bars, fading in after bar animates.
 ```tsx
 const barHeight = normalizedHeight * progress;
 const labelOpacity = interpolate(progress, [0.7, 1], [0, 1], {
-  extrapolateLeft: 'clamp',
-  extrapolateRight: 'clamp',
+  extrapolateLeft: "clamp",
+  extrapolateRight: "clamp",
 });
 
-<div style={{ height: barHeight, backgroundColor: COLOR_BAR, position: 'relative' }}>
-  <span style={{
-    position: 'absolute',
-    top: -24,
-    opacity: labelOpacity,
-    fontSize: 12,
-  }}>
+<div
+  style={{
+    height: barHeight,
+    backgroundColor: COLOR_BAR,
+    position: "relative",
+  }}
+>
+  <span
+    style={{
+      position: "absolute",
+      top: -24,
+      opacity: labelOpacity,
+      fontSize: 12,
+    }}
+  >
     {item.value.toLocaleString()}
   </span>
-</div>
+</div>;
 ```
 
 ## Pie Chart Animation
@@ -105,7 +129,7 @@ const offset = interpolate(progress, [0, 1], [segmentLength, 0]);
   strokeDasharray={`${segmentLength} ${circumference}`}
   strokeDashoffset={offset}
   transform={`rotate(-90 ${center} ${center})`}
-/>
+/>;
 ```
 
 ## Progress Bar Animation
@@ -135,9 +159,14 @@ const displayPercent = Math.round(progress);
 Draw lines progressively using SVG path animation.
 
 ```tsx
-const pathLength = calculatePathLength(points);
+// Build SVG path from your data points, then animate with stroke-dashoffset
+const pathData = data
+  .map((d, i) => `${i === 0 ? "M" : "L"} ${d.x} ${d.y}`)
+  .join(" ");
+const pathLength = 1000; // Generous estimate for dash animation
+
 const drawProgress = interpolate(frame, [0, 60], [0, 1], {
-  extrapolateRight: 'clamp',
+  extrapolateRight: "clamp",
 });
 
 <path
@@ -147,7 +176,7 @@ const drawProgress = interpolate(frame, [0, 60], [0, 1], {
   strokeWidth={2}
   strokeDasharray={pathLength}
   strokeDashoffset={pathLength * (1 - drawProgress)}
-/>
+/>;
 ```
 
 ## Counter Animation
@@ -156,11 +185,11 @@ Animate numbers counting up.
 
 ```tsx
 const progress = interpolate(frame, [0, 60], [0, 1], {
-  extrapolateRight: 'clamp',
+  extrapolateRight: "clamp",
 });
 const displayValue = Math.round(progress * targetValue);
 
-<span style={{ fontVariantNumeric: 'tabular-nums' }}>
+<span style={{ fontVariantNumeric: "tabular-nums" }}>
   {displayValue.toLocaleString()}
-</span>
+</span>;
 ```

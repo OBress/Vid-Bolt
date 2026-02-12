@@ -162,8 +162,9 @@ const stickers = ["🔥", "💯", "✨", "🎉"];
           position: "absolute",
           fontSize: 48,
           transform: `scale(${Math.max(0, scale)}) rotate(${rotation}deg)`,
-          left: POSITIONS[i].x,
-          top: POSITIONS[i].y,
+          // Use random() for deterministic sticker placement
+          left: random("sticker-x-" + i) * (width - 100),
+          top: random("sticker-y-" + i) * (height - 200),
         }}
       >
         {emoji}
