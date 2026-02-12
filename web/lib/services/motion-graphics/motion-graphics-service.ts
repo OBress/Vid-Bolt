@@ -681,6 +681,7 @@ class MotionGraphicsService {
           conversationHistory,
           detectedSkills,
           errorCorrection,
+          baseSystemPrompt: systemPrompt,
         });
         return;
       }
@@ -710,7 +711,7 @@ class MotionGraphicsService {
 
       // Step 6: Finalize (with syntax retry context so Babel failures auto-correct)
       await this.finalizeGeneration(sendSSE, accumulatedCode, detectedSkills, null, plannedDuration, {
-        apiKey, model, prompt, attempt: 0,
+        apiKey, model, prompt, attempt: 0, baseSystemPrompt: systemPrompt,
       });
 
     } catch (error) {
@@ -736,9 +737,10 @@ class MotionGraphicsService {
       conversationHistory: Array<{ role: string; content: string }>;
       detectedSkills: string[];
       errorCorrection?: GenerationRequest['errorCorrection'];
+      baseSystemPrompt?: string;
     }
   ): Promise<void> {
-    const { prompt, model, currentCode, conversationHistory, detectedSkills, errorCorrection } = options;
+    const { prompt, model, currentCode, conversationHistory, detectedSkills, errorCorrection, baseSystemPrompt } = options;
 
     sendSSE({ type: 'stage', stage: 'editing', message: 'Analyzing edit request...' });
 
@@ -749,7 +751,12 @@ class MotionGraphicsService {
         contextMessages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
     }
 
-    let editPrompt = `## CURRENT CODE:\n\`\`\`tsx\n${currentCode}\n\`\`\`\n${conversationContext}`;
+    // If this is an error correction, number the lines so the AI can use the Babel (Line:Col) coordinates
+    const codeToDisplay = errorCorrection
+      ? currentCode.split('\n').map((line, i) => `${i + 1}: ${line}`).join('\n')
+      : currentCode;
+
+    let editPrompt = `## CURRENT CODE:\n\`\`\`tsx\n${codeToDisplay}\n\`\`\`\n${conversationContext}`;
 
     if (errorCorrection) {
       editPrompt += buildErrorCorrectionContext(errorCorrection);
@@ -757,9 +764,15 @@ class MotionGraphicsService {
 
     editPrompt += `\n\n## USER REQUEST:\n${prompt}\n\nAnalyze the request and decide: use targeted edits (type: "edit") for small changes, or full replacement (type: "full") for major restructuring.\n\nRespond with ONLY a JSON object.`;
 
+    // Combine the full base prompt (Remotion rules, skills, plan) with the edit-specific prompt
+    // so the AI retains all framework constraints during follow-up edits
+    const fullSystemPrompt = baseSystemPrompt
+      ? `${baseSystemPrompt}\n\n${FOLLOW_UP_SYSTEM_PROMPT}`
+      : FOLLOW_UP_SYSTEM_PROMPT;
+
     try {
       const { content } = await callOpenRouter(apiKey, model, [
-        { role: 'system', content: FOLLOW_UP_SYSTEM_PROMPT + '\n\nYou MUST respond with ONLY a valid JSON object, no other text.' },
+        { role: 'system', content: fullSystemPrompt + '\n\nYou MUST respond with ONLY a valid JSON object, no other text.' },
         { role: 'user', content: editPrompt },
       ], {
         temperature: 0.3,
@@ -785,7 +798,7 @@ class MotionGraphicsService {
             const fallbackPrompt = `## CURRENT CODE:\n\`\`\`tsx\n${currentCode}\n\`\`\`\n\n## USER REQUEST:\n${prompt}\n\nThe targeted edit approach failed. You MUST provide a full replacement.\n\nRespond with ONLY a JSON object: { "type": "full", "summary": "...", "code": "...full replacement code..." }`;
 
             const { content: fallbackContent } = await callOpenRouter(apiKey, model, [
-              { role: 'system', content: FOLLOW_UP_SYSTEM_PROMPT + '\n\nYou MUST respond with type: "full" and provide the complete replacement code. Do NOT use type: "edit".' },
+              { role: 'system', content: fullSystemPrompt + '\n\nYou MUST respond with type: "full" and provide the complete replacement code. Do NOT use type: "edit".' },
               { role: 'user', content: fallbackPrompt },
             ], {
               temperature: 0.3,
@@ -961,7 +974,7 @@ class MotionGraphicsService {
     detectedSkills: string[],
     editType: string | null = null,
     duration: number | null = null,
-    _syntaxRetryContext?: { apiKey: string; model: string; prompt: string; attempt: number }
+    _syntaxRetryContext?: { apiKey: string; model: string; prompt: string; attempt: number; baseSystemPrompt?: string }
   ): Promise<void> {
     const MAX_SYNTAX_RETRIES = 2;
 
@@ -999,6 +1012,7 @@ class MotionGraphicsService {
               attemptNumber: attempt + 1,
               maxAttempts: MAX_SYNTAX_RETRIES,
             },
+            baseSystemPrompt: _syntaxRetryContext.baseSystemPrompt,
           });
           // handleFollowUpEdit calls finalizeGeneration internally with the fixed code,
           // so we return here — the recursive call handles completion.

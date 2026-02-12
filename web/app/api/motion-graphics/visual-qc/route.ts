@@ -161,8 +161,10 @@ export async function POST(request: NextRequest) {
 
     // 3. Parse request body
     const body = await request.json();
-    const { screenshots, prompt, model, code } = body as {
+    const { screenshots, frameMetadata, totalDurationSeconds, prompt, model, code } = body as {
       screenshots: string[];
+      frameMetadata?: Array<{ frame: number; timeSeconds: number; percentThrough: number }>;
+      totalDurationSeconds?: number;
       prompt: string;
       model: string;
       code?: string;
@@ -179,13 +181,30 @@ export async function POST(request: NextRequest) {
     // Use a vision-capable model — fallback to a known one if the selected model doesn't support vision
     const visionModel = getVisionCapableModel(model);
 
-    const imageContent = screenshots.map((screenshot, _i) => ({
-      type: 'image_url' as const,
-      image_url: {
-        url: screenshot, // base64 data URL
-        detail: 'high' as const, // High detail for thorough visual analysis
-      },
-    }));
+    // Build labeled image content — interleave text labels before each screenshot
+    // so the vision AI knows exactly which point in the animation each frame represents
+    const imageContent: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string; detail: 'high' } }> = [];
+
+    screenshots.forEach((screenshot, i) => {
+      // Add a text label before each image identifying its position
+      if (frameMetadata && frameMetadata[i]) {
+        const meta = frameMetadata[i];
+        const durationLabel = totalDurationSeconds ? ` of ${totalDurationSeconds}s` : '';
+        imageContent.push({
+          type: 'text' as const,
+          text: `Screenshot ${i + 1}/${screenshots.length} — Frame ${meta.frame} at ${meta.timeSeconds}s${durationLabel} (${meta.percentThrough}% through animation):`,
+        });
+      }
+      imageContent.push({
+        type: 'image_url' as const,
+        image_url: {
+          url: screenshot,
+          detail: 'high' as const,
+        },
+      });
+    });
+
+    const durationContext = totalDurationSeconds ? ` The total animation is ${totalDurationSeconds}s long.` : '';
 
     const messages = [
       {
@@ -197,7 +216,7 @@ export async function POST(request: NextRequest) {
         content: [
           {
             type: 'text' as const,
-            text: `Original user request: "${prompt}"\n\n${code ? `Source code that generated this animation:\n\`\`\`tsx\n${code.substring(0, 6000)}\n\`\`\`\n\nCross-reference the screenshots below with the source code above. Identify issues by referencing specific variable names, constants, or JSX elements from the code.\n\n` : ''}Here are ${screenshots.length} screenshots from the generated animation (frames at 0.5s intervals). Evaluate the quality:`,
+            text: `Original user request: "${prompt}"\n\n${code ? `Source code that generated this animation:\n\`\`\`tsx\n${code.substring(0, 6000)}\n\`\`\`\n\nCross-reference the screenshots below with the source code above. Identify issues by referencing specific variable names, constants, or JSX elements from the code.\n\n` : ''}The following ${screenshots.length} labeled screenshots show the animation at specific points in time.${durationContext} Evaluate the quality:`,
           },
           ...imageContent,
         ],

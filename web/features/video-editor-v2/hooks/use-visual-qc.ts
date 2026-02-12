@@ -55,6 +55,12 @@ export interface UseVisualQCReturn {
 // CAPTURE HELPERS
 // ============================================================
 
+export interface FrameCapture {
+  frame: number;
+  timeSeconds: number;
+  dataUrl: string;
+}
+
 /**
  * Wait for the next animation frame + a delay for rendering to complete.
  */
@@ -155,7 +161,7 @@ async function captureKeyFrames(
   playerRef: React.RefObject<any>,
   durationInFrames: number,
   fps: number = 30
-): Promise<string[]> {
+): Promise<FrameCapture[]> {
   const intervalFrames = Math.round(fps * 0.5); // 0.5 seconds between captures
   const frames: number[] = [0]; // Always start with frame 0
 
@@ -179,7 +185,7 @@ async function captureKeyFrames(
     : frames;
 
   console.log(`[VisualQC] Capturing ${selectedFrames.length} frames at 0.5s intervals:`, selectedFrames);
-  const screenshots: string[] = [];
+  const captures: FrameCapture[] = [];
 
   for (const frameNum of selectedFrames) {
     try {
@@ -200,8 +206,12 @@ async function captureKeyFrames(
 
       const screenshot = await capturePlayerFrame(container);
       if (screenshot) {
-        screenshots.push(screenshot);
-        console.log(`[VisualQC] ✅ Frame ${frameNum}/${durationInFrames}`);
+        captures.push({
+          frame: frameNum,
+          timeSeconds: Math.round((frameNum / fps) * 100) / 100,
+          dataUrl: screenshot,
+        });
+        console.log(`[VisualQC] ✅ Frame ${frameNum}/${durationInFrames} (${(frameNum / fps).toFixed(2)}s)`);
       } else {
         console.warn(`[VisualQC] ❌ Could not capture frame ${frameNum}`);
       }
@@ -210,7 +220,7 @@ async function captureKeyFrames(
     }
   }
 
-  return screenshots;
+  return captures;
 }
 
 // ============================================================
@@ -248,25 +258,32 @@ export function useVisualQC(): UseVisualQCReturn {
     try {
       // Step 1: Capture screenshots at 0.5s intervals
       console.log(`[VisualQC] Starting frame capture (${durationInFrames} frames at ${fps}fps)...`);
-      const screenshots = await captureKeyFrames(playerRef, durationInFrames, fps);
+      const captures = await captureKeyFrames(playerRef, durationInFrames, fps);
 
-      if (screenshots.length === 0) {
+      if (captures.length === 0) {
         const err = 'Could not capture any frames from the player. The player may not be rendering to a canvas.';
         setError(err);
         setIsAnalyzing(false);
         return null;
       }
 
-      console.log(`[VisualQC] Captured ${screenshots.length} frames, sending for analysis...`);
+      console.log(`[VisualQC] Captured ${captures.length} frames, sending for analysis...`);
 
-      // Step 2: Send to API
+      // Step 2: Send to API with frame metadata
       abortControllerRef.current = new AbortController();
 
+      const totalDurationSeconds = Math.round((durationInFrames / fps) * 100) / 100;
       const response = await fetch('/api/motion-graphics/visual-qc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          screenshots,
+          screenshots: captures.map(c => c.dataUrl),
+          frameMetadata: captures.map(c => ({
+            frame: c.frame,
+            timeSeconds: c.timeSeconds,
+            percentThrough: Math.round((c.frame / Math.max(1, durationInFrames - 1)) * 100),
+          })),
+          totalDurationSeconds,
           prompt: originalPrompt,
           model,
           ...(code ? { code } : {}),

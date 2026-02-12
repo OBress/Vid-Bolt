@@ -679,20 +679,23 @@ export const MotionGraphicsTab: React.FC = () => {
           qcRetryCountRef.current++;
           console.log(`[MotionGraphicsTab] 🔄 QC failed, auto-correcting (attempt ${qcRetryCountRef.current}/${MAX_QC_RETRIES})...`);
 
-          // Build element-specific feedback prompt from QC results
-          const elementFeedback = result.elementIssues?.length > 0
-            ? result.elementIssues.map(ei =>
-                `[${ei.severity.toUpperCase()}] Element "${ei.elementId}" (${ei.elementDescription}): ${ei.issue}. Fix: ${ei.suggestedFix}`
-              ).join('\n')
-            : '';
-          const generalFeedback = result.generalIssues?.length > 0
-            ? result.generalIssues.join('; ')
-            : result.issues.join('; ');
-          const suggestionsFallback = result.suggestions.length > 0 ? ` Suggestions: ${result.suggestions.join('; ')}` : '';
-
-          let feedbackPrompt = elementFeedback
-            ? `Fix these specific element issues:\n${elementFeedback}${generalFeedback ? `\n\nGeneral issues: ${generalFeedback}` : ''}`
-            : `Fix the following visual issues: ${generalFeedback}.${suggestionsFallback}`;
+          // Build structured QC feedback for the revision AI
+          // Using JSON preserves element IDs, severity, and suggested fixes
+          // so the revision AI can cross-reference directly with code constants
+          let feedbackPrompt: string;
+          if (result.elementIssues?.length > 0 || result.generalIssues?.length > 0) {
+            feedbackPrompt = `## VISUAL QC RESULTS (structured)\n\`\`\`json\n${JSON.stringify({
+              passed: result.passed,
+              elementIssues: result.elementIssues,
+              generalIssues: result.generalIssues,
+              summary: result.summary,
+            }, null, 2)}\n\`\`\`\n\nFix all issues identified above. Reference the element IDs to locate the exact code to change.`;
+          } else {
+            // Legacy fallback if no structured issues
+            const generalFeedback = result.issues?.join('; ') || result.summary;
+            const suggestionsFallback = result.suggestions?.length > 0 ? ` Suggestions: ${result.suggestions.join('; ')}` : '';
+            feedbackPrompt = `Fix the following visual issues: ${generalFeedback}.${suggestionsFallback}`;
+          }
 
           // If we captured a runtime error, scrap everything and regenerate from scratch
           const hasRuntimeError = !!qcRuntimeErrorRef.current;
@@ -817,6 +820,9 @@ export const MotionGraphicsTab: React.FC = () => {
       {
         currentCode: generatedCode || undefined,
         isFollowUp: !!generatedCode,
+        conversationHistory: chatMessages
+          .filter(m => !m.isStreaming)
+          .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       },
       {
         onStreamPhaseChange: (phase) => {
@@ -1007,6 +1013,9 @@ export const MotionGraphicsTab: React.FC = () => {
       {
         currentCode: forceFullRegeneration ? undefined : (generatedCode || undefined),
         isFollowUp: !forceFullRegeneration,
+        conversationHistory: chatMessages
+          .filter(m => !m.isStreaming)
+          .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       },
       {
         onStreamPhaseChange: (phase) => {

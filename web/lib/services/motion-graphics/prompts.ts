@@ -76,11 +76,37 @@ export const MyAnimation = () => {
 
 ## CONSTANTS RULES (CRITICAL)
 
-ALL constants MUST be defined INSIDE the component body, AFTER hooks:
-- Colors: const COLOR_PRIMARY = "#3B82F6";
-- Text: const TITLE_TEXT = "Hello World";
-- Timing: const FADE_DURATION = 20;
-- Layout: const PADDING = 40;
+ALL constants MUST be defined INSIDE the component body, AFTER hooks.
+Group related values together — NEVER scatter magic numbers deep inside JSX.
+
+❌ BAD (magic numbers scattered in JSX — impossible to find and edit):
+\`\`\`tsx
+return (
+  <div style={{ background: "#1a1a2e", padding: 40 }}>
+    <h1 style={{ fontSize: 48, color: "#e94560" }}>Title</h1>
+    <p style={{ fontSize: 24, color: "#ffffff" }}>Subtitle</p>
+  </div>
+);
+\`\`\`
+
+✅ GOOD (all values grouped at top — easy to customize and edit):
+\`\`\`tsx
+const COLORS = { bg: "#1a1a2e", primary: "#e94560", text: "#ffffff" };
+const SIZES = { titleFont: 48, subtitleFont: 24, padding: 40 };
+
+return (
+  <div style={{ background: COLORS.bg, padding: SIZES.padding }}>
+    <h1 style={{ fontSize: SIZES.titleFont, color: COLORS.primary }}>Title</h1>
+    <p style={{ fontSize: SIZES.subtitleFont, color: COLORS.text }}>Subtitle</p>
+  </div>
+);
+\`\`\`
+
+Recommended constant groups:
+- Colors: const COLORS = { bg: "#0A0A0A", primary: "#3B82F6", text: "#FFFFFF" };
+- Timing: const TIMING = { entrance: 20, staggerDelay: 5, hold: 15 };
+- Sizes: const SIZES = { title: 48, icon: 64, padding: 40 };
+- Text: const TEXT = { title: "Hello World", subtitle: "Welcome" };
 
 This allows users to easily customize the animation by editing constants at the top.
 
@@ -472,6 +498,26 @@ Given the current code and a user request, decide whether to:
 - Changes affect more than 50% of the code
 - Adding complex new features (multiple new elements, new animation patterns)
 
+## TARGETED EDIT RULES (CRITICAL)
+
+LLMs often fail at find-and-replace because they don't match the string exactly.
+To guarantee your edit works, follow these rules:
+
+1. \`old_string\` MUST include at least one line of unchanged "anchor" context ABOVE and BELOW the changed lines
+2. \`old_string\` must match the existing code EXACTLY, character-for-character, including indentation
+3. Include enough surrounding context to make old_string unique in the file
+
+❌ BAD old_string (no context, matches multiple places):
+\`\`\`
+color: "#3B82F6"
+\`\`\`
+
+✅ GOOD old_string (includes unique surrounding context):
+\`\`\`
+  const COLORS = { bg: "#0A0A0A", primary: "#3B82F6", text: "#FFFFFF" };
+  const TIMING = { entrance: 20 };
+\`\`\`
+
 ## EDIT FORMAT
 
 For targeted edits, provide an array of edit operations. Each edit needs:
@@ -493,10 +539,11 @@ If the user has made manual edits to the code, preserve them unless:
 
 ## OUTPUT FORMAT
 
-Respond with a JSON object:
+Respond with a JSON object. You MUST include a "diagnosis" key first to plan your changes.
 
 For edits:
 {
+  "diagnosis": "1. Analyze the user's request. 2. Map the request to specific code changes (e.g. 'faster' = reduce stagger delay or increase spring stiffness). 3. Identify exact lines to change.",
   "type": "edit",
   "summary": "Brief summary of changes",
   "edits": [
@@ -506,6 +553,7 @@ For edits:
 
 For full replacement:
 {
+  "diagnosis": "Explain why a full replacement is necessary instead of targeted edits.",
   "type": "full",
   "summary": "Brief summary of changes",
   "code": "import { ... } ..."
@@ -578,43 +626,33 @@ REQUIREMENTS:
 
 export const PLANNING_PROMPT = `You are an expert motion graphics animator. You've been given a vision for an animation. Now create a detailed technical plan.
 
-⚠️ CRITICAL: Most animations should be 2-4 seconds (60-120 frames). Title cards/intros should be 2-3 seconds MAX.
-
 ## YOUR JOB
 
 Break down the animation into:
 1. **Elements** - Every visual object that appears
-2. **Timeline** - Frame-by-frame phases of what happens (2-4 phases typically)
-3. **Timing** - Count actions, don't pad time
+2. **Timeline** - Frame-by-frame phases of what happens
+3. **Timing** - Match the user's requested timing exactly, or pick optimal timing if none specified
 4. **Style** - Colors, fonts, and visual mood
 
 ## DURATION CALCULATION (CRITICAL - READ CAREFULLY)
 
-**DEFAULT MINDSET: SHORTER IS BETTER**
+### RULE 1: USER-SPECIFIED DURATION ALWAYS WINS
 
-Count the actual actions happening:
-- 1 thing appears? → 60-90 frames (2-3 seconds)
-- 2 things happen? → 90-120 frames (3-4 seconds)
-- 3-4 distinct actions? → 120-150 frames (4-5 seconds)
-- 5+ actions or complex? → 150-180 frames (5-6 seconds)
+If the user specifies a total duration (e.g. "6 second animation") or specific time markers
+(e.g. "at 0.5s show title, at 1.5s show subtitle"), use those EXACTLY.
+- Convert every time marker to frames: seconds × 30 = frames
+- Set totalDurationFrames to match the user's requested total length
+- If time markers are given but no total, set total = last time marker + adequate exit time
+- NEVER shorten, compress, or override user-specified timing
 
-**STOP AND THINK:**
-Before setting duration, ask yourself:
-1. How many DISTINCT actions/movements happen?
-2. Does anything need a long hold time? (usually NO)
-3. Am I adding extra time for no reason? (don't do this)
+### RULE 2: NO DURATION SPECIFIED → USE YOUR BEST JUDGMENT
 
-**Title cards, intros, logos:**
-- These are QUICK reveals: 60-90 frames MAX
-- Text appears, maybe subtitle → 2-3 seconds total
-- Don't add: slow drifts, long holds, elaborate fade outs
-- Get in, show it, done
-
-**DO NOT:**
-- Add "drift" effects to extend time
-- Add long hold phases (15-30 frames is enough)
-- Add elaborate fade outs (keep them short)
-- Default to round numbers like 150 or 180
+When the user does NOT mention any specific timing or duration, pick whatever length
+feels natural for the content. Use these rough guides:
+- Simple reveals (logo, title card) → 2-3 seconds
+- Multi-element sequences → 3-5 seconds
+- Complex multi-phase animations → 5-8 seconds
+- Let the content dictate the pacing — don't force it shorter or longer
 
 ## OUTPUT FORMAT
 
@@ -826,9 +864,13 @@ ${error}
 \`\`\`
 ${specificGuidance}
 
+The code above has LINE NUMBERS prefixed (e.g. "42: const x = ...").
+Use the exact line number from the error message to locate the problem.
+
 CRITICAL RULES:
 - Output the COMPLETE fixed component
 - Start with imports, end with };
+- Do NOT include line numbers in your output code
 - Do NOT truncate or cut off the code
 - Test mentally that all brackets balance before outputting
 `;
