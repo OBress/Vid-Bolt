@@ -286,7 +286,7 @@ export function VideoEditorTester({
         </Button>
         <div className="h-4 w-px bg-neutral-700" />
         <h2 className="text-sm font-bold uppercase tracking-wider text-cyan-400">
-          Video Editor V2 Tester
+          Video Editor Tester
         </h2>
         <div className="h-4 w-px bg-neutral-700" />
         <StressTestPopover />

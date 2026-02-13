@@ -77,6 +77,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
   splittingEnabled = false,
   hideItemsOnDrag = false,
   trackHeight = TIMELINE_CONSTANTS.TRACK_HEIGHT,
+  trackItemHeight,
   onCloseGap,
   // Transition props
   isDraggingTransition = false,
@@ -114,7 +115,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
   }, []);
   
   // Track container width for Premiere Pro-style scaling
-  const [containerWidth, setContainerWidth] = useState(1000); // Default fallback
+  const [containerWidth, setContainerWidth] = useState(0); // Measured by ResizeObserver
   const containerRef = useRef<HTMLDivElement>(null);
   
   // Measure container width on mount and resize
@@ -1011,6 +1012,7 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
             currentFrame={currentFrame}
             fps={fps}
             trackHeight={trackHeight}
+            trackItemHeight={trackItemHeight}
             splittingEnabled={splittingEnabled}
             onItemSelect={onItemSelect}
             onSelectionChange={handleCanvasSelectionChange}
@@ -1052,6 +1054,10 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
             trackHeight={trackHeight}
             fps={fps}
             collapsedGroups={collapsedGroups}
+            scrollX={scrollX}
+            scrollableWidth={scrollableWidthPixels}
+            viewportWidth={containerWidth}
+            scrollY={scrollY}
           />
 
           {/* Timeline Guidelines */}

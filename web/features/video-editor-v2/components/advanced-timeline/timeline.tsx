@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, forwardRef, useImperativeHandle, useMemo } from 'react';
 import { TimelineHeader, TimelineTrackHandles, TimelineContent } from './components';
 import { TimelineNavigatorV2 } from './components/timeline-navigator-v2';
 import { 
@@ -17,7 +17,7 @@ import {
 import { TimelineProps, TimelineRef, TimelineItem } from './types';
 import { clearTimelineMarkerPosition } from './utils';
 import { getTotalContentHeight } from './components/canvas-timeline/canvas-timeline-utils';
-import { ZOOM_CONSTRAINTS, TIMELINE_CONSTANTS } from './constants';
+import { ZOOM_CONSTRAINTS, TIMELINE_CONSTANTS, TIMELINE_DIMENSIONS_REM, COMPACT_DIMENSIONS_REM } from './constants';
 import { useVideoEditorStore, selectDragType } from '../../stores/video-editor-store';
 import type { TrackGroup } from '../../types/timeline-v2';
 
@@ -137,13 +137,13 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
   const effectiveHideItemsOnDrag = isMobile ? false : hideItemsOnDrag;
   
   // Container dimensions for virtual scroll calculations
-  const [containerWidth, setContainerWidth] = useState(800);
-  const [containerHeight, setContainerHeight] = useState(400);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
   
   // Update container dimensions on resize
   // IMPORTANT: Subtract handle width to get actual content area width
   // The playhead and all coordinate calculations are relative to the content area, not the full container
-  useEffect(() => {
+  useLayoutEffect(() => {
     const updateDimensions = () => {
       if (timelineContainerRef.current) {
         // Content width is full width minus the track handles
@@ -154,7 +154,7 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
         // For vertical scroll, we need just the tracks viewport height
         // Full height minus: header (52px) + markers (40px) + navigator (24px)
         const fullHeight = timelineContainerRef.current.offsetHeight;
-        const nonScrollableHeight = TIMELINE_CONSTANTS.HEADER_HEIGHT + TIMELINE_CONSTANTS.MARKERS_HEIGHT + 24; // navigator is h-6 (24px)
+        const nonScrollableHeight = TIMELINE_CONSTANTS.HEADER_HEIGHT + TIMELINE_CONSTANTS.MARKERS_HEIGHT + TIMELINE_CONSTANTS.NAVIGATOR_HEIGHT;
         const tracksViewportHeight = Math.max(50, fullHeight - nonScrollableHeight);
         setContainerHeight(tracksViewportHeight);
       }
@@ -706,8 +706,8 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
       ref={timelineContainerRef}
       className="timeline-container bg-background flex flex-col h-full overflow-hidden"
       style={{
-        '--timeline-track-height': `${trackHeight || 48}px`,
-        '--timeline-item-height': `${trackItemHeight || 40}px`,
+        '--timeline-track-height': `${isCompact ? COMPACT_DIMENSIONS_REM.TRACK_HEIGHT : TIMELINE_DIMENSIONS_REM.TRACK_HEIGHT}rem`,
+        '--timeline-item-height': `${(isCompact ? COMPACT_DIMENSIONS_REM.TRACK_HEIGHT : TIMELINE_DIMENSIONS_REM.TRACK_HEIGHT) - TIMELINE_DIMENSIONS_REM.TRACK_ITEM_PADDING}rem`,
         // Ensure the timeline is a scroll container boundary
         overscrollBehavior: 'contain',
         touchAction: 'pan-y pinch-zoom',
@@ -833,6 +833,7 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
             hideItemsOnDrag={effectiveHideItemsOnDrag}
             onNewItemDrop={onNewItemDrop}
             trackHeight={trackHeight}
+            trackItemHeight={trackItemHeight}
             onCloseGap={handleCloseGap}
             onZoomToRange={zoomToRange}
             onEffectDrop={onEffectDrop}

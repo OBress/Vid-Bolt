@@ -1,7 +1,10 @@
 import { useState, useCallback } from "react";
-import { IImage } from "@designcombo/types";
 
-interface PexelsImage extends Partial<IImage> {
+interface PexelsImage {
+  id?: string;
+  name?: string;
+  src?: string;
+  preview?: string;
   metadata?: {
     pexels_id: number;
     avg_color: string;

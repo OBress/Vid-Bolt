@@ -56,6 +56,8 @@ export interface CanvasTimelineTrackProps {
   totalWidth: number;
   /** Track height in pixels */
   trackHeight: number;
+  /** Track item height in pixels */
+  trackItemHeight?: number;
   /** Currently selected item IDs */
   selectedItemIds: string[];
   /** Currently selected transition ID */
@@ -99,6 +101,7 @@ export const CanvasTimelineTrack = React.memo(function CanvasTimelineTrack({
   totalDuration,
   totalWidth,
   trackHeight,
+  trackItemHeight,
   selectedItemIds,
   selectedTransitionId,
   splittingEnabled = false,
@@ -189,6 +192,7 @@ export const CanvasTimelineTrack = React.memo(function CanvasTimelineTrack({
           totalDuration={totalDuration}
           totalWidth={totalWidth}
           trackHeight={trackHeight}
+          trackItemHeight={trackItemHeight}
           isSelected={selectedSet.has(item.id)}
           isMuted={isMuted}
           isLocked={isLocked}

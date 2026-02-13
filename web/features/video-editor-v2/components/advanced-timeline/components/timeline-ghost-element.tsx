@@ -76,7 +76,7 @@ export const TimelineGhostElement: React.FC<TimelineGhostElementProps> = ({
           left: floatingPosition?.x || 0,
           top: floatingPosition?.y || 0,
           width: hasThumbnail ? '120px' : '100px',
-          height: `${TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT}px`,
+          height: `var(--timeline-item-height, ${TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT}px)`,
           willChange: "transform",
           transform: "translate(-50%, -50%)",
           border: `2px solid ${isValidDrop ? 'rgba(59, 130, 246, 0.9)' : 'rgba(239, 68, 68, 0.9)'}`,
@@ -133,7 +133,7 @@ export const TimelineGhostElement: React.FC<TimelineGhostElementProps> = ({
         style={{
           left: `${ghostElement.left}%`,
           width: `${Math.max(ghostElement.width, 0.1)}%`,
-          height: `${TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT}px`,
+          height: `var(--timeline-item-height, ${TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT}px)`,
           zIndex: 50,
           willChange: "transform",
           border: `2px solid ${isValidDrop ? 'rgba(34, 197, 94, 0.9)' : 'rgba(239, 68, 68, 0.9)'}`,

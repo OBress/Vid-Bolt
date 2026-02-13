@@ -29,7 +29,8 @@ import {
   truncateLabel,
 } from './canvas-timeline-utils';
 import type { TimelineItem } from '../../../../stores/memoized-selectors';
-import { TIMELINE_CONSTANTS } from '../../constants';
+import { TIMELINE_CONSTANTS, TIMELINE_DIMENSIONS_REM } from '../../constants';
+import { remToPx } from '../../utils/rem-utils';
 
 // Register PixiJS classes with @pixi/react
 extend({ Container, Graphics, Text });
@@ -40,7 +41,7 @@ extend({ Container, Graphics, Text });
 
 const CORNER_RADIUS = 4;
 const LABEL_PADDING = 8;
-const LABEL_FONT_SIZE = 11;
+const LABEL_FONT_SIZE = 13;
 const SELECTION_BORDER_WIDTH = 2;
 const SELECTION_COLOR = 0x3b82f6; // Blue-500
 const SELECTION_GLOW_ALPHA = 0.3;
@@ -101,7 +102,7 @@ function getLabelStyle(fontSize: number): TextStyle {
       fontSize,
       fill: 0xffffff,
       fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
-      fontWeight: '500',
+      fontWeight: '600',
     });
     labelStyleCache.set(key, cached);
   }
@@ -131,6 +132,8 @@ export interface CanvasTimelineItemProps {
   totalWidth: number;
   /** Track height in pixels */
   trackHeight: number;
+  /** Track item height in pixels (height of the clip rectangle within the track) */
+  trackItemHeight?: number;
   /** Whether this item is currently selected */
   isSelected: boolean;
   /** Whether the track is muted */
@@ -331,6 +334,7 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
   totalDuration,
   totalWidth,
   trackHeight,
+  trackItemHeight,
   isSelected,
   isMuted = false,
   isLocked = false,
@@ -344,7 +348,9 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
   onContextMenu,
   onTransitionClick,
 }: CanvasTimelineItemProps) {
-  const itemHeight = TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT;
+  // Derive item height from track height with consistent padding.
+  // This guarantees items ALWAYS fit within their track regardless of mode.
+  const itemHeight = trackHeight - remToPx(TIMELINE_DIMENSIONS_REM.TRACK_ITEM_PADDING);
   const [isHovering, setIsHovering] = useState(false);
 
   // Compute pixel-domain rectangle from time-domain item data
@@ -830,15 +836,16 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
   const labelLayout = useMemo(() => {
     if (!displayLabel) return null;
     const labelX = ACCENT_BAR_WIDTH + TYPE_ICON_SIZE + TYPE_ICON_MARGIN + LABEL_PADDING + (linkGroupColor ? BADGE_SIZE + BADGE_MARGIN + 2 : 0);
-    const labelY = (rect.height - LABEL_FONT_SIZE) / 2;
+    // Round to whole pixels to avoid anti-aliased soft edges
+    const labelY = Math.round((rect.height - LABEL_FONT_SIZE) / 2);
     const estimatedTextWidth = Math.min(displayLabel.length * 6, rect.width - labelX - 4);
-    return { labelX, labelY, estimatedTextWidth };
+    return { labelX: Math.round(labelX), labelY, estimatedTextWidth: Math.round(estimatedTextWidth) };
   }, [displayLabel, rect.height, rect.width, linkGroupColor]);
 
   const drawLabelBackdrop = useCallback((g: Graphics) => {
     g.clear();
     if (!labelLayout) return;
-    const backdropPadX = 3;
+    const backdropPadX = 4;
     const backdropPadY = 2;
     g.roundRect(
       labelLayout.labelX - backdropPadX,
@@ -847,7 +854,7 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
       LABEL_FONT_SIZE + backdropPadY * 2,
       3,
     );
-    g.fill({ color: 0x000000, alpha: 0.4 });
+    g.fill({ color: 0x000000, alpha: 0.55 });
   }, [labelLayout]);
 
   // Don't render items that are too narrow to see (< 1px)
@@ -904,8 +911,6 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
 
       {/* Label text with dark backdrop for readability over waveforms/thumbnails */}
       {displayLabel && labelLayout && (
-        <>
-          <pixiGraphics draw={drawLabelBackdrop} />
           <pixiText
             text={displayLabel}
             style={getLabelStyle(LABEL_FONT_SIZE)}
@@ -913,7 +918,6 @@ export const CanvasTimelineItem = React.memo(function CanvasTimelineItem({
             y={labelLayout.labelY}
             alpha={0.95}
           />
-        </>
       )}
     </pixiContainer>
   );

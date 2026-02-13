@@ -1,7 +1,10 @@
 import { useState, useCallback } from "react";
-import { IVideo } from "@designcombo/types";
 
-interface PexelsVideo extends Partial<IVideo> {
+interface PexelsVideo {
+  id?: string;
+  name?: string;
+  src?: string;
+  preview?: string;
   metadata?: {
     pexels_id: number;
     user: {

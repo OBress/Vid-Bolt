@@ -1,6 +1,7 @@
 import React from 'react';
 import { useVerticalResize } from '../../../../hooks/use-vertical-resize';
-import { TIMELINE_CONSTANTS } from '../../../advanced-timeline/constants';
+import { TIMELINE_DIMENSIONS_REM, COMPACT_DIMENSIONS_REM } from '../../../advanced-timeline/constants';
+import { remToPx } from '../../../advanced-timeline/utils/rem-utils';
 
 interface UseTimelineResizeOptions {
   /** Number of tracks in the timeline (not affected by track visibility) */
@@ -26,16 +27,8 @@ const HEIGHT_CONSTANTS = {
 } as const;
 
 /**
- * Compact mode constants - reduced sizes for space saving
- */
-const COMPACT_CONSTANTS = {
-  TRACK_HEIGHT: 32, // Reduced from 48
-  TRACK_ITEM_HEIGHT: 26, // Reduced from 40
-  MARKERS_HEIGHT: 28, // Reduced from 40
-} as const;
-
-/**
  * Custom hook for managing timeline resize functionality
+ * - Uses rem-based dimensions that scale with browser font-size
  * - Uses a fixed large max height so users can resize freely
  * - Height persists across sessions via localStorage
  * - Supports compact mode for space-saving
@@ -67,19 +60,27 @@ export const useTimelineResize = ({ trackCount: passedTrackCount }: UseTimelineR
   }, [isCompact]);
 
   /**
-   * Get the current track height based on compact mode
+   * Get the current track height based on compact mode (px, computed from rem)
    */
-  const currentTrackHeight = isCompact ? COMPACT_CONSTANTS.TRACK_HEIGHT : TIMELINE_CONSTANTS.TRACK_HEIGHT;
-  const currentMarkersHeight = isCompact ? COMPACT_CONSTANTS.MARKERS_HEIGHT : TIMELINE_CONSTANTS.MARKERS_HEIGHT;
+  const currentTrackHeight = isCompact
+    ? remToPx(COMPACT_DIMENSIONS_REM.TRACK_HEIGHT)
+    : remToPx(TIMELINE_DIMENSIONS_REM.TRACK_HEIGHT);
+  const currentMarkersHeight = isCompact
+    ? remToPx(COMPACT_DIMENSIONS_REM.MARKERS_HEIGHT)
+    : remToPx(TIMELINE_DIMENSIONS_REM.MARKERS_HEIGHT);
 
   /**
    * Calculate the height needed to show a specific number of tracks
    */
   const calculateHeightForTracks = React.useCallback((numTracks: number, useCompact: boolean) => {
-    const trackHeightVal = useCompact ? COMPACT_CONSTANTS.TRACK_HEIGHT : TIMELINE_CONSTANTS.TRACK_HEIGHT;
-    const markersHeightVal = useCompact ? COMPACT_CONSTANTS.MARKERS_HEIGHT : TIMELINE_CONSTANTS.MARKERS_HEIGHT;
+    const trackHeightVal = useCompact
+      ? remToPx(COMPACT_DIMENSIONS_REM.TRACK_HEIGHT)
+      : remToPx(TIMELINE_DIMENSIONS_REM.TRACK_HEIGHT);
+    const markersHeightVal = useCompact
+      ? remToPx(COMPACT_DIMENSIONS_REM.MARKERS_HEIGHT)
+      : remToPx(TIMELINE_DIMENSIONS_REM.MARKERS_HEIGHT);
     
-    return TIMELINE_CONSTANTS.HEADER_HEIGHT + // Timeline header with controls
+    return remToPx(TIMELINE_DIMENSIONS_REM.HEADER_HEIGHT) + // Timeline header with controls
            markersHeightVal + // Time ruler
            HEIGHT_CONSTANTS.ADD_VIDEO_BUTTON_HEIGHT + // "Add Video Track" button
            (numTracks * trackHeightVal) + // All tracks
@@ -113,7 +114,7 @@ export const useTimelineResize = ({ trackCount: passedTrackCount }: UseTimelineR
     initialHeight: calculateInitialHeight(),
     minHeight: HEIGHT_CONSTANTS.MIN_TIMELINE_HEIGHT,
     maxHeight: HEIGHT_CONSTANTS.MAX_TIMELINE_HEIGHT,
-    storageKey: 'editor-timeline-height-v2', // v2: updated height calculation for 4 tracks
+    storageKey: 'editor-timeline-height-v3', // v3: rem-based responsive dimensions
   });
 
   /**
@@ -141,7 +142,7 @@ export const useTimelineResize = ({ trackCount: passedTrackCount }: UseTimelineR
     toggleCompactMode,
     currentTrackHeight,
     currentMarkersHeight,
-    compactTrackItemHeight: isCompact ? COMPACT_CONSTANTS.TRACK_ITEM_HEIGHT : TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT,
+    compactTrackItemHeight: currentTrackHeight - remToPx(TIMELINE_DIMENSIONS_REM.TRACK_ITEM_PADDING),
   };
 };
 

@@ -113,6 +113,26 @@ export async function GET(
       }));
     }
 
+    // Sanitize audio chunk URLs: convert presigned URLs to public R2 URLs
+    if (Array.isArray(audioChunks) && audioChunks.length > 0) {
+      try {
+        const { getKeyFromUrl, getPublicUrl } = await import("@/lib/services/r2-storage");
+        audioChunks = audioChunks.map((c: any) => {
+          if (c.url && (c.url.includes('X-Amz-') || c.url.includes('r2.cloudflarestorage.com'))) {
+            try {
+              const key = getKeyFromUrl(c.url);
+              return { ...c, url: getPublicUrl(key) };
+            } catch {
+              return c;
+            }
+          }
+          return c;
+        });
+      } catch (e) {
+        console.error("[API] Failed to sanitize audio chunk URLs:", e);
+      }
+    }
+
     // Query for any active (pending/running) tasks associated with this video
     // This enables the wizard to restore loading screens when resuming mid-generation
     let activeTasks: Array<{ id: string; type: string; status: string; name: string }> = [];

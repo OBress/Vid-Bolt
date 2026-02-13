@@ -1,4 +1,4 @@
-// Timeline dimension constants
+// Timeline dimension constants (pixel values — used as fallbacks and for backward compat)
 export const TIMELINE_CONSTANTS = {
   // Header height - matches the actual TimelineHeader component (py-2.5 + button height)
   HEADER_HEIGHT: 52, // Height of timeline header (2x10px padding + ~32px content)
@@ -8,6 +8,10 @@ export const TIMELINE_CONSTANTS = {
 
   TRACK_ITEM_HEIGHT: 40, // Height of each track item
 
+  // Total vertical padding between track edges and item rectangle (top + bottom).
+  // Item height = TRACK_HEIGHT - TRACK_ITEM_PADDING = 40 for default, auto-scales for compact.
+  TRACK_ITEM_PADDING: 8, // 4px top + 4px bottom
+
   // Group header height - section dividers between track groups (Video, Audio, Text, etc.)
   GROUP_HEADER_HEIGHT: 24, // Height of each group header bar
   
@@ -16,7 +20,29 @@ export const TIMELINE_CONSTANTS = {
   
   // Timeline markers
   MARKERS_HEIGHT: 40, // Height of time markers area - increased to show labels
+  NAVIGATOR_HEIGHT: 24,
 };
+
+/**
+ * Responsive dimensions in rem — the primary source of truth.
+ * Scales automatically with browser font-size (accessibility, display preferences).
+ * Convert to px via remToPx() for PixiJS canvas rendering.
+ */
+export const TIMELINE_DIMENSIONS_REM = {
+  TRACK_HEIGHT: 4.1,            // ~66px at 16px base
+  TRACK_ITEM_PADDING: 0.5,    // 8px total vertical padding (4px top + 4px bottom)
+  GROUP_HEADER_HEIGHT: 1.5,    // 24px
+  MARKERS_HEIGHT: 2.5,         // 40px
+  HEADER_HEIGHT: 3.25,         // 52px
+  NAVIGATOR_HEIGHT: 1.5,       // 24px
+  HANDLE_WIDTH: 8.125,         // 130px
+} as const;
+
+/** Compact mode rem overrides — only dimensions that differ from normal mode. */
+export const COMPACT_DIMENSIONS_REM = {
+  TRACK_HEIGHT: 2.925,          // ~47px at 16px base
+  MARKERS_HEIGHT: 1.75,        // 28px
+} as const;
 
 // Virtual scroll constants - centralized for consistency
 export const VIRTUAL_SCROLL_CONSTANTS = {

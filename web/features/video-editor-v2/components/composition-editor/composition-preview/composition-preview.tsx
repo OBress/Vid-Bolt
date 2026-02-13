@@ -161,9 +161,12 @@ export const CompositionPreview: React.FC = () => {
       if (!container) return;
       
       const rect = container.getBoundingClientRect();
-      // Account for padding
-      const availableWidth = rect.width - 32; // p-4 = 16px * 2
-      const availableHeight = rect.height - 32;
+      // Dynamically measure padding so we don't hardcode assumptions about CSS classes
+      const style = getComputedStyle(container);
+      const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+      const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      const availableWidth = rect.width - paddingX;
+      const availableHeight = rect.height - paddingY;
       
       if (availableWidth > 100 && availableHeight > 100) {
         setContainerSize({

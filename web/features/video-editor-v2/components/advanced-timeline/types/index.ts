@@ -179,6 +179,7 @@ export interface TimelineContentProps {
   splittingEnabled?: boolean;
   hideItemsOnDrag?: boolean;
   trackHeight?: number;
+  trackItemHeight?: number;
   onCloseGap?: (trackId: string, gapStart: number, gapEnd: number) => void;
   // Transition props
   isDraggingTransition?: boolean;

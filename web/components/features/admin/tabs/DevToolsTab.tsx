@@ -211,7 +211,7 @@ export function DevToolsTab() {
         </div>
         <div>
           <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
-            Video Editor V2
+            Video Editor
           </h3>
           <p className="text-neutral-400 text-xs h-10">
             Timeline-based video editor with tracks, clips, and playback.

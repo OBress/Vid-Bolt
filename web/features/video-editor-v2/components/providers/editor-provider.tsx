@@ -23,6 +23,7 @@ import {
   destroyAudioResourceManager,
   cleanupAllAudioResources,
 } from "../../utils/audio-resource-manager";
+import { useProjectSync } from "../../hooks/use-project-sync";
 
 interface EditorProviderProps {
   children: React.ReactNode;
@@ -206,27 +207,25 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
     // Rendering is handled by the rendering system
   }, []);
 
-  // Save function
-  const saveProject = useCallback(async () => {
-    if (onSaving) onSaving(true);
-    try {
-      // Get current state from store
-      const state = useVideoEditorStore.getState();
-      
-      // TODO: Implement Supabase save
-      console.log('[EditorProvider] Saving project:', {
-        projectId,
-        tracks: state.tracks.length,
-        clips: state.clips.length,
-      });
-      
-      state.markSaved();
-      
-      if (onSaved) onSaved(Date.now());
-    } finally {
-      if (onSaving) onSaving(false);
-    }
-  }, [projectId, onSaving, onSaved]);
+  // Supabase auto-save + load via useProjectSync
+  const {
+    save: saveProject,
+    isLoaded: isSyncLoaded,
+  } = useProjectSync(projectId, {
+    enableAutoSave: true,
+    autoSaveInterval: 10000,
+    onSaveStart: () => onSaving?.(true),
+    onSaveComplete: (ts) => {
+      onSaving?.(false);
+      onSaved?.(ts);
+    },
+    onSaveError: () => onSaving?.(false),
+  });
+
+  // Wrap save in async callback for context compatibility
+  const saveProjectCallback = useCallback(async () => {
+    await saveProject();
+  }, [saveProject]);
 
   // Context value - MEMOIZED to prevent re-render cascade
   // IMPORTANT: currentFrame and isPlaying are intentionally excluded —
@@ -277,17 +276,17 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
     renderMedia,
     
     // Save functionality
-    saveProject,
+    saveProject: saveProjectCallback,
     
     // Loading state
-    isInitialLoadComplete: !isLoadingProject,
+    isInitialLoadComplete: !isLoadingProject && isSyncLoaded,
   }), [
     projectId, fps, playerRef, isScrubbingRef, renderType, baseUrl,
     initialRows, maxRows, zoomConstraints, snappingConfig,
     disableMobileLayout, disableVideoKeyframes, enablePushOnDrag,
     videoWidth, videoHeight,
     play, pause, togglePlayPause, seekTo, formatTime,
-    renderMedia, saveProject, isLoadingProject,
+    renderMedia, saveProjectCallback, isLoadingProject, isSyncLoaded,
   ]);
 
   return (

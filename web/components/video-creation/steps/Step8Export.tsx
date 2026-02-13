@@ -1,29 +1,23 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import {
-  Clapperboard,
-  Loader2,
-  CheckCircle,
-  XCircle,
-} from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Loader2, CheckCircle, XCircle, Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import useStore from "@/features/editor/store/use-store";
-import { useNavigationStore } from "@/store/use-navigation-store";
-import {
-  createDaVinciExport,
-  getAssetCounts,
-  estimateExportSize,
-} from "@/lib/export";
-import { generateId } from "@designcombo/timeline";
+import { useVideoEditorStore } from "@/features/video-editor-v2/stores/video-editor-store";
+import { buildRenderState } from "@/features/video-editor-v2/utils/clip-to-render-adapter";
+import { HttpRenderer } from "@/features/video-editor-v2/utils/http-renderer";
 import type {
   AudioChunk,
   ShotEvent,
 } from "@/components/video-creation/VideoCreationWizard";
+import type { TimelineClip } from "@/features/video-editor-v2/types/timeline-v2";
 
-// DaVinci Resolve icon
-const DaVinciIcon = () => <Clapperboard className="w-5 h-5" />;
+// Shared renderer targeting the Lambda endpoint
+const renderer = new HttpRenderer("/api/render", {
+  type: "ssr",
+  entryPoint: "/api/render",
+});
 
 interface Step8ExportProps {
   videoId: string;
@@ -36,15 +30,13 @@ interface Step8ExportProps {
   lockedMessage?: string;
 }
 
-type ExportStatus = "idle" | "exporting" | "success" | "error";
+type ExportStatus = "idle" | "rendering" | "success" | "error";
 
 export function Step8Export({
   videoId,
   projectId,
   onBack: _onBack,
   onClose,
-  audioChunks,
-  shotList,
   isLocked,
   lockedMessage,
 }: Step8ExportProps) {
@@ -52,290 +44,130 @@ export function Step8Export({
   const [exportProgress, setExportProgress] = useState(0);
   const [exportMessage, setExportMessage] = useState("");
   const [exportError, setExportError] = useState<string | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
 
-  // Track if we've already populated the store to prevent duplicate dispatches
-  const hasPopulatedRef = useRef(false);
+  // Get timeline data from V2 editor store (for UI display only)
+  const clips = useVideoEditorStore((s) => s.clips);
 
-  // Get timeline data from editor store
-  const { trackItemsMap, tracks, duration, fps, size, timeline: _timeline } = useStore();
+  // Count assets for display
+  const clipValues = Object.values(clips) as TimelineClip[];
+  const audioCount = clipValues.filter((c) => c.type === "audio").length;
+  const videoCount = clipValues.filter((c) => c.type === "video").length;
+  const imageCount = clipValues.filter((c) => c.type === "image").length;
+  const totalAssets = clipValues.length;
 
-  // Get video name from navigation store
-  const { currentVideoName } = useNavigationStore();
+  const handleRender = useCallback(async () => {
+    if (isLocked || exportStatus === "rendering") return;
 
-  // Populate the store with track items if it's empty (direct navigation to export page)
-  useEffect(() => {
-    // Skip if we've already populated or if store already has items
-    if (hasPopulatedRef.current) return;
-
-    const existingItems = Object.keys(trackItemsMap).length;
-    if (existingItems > 0) {
-      console.log("[Step8Export] Store already has items, skipping population");
-      hasPopulatedRef.current = true;
-      return;
-    }
-
-    // Check if we have data to populate
-    const hasAudioChunks = audioChunks && audioChunks.length > 0;
-    const hasShotList = shotList && shotList.length > 0;
-
-    if (!hasAudioChunks && !hasShotList) {
-      console.log("[Step8Export] No audio chunks or shot list to populate");
-      return;
-    }
-
-    console.log("[Step8Export] Populating store with track items:", {
-      audioChunksCount: audioChunks?.length || 0,
-      shotListCount: shotList?.length || 0,
-    });
-
-    // Mark as populated immediately to prevent duplicate attempts
-    hasPopulatedRef.current = true;
-
-    // Build audio track items
-    const audioTrackItems: any[] = [];
-    let currentTime = 0;
-
-    if (hasAudioChunks) {
-      const sortedChunks = [...audioChunks].sort(
-        (a, b) => a.chapterNumber - b.chapterNumber,
-      );
-
-      for (const chunk of sortedChunks) {
-        const id = generateId();
-        const durationMs = (chunk.duration_seconds || 5) * 1000;
-
-        audioTrackItems.push({
-          id,
-          type: "audio" as const,
-          name: `Audio ${chunk.chapterNumber + 1}`,
-          display: {
-            from: currentTime,
-            to: currentTime + durationMs,
-          },
-          trim: {
-            from: 0,
-            to: durationMs,
-          },
-          duration: durationMs,
-          details: {
-            src: chunk.url,
-          },
-          metadata: {
-            text: chunk.text,
-          },
-        });
-
-        currentTime += durationMs;
-      }
-    }
-
-    // Build visual track items from shot list
-    const visualTrackItems: any[] = [];
-
-    if (hasShotList) {
-      const contentTypeColors: Record<string, string> = {
-        "list-item": "#f97316",
-        comparison: "#8b5cf6",
-        concept: "#3b82f6",
-        transition: "#22c55e",
-        "emotional-beat": "#ef4444",
-      };
-
-      const getVisualType = (shot: ShotEvent): "image" | "video" => {
-        // media_type may be present in runtime data but not in the type definition
-        const mediaType = (shot as any).media_type;
-        if (mediaType === "image" || mediaType === "video") {
-          return mediaType;
-        }
-        switch (shot.content_type) {
-          case "transition":
-          case "emotional-beat":
-            return "video";
-          default:
-            return "image";
-        }
-      };
-
-      const transparentPng =
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-
-      for (const shot of shotList) {
-        const id = generateId();
-        const color = contentTypeColors[shot.content_type] || "#6b7280";
-        const visualType = getVisualType(shot);
-
-        const itemDetails: any = { src: transparentPng };
-        if (visualType === "video") {
-          itemDetails.volume = 0;
-          itemDetails.width = 1920;
-          itemDetails.height = 1080;
-        }
-
-        visualTrackItems.push({
-          id,
-          type: visualType,
-          name: `Shot ${shot.segment_index}`,
-          display: {
-            from: shot.start_seconds * 1000,
-            to: shot.end_seconds * 1000,
-          },
-          trim: {
-            from: 0,
-            to: shot.duration_seconds * 1000,
-          },
-          duration: shot.duration_seconds * 1000,
-          details: itemDetails,
-          metadata: {
-            shotIndex: shot.segment_index,
-            contentType: shot.content_type,
-            mediaType: visualType,
-            color: color,
-            visualPrompt: shot.visual_prompt || shot.text,
-            text: shot.text,
-          },
-        });
-      }
-    }
-
-    // Build tracks array
-    const tracksToAdd: any[] = [];
-
-    if (audioTrackItems.length > 0) {
-      const audioTrackId = generateId();
-      tracksToAdd.push({
-        id: audioTrackId,
-        items: audioTrackItems.map((item) => item.id),
-        type: "audio",
-        name: "Audio",
-      });
-    }
-
-    if (visualTrackItems.length > 0) {
-      const visualTrackId = generateId();
-      tracksToAdd.push({
-        id: visualTrackId,
-        items: visualTrackItems.map((item) => item.id),
-        type: "image",
-        name: "Visuals",
-      });
-    }
-
-    const allItems = [...audioTrackItems, ...visualTrackItems];
-
-    if (allItems.length > 0) {
-      // Build trackItemsMap from allItems
-      const newTrackItemsMap: Record<string, any> = {};
-      for (const item of allItems) {
-        newTrackItemsMap[item.id] = item;
-      }
-
-      // Calculate total duration
-      const maxEndTime = Math.max(
-        ...allItems.map((item) => item.display?.to || 0),
-      );
-
-      // Directly update the zustand store (bypassing event dispatch system)
-      useStore.setState({
-        trackItemsMap: newTrackItemsMap,
-        tracks: tracksToAdd,
-        trackItemIds: allItems.map((item) => item.id),
-        duration: maxEndTime,
-      });
-
-      console.log(
-        `[Step8Export] Directly updated store with ${allItems.length} items in ${tracksToAdd.length} tracks`,
-      );
-    }
-  }, [audioChunks, shotList, trackItemsMap]);
-
-  // Calculate asset counts and estimated size
-  const assetCounts = getAssetCounts(trackItemsMap);
-  const estimatedSize = estimateExportSize(trackItemsMap);
-
-  const exportOptions = [
-    {
-      id: "davinci",
-      label: "Export to DaVinci Resolve",
-      description: `${assetCounts.total} assets • ~${estimatedSize.formatted}`,
-      icon: DaVinciIcon,
-      color: "from-orange-500 to-amber-600",
-      hoverColor: "hover:from-orange-400 hover:to-amber-500",
-    },
-  ];
-
-  const handleExport = async (platformId: string) => {
-    if (isLocked || exportStatus === "exporting") return;
-
-    if (platformId === "davinci") {
-      await handleDaVinciExport();
-    } else {
-      console.log(`Exporting to ${platformId}`, { videoId, projectId });
-      // TODO: Implement other export options
-    }
-  };
-
-  const handleDaVinciExport = async () => {
-    setExportStatus("exporting");
+    setExportStatus("rendering");
     setExportProgress(0);
-    setExportMessage("Preparing export...");
+    setExportMessage("Building render state...");
     setExportError(null);
+    setDownloadUrl(null);
 
     try {
-      // Use video name if available, fallback to a generic name
-      const projectName = currentVideoName || `Video_Project`;
+      // Read latest state directly from store (stable reference)
+      const storeState = useVideoEditorStore.getState();
+      const latestClips = Object.values(storeState.clips) as TimelineClip[];
+      const latestTracks = Object.values(storeState.tracks) as import("@/features/video-editor-v2/types/timeline-v2").TimelineTrack[];
+      const latestTransitions = storeState.transitions;
 
-      const result = await createDaVinciExport({
-        projectName,
-        frameRate: fps,
-        width: size.width,
-        height: size.height,
-        duration: Math.round((duration * fps) / 1000), // Convert ms to frames
-        trackItems: trackItemsMap,
-        tracks: tracks,
-        onProgress: (progress, message) => {
-          setExportProgress(progress);
-          setExportMessage(message);
-        },
+      // Build render state from V2 store data
+      const state = buildRenderState(
+        latestClips,
+        latestTracks,
+        latestTransitions,
+        30,
+        { width: 1920, height: 1080 },
+        "#000000",
+      );
+
+      const inputProps = {
+        overlays: state.overlays,
+        durationInFrames: state.durationInFrames,
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        src: "",
+      };
+
+      setExportMessage("Invoking Lambda render...");
+
+      // Start the render
+      const { renderId, bucketName } = await renderer.renderVideo({
+        id: projectId,
+        inputProps,
       });
 
-      if (result.success) {
-        setExportStatus("success");
-        setExportMessage(
-          `Downloaded ${result.fileName} (${formatBytes(result.fileSize)})`,
-        );
-      } else {
-        setExportStatus("error");
-        setExportError(result.error || "Export failed");
-        setExportMessage("Export failed");
+      setExportMessage("Rendering video...");
+
+      // Poll for progress
+      let pending = true;
+      while (pending) {
+        const result = await renderer.getProgress({
+          id: renderId,
+          ...(bucketName && { bucketName }),
+        });
+
+        switch (result.type) {
+          case "error":
+            setExportStatus("error");
+            setExportError(result.message);
+            setExportMessage("Render failed");
+            pending = false;
+            break;
+
+          case "done":
+            setExportStatus("success");
+            setExportProgress(100);
+            setExportMessage("Video rendered successfully!");
+            setDownloadUrl(result.url);
+            pending = false;
+            break;
+
+          case "progress":
+            setExportProgress(result.progress * 100);
+            setExportMessage(
+              `Rendering... ${Math.round(result.progress * 100)}%`,
+            );
+            // Wait before polling again
+            await new Promise((r) => setTimeout(r, 1500));
+            break;
+        }
       }
     } catch (error) {
       setExportStatus("error");
-      setExportError(error instanceof Error ? error.message : "Export failed");
-      setExportMessage("Export failed");
+      setExportError(
+        error instanceof Error ? error.message : "Render failed",
+      );
+      setExportMessage("Render failed");
     }
-  };
+  }, [projectId, isLocked, exportStatus]);
 
   const resetExportState = () => {
     setExportStatus("idle");
     setExportProgress(0);
     setExportMessage("");
     setExportError(null);
+    setDownloadUrl(null);
   };
 
   return (
     <div className="flex flex-col items-center gap-6 text-center pt-12">
       {/* Header */}
       <div className="space-y-2">
-        <h2 className="text-2xl font-bold tracking-tight">Export Your Video</h2>
+        <h2 className="text-2xl font-bold tracking-tight">
+          Export Your Video
+        </h2>
         <p className="text-neutral-500 text-sm max-w-md">
-          Download your video or share it directly to your favorite platforms.
+          Render your video through AWS Lambda and download the final result.
         </p>
       </div>
 
-      {/* Export Progress Modal */}
+      {/* Export Progress */}
       {exportStatus !== "idle" && (
         <div className="w-full max-w-md p-6 bg-neutral-900 border border-neutral-800 rounded-xl space-y-4">
-          {exportStatus === "exporting" && (
+          {exportStatus === "rendering" && (
             <>
               <div className="flex items-center gap-3">
                 <Loader2 className="w-5 h-5 animate-spin text-orange-500" />
@@ -353,17 +185,26 @@ export function Step8Export({
               <div className="flex items-center gap-3">
                 <CheckCircle className="w-5 h-5 text-green-500" />
                 <span className="text-sm font-medium text-green-500">
-                  Export Complete!
+                  Render Complete!
                 </span>
               </div>
               <p className="text-xs text-neutral-400">{exportMessage}</p>
+              {downloadUrl && (
+                <a
+                  href={downloadUrl}
+                  download
+                  className="block w-full py-2 text-center text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors"
+                >
+                  Download Video
+                </a>
+              )}
               <Button
                 onClick={resetExportState}
                 variant="outline"
                 size="sm"
                 className="w-full border-neutral-700"
               >
-                Export Another Format
+                Render Again
               </Button>
             </>
           )}
@@ -373,7 +214,7 @@ export function Step8Export({
               <div className="flex items-center gap-3">
                 <XCircle className="w-5 h-5 text-red-500" />
                 <span className="text-sm font-medium text-red-500">
-                  Export Failed
+                  Render Failed
                 </span>
               </div>
               <p className="text-xs text-red-400">{exportError}</p>
@@ -390,68 +231,58 @@ export function Step8Export({
         </div>
       )}
 
-      {/* Export options grid */}
+      {/* Render Button */}
       {exportStatus === "idle" && (
         <div
-          className={`w-full grid grid-cols-1 sm:grid-cols-2 gap-3 ${
-            isLocked ? "opacity-50" : ""
-          }`}
+          className={`w-full grid grid-cols-1 gap-3 ${isLocked ? "opacity-50" : ""}`}
         >
-          {exportOptions.map((option) => {
-            const Icon = option.icon;
-            return (
-              <button
-                key={option.id}
-                onClick={() => handleExport(option.id)}
-                disabled={isLocked}
-                className={`group flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r ${
-                  option.color
-                } ${
-                  option.hoverColor
-                } text-white transition-all duration-300 hover:scale-[1.02] hover:shadow-lg ${
-                  isLocked ? "cursor-not-allowed" : ""
-                }`}
-              >
-                <div className="p-2 bg-white/20 rounded-lg">
-                  <Icon />
-                </div>
-                <div className="text-left">
-                  <p className="font-semibold">{option.label}</p>
-                  <p className="text-xs opacity-80">{option.description}</p>
-                </div>
-              </button>
-            );
-          })}
+          <button
+            onClick={handleRender}
+            disabled={isLocked || totalAssets === 0}
+            className={`group flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-400 hover:to-amber-500 text-white transition-all duration-300 hover:scale-[1.02] hover:shadow-lg ${
+              isLocked ? "cursor-not-allowed" : ""
+            }`}
+          >
+            <div className="p-2 bg-white/20 rounded-lg">
+              <Rocket className="w-5 h-5" />
+            </div>
+            <div className="text-left">
+              <p className="font-semibold">Render Video</p>
+              <p className="text-xs opacity-80">
+                {totalAssets} assets • AWS Lambda
+              </p>
+            </div>
+          </button>
         </div>
       )}
 
-      {/* Asset Summary for DaVinci */}
-      {exportStatus === "idle" && assetCounts.total > 0 && (
+      {/* Asset Summary */}
+      {exportStatus === "idle" && totalAssets > 0 && (
         <div className="w-full p-4 bg-neutral-900/50 border border-neutral-800 rounded-lg">
           <p className="text-xs text-neutral-400 mb-2">Project Summary</p>
           <div className="flex justify-center gap-6 text-sm">
-            {assetCounts.video > 0 && (
+            {videoCount > 0 && (
               <span className="text-neutral-300">
                 <span className="text-orange-500 font-semibold">
-                  {assetCounts.video}
+                  {videoCount}
                 </span>{" "}
-                video{assetCounts.video !== 1 ? "s" : ""}
+                video{videoCount !== 1 ? "s" : ""}
               </span>
             )}
-            {assetCounts.audio > 0 && (
+            {audioCount > 0 && (
               <span className="text-neutral-300">
                 <span className="text-orange-500 font-semibold">
-                  {assetCounts.audio}
+                  {audioCount}
                 </span>{" "}
                 audio
               </span>
             )}
-            {assetCounts.image > 0 && (
+            {imageCount > 0 && (
               <span className="text-neutral-300">
                 <span className="text-orange-500 font-semibold">
-                  {assetCounts.image}
+                  {imageCount}
                 </span>{" "}
-                image{assetCounts.image !== 1 ? "s" : ""}
+                image{imageCount !== 1 ? "s" : ""}
               </span>
             )}
           </div>
@@ -468,7 +299,7 @@ export function Step8Export({
           <Button
             onClick={onClose}
             className="w-full h-12 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white font-bold uppercase tracking-widest"
-            disabled={exportStatus === "exporting"}
+            disabled={exportStatus === "rendering"}
           >
             Done
           </Button>
@@ -476,17 +307,4 @@ export function Step8Export({
       </div>
     </div>
   );
-}
-
-/**
- * Format bytes to human readable string
- */
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 Bytes";
-
-  const k = 1024;
-  const sizes = ["Bytes", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }

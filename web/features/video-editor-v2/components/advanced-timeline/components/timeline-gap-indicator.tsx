@@ -28,7 +28,7 @@ export const TimelineGapIndicator: React.FC<TimelineGapIndicatorProps> = ({
       style={{
         left: `${(gap.start / totalDuration) * 100}%`,
         width: `${((gap.end - gap.start) / totalDuration) * 100}%`,
-        height: `${TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT}px`,
+        height: `var(--timeline-item-height, ${TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT}px)`,
       }}
       title={`Gap: ${gap.start.toFixed(1)}s - ${gap.end.toFixed(1)}s`}
     >

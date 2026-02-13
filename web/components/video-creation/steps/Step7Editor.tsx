@@ -1,12 +1,34 @@
 "use client";
 
-import { Clapperboard } from "lucide-react";
-import Editor from "@/features/editor";
+import dynamic from "next/dynamic";
 import type {
   AudioChunk,
   ShotEvent,
 } from "@/components/video-creation/VideoCreationWizard";
 import type { GeneratedMedia } from "@/types/video";
+import { useWizardDataImport } from "@/features/video-editor-v2/hooks/use-wizard-data-import";
+import { HttpRenderer } from "@/features/video-editor-v2/utils/http-renderer";
+
+const ReactVideoEditor = dynamic(
+  () =>
+    import("@/features/video-editor-v2/components/react-video-editor-v2").then(
+      (mod) => mod.ReactVideoEditorV2,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full w-full items-center justify-center bg-background">
+        <div className="text-neutral-400">Loading Editor...</div>
+      </div>
+    ),
+  },
+);
+
+// Shared renderer instance for wizard editor sessions
+const httpRenderer = new HttpRenderer("/api/render", {
+  type: "ssr",
+  entryPoint: "/api/render",
+});
 
 interface Step7EditorProps {
   videoId: string;
@@ -15,10 +37,25 @@ interface Step7EditorProps {
   audioChunks?: AudioChunk[];
   shotList?: ShotEvent[];
   generatedMedia?: GeneratedMedia[];
-  onContinue: () => void;
-  onBack: () => void;
+  onContinue?: () => void;
+  onBack?: () => void;
   isLocked?: boolean;
   lockedMessage?: string;
+}
+
+/**
+ * Invisible component that populates the V2 editor store
+ * with wizard data (audioChunks, shotList, generatedMedia).
+ * Uses the global Zustand store so it works as a sibling to the editor.
+ */
+function WizardDataBridge({
+  audioChunks,
+  audioUrl,
+  shotList,
+  generatedMedia,
+}: Pick<Step7EditorProps, "audioChunks" | "audioUrl" | "shotList" | "generatedMedia">) {
+  useWizardDataImport({ audioChunks, audioUrl, shotList, generatedMedia });
+  return null;
 }
 
 export function Step7Editor({
@@ -28,48 +65,72 @@ export function Step7Editor({
   audioChunks,
   shotList,
   generatedMedia,
-  onContinue: _onContinue,
+  onContinue,
+  onBack,
   isLocked,
-  lockedMessage: _lockedMessage,
+  lockedMessage,
 }: Step7EditorProps) {
-  // Debug logging
-  console.log("[Step7Editor Debug] Props received:", {
+  console.log("[Step7Editor] Props received:", {
     videoId,
     projectId,
-    audioUrl,
-    audioChunksCount: audioChunks?.length || 0,
-    shotListCount: shotList?.length || 0,
-    audioChunks,
+    audioUrl: audioUrl ? "present" : "null",
+    audioChunks: audioChunks?.length || 0,
+    shotList: shotList?.length || 0,
+    generatedMedia: generatedMedia?.length || 0,
   });
 
   return (
     <div
-      className={`dark flex flex-col h-full w-full bg-background ${
-        isLocked ? "pointer-events-none" : ""
-      }`}
+      className={`dark flex flex-col h-full w-full bg-background ${isLocked ? "pointer-events-none" : ""}`}
     >
-      {/* Compact header bar */}
-      <div className="flex items-center justify-between px-3 py-2 bg-neutral-900/80 border-b border-neutral-800 flex-shrink-0">
+      {/* Header with navigation */}
+      <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-neutral-800">
         <div className="flex items-center gap-2">
-          <div className="inline-flex items-center gap-1.5 px-2 py-1 bg-orange-500/10 border border-orange-500/20 rounded text-orange-500 text-[10px] font-mono uppercase tracking-widest">
-            <Clapperboard className="w-3 h-3" />
-            Editor
-          </div>
-          <span className="text-sm text-neutral-400">
-            {isLocked ? "Editor Locked" : "Edit your video"}
-          </span>
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="text-sm text-neutral-400 hover:text-white transition-colors"
+            >
+              ← Back
+            </button>
+          )}
+          <span className="text-sm text-neutral-500">Step 7: Video Editor</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {isLocked && lockedMessage && (
+            <span className="text-xs text-neutral-500 font-mono uppercase tracking-widest">
+              {lockedMessage}
+            </span>
+          )}
+          {onContinue && (
+            <button
+              onClick={onContinue}
+              disabled={isLocked}
+              className="px-4 py-1.5 text-sm font-medium bg-orange-500 hover:bg-orange-400 text-white rounded-md transition-colors disabled:opacity-50"
+            >
+              Continue to Export →
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Full-bleed Editor with dark theme wrapper */}
+      {/* Wizard data bridge — populates the V2 store with wizard data */}
+      <WizardDataBridge
+        audioChunks={audioChunks}
+        audioUrl={audioUrl}
+        shotList={shotList}
+        generatedMedia={generatedMedia}
+      />
+
+      {/* Editor */}
       <div className="flex-1 overflow-hidden bg-background">
-        <Editor
-          tempId={videoId}
-          id={projectId}
-          audioUrl={audioUrl}
-          audioChunks={audioChunks}
-          shotList={shotList}
-          generatedMedia={generatedMedia}
+        <ReactVideoEditor
+          projectId={projectId}
+          renderer={httpRenderer}
+          projectTitle="Video Editor"
+          fps={30}
+          videoWidth={1920}
+          videoHeight={1080}
         />
       </div>
     </div>

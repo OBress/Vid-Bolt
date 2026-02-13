@@ -16,7 +16,8 @@ import React, { useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useVideoEditorStore, selectDragState } from '../../../../stores/video-editor-store';
 import type { TrackWithClips } from '../../../../stores/memoized-selectors';
-import { TIMELINE_CONSTANTS } from '../../constants';
+import { TIMELINE_CONSTANTS, TIMELINE_DIMENSIONS_REM } from '../../constants';
+import { remToPx } from '../../utils/rem-utils';
 import { getTrackYOffset } from './canvas-timeline-utils';
 
 // ============================================================
@@ -71,6 +72,11 @@ export interface CanvasDragPreviewProps {
   fps?: number;
   /** Collapsed track groups (for correct Y positioning) */
   collapsedGroups?: Set<string>;
+  /** Current virtual scroll state for correct positioning */
+  scrollX?: number;
+  scrollableWidth?: number;
+  viewportWidth?: number;
+  scrollY?: number;
 }
 
 // ============================================================
@@ -174,10 +180,14 @@ export function CanvasDragPreview({
   trackHeight: propTrackHeight,
   fps = 30,
   collapsedGroups,
+  scrollX = 0,
+  scrollableWidth = 0,
+  viewportWidth,
+  scrollY = 0,
 }: CanvasDragPreviewProps) {
   const dragState = useVideoEditorStore(selectDragState);
   const trackHeight = propTrackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
-  const itemHeight = TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT;
+  const itemHeight = trackHeight - remToPx(TIMELINE_DIMENSIONS_REM.TRACK_ITEM_PADDING);
 
   // Only render for clip drags
   const isClipDrag = dragState?.type?.startsWith('clip-') ?? false;
@@ -244,10 +254,11 @@ export function CanvasDragPreview({
         const itemY = trackY + (trackHeight - itemHeight) / 2;
 
         // Convert to screen space using the container rect.
-        // getBoundingClientRect() already includes CSS transform offsets (scrollX/scrollY),
-        // so we only need to add the item's position within content space.
-        const screenX = containerRect.left + previewX;
-        const screenY = containerRect.top + itemY;
+        // previewX is in full content space — subtract scroll offset to get viewport-relative
+        const effectiveViewportWidth = viewportWidth ?? containerRect.width;
+        const scrollOffsetX = scrollX * Math.max(0, scrollableWidth - effectiveViewportWidth);
+        const screenX = containerRect.left + previewX - scrollOffsetX;
+        const screenY = containerRect.top + itemY - scrollY;
 
         // Don't render if off-screen
         if (screenX + previewW < containerRect.left || screenX > containerRect.right) return null;

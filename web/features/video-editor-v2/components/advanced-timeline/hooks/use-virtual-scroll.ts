@@ -174,15 +174,17 @@ export const useVirtualScroll = ({
 
   // Convert time to pixel position
   const timeToPixels = useCallback((timeInSeconds: number): number => {
-    const pixelsPerSecond = contentWidth / Math.max(totalDuration, FIXED_BASE_DURATION);
-    return timeInSeconds * pixelsPerSecond;
-  }, [contentWidth, totalDuration]);
+    if (scrollableDuration <= 0) return 0;
+    const pps = contentWidth / scrollableDuration;
+    return timeInSeconds * pps;
+  }, [contentWidth, scrollableDuration]);
 
   // Convert pixel position to time
   const pixelsToTime = useCallback((pixels: number): number => {
-    const pixelsPerSecond = contentWidth / Math.max(totalDuration, FIXED_BASE_DURATION);
-    return pixels / pixelsPerSecond;
-  }, [contentWidth, totalDuration]);
+    if (contentWidth <= 0) return 0;
+    const pps = contentWidth / scrollableDuration;
+    return pixels / pps;
+  }, [contentWidth, scrollableDuration]);
 
   // Get the transform offset for content positioning
   const getContentTransform = useCallback((): { x: number; y: number } => {

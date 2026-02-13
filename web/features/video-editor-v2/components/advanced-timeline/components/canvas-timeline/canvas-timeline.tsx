@@ -45,7 +45,8 @@ import { useCanvasKeyboard } from './use-canvas-keyboard';
 import { CanvasTimelineAria } from './canvas-timeline-aria';
 import type { CanvasContextMenuData } from './canvas-timeline-item';
 import type { TrackWithClips, TimelineItem } from '../../../../stores/memoized-selectors';
-import { TIMELINE_CONSTANTS } from '../../constants';
+import { TIMELINE_CONSTANTS, TIMELINE_DIMENSIONS_REM } from '../../constants';
+import { remToPx } from '../../utils/rem-utils';
 
 extend({ Container, Graphics });
 
@@ -54,7 +55,7 @@ extend({ Container, Graphics });
 // ============================================================
 
 const CANVAS_BG = 0x0a0a0a; // Near-black background (matches neutral-950)
-const GROUP_HEADER_HEIGHT = 24; // Must match canvas-timeline-utils.ts
+const GROUP_HEADER_HEIGHT = TIMELINE_CONSTANTS.GROUP_HEADER_HEIGHT;
 
 /** Visual config for each group header in the canvas */
 const GROUP_CONFIG: Record<string, { accentColor: number; bgColor: number; label: string }> = {
@@ -91,6 +92,8 @@ export interface CanvasTimelineProps {
   fps: number;
   /** Track height override (or undefined for default) */
   trackHeight?: number;
+  /** Track item height override (or undefined for default) */
+  trackItemHeight?: number;
   /** Whether splitting mode is active */
   splittingEnabled?: boolean;
   /** Callback when an item is clicked/selected */
@@ -151,6 +154,7 @@ const CanvasTimelineContent = React.memo(function CanvasTimelineContent({
   currentFrame,
   fps,
   trackHeight: propTrackHeight,
+  trackItemHeight: propTrackItemHeight,
   splittingEnabled,
   onItemSelect,
   onSelectionChange,
@@ -163,6 +167,7 @@ const CanvasTimelineContent = React.memo(function CanvasTimelineContent({
   onTransitionResizeStart,
 }: Omit<CanvasTimelineProps, 'zoomScale'> & { viewportWidth: number }) {
   const trackHeight = propTrackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
+  const itemHeight = trackHeight - remToPx(TIMELINE_DIMENSIONS_REM.TRACK_ITEM_PADDING);
 
   // Compute total content height for all tracks (including spacers and dividers)
   const contentHeight = useMemo(
@@ -264,6 +269,7 @@ const CanvasTimelineContent = React.memo(function CanvasTimelineContent({
           totalDuration={scrollableDuration}
           totalWidth={scrollableWidth}
           trackHeight={trackHeight}
+          trackItemHeight={itemHeight}
           selectedItemIds={selectedItemIds}
           splittingEnabled={splittingEnabled}
           onItemSelect={onItemSelect}
@@ -394,9 +400,70 @@ export function CanvasTimeline({
     };
   }, []);
 
-  // Force PixiJS renderer to resize when the viewport grows/shrinks
-  // (e.g. fullscreen mode). The `resizeTo` prop only tracks one dimension;
-  // this guarantees the WebGL back buffer matches the measured viewport.
+  // Monkey-patch renderer.resize to ALWAYS enforce correct DPR.
+  // `resizeTo` calls renderer.resize() internally and may use resolution=1,
+  // causing blurry rendering on high-DPR displays. By wrapping resize(),
+  // we guarantee the correct DPR for ALL resize paths (resizeTo, manual, etc.)
+  //
+  // Uses interval polling because @pixi/react creates the renderer asynchronously
+  // — appRef.current.renderer may not exist when the effect first runs.
+  useEffect(() => {
+    let disposed = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const tryPatch = () => {
+      if (disposed) return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const app = appRef.current as any;
+      const renderer = app?.renderer;
+      if (!renderer) return; // Renderer not yet created — retry
+      if (renderer.__dprPatched) { clearInterval(intervalId!); return; }
+
+      const dpr = window.devicePixelRatio || 1;
+      const originalResize = renderer.resize.bind(renderer);
+      renderer.resize = (width: number, height: number, resolution?: number) => {
+        renderer.resolution = window.devicePixelRatio || 1;
+        originalResize(width, height, resolution);
+      };
+      renderer.__dprPatched = true;
+      renderer.__originalResize = originalResize;
+
+      // Immediately re-resize with correct DPR
+      renderer.resolution = dpr;
+      const canvas = renderer.canvas || app.canvas;
+      if (canvas) {
+        const cssW = canvas.clientWidth || (viewportSize?.w ?? 800);
+        const cssH = canvas.clientHeight || (viewportSize?.h ?? 400);
+        renderer.resize(cssW, cssH);
+      }
+
+      console.warn('[CanvasTimeline] DPR patch applied:', {
+        dpr,
+        rendererResolution: renderer.resolution,
+        canvas: canvas ? `${canvas.width}×${canvas.height}` : 'N/A',
+      });
+
+      if (intervalId) clearInterval(intervalId);
+    };
+
+    // Try immediately, then poll every 100ms until renderer is ready
+    tryPatch();
+    intervalId = setInterval(tryPatch, 100);
+
+    return () => {
+      disposed = true;
+      if (intervalId) clearInterval(intervalId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const app = appRef.current as any;
+      const renderer = app?.renderer;
+      if (renderer?.__dprPatched && renderer.__originalResize) {
+        renderer.resize = renderer.__originalResize;
+        renderer.__dprPatched = false;
+      }
+    };
+  }, []); // Only run once on mount
+
+  // Force a resize when viewport dimensions change (fullscreen, layout shifts)
   useEffect(() => {
     if (!viewportSize || !appRef.current) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -407,6 +474,18 @@ export function CanvasTimeline({
       // Renderer not ready yet — safe to ignore
     }
   }, [viewportSize?.w, viewportSize?.h]);
+
+  // Apply counter-transform when React state settles (scroll idle).
+  // During active scrolling, applyDOMTransform() in use-virtual-scroll.ts
+  // mutates canvasContainerRef.current.style.transform directly.
+  // This effect runs only on React state changes (after flush), keeping
+  // them in sync without conflicting inline styles.
+  useEffect(() => {
+    if (canvasContainerRef?.current) {
+      const scrollOffsetX = scrollX * Math.max(0, scrollableWidth - (viewportSize?.w ?? 0));
+      canvasContainerRef.current.style.transform = `translate(${scrollOffsetX}px, ${scrollY}px)`;
+    }
+  }, [scrollX, scrollY, scrollableWidth, viewportSize?.w, canvasContainerRef]);
 
   // Professional keyboard shortcuts (JKL shuttle, split, delete, nudge, etc.)
   const { handleKeyDown } = useCanvasKeyboard({
@@ -439,10 +518,8 @@ export function CanvasTimeline({
         position: 'sticky',
         left: 0,
         top: 0,
-        // Counter-transform: undo the parent's CSS translate so the canvas
-        // stays pinned to the viewport. Uses CSS custom property that gets
-        // updated by both React state AND direct DOM manipulation.
-        transform: `translate(${scrollX * Math.max(0, scrollableWidth - (viewportSize?.w ?? 0))}px, ${scrollY}px)`,
+        // Counter-transform is applied via useEffect / applyDOMTransform (use-virtual-scroll.ts)
+        // to avoid React inline styles fighting with direct DOM mutation during active scrolling.
         willChange: 'transform',
         overflow: 'hidden',
         outline: 'none',
@@ -454,7 +531,7 @@ export function CanvasTimeline({
         ref={appRef}
         resizeTo={containerRef}
         background={CANVAS_BG}
-        antialias
+        antialias={false}
         resolution={typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1}
         autoDensity
       >

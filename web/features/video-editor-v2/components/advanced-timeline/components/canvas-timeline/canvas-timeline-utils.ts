@@ -50,8 +50,10 @@ export function xToTime(
  */
 const GROUP_ORDER: string[] = ['video', 'overlays', 'text', 'effects', 'audio'];
 
-/** Height of each group header bar in pixels */
-export const GROUP_HEADER_HEIGHT = 24;
+import { TIMELINE_CONSTANTS } from '../../constants';
+
+/** Height of each group header bar in pixels — single source of truth from constants.ts */
+export const GROUP_HEADER_HEIGHT = TIMELINE_CONSTANTS.GROUP_HEADER_HEIGHT;
 
 /**
  * Resolve the effective group for a track.

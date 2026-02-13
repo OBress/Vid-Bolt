@@ -11,7 +11,7 @@ import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
-import useUploadStore from "@/features/editor/store/use-upload-store";
+import useUploadStore from "@/stores/use-upload-store";
 import { Input } from "./ui/input";
 type ModalUploadProps = {
   type?: string;

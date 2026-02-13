@@ -292,7 +292,7 @@ export const TimelineTrackHandles: React.FC<TimelineTrackHandlesProps> = ({
                     <div
                       key={track.id}
                       className={getTrackClasses(globalIndex)}
-                      style={{ height: 'var(--timeline-track-height, 48px)' }}
+                      style={{ height: 'var(--timeline-track-height, 3.5rem)' }}
                       onDragOver={handleDragOver(globalIndex)}
                       onDragLeave={handleDragLeave}
                       onDrop={handleDrop(globalIndex)}
@@ -401,7 +401,7 @@ export const TimelineTrackHandles: React.FC<TimelineTrackHandlesProps> = ({
           {/* Bottom padding spacer */}
           <div 
             className="bg-black" 
-            style={{ height: 'calc(var(--timeline-track-height, 48px) / 2)' }}
+            style={{ height: 'calc(var(--timeline-track-height, 3.5rem) / 2)' }}
           />
         </div>
       </div>
