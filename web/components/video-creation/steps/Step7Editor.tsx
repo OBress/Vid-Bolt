@@ -7,6 +7,7 @@ import type {
 } from "@/components/video-creation/VideoCreationWizard";
 import type { GeneratedMedia } from "@/types/video";
 import { useWizardDataImport } from "@/features/video-editor-v2/hooks/use-wizard-data-import";
+import type { EditDecisionList } from "@/lib/services/edit-assembly/edit-assembly-prompts";
 import { HttpRenderer } from "@/features/video-editor-v2/utils/http-renderer";
 
 const ReactVideoEditor = dynamic(
@@ -37,6 +38,7 @@ interface Step7EditorProps {
   audioChunks?: AudioChunk[];
   shotList?: ShotEvent[];
   generatedMedia?: GeneratedMedia[];
+  edl?: EditDecisionList | null;
   onContinue?: () => void;
   onBack?: () => void;
   isLocked?: boolean;
@@ -53,8 +55,9 @@ function WizardDataBridge({
   audioUrl,
   shotList,
   generatedMedia,
-}: Pick<Step7EditorProps, "audioChunks" | "audioUrl" | "shotList" | "generatedMedia">) {
-  useWizardDataImport({ audioChunks, audioUrl, shotList, generatedMedia });
+  edl,
+}: Pick<Step7EditorProps, "audioChunks" | "audioUrl" | "shotList" | "generatedMedia" | "edl">) {
+  useWizardDataImport({ audioChunks, audioUrl, shotList, generatedMedia, edl });
   return null;
 }
 
@@ -65,6 +68,7 @@ export function Step7Editor({
   audioChunks,
   shotList,
   generatedMedia,
+  edl,
   onContinue,
   onBack,
   isLocked,
@@ -120,6 +124,7 @@ export function Step7Editor({
         audioUrl={audioUrl}
         shotList={shotList}
         generatedMedia={generatedMedia}
+        edl={edl}
       />
 
       {/* Editor */}

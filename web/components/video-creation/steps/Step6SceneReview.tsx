@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { SceneReviewSidebar } from "./scene-review/SceneReviewSidebar";
 import { SceneList } from "./scene-review/SceneList";
 import { MediaEditModal } from "./scene-review/MediaEditModal";
 import { Save, Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { GeneratedMedia, RoutingTag, SoundEffect } from "@/types/video";
+import type { ImageAsset } from "@/lib/services/motion-graphics/pipeline-motion-graphics";
 
 // Shot data type (from av-script worker - ShotPart1)
 export interface ShotData {
@@ -175,6 +176,66 @@ export function Step6SceneReview({
     return 'image';
   }, []);
 
+  // =========================================================================
+  // IMAGE ASSET COLLECTION (for MG prompt enrichment)
+  // =========================================================================
+
+  /**
+   * Collect R2 image/video URLs from generated media for a given shot.
+   * Used to enrich motion graphic prompts with real asset references.
+   */
+  const collectImageAssets = useCallback(
+    (shotIndex: number): ImageAsset[] => {
+      const assets: ImageAsset[] = [];
+      const media = pendingChanges.get(shotIndex) || mediaMap.get(shotIndex);
+
+      if (!media) return assets;
+
+      // Primary media URL
+      if (media.media_url && media.generation_status === 'completed') {
+        assets.push({
+          url: media.media_url,
+          description: media.visual_prompt || 'Generated image',
+          suggestedUsage: media.media_type === 'video'
+            ? 'Use as the main video background with <OffthreadVideo src={url} />'
+            : 'Use as the main background image, apply slow Ken Burns zoom-in over the duration',
+        });
+      }
+
+      // Multi-image items
+      if (media.media_items && media.media_items.length > 0) {
+        media.media_items.forEach((item, i) => {
+          if (item.media_url && item.generation_status === 'completed') {
+            assets.push({
+              url: item.media_url,
+              description: item.visual_prompt || `Image ${i + 1}`,
+              suggestedUsage: `Layer or transition element ${i + 1}`,
+            });
+          }
+        });
+      }
+
+      // Keyframe images
+      if (media.keyframes?.start?.image_url) {
+        assets.push({
+          url: media.keyframes.start.image_url,
+          description: media.keyframes.start.prompt || 'Start keyframe',
+          suggestedUsage: 'Reference keyframe — use as starting visual state',
+        });
+      }
+
+      return assets;
+    },
+    [pendingChanges, mediaMap]
+  );
+
+  // Track failed shots for Media Issues panel
+  const failedShotsRef = useRef<number[]>([]);
+
+  // =========================================================================
+  // GENERATION HANDLERS
+  // =========================================================================
+
   // Generate shot using routing-based endpoints
   const handleGenerateShot = useCallback(
     async (shotIndex: number) => {
@@ -240,12 +301,26 @@ export function Step6SceneReview({
             }),
           });
         } else if (generationType === 'motiongraphic') {
+          // Collect R2 image assets for prompt enrichment
+          const imageAssets = collectImageAssets(shotIndex);
+          const routingTags = shot.visual_elements || [];
+
+          // Determine context hint from routing tags
+          let contextHint: string | undefined;
+          if (routingTags.includes('remotion_overlay')) contextHint = 'text/graphics overlay';
+          else if (routingTags.includes('remotion_image_manipulation')) contextHint = 'image manipulation with Ken Burns/montage';
+          else if (routingTags.includes('remotion_video_manipulation')) contextHint = 'video annotation/overlay';
+
           response = await fetch(`/api/videos/${videoId}/generate/motiongraphic`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               shotIndex,
               prompt,
+              duration: shot.duration_seconds,
+              routingTags,
+              imageAssets,
+              contextHint,
             }),
           });
         } else {
@@ -268,7 +343,7 @@ export function Step6SceneReview({
         const result = await response.json();
         console.log(`[Step6] Shot ${shotIndex} generation result:`, result);
 
-        // Create pending media entry (status will be updated by task tracking)
+        // Create pending media entry
         const generatedItem: GeneratedMedia = {
           shot_index: shotIndex,
           media_type: generationType === 'motiongraphic' ? 'motiongraphic' : generationType === 'video' ? 'video' : 'image',
@@ -276,9 +351,18 @@ export function Step6SceneReview({
           visual_prompt: prompt,
           visual_elements: shot.visual_elements,
           visual_description: shot.visual_description,
+          // Store Remotion code for motion graphics
+          ...(generationType === 'motiongraphic' && result.remotion_code ? {
+            media_url: `remotion://${shotIndex}`, // Marker URL for Remotion-rendered content
+          } : {}),
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
+
+        // Store remotion_code in metadata if available
+        if (result.remotion_code) {
+          (generatedItem as GeneratedMedia & { remotion_code?: string }).remotion_code = result.remotion_code;
+        }
 
         setPendingChanges((prev) => {
           const newMap = new Map(prev);
@@ -289,6 +373,9 @@ export function Step6SceneReview({
         console.log(`[Step6] Shot ${shotIndex} generation triggered, taskId: ${result.taskId}`);
       } catch (error) {
         console.error(`[Step6] Shot ${shotIndex} generation failed:`, error);
+        // Track failed shot for Media Issues panel
+        failedShotsRef.current = [...failedShotsRef.current, shotIndex];
+
         const errorItem: GeneratedMedia = {
           shot_index: shotIndex,
           media_type: generationType === 'motiongraphic' ? 'motiongraphic' : generationType === 'video' ? 'video' : 'image',
@@ -310,28 +397,102 @@ export function Step6SceneReview({
         });
       }
     },
-    [shots, mediaMap, pendingChanges, videoId, getGenerationType],
+    [shots, mediaMap, pendingChanges, videoId, getGenerationType, gpuEnabled, collectImageAssets],
   );
 
-  // Generate all pending shots
-  const handleGenerateAll = useCallback(() => {
-    console.log("[Step6] Generate all shots (placeholder)");
+  // =========================================================================
+  // PARALLELIZED GENERATE ALL (with dependency ordering)
+  // =========================================================================
+
+  const handleGenerateAll = useCallback(async () => {
+    console.log("[Step6] Generate all shots (parallelized)");
 
     // Find all shots without completed media
-    const pendingShots = shots.filter((shot) => {
+    const pendingShotsList = shots.filter((shot) => {
       const media =
         pendingChanges.get(shot.segment_index) ||
         mediaMap.get(shot.segment_index);
-      return !media?.media_url || media.generation_status !== "completed";
+      // For motiongraphics, check if remotion_code exists; for others, check media_url
+      const isCompleted = media?.generation_status === 'completed' && media?.media_url;
+      return !isCompleted;
     });
 
-    // Generate each one with staggered delays
-    pendingShots.forEach((shot, index) => {
-      setTimeout(() => {
-        handleGenerateShot(shot.segment_index);
-      }, index * 500); // Stagger by 500ms each
+    if (pendingShotsList.length === 0) {
+      console.log("[Step6] No pending shots to generate");
+      return;
+    }
+
+    // Separate into two phases: images/video first, then motion graphics
+    // This ensures R2 URLs are available before MG prompts need them
+    const phase1Shots: ShotData[] = []; // images + video
+    const phase2Shots: ShotData[] = []; // motion graphics (depend on images)
+
+    pendingShotsList.forEach((shot) => {
+      const genType = getGenerationType(shot.visual_elements);
+      if (genType === 'motiongraphic') {
+        phase2Shots.push(shot);
+      } else if (genType !== 'stock') {
+        phase1Shots.push(shot);
+      }
     });
-  }, [shots, mediaMap, pendingChanges, handleGenerateShot]);
+
+    console.log(`[Step6] Generation plan: Phase 1 (images/video): ${phase1Shots.length}, Phase 2 (MG): ${phase2Shots.length}`);
+
+    // Concurrency-limited parallel execution
+    const CONCURRENCY_LIMIT = 3;
+
+    const runWithConcurrency = async (shotList: ShotData[]) => {
+      const results: PromiseSettledResult<void>[] = [];
+      const queue = [...shotList];
+      const active: Promise<void>[] = [];
+
+      while (queue.length > 0 || active.length > 0) {
+        // Fill up to concurrency limit
+        while (queue.length > 0 && active.length < CONCURRENCY_LIMIT) {
+          const shot = queue.shift()!;
+          const promise = handleGenerateShot(shot.segment_index).then(
+            () => { /* resolved */ },
+            () => { /* rejected - error already handled in handleGenerateShot */ }
+          );
+          active.push(promise);
+        }
+
+        // Wait for at least one to complete
+        if (active.length > 0) {
+          await Promise.race(active);
+          // Remove completed promises
+          for (let i = active.length - 1; i >= 0; i--) {
+            const result = await Promise.race([
+              active[i].then(() => 'done' as const),
+              Promise.resolve('pending' as const),
+            ]);
+            if (result === 'done') {
+              results.push({ status: 'fulfilled', value: undefined });
+              active.splice(i, 1);
+            }
+          }
+        }
+      }
+
+      return results;
+    };
+
+    // Phase 1: Generate all images and videos first
+    if (phase1Shots.length > 0) {
+      console.log(`[Step6] Phase 1: Generating ${phase1Shots.length} images/videos...`);
+      await runWithConcurrency(phase1Shots);
+      console.log(`[Step6] Phase 1 complete`);
+    }
+
+    // Phase 2: Generate motion graphics (images are now available for prompt enrichment)
+    if (phase2Shots.length > 0) {
+      console.log(`[Step6] Phase 2: Generating ${phase2Shots.length} motion graphics...`);
+      await runWithConcurrency(phase2Shots);
+      console.log(`[Step6] Phase 2 complete`);
+    }
+
+    console.log(`[Step6] All generation complete. Failed shots: ${failedShotsRef.current.length}`);
+  }, [shots, mediaMap, pendingChanges, handleGenerateShot, getGenerationType]);
 
   // Save all pending changes to database
   const handleSaveAll = useCallback(async () => {

@@ -22,6 +22,7 @@ import { AsyncLoadingStep } from "./AsyncLoadingStep";
 import { useVideos } from "@/hooks/use-videos";
 import { Loader2 } from "lucide-react";
 import type { VideoStage, VideoProject, GeneratedMedia } from "@/types/video";
+import type { EditDecisionList } from "@/lib/services/edit-assembly/edit-assembly-prompts";
 
 export interface AudioChunk {
   chapterNumber: number;
@@ -110,6 +111,8 @@ export interface WizardState {
   assetImageTaskId: string | null;
   // Generated reference images for assets { assetId: imageUrl }
   assetReferenceImages: Record<string, string> | null;
+  // Edit Decision List (Step 6 → Step 7 transition)
+  edl: EditDecisionList | null;
 }
 
 // Step configuration for the wizard - 8 steps
@@ -233,6 +236,7 @@ export function VideoCreationWizard({
     stockMediaOverride: false, // Default: no override, respect Step 1 setting
     assetImageTaskId: null,
     assetReferenceImages: null,
+    edl: null,
   });
 
   // Step 3 ref for manual trigger
@@ -406,6 +410,7 @@ export function VideoCreationWizard({
           assetImageTaskId: (video.metadata as any)?.assetImageTaskId || null,
           assetReferenceImages:
             (video.metadata as any)?.assetReferenceImages || null,
+          edl: (video.metadata as any)?.edl || null,
         });
 
         // =====================================================================
@@ -2101,11 +2106,29 @@ export function VideoCreationWizard({
             onContinue={async () => {
               if (state.videoId) {
                 try {
+                  // Save stage
                   await fetch(`/api/videos/${state.videoId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ current_stage: "video" }),
                   });
+
+                  // Call AI edit assembly to generate EDL
+                  try {
+                    const edlRes = await fetch(
+                      `/api/videos/${state.videoId}/assemble-edit`,
+                      { method: "POST" }
+                    );
+                    if (edlRes.ok) {
+                      const edlData = await edlRes.json();
+                      setState((prev) => ({ ...prev, edl: edlData.edl || null }));
+                      console.log('[Wizard] EDL generated successfully');
+                    } else {
+                      console.warn('[Wizard] EDL generation failed, continuing without EDL');
+                    }
+                  } catch (edlErr) {
+                    console.warn('[Wizard] EDL generation error:', edlErr);
+                  }
                 } catch (err) {
                   console.error("Failed to save step:", err);
                 }
@@ -2126,6 +2149,7 @@ export function VideoCreationWizard({
             audioChunks={state.audioChunks}
             shotList={state.avScriptPart1Output?.shots || state.shotList}
             generatedMedia={state.generatedMedia}
+            edl={state.edl}
             onContinue={async () => {
               if (state.videoId) {
                 try {

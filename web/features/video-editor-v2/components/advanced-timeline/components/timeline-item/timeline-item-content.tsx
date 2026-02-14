@@ -5,6 +5,7 @@ import { TrackItemType } from '../../types';
 import { useWaveformProcessor } from '../../hooks/use-waveform-processor';
 import { useThumbnailGenerator } from '../../hooks/use-thumbnail-generator';
 import { useScrollState } from '../../contexts/scroll-state-context';
+import { useMediaIssuesStore, selectClipHasIssues } from '../../../../stores/media-issues-store';
 
 /**
  * Loading phases for multi-tier lazy loading:
@@ -275,10 +276,15 @@ const TimelineItemContentInner: React.FC<TimelineItemContentInnerProps> = memo((
     };
   }, []);
 
+  // Check if this clip has media issues
+  const hasIssues = useMediaIssuesStore(
+    useCallback((s) => itemId ? selectClipHasIssues(itemId)(s) : false, [itemId])
+  );
+
   return (
     <div
       ref={containerRef}
-      className="flex-1 min-w-0 h-full"
+      className="flex-1 min-w-0 h-full relative"
     >
       {/* Keep content visible during resize to allow visual alignment with thumbnails/waveforms */}
       {dimensions.width > 0 && (
@@ -296,6 +302,16 @@ const TimelineItemContentInner: React.FC<TimelineItemContentInnerProps> = memo((
           currentFrame={currentFrame}
           fps={fps}
         />
+      )}
+
+      {/* Media issue warning badge */}
+      {hasIssues && (
+        <div
+          className="absolute top-0.5 right-1 z-10 w-4 h-4 flex items-center justify-center rounded-sm bg-amber-500/90"
+          title="This clip has media issues"
+        >
+          <span className="text-[10px] font-bold text-black leading-none">⚠</span>
+        </div>
       )}
     </div>
   );
