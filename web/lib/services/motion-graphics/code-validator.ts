@@ -368,6 +368,46 @@ export function validateCode(code: string): ValidationResult {
     }
   }
 
+  // === SECURITY CHECKS (CODE INJECTION PREVENTION) ===
+
+  /** Dangerous APIs that should never appear in Remotion components */
+  const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+    // Network access
+    { pattern: /\bfetch\s*\(/, label: 'fetch() — network requests are not allowed in motion graphics' },
+    { pattern: /\bXMLHttpRequest\b/, label: 'XMLHttpRequest — network requests are not allowed' },
+    { pattern: /\bWebSocket\b/, label: 'WebSocket — network access is not allowed' },
+    { pattern: /\bnavigator\.sendBeacon\b/, label: 'navigator.sendBeacon — network access is not allowed' },
+    // Code execution
+    { pattern: /\beval\s*\(/, label: 'eval() — dynamic code execution is forbidden' },
+    { pattern: /\bnew\s+Function\s*\(/, label: 'new Function() — dynamic code execution is forbidden' },
+    { pattern: /\bimport\s*\(/, label: 'Dynamic import() — not allowed in motion graphics' },
+    // Cookie / storage access
+    { pattern: /\bdocument\.cookie\b/, label: 'document.cookie — cookie access is not allowed' },
+    { pattern: /\blocalStorage\b/, label: 'localStorage — storage access is not allowed' },
+    { pattern: /\bsessionStorage\b/, label: 'sessionStorage — storage access is not allowed' },
+    { pattern: /\bindexedDB\b/, label: 'indexedDB — storage access is not allowed' },
+    // DOM manipulation (outside React)
+    { pattern: /\bdocument\.getElementById\b/, label: 'Direct DOM access is not allowed — use React JSX' },
+    { pattern: /\bdocument\.querySelector\b/, label: 'Direct DOM access is not allowed — use React JSX' },
+    { pattern: /\bdocument\.createElement\b/, label: 'Direct DOM creation is not allowed — use React JSX' },
+    { pattern: /\.innerHTML\s*=/, label: 'innerHTML assignment — XSS vector, not allowed' },
+    { pattern: /\.outerHTML\s*=/, label: 'outerHTML assignment — XSS vector, not allowed' },
+    // Navigation / window manipulation
+    { pattern: /\bwindow\.open\s*\(/, label: 'window.open() — navigation is not allowed' },
+    { pattern: /\bwindow\.location\b/, label: 'window.location — navigation is not allowed' },
+    { pattern: /\blocation\.href\b/, label: 'location.href — navigation is not allowed' },
+    { pattern: /\blocation\.assign\b/, label: 'location.assign — navigation is not allowed' },
+    // Process / global access (Node.js context)
+    { pattern: /\bprocess\.env\b/, label: 'process.env — environment variable access is not allowed' },
+    { pattern: /\bglobalThis\b/, label: 'globalThis — direct global access is not allowed' },
+  ];
+
+  for (const { pattern, label } of DANGEROUS_PATTERNS) {
+    if (pattern.test(fixedCode)) {
+      errors.push(`🛡️ SECURITY: ${label}`);
+    }
+  }
+
   return {
     isValid: errors.length === 0,
     errors,

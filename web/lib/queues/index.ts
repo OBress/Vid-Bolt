@@ -20,6 +20,7 @@ export {
   gpuLtx2InterpolateQueue,
   gpuMusicCreateQueue,
   gpuSfxCreateQueue,
+  editAssemblyQueue,
   allQueues, 
   closeAllQueues 
 } from './queues';

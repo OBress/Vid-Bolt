@@ -5,6 +5,7 @@ import { useEditorContext } from "../../contexts/editor-context";
 import { useVideoEditorStore, selectDurationInFrames } from "../../stores/video-editor-store";
 import type { TimelineClip } from "../../types/timeline-v2";
 import { selectOverlays } from "../../stores/memoized-render-selectors";
+import { clipIdToNumeric } from "../../utils/clip-to-render-adapter";
 import { SelectionOverlays } from "./selection-overlays";
 
 /**
@@ -213,7 +214,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     
     // Find the clip that corresponds to this numeric overlay ID
     const matchingClip = currentClips.find((clip: TimelineClip) => {
-      const numericId = parseInt(clip.id.replace(/\D/g, ''), 10) || 0;
+      const numericId = clipIdToNumeric(clip.id);
       return numericId === overlayId;
     });
     
@@ -241,7 +242,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     
     // Find the clip that corresponds to this numeric overlay ID
     const matchingClip = currentClips.find((clip: TimelineClip) => {
-      const numericId = parseInt(clip.id.replace(/\D/g, ''), 10) || 0;
+      const numericId = clipIdToNumeric(clip.id);
       return numericId === overlayId;
     });
     

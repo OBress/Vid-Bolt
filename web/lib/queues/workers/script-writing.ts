@@ -251,7 +251,7 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
         startSeconds: beat.timing.startSeconds,
         endSeconds: beat.timing.endSeconds,
         type: beat.classification.type,
-        summary: beat.contentSummary.substring(0, 100),
+        summary: (beat.contentSummary || '').substring(0, 100),
       })),
       visualCalloutList: expandedBeats.flatMap((beat) =>
         beat.visualCallouts.map((callout) => ({
@@ -273,7 +273,7 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
       startSeconds: beat.timing.startSeconds,
       endSeconds: beat.timing.endSeconds,
       type: beat.classification.type,
-      summary: beat.contentSummary.substring(0, 100),
+      summary: (beat.contentSummary || '').substring(0, 100),
     }));
 
     const fullOutput: UniversalScriptOutput = {

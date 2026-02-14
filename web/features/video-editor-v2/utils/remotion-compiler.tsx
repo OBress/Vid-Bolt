@@ -555,6 +555,20 @@ function createComponentFromTranspiled(
       console.log(`[Compiler] ✓ Injected all ${iconCount} lucide-react icons into scope`);
     }
 
+    // SECURITY: Shadow dangerous globals so generated code cannot access them.
+    // new Function() runs in global scope by default — these overrides block access
+    // to browser APIs that motion graphic components should never need.
+    const SHADOWED_GLOBALS: string[] = [
+      'window', 'document', 'fetch', 'eval',
+      'localStorage', 'sessionStorage', 'indexedDB',
+      'XMLHttpRequest', 'WebSocket', 'navigator',
+      'globalThis', 'process', 'importScripts',
+    ];
+    for (const name of SHADOWED_GLOBALS) {
+      paramNames.push(name);
+      paramValues.push(undefined);
+    }
+
     // Build the function body
     const wrappedCode = `
       ${transpiledCode}

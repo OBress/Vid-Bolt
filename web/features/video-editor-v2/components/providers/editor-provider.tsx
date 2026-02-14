@@ -24,6 +24,8 @@ import {
   cleanupAllAudioResources,
 } from "../../utils/audio-resource-manager";
 import { useProjectSync } from "../../hooks/use-project-sync";
+import { importWizardDataToStore, type WizardData } from "../../hooks/use-wizard-data-import";
+
 
 interface EditorProviderProps {
   children: React.ReactNode;
@@ -71,6 +73,12 @@ interface EditorProviderProps {
   // Loading state
   isLoadingProject?: boolean;
   
+  // Skip initial load from Supabase (wizard data bridge will populate the store)
+  skipInitialLoad?: boolean;
+  
+  // Wizard data to import after store initialization (from video creation wizard)
+  wizardData?: WizardData;
+  
   // Callbacks
   onSaving?: (saving: boolean) => void;
   onSaved?: (timestamp: number) => void;
@@ -105,6 +113,8 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
   videoWidth = 1280,
   videoHeight = 720,
   isLoadingProject = false,
+  skipInitialLoad = false,
+  wizardData,
   onSaving,
   onSaved,
 }) => {
@@ -134,6 +144,11 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
     };
   }, []);
   
+  // Capture wizardData in a ref to avoid it being a dependency (it's an inline object
+  // that changes reference every render, which would cause infinite re-renders via store mutations)
+  const wizardDataRef = useRef(wizardData);
+  wizardDataRef.current = wizardData;
+  
   // Initialize store on mount
   useEffect(() => {
     if (hasInitialized.current || isLoadingProject) return;
@@ -152,6 +167,13 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
     // Set timeline constants
     store.setTrackHeight(TIMELINE_CONSTANTS.TRACK_HEIGHT);
     store.setClipHeight(TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT);
+    
+    // Import wizard data IMMEDIATELY after initialize (same tick)
+    // This guarantees clips are populated before any other effects run.
+    if (wizardDataRef.current) {
+      console.log('[EditorProvider] Importing wizard data after store.initialize()');
+      importWizardDataToStore(wizardDataRef.current);
+    }
     
     hasInitialized.current = true;
   }, [projectId, defaultTracks, defaultClips, fps, defaultAspectRatio, defaultResolution, defaultBackgroundColor, isLoadingProject]);
@@ -214,6 +236,7 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
   } = useProjectSync(projectId, {
     enableAutoSave: true,
     autoSaveInterval: 10000,
+    skipInitialLoad,
     onSaveStart: () => onSaving?.(true),
     onSaveComplete: (ts) => {
       onSaving?.(false);

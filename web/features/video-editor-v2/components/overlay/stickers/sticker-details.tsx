@@ -15,6 +15,7 @@
 
 import React from "react";
 import type { TimelineClip } from "../../../types/timeline-v2";
+import { clipIdToNumeric } from "../../../utils/clip-to-render-adapter";
 import { useVideoEditorStore } from "../../../stores/video-editor-store";
 
 import { UnifiedTabs } from "../shared/unified-tabs";
@@ -50,7 +51,7 @@ export const StickerDetails: React.FC<StickerDetailsProps> = ({
   // Convert clip to the format expected by child components (backward compat)
   // TODO: Refactor child components to use TimelineClip directly
   const clipAsOverlay = {
-    id: parseInt(clip.id.replace(/\D/g, ''), 10) || Date.now(),
+    id: clipIdToNumeric(clip.id),
     type: 5, // OverlayType.STICKER
     left: clip.transform.x,
     top: clip.transform.y,

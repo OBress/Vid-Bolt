@@ -16,7 +16,7 @@
 
 import type { TimelineClip, TimelineTrack, TransitionEntity } from '../types/timeline-v2';
 import { isBetweenTransition, getTransitionDuration } from '../types/timeline-v2';
-import { getClipTransitionsPure } from '../stores/video-editor-store';
+import { getClipTransitionsPure, useVideoEditorStore } from '../stores/video-editor-store';
 import type { 
   Overlay, 
   ClipOverlay, 
@@ -55,9 +55,6 @@ export interface RenderState {
 export type { RenderClip, RenderClipState };
 
 // Note: findClipTransitions is now imported as getClipTransitionsPure from the store
-
-// Cached regex for stripping non-digits from IDs (avoids recompilation per call)
-const NON_DIGIT_RE = /\D/g;
 
 /**
  * PERF: Pre-build a clipId → {inTransition, outTransition} lookup map in O(M).
@@ -120,31 +117,24 @@ export function buildTransitionLookup(
 }
 
 /**
- * Convert a string clip ID to a safe numeric ID.
- * 
- * The naive approach of stripping non-digits can produce numbers > MAX_SAFE_INTEGER
- * when IDs contain timestamps (e.g., "clip-stress-1770771882549-3116" → 17707718825493116),
- * causing precision loss and duplicate React keys.
- * 
- * This uses djb2 hashing to produce a deterministic, unique integer within safe range.
- * Falls back to digit-stripping when the result fits in safe integer range.
+ * Convert a string clip ID to a safe, deterministic numeric ID.
+ *
+ * Uses djb2 hashing to produce a collision-resistant integer within safe range.
+ * The previous digit-stripping approach was unsafe because different clip IDs
+ * (e.g., "clip-1771096011816-9abc" and "clip-17710960118169-xyz") could strip
+ * to the same digit string, producing duplicate React keys.
+ *
+ * Exported so all consumers use the same conversion (detail components,
+ * video-player, overlay selection, etc.).
  */
-function clipIdToNumeric(clipId: string): number {
-  // Try the fast path: strip non-digits
-  const digitsOnly = clipId.replace(NON_DIGIT_RE, '');
-  if (digitsOnly.length > 0 && digitsOnly.length <= 15) {
-    // 15 digits is always safe (MAX_SAFE_INTEGER has 16 digits)
-    const num = parseInt(digitsOnly, 10);
-    if (num <= Number.MAX_SAFE_INTEGER) return num;
-  }
-
-  // Fallback: djb2 hash for IDs that would exceed safe integer range
+export function clipIdToNumeric(clipId: string): number {
+  // djb2 hash — deterministic, collision-resistant, always within safe integer range
   let hash = 5381;
   for (let i = 0; i < clipId.length; i++) {
     // hash * 33 + char, kept within 32-bit signed range then made positive
     hash = ((hash << 5) + hash + clipId.charCodeAt(i)) | 0;
   }
-  // Ensure positive and add a large offset to avoid colliding with short numeric IDs
+  // Ensure positive and add a large offset to avoid colliding with small integers
   return (hash >>> 0) + 1_000_000_000;
 }
 
@@ -586,8 +576,7 @@ export function buildRenderState(
  * Hook to get render state from the VideoEditorStore
  */
 export function useRenderState(): RenderState {
-  const { useVideoEditorStore } = require('../stores/video-editor-store');
-  
+    
   const clipsRecord = useVideoEditorStore((state: any) => state.clips) || {};
   const tracksRecord = useVideoEditorStore((state: any) => state.tracks) || {};
   const clips = Array.isArray(clipsRecord) ? clipsRecord : Object.values(clipsRecord) as TimelineClip[];
@@ -697,8 +686,7 @@ export function buildRenderClipState(
  * Hook to get RenderClipState from the VideoEditorStore (new format)
  */
 export function useRenderClipState(): RenderClipState {
-  const { useVideoEditorStore } = require('../stores/video-editor-store');
-  
+    
   const clipsRecord = useVideoEditorStore((state: any) => state.clips) || {};
   const tracksRecord = useVideoEditorStore((state: any) => state.tracks) || {};
   const clips = Array.isArray(clipsRecord) ? clipsRecord : Object.values(clipsRecord) as TimelineClip[];

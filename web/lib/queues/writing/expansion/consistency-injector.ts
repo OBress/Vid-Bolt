@@ -27,7 +27,7 @@ export function getRelevantAssets(
   registry: AssetRegistry,
   _dossier: ResearchDossier | null
 ): RelevantAssets {
-  const contentToSearch = beat.contentSummary.toLowerCase();
+  const contentToSearch = (beat.contentSummary || '').toLowerCase();
   
   // Find characters mentioned in beat
   const characters = registry.characters.filter(char => 

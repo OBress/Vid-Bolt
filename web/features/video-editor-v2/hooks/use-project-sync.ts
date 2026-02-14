@@ -8,7 +8,9 @@
  * - Save status tracking
  * - Asset validation on load
  * 
- * No localStorage - all persistence goes to Supabase.
+ * IMPORTANT: This hook uses NON-REACTIVE store access (getState / subscribe)
+ * instead of Zustand selectors. This prevents the hook from causing re-renders
+ * of EditorProvider and its entire subtree on every store change.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -39,6 +41,9 @@ export interface UseProjectSyncOptions {
   onAssetValidation?: (summary: ValidationSummary) => void;
   /** Whether to automatically remove clips with invalid assets (default: false) */
   autoRemoveInvalidClips?: boolean;
+  /** Skip loading state from Supabase on mount (use when wizard data bridge
+   *  will populate the store instead). Auto-save still works. */
+  skipInitialLoad?: boolean;
 }
 
 export interface ProjectSyncState {
@@ -72,9 +77,10 @@ export function useProjectSync(
     validateAssetsOnLoad = false,
     onAssetValidation,
     autoRemoveInvalidClips = false,
+    skipInitialLoad = false,
   } = options;
 
-  // State
+  // State — only tracks meta-status, NOT store data
   const [state, setState] = useState<ProjectSyncState>({
     isSaving: false,
     lastSavedAt: null,
@@ -88,37 +94,38 @@ export function useProjectSync(
   // Refs for tracking
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveDataRef = useRef<string>('');
+  const isMountedRef = useRef(true);
 
-  // Get current state from store
-  const tracks = useVideoEditorStore(state => state.tracks);
-  const clips = useVideoEditorStore(state => state.clips);
-  const transitions = useVideoEditorStore(state => state.transitions);
-  const aspectRatio = useVideoEditorStore(state => state.aspectRatio);
-  const resolution = useVideoEditorStore(state => state.resolution);
-  const backgroundColor = useVideoEditorStore(state => state.backgroundColor);
-  const storeIsDirty = useVideoEditorStore(state => state.isDirty);
-  const markSaved = useVideoEditorStore(state => state.markSaved);
+  // Keep callback refs so effects stay stable
+  const onSaveStartRef = useRef(onSaveStart);
+  const onSaveCompleteRef = useRef(onSaveComplete);
+  const onSaveErrorRef = useRef(onSaveError);
+  const onLoadRef = useRef(onLoad);
+  const onAssetValidationRef = useRef(onAssetValidation);
+  onSaveStartRef.current = onSaveStart;
+  onSaveCompleteRef.current = onSaveComplete;
+  onSaveErrorRef.current = onSaveError;
+  onLoadRef.current = onLoad;
+  onAssetValidationRef.current = onAssetValidation;
 
-  // Build save payload
-  const buildSavePayload = useCallback(() => {
-    return {
-      timelineData: {
-        tracks,
-        clips,
-        transitions,
-        version: 2, // Timeline V2 format
-      },
-      aspectRatio,
-      resolution,
-      backgroundColor,
-    };
-  }, [tracks, clips, transitions, aspectRatio, resolution, backgroundColor]);
-
-  // Perform save
+  // =============================================
+  // NON-REACTIVE save — reads store via getState()
+  // =============================================
   const performSave = useCallback(async () => {
-    if (!projectId) return false;
+    if (!projectId || !isMountedRef.current) return false;
 
-    const payload = buildSavePayload();
+    const store = useVideoEditorStore.getState();
+    const payload = {
+      timelineData: {
+        tracks: store.tracks,
+        clips: store.clips,
+        transitions: store.transitions,
+        version: 2,
+      },
+      aspectRatio: store.aspectRatio,
+      resolution: store.resolution,
+      backgroundColor: store.backgroundColor,
+    };
     const payloadString = JSON.stringify(payload);
 
     // Skip if nothing changed
@@ -126,8 +133,10 @@ export function useProjectSync(
       return true;
     }
 
-    setState(prev => ({ ...prev, isSaving: true, error: null }));
-    onSaveStart?.();
+    if (isMountedRef.current) {
+      setState(prev => ({ ...prev, isSaving: true, error: null }));
+    }
+    onSaveStartRef.current?.();
 
     try {
       const result = await saveProjectState(projectId, {
@@ -142,16 +151,18 @@ export function useProjectSync(
       if (result.success) {
         const timestamp = Date.now();
         lastSaveDataRef.current = payloadString;
-        markSaved();
+        store.markSaved();
         
-        setState(prev => ({
-          ...prev,
-          isSaving: false,
-          lastSavedAt: timestamp,
-          isDirty: false,
-        }));
+        if (isMountedRef.current) {
+          setState(prev => ({
+            ...prev,
+            isSaving: false,
+            lastSavedAt: timestamp,
+            isDirty: false,
+          }));
+        }
         
-        onSaveComplete?.(timestamp);
+        onSaveCompleteRef.current?.(timestamp);
         return true;
       } else {
         throw new Error('Save failed');
@@ -159,26 +170,26 @@ export function useProjectSync(
     } catch (error) {
       const err = error instanceof Error ? error : new Error('Unknown save error');
       
-      setState(prev => ({
-        ...prev,
-        isSaving: false,
-        error: err,
-      }));
+      if (isMountedRef.current) {
+        setState(prev => ({
+          ...prev,
+          isSaving: false,
+          error: err,
+        }));
+      }
       
-      onSaveError?.(err);
+      onSaveErrorRef.current?.(err);
       console.error('[useProjectSync] Save failed:', err);
       return false;
     }
-  }, [projectId, buildSavePayload, markSaved, onSaveStart, onSaveComplete, onSaveError]);
+  }, [projectId]); // Only depends on projectId — all store data read via getState()
 
   // Manual save function
   const save = useCallback(async () => {
-    // Clear any pending auto-save
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
-    
     return performSave();
   }, [performSave]);
 
@@ -186,7 +197,7 @@ export function useProjectSync(
   const load = useCallback(async () => {
     if (!projectId) {
       setState(prev => ({ ...prev, isLoaded: true }));
-      onLoad?.(false);
+      onLoadRef.current?.(false);
       return;
     }
 
@@ -211,9 +222,8 @@ export function useProjectSync(
             });
             
             setState(prev => ({ ...prev, assetValidation: validationSummary }));
-            onAssetValidation?.(validationSummary);
+            onAssetValidationRef.current?.(validationSummary);
             
-            // If there are invalid assets and auto-remove is enabled
             if (validationSummary.invalidAssets > 0 && autoRemoveInvalidClips) {
               console.log(`[useProjectSync] Removing ${validationSummary.invalidClipIds.length} clips with invalid assets`);
               const { validClips } = filterInvalidClips(clipsToLoad, validationSummary.invalidClipIds);
@@ -226,7 +236,6 @@ export function useProjectSync(
             }
           } catch (validationError) {
             console.error('[useProjectSync] Asset validation failed:', validationError);
-            // Continue loading even if validation fails
           } finally {
             setState(prev => ({ ...prev, isValidatingAssets: false }));
           }
@@ -263,10 +272,10 @@ export function useProjectSync(
         });
         
         setState(prev => ({ ...prev, isLoaded: true, isDirty: false }));
-        onLoad?.(true);
+        onLoadRef.current?.(true);
       } else {
         setState(prev => ({ ...prev, isLoaded: true }));
-        onLoad?.(false);
+        onLoadRef.current?.(false);
       }
     } catch (error) {
       console.error('[useProjectSync] Load failed:', error);
@@ -275,56 +284,72 @@ export function useProjectSync(
         isLoaded: true, 
         error: error instanceof Error ? error : new Error('Load failed'),
       }));
-      onLoad?.(false);
+      onLoadRef.current?.(false);
     }
-  }, [projectId, onLoad, validateAssetsOnLoad, onAssetValidation, autoRemoveInvalidClips]);
+  }, [projectId, validateAssetsOnLoad, autoRemoveInvalidClips]);
 
-  // Auto-save effect
+  // =============================================
+  // Auto-save via non-reactive subscribe()
+  // =============================================
   useEffect(() => {
-    if (!enableAutoSave || !projectId || !storeIsDirty) {
-      return;
-    }
+    if (!enableAutoSave || !projectId) return;
 
-    // Clear existing timeout
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
+    // Subscribe to isDirty changes in the store — does NOT trigger re-render
+    const unsubscribe = useVideoEditorStore.subscribe(
+      (state) => state.isDirty,
+      (isDirty) => {
+        if (!isDirty || !isMountedRef.current) return;
 
-    // Schedule new save
-    saveTimeoutRef.current = setTimeout(() => {
-      performSave();
-    }, autoSaveInterval);
+        // Clear any pending save
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current);
+        }
 
-    // Update dirty state
-    setState(prev => ({ ...prev, isDirty: true }));
+        // Schedule new save
+        saveTimeoutRef.current = setTimeout(() => {
+          performSave();
+        }, autoSaveInterval);
+      },
+    );
 
     return () => {
+      unsubscribe();
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [enableAutoSave, projectId, storeIsDirty, autoSaveInterval, performSave]);
+  }, [enableAutoSave, projectId, autoSaveInterval, performSave]);
 
-  // Initial load
+  // Initial load (skipped when wizard data bridge will populate the store)
   useEffect(() => {
     if (projectId && !state.isLoaded) {
-      load();
+      if (skipInitialLoad) {
+        console.log('[useProjectSync] Skipping initial load (wizard data bridge will populate store)');
+        setState(prev => ({ ...prev, isLoaded: true }));
+        onLoadRef.current?.(false);
+      } else {
+        load();
+      }
     }
-  }, [projectId, state.isLoaded, load]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, state.isLoaded, load, skipInitialLoad]);
 
-  // Cleanup on unmount - save if dirty
+  // Cleanup on unmount
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
-      
       // Perform final save if dirty
-      if (storeIsDirty && projectId) {
+      const store = useVideoEditorStore.getState();
+      if (store.isDirty && projectId) {
         performSave();
       }
     };
-  }, [storeIsDirty, projectId, performSave]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   return {
     ...state,

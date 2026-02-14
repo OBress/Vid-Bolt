@@ -2,6 +2,7 @@
 import { useCallback } from "react";
 import { useEditorSidebar } from "../contexts/sidebar-context";
 import { useVideoEditorStore, getTypedState } from "../stores/video-editor-store";
+import { clipIdToNumeric } from "../utils/clip-to-render-adapter";
 import { Overlay, OverlayType } from "../types";
 
 /**
@@ -42,7 +43,7 @@ export const useOverlaySelection = () => {
         // Find the clip that corresponds to this numeric overlay ID
         // The adapter converts clip IDs like "clip-1768620046955-qcri1o2" to numeric "1768620046955"
         const matchingClip = clips.find((clip: any) => {
-          const numericId = parseInt(clip.id.replace(/\D/g, ''), 10) || 0;
+          const numericId = clipIdToNumeric(clip.id);
           return numericId === overlay.id;
         });
         

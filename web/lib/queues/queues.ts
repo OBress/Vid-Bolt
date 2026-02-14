@@ -114,6 +114,19 @@ export const researchCompareQueue = createQueue('research-compare');
 /** GPU VM inactivity shutdown checker (repeatable) */
 export const gpuShutdownCheckQueue = createQueue('gpu-shutdown-check');
 
+/** Video rendering via Remotion Lambda → Cloudflare R2 */
+export const videoRenderQueue = createQueue('video-render', {
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 5000 },
+    removeOnComplete: { count: 50, age: 60 * 60 * 24 * 3 },  // 3 days
+    removeOnFail: { count: 200, age: 60 * 60 * 24 * 14 },    // 14 days
+  },
+});
+
+/** AI-driven edit assembly (chunked EDL generation) */
+export const editAssemblyQueue = createQueue('edit-assembly-workflow');
+
 /**
  * All active queues for graceful shutdown.
  */
@@ -138,6 +151,8 @@ export const allQueues = [
   assetReferenceImagesQueue,
   researchCompareQueue,
   gpuShutdownCheckQueue,
+  videoRenderQueue,
+  editAssemblyQueue,
 ];
 
 /**

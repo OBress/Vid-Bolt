@@ -780,6 +780,19 @@ $$;
 ALTER FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_month_date" "text") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."update_render_jobs_updated_at"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_render_jobs_updated_at"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -885,6 +898,19 @@ $$;
 ALTER FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."update_video_project_state_updated_at"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_video_project_state_updated_at"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "text", "proof_url" "text") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -945,6 +971,34 @@ CREATE TABLE IF NOT EXISTS "public"."media_projects" (
 ALTER TABLE "public"."media_projects" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."pending_gpu_jobs" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "video_id" "uuid" NOT NULL,
+    "job_type" "text" NOT NULL,
+    "target_queue" "text" NOT NULL,
+    "job_data" "jsonb" NOT NULL,
+    "task_id" "uuid",
+    "priority" integer DEFAULT 0,
+    "status" "text" DEFAULT 'pending'::"text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "dispatched_at" timestamp with time zone,
+    "expires_at" timestamp with time zone DEFAULT ("now"() + '24:00:00'::interval),
+    "error_message" "text",
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb",
+    CONSTRAINT "pending_gpu_jobs_job_type_check" CHECK (("job_type" = ANY (ARRAY['asset_reference_images'::"text", 'image_generation'::"text", 'image_editing'::"text", 'video_generation'::"text"]))),
+    CONSTRAINT "pending_gpu_jobs_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'dispatched'::"text", 'failed'::"text", 'expired'::"text"]))),
+    CONSTRAINT "pending_gpu_jobs_target_queue_check" CHECK (("target_queue" = ANY (ARRAY['asset-reference-images'::"text", 'gpu-image-create'::"text", 'gpu-image-edit'::"text", 'gpu-ltx2-create'::"text"])))
+);
+
+
+ALTER TABLE "public"."pending_gpu_jobs" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."pending_gpu_jobs" IS 'Stores GPU jobs waiting for VM readiness. Jobs are dispatched automatically when VM becomes ready via GCP startup webhook.';
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."project_settings" (
     "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
     "project_id" "uuid" NOT NULL,
@@ -954,6 +1008,36 @@ CREATE TABLE IF NOT EXISTS "public"."project_settings" (
 
 
 ALTER TABLE "public"."project_settings" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."render_jobs" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "video_id" "text" NOT NULL,
+    "bullmq_job_id" "text",
+    "status" "text" DEFAULT 'queued'::"text" NOT NULL,
+    "render_id" "text",
+    "bucket_name" "text",
+    "output_key" "text",
+    "output_url" "text",
+    "output_size_bytes" bigint,
+    "error_message" "text",
+    "composition_id" "text" DEFAULT 'VideoComposition'::"text",
+    "width" integer,
+    "height" integer,
+    "fps" integer,
+    "duration_frames" integer,
+    "cost_accrued" numeric(10,6),
+    "cost_display" "text",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "started_at" timestamp with time zone,
+    "completed_at" timestamp with time zone,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "render_jobs_status_check" CHECK (("status" = ANY (ARRAY['queued'::"text", 'rendering'::"text", 'completed'::"text", 'failed'::"text"])))
+);
+
+
+ALTER TABLE "public"."render_jobs" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."stock_media" (
@@ -1036,7 +1120,7 @@ CREATE TABLE IF NOT EXISTS "public"."tasks" (
     CONSTRAINT "tasks_current_phase_check" CHECK ((("current_phase" IS NULL) OR ("current_phase" = ANY (ARRAY['preprocessing'::"text", 'writing'::"text", 'postprocessing'::"text", 'audio_generation'::"text", 'audio_processing'::"text", 'image_generation'::"text", 'image_editing'::"text", 'video_generation'::"text", 'compositing'::"text", 'encoding'::"text", 'uploading'::"text"])))),
     CONSTRAINT "tasks_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
     CONSTRAINT "tasks_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'running'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"]))),
-    CONSTRAINT "tasks_type_check" CHECK (("type" = ANY (ARRAY['writing'::"text", 'writing_workflow'::"text", 'audio'::"text", 'video'::"text", 'export'::"text", 'outline'::"text", 'script_writing'::"text", 'av_script_part1'::"text", 'av_script_part2'::"text"])))
+    CONSTRAINT "tasks_type_check" CHECK (("type" = ANY (ARRAY['writing'::"text", 'writing_workflow'::"text", 'audio'::"text", 'video'::"text", 'export'::"text", 'outline'::"text", 'script_writing'::"text", 'av_script_part1'::"text", 'av_script_part2'::"text", 'edit_assembly'::"text"])))
 );
 
 
@@ -1169,6 +1253,44 @@ CREATE TABLE IF NOT EXISTS "public"."users" (
 ALTER TABLE "public"."users" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."video_editor_media" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "project_id" "uuid",
+    "s3_key" "text" NOT NULL,
+    "s3_url" "text" NOT NULL,
+    "name" "text" NOT NULL,
+    "type" "text" NOT NULL,
+    "size" bigint NOT NULL,
+    "duration" double precision,
+    "thumbnail" "text",
+    "width" integer,
+    "height" integer,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "video_editor_media_type_check" CHECK (("type" = ANY (ARRAY['video'::"text", 'image'::"text", 'audio'::"text"])))
+);
+
+
+ALTER TABLE "public"."video_editor_media" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."video_project_state" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "project_id" "uuid" NOT NULL,
+    "research_data" "jsonb" DEFAULT '{}'::"jsonb",
+    "script_data" "jsonb" DEFAULT '{}'::"jsonb",
+    "voice_data" "jsonb" DEFAULT '{}'::"jsonb",
+    "timeline_data" "jsonb" DEFAULT '{}'::"jsonb",
+    "export_settings" "jsonb" DEFAULT '{}'::"jsonb",
+    "editor_preferences" "jsonb" DEFAULT '{}'::"jsonb",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."video_project_state" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."video_projects" (
     "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
     "user_id" "uuid" NOT NULL,
@@ -1249,6 +1371,11 @@ ALTER TABLE ONLY "public"."monthly_statements"
 
 
 
+ALTER TABLE ONLY "public"."pending_gpu_jobs"
+    ADD CONSTRAINT "pending_gpu_jobs_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."project_settings"
     ADD CONSTRAINT "project_settings_pkey" PRIMARY KEY ("id");
 
@@ -1256,6 +1383,11 @@ ALTER TABLE ONLY "public"."project_settings"
 
 ALTER TABLE ONLY "public"."project_settings"
     ADD CONSTRAINT "project_settings_project_id_key" UNIQUE ("project_id");
+
+
+
+ALTER TABLE ONLY "public"."render_jobs"
+    ADD CONSTRAINT "render_jobs_pkey" PRIMARY KEY ("id");
 
 
 
@@ -1324,6 +1456,21 @@ ALTER TABLE ONLY "public"."users"
 
 
 
+ALTER TABLE ONLY "public"."video_editor_media"
+    ADD CONSTRAINT "video_editor_media_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."video_project_state"
+    ADD CONSTRAINT "video_project_state_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."video_project_state"
+    ADD CONSTRAINT "video_project_state_project_id_key" UNIQUE ("project_id");
+
+
+
 ALTER TABLE ONLY "public"."video_projects"
     ADD CONSTRAINT "video_projects_pkey" PRIMARY KEY ("id");
 
@@ -1334,6 +1481,30 @@ CREATE INDEX "idx_media_projects_user_id" ON "public"."media_projects" USING "bt
 
 
 CREATE INDEX "idx_monthly_statements_user_date" ON "public"."monthly_statements" USING "btree" ("user_id", "month_date");
+
+
+
+CREATE INDEX "idx_pending_gpu_jobs_expires" ON "public"."pending_gpu_jobs" USING "btree" ("expires_at") WHERE ("status" = 'pending'::"text");
+
+
+
+CREATE INDEX "idx_pending_gpu_jobs_user_status" ON "public"."pending_gpu_jobs" USING "btree" ("user_id", "status");
+
+
+
+CREATE INDEX "idx_render_jobs_created_at" ON "public"."render_jobs" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_render_jobs_status" ON "public"."render_jobs" USING "btree" ("status");
+
+
+
+CREATE INDEX "idx_render_jobs_user_id" ON "public"."render_jobs" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_render_jobs_video_id" ON "public"."render_jobs" USING "btree" ("video_id");
 
 
 
@@ -1398,6 +1569,26 @@ CREATE INDEX "idx_tasks_user_status" ON "public"."tasks" USING "btree" ("user_id
 
 
 CREATE INDEX "idx_tasks_user_type" ON "public"."tasks" USING "btree" ("user_id", "type");
+
+
+
+CREATE INDEX "idx_video_editor_media_project" ON "public"."video_editor_media" USING "btree" ("project_id");
+
+
+
+CREATE INDEX "idx_video_editor_media_user" ON "public"."video_editor_media" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_video_editor_media_user_project" ON "public"."video_editor_media" USING "btree" ("user_id", "project_id");
+
+
+
+CREATE INDEX "idx_video_editor_media_user_project_date" ON "public"."video_editor_media" USING "btree" ("user_id", "project_id", "created_at" DESC);
+
+
+
+CREATE INDEX "idx_video_project_state_project" ON "public"."video_project_state" USING "btree" ("project_id");
 
 
 
@@ -1469,7 +1660,15 @@ CREATE OR REPLACE TRIGGER "set_updated_at_video_projects" BEFORE UPDATE ON "publ
 
 
 
+CREATE OR REPLACE TRIGGER "trigger_render_jobs_updated_at" BEFORE UPDATE ON "public"."render_jobs" FOR EACH ROW EXECUTE FUNCTION "public"."update_render_jobs_updated_at"();
+
+
+
 CREATE OR REPLACE TRIGGER "update_user_api_keys_updated_at" BEFORE UPDATE ON "public"."user_api_keys" FOR EACH ROW EXECUTE FUNCTION "public"."update_updated_at_column"();
+
+
+
+CREATE OR REPLACE TRIGGER "video_project_state_updated_at" BEFORE UPDATE ON "public"."video_project_state" FOR EACH ROW EXECUTE FUNCTION "public"."update_video_project_state_updated_at"();
 
 
 
@@ -1488,8 +1687,28 @@ ALTER TABLE ONLY "public"."monthly_statements"
 
 
 
+ALTER TABLE ONLY "public"."pending_gpu_jobs"
+    ADD CONSTRAINT "pending_gpu_jobs_task_id_fkey" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."pending_gpu_jobs"
+    ADD CONSTRAINT "pending_gpu_jobs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pending_gpu_jobs"
+    ADD CONSTRAINT "pending_gpu_jobs_video_id_fkey" FOREIGN KEY ("video_id") REFERENCES "public"."video_projects"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."project_settings"
     ADD CONSTRAINT "project_settings_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."media_projects"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."render_jobs"
+    ADD CONSTRAINT "render_jobs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 
 
@@ -1525,6 +1744,21 @@ ALTER TABLE ONLY "public"."user_settings"
 
 ALTER TABLE ONLY "public"."users"
     ADD CONSTRAINT "users_id_fkey" FOREIGN KEY ("id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."video_editor_media"
+    ADD CONSTRAINT "video_editor_media_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."video_projects"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."video_editor_media"
+    ADD CONSTRAINT "video_editor_media_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."video_project_state"
+    ADD CONSTRAINT "video_project_state_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."video_projects"("id") ON DELETE CASCADE;
 
 
 
@@ -1566,7 +1800,29 @@ CREATE POLICY "Service role can manage stock media" ON "public"."stock_media" TO
 
 
 
+CREATE POLICY "Service role full access on video_editor_media" ON "public"."video_editor_media" USING (("auth"."role"() = 'service_role'::"text"));
+
+
+
+CREATE POLICY "Service role full access on video_project_state" ON "public"."video_project_state" USING (("auth"."role"() = 'service_role'::"text"));
+
+
+
+CREATE POLICY "Service role full access to render jobs" ON "public"."render_jobs" USING (("auth"."role"() = 'service_role'::"text")) WITH CHECK (("auth"."role"() = 'service_role'::"text"));
+
+
+
+CREATE POLICY "Users can delete state for their own projects" ON "public"."video_project_state" FOR DELETE USING ((EXISTS ( SELECT 1
+   FROM "public"."video_projects"
+  WHERE (("video_projects"."id" = "video_project_state"."project_id") AND ("video_projects"."user_id" = "auth"."uid"())))));
+
+
+
 CREATE POLICY "Users can delete their own config" ON "public"."user_gcp_config" FOR DELETE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users can delete their own media" ON "public"."video_editor_media" FOR DELETE USING (("auth"."uid"() = "user_id"));
 
 
 
@@ -1582,7 +1838,17 @@ CREATE POLICY "Users can insert own profile" ON "public"."users" FOR INSERT WITH
 
 
 
+CREATE POLICY "Users can insert state for their own projects" ON "public"."video_project_state" FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."video_projects"
+  WHERE (("video_projects"."id" = "video_project_state"."project_id") AND ("video_projects"."user_id" = "auth"."uid"())))));
+
+
+
 CREATE POLICY "Users can insert their own config" ON "public"."user_gcp_config" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users can insert their own media" ON "public"."video_editor_media" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
 
 
 
@@ -1630,6 +1896,12 @@ CREATE POLICY "Users can update own profile" ON "public"."users" FOR UPDATE USIN
 
 
 
+CREATE POLICY "Users can update state for their own projects" ON "public"."video_project_state" FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM "public"."video_projects"
+  WHERE (("video_projects"."id" = "video_project_state"."project_id") AND ("video_projects"."user_id" = "auth"."uid"())))));
+
+
+
 CREATE POLICY "Users can update their own config" ON "public"."user_gcp_config" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
 
@@ -1650,6 +1922,16 @@ CREATE POLICY "Users can view own profile" ON "public"."users" FOR SELECT USING 
 
 
 
+CREATE POLICY "Users can view own render jobs" ON "public"."render_jobs" FOR SELECT USING (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "Users can view state for their own projects" ON "public"."video_project_state" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM "public"."video_projects"
+  WHERE (("video_projects"."id" = "video_project_state"."project_id") AND ("video_projects"."user_id" = "auth"."uid"())))));
+
+
+
 CREATE POLICY "Users can view steps for their own tasks" ON "public"."task_steps" USING ((EXISTS ( SELECT 1
    FROM "public"."tasks"
   WHERE (("tasks"."id" = "task_steps"."task_id") AND ("tasks"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
@@ -1657,6 +1939,10 @@ CREATE POLICY "Users can view steps for their own tasks" ON "public"."task_steps
 
 
 CREATE POLICY "Users can view their own config" ON "public"."user_gcp_config" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users can view their own media" ON "public"."video_editor_media" FOR SELECT USING (("auth"."uid"() = "user_id"));
 
 
 
@@ -1670,6 +1956,10 @@ CREATE POLICY "Users can view their own video projects" ON "public"."video_proje
 
 
 
+CREATE POLICY "Users manage own pending jobs" ON "public"."pending_gpu_jobs" USING (("auth"."uid"() = "user_id"));
+
+
+
 ALTER TABLE "public"."continuity_state" ENABLE ROW LEVEL SECURITY;
 
 
@@ -1679,7 +1969,13 @@ ALTER TABLE "public"."media_projects" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."monthly_statements" ENABLE ROW LEVEL SECURITY;
 
 
+ALTER TABLE "public"."pending_gpu_jobs" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."project_settings" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."render_jobs" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."stock_media" ENABLE ROW LEVEL SECURITY;
@@ -1701,6 +1997,12 @@ ALTER TABLE "public"."user_settings" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."users" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."video_editor_media" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."video_project_state" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."video_projects" ENABLE ROW LEVEL SECURITY;
@@ -2343,6 +2645,12 @@ GRANT ALL ON FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "t
 
 
 
+GRANT ALL ON FUNCTION "public"."update_render_jobs_updated_at"() TO "anon";
+GRANT ALL ON FUNCTION "public"."update_render_jobs_updated_at"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_render_jobs_updated_at"() TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") TO "anon";
 GRANT ALL ON FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."update_task_step"("p_task_id" "uuid", "p_step_id" "text", "p_updates" "jsonb") TO "service_role";
@@ -2364,6 +2672,12 @@ GRANT ALL ON FUNCTION "public"."update_user_status"("target_user_id" "uuid", "ne
 GRANT ALL ON FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) TO "anon";
 GRANT ALL ON FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) TO "authenticated";
 GRANT ALL ON FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_stage" "text", "p_current_step" "text", "p_progress_percent" integer) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_video_project_state_updated_at"() TO "anon";
+GRANT ALL ON FUNCTION "public"."update_video_project_state_updated_at"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_video_project_state_updated_at"() TO "service_role";
 
 
 
@@ -2412,9 +2726,21 @@ GRANT ALL ON TABLE "public"."media_projects" TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."pending_gpu_jobs" TO "anon";
+GRANT ALL ON TABLE "public"."pending_gpu_jobs" TO "authenticated";
+GRANT ALL ON TABLE "public"."pending_gpu_jobs" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."project_settings" TO "anon";
 GRANT ALL ON TABLE "public"."project_settings" TO "authenticated";
 GRANT ALL ON TABLE "public"."project_settings" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."render_jobs" TO "anon";
+GRANT ALL ON TABLE "public"."render_jobs" TO "authenticated";
+GRANT ALL ON TABLE "public"."render_jobs" TO "service_role";
 
 
 
@@ -2457,6 +2783,18 @@ GRANT ALL ON TABLE "public"."user_settings" TO "service_role";
 GRANT ALL ON TABLE "public"."users" TO "anon";
 GRANT ALL ON TABLE "public"."users" TO "authenticated";
 GRANT ALL ON TABLE "public"."users" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."video_editor_media" TO "anon";
+GRANT ALL ON TABLE "public"."video_editor_media" TO "authenticated";
+GRANT ALL ON TABLE "public"."video_editor_media" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."video_project_state" TO "anon";
+GRANT ALL ON TABLE "public"."video_project_state" TO "authenticated";
+GRANT ALL ON TABLE "public"."video_project_state" TO "service_role";
 
 
 

@@ -80,7 +80,7 @@ export function updateContinuityState(
     // Update covered content
     coveredContent: [
       ...tracker.currentState.coveredContent,
-      beat.contentSummary.substring(0, 100),
+      (beat.contentSummary || '').substring(0, 100),
     ],
     
     // Add established facts from this beat

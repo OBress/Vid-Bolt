@@ -130,7 +130,7 @@ export function createBeatFromSpec(spec: BeatSpec, timing: BeatTiming): Beat {
       section: spec.section,
       engagementFunction: spec.engagementFunction,
     },
-    contentSummary: spec.contentSummary,
+    contentSummary: spec.contentSummary || '',
     researchReferences: {
       factIds: spec.factIds || [],
       quoteIds: spec.quoteIds || [],

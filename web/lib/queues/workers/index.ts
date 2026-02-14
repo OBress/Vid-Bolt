@@ -26,3 +26,5 @@ export { stockMediaProcessor } from './stock-media';
 export { assetReferenceImageProcessor } from './asset-reference-images';
 export { researchCompareProcessor } from './research-compare';
 export { gpuShutdownCheckProcessor, checkForInactiveVMs } from './gpu-shutdown-checker';
+export { videoRenderProcessor } from './render';
+export { editAssemblyProcessor } from './edit-assembly';

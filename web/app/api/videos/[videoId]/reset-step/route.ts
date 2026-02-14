@@ -471,7 +471,7 @@ async function resetStepData(
         console.log('');
         break;
 
-      case 7: // Editor
+      case 7: // Editor - clear editor state, timeline, and EDL
         if (metadataUpdates.editor_state) {
           delete metadataUpdates.editor_state;
           result.resetFields.push('metadata.editor_state');
@@ -479,6 +479,10 @@ async function resetStepData(
         if (metadataUpdates.timeline) {
           delete metadataUpdates.timeline;
           result.resetFields.push('metadata.timeline');
+        }
+        if (metadataUpdates.edl) {
+          delete metadataUpdates.edl;
+          result.resetFields.push('metadata.edl');
         }
         break;
 

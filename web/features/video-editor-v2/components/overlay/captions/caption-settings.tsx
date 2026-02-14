@@ -13,6 +13,7 @@
 import React from "react";
 import type { TimelineClip } from "../../../types/timeline-v2";
 import type { CaptionStyles, Caption } from "../../../types";
+import { clipIdToNumeric } from "../../../utils/clip-to-render-adapter";
 import { captionTemplates } from "../../../templates/caption-templates";
 import { useVideoEditorStore } from "../../../stores/video-editor-store";
 
@@ -50,7 +51,7 @@ export const CaptionSettings: React.FC<CaptionSettingsProps> = ({
   // Convert clip to the format expected by child components (backward compat)
   // TODO: Refactor child components to use TimelineClip directly
   const clipAsOverlay = {
-    id: parseInt(clip.id.replace(/\D/g, ''), 10) || Date.now(),
+    id: clipIdToNumeric(clip.id),
     type: 4, // OverlayType.CAPTION
     left: clip.transform.x,
     top: clip.transform.y,

@@ -54,6 +54,8 @@ import {
   assetReferenceImageProcessor,
   researchCompareProcessor,
   gpuShutdownCheckProcessor,
+  videoRenderProcessor,
+  editAssemblyProcessor,
 } from './workers';
 
 // ============================================================================
@@ -188,6 +190,18 @@ const workerConfigs: WorkerConfig[] = [
     processor: gpuShutdownCheckProcessor,
     concurrency: 1,
     description: 'GPU VM inactivity shutdown checker',
+  },
+  {
+    queue: 'video-render',
+    processor: videoRenderProcessor,
+    concurrency: parseInt(process.env.RENDER_CONCURRENCY_LIMIT || '4', 10),
+    description: 'Video rendering via Remotion Lambda → R2',
+  },
+  {
+    queue: 'edit-assembly-workflow',
+    processor: editAssemblyProcessor,
+    concurrency: 3,
+    description: 'AI-driven EDL generation for video editing',
   },
 ];
 

@@ -107,7 +107,7 @@ function buildVideoSkeleton(spine: Spine, currentBeatIndex: number): string {
     const marker = isCurrent ? '>>> ' : '    ';
     const status = isCurrent ? ' <-- YOU ARE HERE' : '';
     const beatType = beat.classification.type;
-    const summary = beat.contentSummary.substring(0, 60);
+    const summary = (beat.contentSummary || '').substring(0, 60);
     
     lines.push(`${marker}Beat ${i + 1} (${beatType}): ${summary}...${status}`);
   }
@@ -155,10 +155,10 @@ function buildPreviousBeatsContext(
     context.push({
       index: beatIndex + 1,
       title: spineBeat.classification.type,
-      summary: spineBeat.contentSummary.substring(0, 150),
+      summary: (spineBeat.contentSummary || '').substring(0, 150),
       lastParagraph: expandedBeat 
         ? extractLastParagraph(expandedBeat.narration)
-        : spineBeat.contentSummary.substring(0, 100),
+        : (spineBeat.contentSummary || '').substring(0, 100),
     });
   }
   
@@ -195,7 +195,7 @@ function buildNextBeatSummary(spine: Spine, currentBeatIndex: number): string {
   }
   
   const nextBeat = spine.beats[nextIndex];
-  return `NEXT: Beat ${nextIndex + 1} (${nextBeat.classification.type}) - ${nextBeat.contentSummary.substring(0, 100)}...`;
+  return `NEXT: Beat ${nextIndex + 1} (${nextBeat.classification.type}) - ${(nextBeat.contentSummary || '').substring(0, 100)}...`;
 }
 
 // ============================================================================

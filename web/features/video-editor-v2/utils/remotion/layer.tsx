@@ -556,37 +556,12 @@ export const Layer: React.FC<{
     keyframedTransform.opacity,
     isEditing,
   ]);
-
-  /**
-   * Special handling for sound overlays
-   * Sound overlays don't need positioning or visual representation,
-   * they just need to be sequenced correctly
-   */
-  if (overlay.type === "sound") {
-    return (
-      <Sequence
-        key={overlay.id}
-        from={overlay.from}
-        durationInFrames={overlay.durationInFrames}
-      >
-        <TransitionWrapper overlay={overlay} durationInFrames={overlay.durationInFrames}>
-          <LayerContent overlay={overlay} {...(baseUrl && { baseUrl })} {...(fontInfos && { fontInfos })} />
-        </TransitionWrapper>
-      </Sequence>
-    );
-  }
-
   /**
    * Track matte handling
    * If this overlay is used as a track matte source by another overlay,
    * it will be rendered inside that overlay's mask, so we skip rendering it here.
    */
   const isMatteSource = allOverlays.length > 0 && isTrackMatteSource(overlay.id, allOverlays);
-  if (isMatteSource) {
-    // This layer is a matte source - it will be rendered inside the target layer's mask
-    // Return null to avoid double-rendering
-    return null;
-  }
 
   /**
    * Check if this overlay has a track matte configured
@@ -603,6 +578,9 @@ export const Layer: React.FC<{
    * context-triggered re-render. During playback, `overlay` reference is stable
    * (from memoized selector), so useMemo returns cached JSX. React's reconciler
    * sees the same element references and skips diffing the subtree entirely.
+   *
+   * NOTE: This useMemo MUST be called before any early returns (e.g. sound, matte source)
+   * to satisfy React's Rules of Hooks (consistent hook call order on every render).
    */
   const renderedContent = useMemo(() => {
     const content = (
@@ -626,6 +604,31 @@ export const Layer: React.FC<{
 
     return content;
   }, [overlay, isEditing, baseUrl, fontInfos, trackMatte, matteSourceOverlay]);
+
+  /**
+   * Special handling for sound overlays
+   * Sound overlays don't need positioning or visual representation,
+   * they just need to be sequenced correctly
+   */
+  if (overlay.type === "sound") {
+    return (
+      <Sequence
+        key={overlay.id}
+        from={overlay.from}
+        durationInFrames={overlay.durationInFrames}
+      >
+        <TransitionWrapper overlay={overlay} durationInFrames={overlay.durationInFrames}>
+          <LayerContent overlay={overlay} {...(baseUrl && { baseUrl })} {...(fontInfos && { fontInfos })} />
+        </TransitionWrapper>
+      </Sequence>
+    );
+  }
+
+  if (isMatteSource) {
+    // This layer is a matte source - it will be rendered inside the target layer's mask
+    // Return null to avoid double-rendering
+    return null;
+  }
 
   /**
    * Standard layer rendering for visual elements

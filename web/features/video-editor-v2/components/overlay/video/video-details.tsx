@@ -17,6 +17,7 @@
 
 import React from "react";
 import type { TimelineClip } from "../../../types/timeline-v2";
+import { clipIdToNumeric } from "../../../utils/clip-to-render-adapter";
 import { VideoStylePanel } from "./video-style-panel";
 import { VideoSettingsPanel } from "./video-settings-panel";
 import { VideoAIPanel } from "./video-ai-panel";
@@ -103,7 +104,7 @@ export const VideoDetails: React.FC<VideoDetailsProps> = ({
   // Convert clip to the format expected by child components (backward compat)
   // TODO: Refactor child components to use TimelineClip directly
   const clipAsOverlay = {
-    id: parseInt(clip.id.replace(/\D/g, ''), 10) || Date.now(),
+    id: clipIdToNumeric(clip.id),
     type: 1, // OverlayType.VIDEO
     left: clip.transform.x,
     top: clip.transform.y,

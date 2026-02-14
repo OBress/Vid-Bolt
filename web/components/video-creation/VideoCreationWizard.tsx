@@ -113,6 +113,8 @@ export interface WizardState {
   assetReferenceImages: Record<string, string> | null;
   // Edit Decision List (Step 6 → Step 7 transition)
   edl: EditDecisionList | null;
+  edlTaskId: string | null;
+  isEdlLoading: boolean;
 }
 
 // Step configuration for the wizard - 8 steps
@@ -237,6 +239,8 @@ export function VideoCreationWizard({
     assetImageTaskId: null,
     assetReferenceImages: null,
     edl: null,
+    edlTaskId: null,
+    isEdlLoading: false,
   });
 
   // Step 3 ref for manual trigger
@@ -411,6 +415,8 @@ export function VideoCreationWizard({
           assetReferenceImages:
             (video.metadata as any)?.assetReferenceImages || null,
           edl: (video.metadata as any)?.edl || null,
+          edlTaskId: null,
+          isEdlLoading: false,
         });
 
         // =====================================================================
@@ -473,6 +479,14 @@ export function VideoCreationWizard({
               case "outline":
                 loadingUpdates.outlineTaskId = task.id;
                 console.log(`[Wizard] Restoring active outline task: ${task.id}`);
+                break;
+              case "edit_assembly":
+                // Only restore if we don't already have an EDL
+                if (!(video.metadata as any)?.edl) {
+                  loadingUpdates.isEdlLoading = true;
+                  loadingUpdates.edlTaskId = task.id;
+                  console.log(`[Wizard] Restoring active edit assembly task: ${task.id}`);
+                }
                 break;
             }
           }
@@ -539,6 +553,53 @@ export function VideoCreationWizard({
     setCurrentStep(step);
     setMaxStepReached((prev) => Math.max(prev, step));
   }, []);
+
+  // Auto-trigger EDL generation when step 7 is active but no EDL exists
+  // This handles: page reload at step 7, or going back to step 6 then forward
+  const edlTriggerRef = useRef(false);
+  useEffect(() => {
+    // Reset trigger flag when leaving step 7 or getting an EDL
+    if (currentStep !== 7 || state.edl) {
+      edlTriggerRef.current = false;
+      return;
+    }
+
+    // Guard: don't trigger if already loading, already have a taskId, or no videoId
+    if (state.isEdlLoading || state.edlTaskId || !state.videoId || edlTriggerRef.current) {
+      return;
+    }
+
+    edlTriggerRef.current = true;
+    console.log('[Wizard] Step 7 loaded without EDL — triggering generation');
+    setState((prev) => ({ ...prev, isEdlLoading: true }));
+
+    (async () => {
+      try {
+        const edlRes = await fetch('/api/process/edit-assembly', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoId: state.videoId }),
+        });
+        if (edlRes.ok) {
+          const { taskId } = await edlRes.json();
+          setState((prev) => ({ ...prev, edlTaskId: taskId }));
+          console.log('[Wizard] EDL task created:', taskId);
+        } else {
+          const errBody = await edlRes.text().catch(() => 'unknown');
+          console.warn('[Wizard] EDL trigger failed:', edlRes.status, errBody);
+          setState((prev) => ({ ...prev, isEdlLoading: false }));
+          edlTriggerRef.current = false;
+        }
+      } catch (edlErr) {
+        console.warn('[Wizard] EDL trigger error:', edlErr);
+        setState((prev) => ({ ...prev, isEdlLoading: false }));
+        edlTriggerRef.current = false;
+      }
+    })();
+  // Only depend on step changes, videoId, and edl — NOT isEdlLoading/edlTaskId
+  // because we change those inside the effect and don't want to re-trigger
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep, state.videoId, state.edl]);
 
   // Helper to get lock state for a step
   const getLockState = (stepId: number) => {
@@ -1179,6 +1240,11 @@ export function VideoCreationWizard({
                 stateUpdates.generatedMedia = [];
                 stateUpdates.avScriptPart2TaskId = null;
                 stateUpdates.isMediaGenerating = false;
+                break;
+              case 7: // Editor - clear EDL + editor state
+                stateUpdates.edl = null;
+                stateUpdates.isEdlLoading = false;
+                stateUpdates.edlTaskId = null;
                 break;
             }
 
@@ -2113,21 +2179,25 @@ export function VideoCreationWizard({
                     body: JSON.stringify({ current_stage: "video" }),
                   });
 
-                  // Call AI edit assembly to generate EDL
+                  // Trigger async EDL generation via BullMQ
+                  setState((prev) => ({ ...prev, isEdlLoading: true }));
                   try {
-                    const edlRes = await fetch(
-                      `/api/videos/${state.videoId}/assemble-edit`,
-                      { method: "POST" }
-                    );
+                    const edlRes = await fetch('/api/process/edit-assembly', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ videoId: state.videoId }),
+                    });
                     if (edlRes.ok) {
-                      const edlData = await edlRes.json();
-                      setState((prev) => ({ ...prev, edl: edlData.edl || null }));
-                      console.log('[Wizard] EDL generated successfully');
+                      const { taskId } = await edlRes.json();
+                      setState((prev) => ({ ...prev, edlTaskId: taskId }));
+                      console.log('[Wizard] EDL task created:', taskId);
                     } else {
-                      console.warn('[Wizard] EDL generation failed, continuing without EDL');
+                      console.warn('[Wizard] EDL trigger failed, continuing without EDL');
+                      setState((prev) => ({ ...prev, isEdlLoading: false }));
                     }
                   } catch (edlErr) {
-                    console.warn('[Wizard] EDL generation error:', edlErr);
+                    console.warn('[Wizard] EDL trigger error:', edlErr);
+                    setState((prev) => ({ ...prev, isEdlLoading: false }));
                   }
                 } catch (err) {
                   console.error("Failed to save step:", err);
@@ -2141,6 +2211,60 @@ export function VideoCreationWizard({
         );
 
       case 7: // Editor (restored)
+        // Show loading screen while EDL is being generated
+        // (either from step 6 onContinue or auto-triggered by useEffect above)
+        if (state.isEdlLoading) {
+          return (
+            <AsyncLoadingStep
+              title="Generating Edit Decisions"
+              subtitle="AI is analyzing your shots and creating edit decisions..."
+              steps={[
+                "Loading project context",
+                "Analyzing shots & media",
+                "Generating edit decisions",
+                "Validating & finalizing",
+              ]}
+              taskId={state.edlTaskId}
+              onComplete={async (output) => {
+                console.log('[Wizard] EDL task complete, output:', output);
+                let edl = (output as any)?.edl || null;
+
+                // Fallback: if task output doesn't contain EDL, fetch from project metadata
+                if (!edl && state.videoId) {
+                  console.log('[Wizard] EDL not in task output, fetching from project metadata...');
+                  try {
+                    const res = await fetch(`/api/videos/${state.videoId}`);
+                    if (res.ok) {
+                      const data = await res.json();
+                      edl = (data.video?.metadata as any)?.edl || null;
+                      console.log('[Wizard] EDL from metadata:', edl ? 'found' : 'not found');
+                    }
+                  } catch (err) {
+                    console.warn('[Wizard] Failed to fetch EDL from metadata:', err);
+                  }
+                }
+
+                edlTriggerRef.current = false;
+                setState((prev) => ({
+                  ...prev,
+                  edl,
+                  isEdlLoading: false,
+                  edlTaskId: null,
+                }));
+              }}
+              onError={(error) => {
+                console.warn('[Wizard] EDL task failed:', error);
+                edlTriggerRef.current = false;
+                setState((prev) => ({
+                  ...prev,
+                  isEdlLoading: false,
+                  edlTaskId: null,
+                }));
+              }}
+            />
+          );
+        }
+
         return (
           <Step7Editor
             videoId={state.videoId!}
@@ -2164,7 +2288,28 @@ export function VideoCreationWizard({
               }
               advanceToStep(8);
             }}
-            onBack={() => goToStep(6)}
+            onBack={async () => {
+              // Call reset-step API to revert current_stage and clean up DB
+              if (state.videoId) {
+                try {
+                  await fetch(`/api/videos/${state.videoId}/reset-step`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fromStep: 7, toStep: 6 }),
+                  });
+                } catch (err) {
+                  console.error('[Wizard] Reset step 7→6 error:', err);
+                }
+              }
+              // Clear local EDL + editor state
+              updateState({
+                edl: null,
+                isEdlLoading: false,
+                edlTaskId: null,
+              });
+              setMaxStepReached(6);
+              goToStep(6);
+            }}
             {...lock}
           />
         );
@@ -2174,23 +2319,6 @@ export function VideoCreationWizard({
           <Step8Export
             videoId={state.videoId!}
             projectId={projectId}
-            audioChunks={state.audioChunks}
-            shotList={state.shotList}
-            onBack={async () => {
-              // Persist the step navigation to the database
-              if (state.videoId) {
-                try {
-                  await fetch(`/api/videos/${state.videoId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ current_stage: "video" }),
-                  });
-                } catch (err) {
-                  console.error("Failed to save step:", err);
-                }
-              }
-              goToStep(7);
-            }}
             onClose={async () => {
               if (state.videoId) {
                 try {

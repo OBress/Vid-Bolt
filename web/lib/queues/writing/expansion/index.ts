@@ -189,13 +189,13 @@ export async function expandSpineToScript(
 function createFallbackBeat(beat: Beat, beatIndex: number): ExpandedBeat {
   return {
     beatIndex,
-    narration: beat.contentSummary,
+    narration: beat.contentSummary || '',
     visualCallouts: [],
     audioNotes: {
       musicMood: beat.toneEnergy.mood,
     },
     pacingNotes: {},
-    wordCount: beat.contentSummary.split(/\s+/).length,
+    wordCount: (beat.contentSummary || '').split(/\s+/).length,
     factsUsed: beat.researchReferences.factIds,
   };
 }

@@ -15,6 +15,7 @@
 
 import React from "react";
 import type { TimelineClip } from "../../../types/timeline-v2";
+import { clipIdToNumeric } from "../../../utils/clip-to-render-adapter";
 import { ImageStylePanel } from "./image-style-panel";
 import { ImageSettingsPanel } from "./image-settings-panel";
 import { ImagePreview } from "./image-preview";
@@ -75,7 +76,7 @@ export const ImageDetails: React.FC<ImageDetailsProps> = ({
   // Convert clip to the format expected by child components (backward compat)
   // TODO: Refactor child components to use TimelineClip directly
   const clipAsOverlay = {
-    id: parseInt(clip.id.replace(/\D/g, ''), 10) || Date.now(),
+    id: clipIdToNumeric(clip.id),
     type: 2, // OverlayType.IMAGE
     left: clip.transform.x,
     top: clip.transform.y,

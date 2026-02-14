@@ -322,7 +322,7 @@ function extractOpenLoops(beats: Beat[]): Spine['openLoops'] {
     if (beat.engagement.opensLoop && beat.engagement.loopId) {
       loopMap.set(beat.engagement.loopId, {
         openedAt: i,
-        question: beat.contentSummary.substring(0, 100),
+        question: (beat.contentSummary || '').substring(0, 100),
       });
     }
 

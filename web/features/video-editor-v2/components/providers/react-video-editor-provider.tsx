@@ -15,6 +15,7 @@
 import React from "react";
 import { SidebarProvider as UISidebarProvider } from "../ui/sidebar";
 import { EditorProvider } from "./editor-provider";
+import type { WizardData } from "../../hooks/use-wizard-data-import";
 import { RendererProvider } from "../../contexts/renderer-context";
 import { LocalMediaProvider } from "../../contexts/local-media-context";
 import { SidebarProvider as EditorSidebarProvider } from "../../contexts/sidebar-context";
@@ -22,6 +23,7 @@ import { MediaAdaptorProvider } from "../../contexts/media-adaptor-context";
 import { ThemeProvider } from "../../contexts/theme-context";
 import { ToolProvider } from "../../contexts/tool-context";
 import { VideoRenderer } from "../../types/renderer";
+import { HttpRenderer } from "../../utils/http-renderer";
 import { PlayerRef } from "@remotion/player";
 import { OverlayAdaptors } from "../../types/overlay-adaptors";
 import { CustomTheme } from "../../hooks/use-extended-theme-switcher";
@@ -41,7 +43,7 @@ export interface ReactVideoEditorProviderProps {
   defaultResolution?: ResolutionPreset;
   defaultBackgroundColor?: string;
   fps?: number;
-  renderer: VideoRenderer;
+  renderer?: VideoRenderer;
   
   // Callbacks
   onSaving?: (saving: boolean) => void;
@@ -53,6 +55,12 @@ export interface ReactVideoEditorProviderProps {
   
   // Loading State
   isLoadingProject?: boolean;
+  
+  // Skip initial load from Supabase (wizard data bridge will populate the store)
+  skipInitialLoad?: boolean;
+  
+  // Wizard data to import after store initialization
+  wizardData?: WizardData;
   
   // Player Configuration
   playerRef?: React.RefObject<PlayerRef>;
@@ -95,6 +103,18 @@ export interface ReactVideoEditorProviderProps {
   defaultTheme?: string;
 }
 
+// Default renderer (lazy singleton)
+let _defaultRenderer: VideoRenderer | null = null;
+function getDefaultRenderer(): VideoRenderer {
+  if (!_defaultRenderer) {
+    _defaultRenderer = new HttpRenderer("/api/render", {
+      type: "ssr",
+      entryPoint: "/api/render",
+    });
+  }
+  return _defaultRenderer;
+}
+
 export const ReactVideoEditorProvider: React.FC<ReactVideoEditorProviderProps> = ({
   children,
   projectId,
@@ -110,6 +130,8 @@ export const ReactVideoEditorProvider: React.FC<ReactVideoEditorProviderProps> =
   sidebarWidth = "16rem",
   sidebarIconWidth = "3rem",
   isLoadingProject = false,
+  skipInitialLoad = false,
+  wizardData,
   playerRef,
   baseUrl,
   adaptors,
@@ -146,7 +168,7 @@ export const ReactVideoEditorProvider: React.FC<ReactVideoEditorProviderProps> =
           "--sidebar-width-icon": sidebarIconWidth,
       } as React.CSSProperties}
     >
-      <RendererProvider config={{ renderer }}>
+      <RendererProvider config={{ renderer: renderer ?? getDefaultRenderer() }}>
         <MediaAdaptorProvider adaptors={adaptors || {}}>
           <ThemeProvider config={{
             availableThemes,
@@ -165,6 +187,8 @@ export const ReactVideoEditorProvider: React.FC<ReactVideoEditorProviderProps> =
               defaultBackgroundColor={defaultBackgroundColor}
               fps={fps}
               isLoadingProject={isLoadingProject}
+              skipInitialLoad={skipInitialLoad}
+              wizardData={wizardData}
               onSaving={onSaving}
               onSaved={onSaved}
               playerRef={playerRef}
