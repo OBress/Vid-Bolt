@@ -868,3 +868,232 @@ The Creative Manifest is the Orchestrator's initialization document, set from us
 | BullMQ agent communication                            | Already in stack, supports job dependencies, retries, and priority queues. Message envelopes give structured bidirectional communication.            |
 | Best-Fit Salvage on 3 failures                        | Pipeline never fully blocks. Worst case: user sees a flagged shot in the editor and fixes it manually.                                               |
 | Delta feedback logging                                | Log all Orchestrator corrections to build a dataset for future prompt optimization / agent fine-tuning.                                              |
+
+---
+
+## 14. Customization Touchpoints Audit
+
+> **Purpose:** Comprehensive catalog of every customization decision point across the current Vid-Bolt pipeline, mapped to either the **User Creative Profile** (persistent preferences) or **Per-Video Overrides** (ephemeral settings). Each touchpoint is classified as **Structured** (enum/slider/toggle), **Free-text** (open prompt override), **Both**, or **Not Customizable** (structural/format).
+
+### 14.1 Classification Legend
+
+| Classification       | Meaning                                                    | Example                                           |
+| -------------------- | ---------------------------------------------------------- | ------------------------------------------------- |
+| **Structured**       | Finite set of options (enum, slider, toggle, multi-select) | Aspect ratio: 16:9 or 9:16                        |
+| **Free-text**        | Open-ended user input injected into prompts                | "Make the visual style moody and desaturated"     |
+| **Both**             | Structured presets with optional free-text override        | Visual style: preset dropdown + custom text field |
+| **Not Customizable** | Structural format definitions or quality guardrails        | JSON output schemas, fact-checking rules          |
+
+### 14.2 Script Generation Pipeline
+
+**Workers:** `outline.ts`, `script-writing.ts`, `writing.ts`, `universal-script.ts`
+**Prompts:** `lib/queues/writing/prompts.ts` — contains `PROMPTS` (legacy, 8 templates) and `UNIVERSAL_PROMPTS` (modern, 12+ templates)
+
+#### Research & Scoping
+
+| Touchpoint                     | Current State                                 | Class            | Maps To   |
+| ------------------------------ | --------------------------------------------- | ---------------- | --------- |
+| Research role identity         | Hardcoded "research assistant"                | Free-text        | Per-Video |
+| Source tier system (1-5)       | Hardcoded fact extraction format              | Not Customizable | —         |
+| Content density analysis       | Hardcoded audience attention assumptions      | Both             | Profile   |
+| Duration decision factors      | Hardcoded YouTube-specific (10-min threshold) | Structured       | Per-Video |
+| Duration range                 | Already parameterized                         | Structured       | Per-Video |
+| Must-include/must-avoid topics | Already parameterized                         | Free-text        | Per-Video |
+
+#### Spine & Story Structure
+
+| Touchpoint                     | Current State                                              | Class            | Maps To   |
+| ------------------------------ | ---------------------------------------------------------- | ---------------- | --------- |
+| Spine generator identity       | Hardcoded "master storyteller and YouTube video architect" | Free-text        | Profile   |
+| Story structure choice         | Hardcoded: Chronological, Mystery, Contrast, Escalation    | Structured       | Per-Video |
+| Section word limits            | Hardcoded: min 300, max 2000, sweet spot 500-1200          | Structured       | Profile   |
+| Hook structure                 | Hardcoded "Hook + Promise within 30 seconds"               | Both             | Per-Video |
+| Documentary storytelling rules | Hardcoded 6 principles                                     | Structured       | Profile   |
+| Engagement mechanics           | Hardcoded (open loops, pattern interrupts, energy curve)   | Not Customizable | —         |
+| Angle                          | Already parameterized                                      | Free-text        | Per-Video |
+
+#### Script Expansion
+
+| Touchpoint                       | Current State                                                    | Class      | Maps To |
+| -------------------------------- | ---------------------------------------------------------------- | ---------- | ------- |
+| **Writer persona**               | Hardcoded "seasoned YouTube documentary scriptwriter, 15+ years" | Free-text  | Profile |
+| **Audience definition**          | Hardcoded "educated adults 25-45, mobile, limited attention"     | Both       | Profile |
+| **Banned words list (33 words)** | Hardcoded: delve, tapestry, intricate, nestled, etc.             | Structured | Profile |
+| **Banned sentence patterns (9)** | Hardcoded AI-sounding patterns                                   | Structured | Profile |
+| Formality level                  | Hardcoded contractions, sentence length variety                  | Structured | Profile |
+| Documentary writing style        | Hardcoded 6 rules (quotes > paraphrase, conversational voice)    | Structured | Profile |
+
+#### Validation & Assembly
+
+| Touchpoint                                     | Current State                                    | Class            | Maps To   |
+| ---------------------------------------------- | ------------------------------------------------ | ---------------- | --------- |
+| Quality validation (factual)                   | Hardcoded fact-checking rules                    | Not Customizable | —         |
+| Quality validation (engagement)                | Hardcoded timing (hook at 5s, value prop by 30s) | Structured       | Per-Video |
+| Quality validation (consistency, completeness) | Hardcoded structural checks                      | Not Customizable | —         |
+| Script type                                    | Already parameterized                            | Structured       | Per-Video |
+| Number of chapters                             | Already parameterized                            | Structured       | Per-Video |
+
+### 14.3 Audio / TTS Pipeline
+
+**Worker:** `audio.ts` — **Most parameterized** component; all major controls already exist.
+**Service:** `inworld-tts.ts`
+
+| Touchpoint       | Current State                                                                 | Class            | Maps To |
+| ---------------- | ----------------------------------------------------------------------------- | ---------------- | ------- |
+| Voice provider   | Parameterized (`elevenlabs`, `genai`, `inworld`) — only `inworld` implemented | Structured       | Profile |
+| Voice name/ID    | Parameterized — defaults to "Hades" (6 voices available)                      | Structured       | Profile |
+| Voice model      | Parameterized — `inworld-tts-1.5-max` or `mini`                               | Structured       | Profile |
+| Speaking rate    | Parameterized (default 1.0)                                                   | Structured       | Profile |
+| Temperature      | Parameterized (clamped 0.1–2.0, default 1.0)                                  | Structured       | Profile |
+| Stability        | Parameterized — ElevenLabs only                                               | Structured       | Profile |
+| Similarity boost | Parameterized — ElevenLabs only                                               | Structured       | Profile |
+| Text chunk size  | Hardcoded to 200 words                                                        | Not Customizable | —       |
+
+> **Status:** All TTS parameters exist in `AudioJobData`. Primary work is **surfacing them in the UI**.
+
+### 14.4 AV Script / Shot Planning
+
+**Worker:** `av-script.ts` (Part 1 + Part 2)
+**Processor:** `chunked-processor.ts` (sliding window shot generation)
+**Agents:** `agent-prompts.ts` (5 specialized AI agents)
+
+#### Shot Summary Generation (Chunked Processor)
+
+| Touchpoint                      | Current State                                             | Class            | Maps To   |
+| ------------------------------- | --------------------------------------------------------- | ---------------- | --------- |
+| **Visual philosophy**           | Hardcoded "premium documentary director, Netflix-quality" | Free-text        | Profile   |
+| Video vs MG decision rules      | Hardcoded: "single scene" → video, "composition" → MG     | Structured       | Profile   |
+| Stock worthiness rules          | Hardcoded: only for famous people, iconic landmarks       | Structured       | Per-Video |
+| Routing tags vocabulary         | AI-selected from fixed set                                | Structured       | Per-Video |
+| Sound effects design philosophy | Hardcoded "enhance without distraction"                   | Free-text        | Profile   |
+| Stock media level               | Already parameterized (5 levels)                          | Structured       | Per-Video |
+| Chunk batch size                | Hardcoded to 10 segments                                  | Not Customizable | —         |
+
+#### Multi-Agent Visual Prompt Generation (Part 2)
+
+| Touchpoint               | Current State                                                             | Class      | Maps To     |
+| ------------------------ | ------------------------------------------------------------------------- | ---------- | ----------- |
+| **`visualStyle`**        | **Hardcoded `'cinematic, documentary'`** (line 511 of `av-script.ts`)     | **Both**   | **Profile** |
+| `aspectRatio`            | Already parameterized (16:9 or 9:16)                                      | Structured | Per-Video   |
+| Image prompt scaffold    | Hardcoded Z-Image Turbo format (shot types, lighting, mood, camera specs) | Both       | Profile     |
+| Image quality anchors    | Hardcoded: `["photorealistic", "cinematic", "4K", "film grain"]`          | Structured | Profile     |
+| Image constraints        | Hardcoded: `["no text", "no watermark", "no logos"]`                      | Structured | Profile     |
+| Video prompt scaffold    | Hardcoded LTX-2 cinematographer format                                    | Both       | Profile     |
+| Camera motion vocabulary | Hardcoded 9 options (pushes, tracks, pans, etc.)                          | Structured | Profile     |
+| Motion intensity         | Hardcoded: subtle, moderate, dynamic                                      | Structured | Per-Video   |
+| MG composition types     | Hardcoded 7 types (split_screen, crime_board, etc.)                       | Structured | Profile     |
+| SFX director philosophy  | Hardcoded "less is more"                                                  | Free-text  | Profile     |
+| `userPromptOverride`     | **Already parameterized** in `AgentContext`                               | Free-text  | Per-Video   |
+| GPU enabled flag         | Already parameterized                                                     | Structured | Per-Video   |
+
+### 14.5 Visual Media Generation
+
+**Worker:** `visual-director.ts`
+**Service:** `gpu-api-service.ts`
+
+| Touchpoint              | Current State             | Class      | Maps To   |
+| ----------------------- | ------------------------- | ---------- | --------- |
+| Aspect ratio            | Already parameterized     | Structured | Per-Video |
+| `num_inference_steps`   | API supports, not exposed | Structured | Profile   |
+| Seed                    | API supports, not exposed | Structured | Per-Video |
+| LoRA adapter            | API supports custom LoRAs | Structured | Profile   |
+| Video FPS               | API supports 15 or 30     | Structured | Per-Video |
+| Music generation prompt | GPU API supports it       | Free-text  | Per-Video |
+| Music duration          | API parameterized         | Structured | Per-Video |
+| SFX generation prompt   | GPU API supports it       | Free-text  | Per-Video |
+
+### 14.6 Stock Media Pipeline
+
+**Worker:** `stock-media.ts`
+**Director:** `stock-media-director.ts`
+
+| Touchpoint           | Current State                                             | Class      | Maps To   |
+| -------------------- | --------------------------------------------------------- | ---------- | --------- |
+| Stock media level    | Already parameterized (5 levels)                          | Structured | Per-Video |
+| Similarity threshold | Hardcoded to 0.7                                          | Structured | Profile   |
+| Fallback type logic  | Hardcoded: comparison → MG, else → video                  | Structured | Profile   |
+| Density configs      | Hardcoded (standard: 3 img/2 vid, extensive: 5 img/2 vid) | Structured | Profile   |
+
+### 14.7 Edit Assembly / EDL
+
+**Worker:** `edit-assembly.ts`
+**Prompts:** `edit-assembly-prompts.ts`
+
+| Touchpoint                     | Current State                                               | Class            | Maps To   |
+| ------------------------------ | ----------------------------------------------------------- | ---------------- | --------- |
+| **Editing style**              | Hardcoded "documentary-style + YouTube best practices"      | Both             | Profile   |
+| **Pacing rules**               | Hardcoded: 6-10s default cuts, 4-6s hook pacing             | Structured       | Profile   |
+| Transition types allowed       | Hardcoded: crossfade, fadeToBlack, fade, wipeLeft, dissolve | Structured       | Profile   |
+| Text overlay styles            | Hardcoded: chapterTitle, lowerThird, callout, subtitle      | Structured       | Profile   |
+| Effects (Ken Burns, zoom, pan) | Hardcoded allowed set                                       | Structured       | Profile   |
+| FPS                            | Hardcoded to 30                                             | Structured       | Per-Video |
+| LLM model                      | Hardcoded to `google/gemini-3-flash-preview`                | Not Customizable | —         |
+
+### 14.8 Motion Graphics
+
+**Prompts:** `motion-graphics/prompts.ts`
+
+| Touchpoint                | Current State                                                   | Class            | Maps To |
+| ------------------------- | --------------------------------------------------------------- | ---------------- | ------- |
+| **MG aesthetic defaults** | Hardcoded: "dark themes, subtle gradients, micro-animations"    | Structured       | Profile |
+| **Default color scheme**  | Hardcoded: `bg: "#0A0A0A", primary: "#3B82F6", text: "#FFFFFF"` | Structured       | Profile |
+| Animation spring configs  | Hardcoded 4 presets (smooth, bouncy, snappy, gentle)            | Structured       | Profile |
+| Spacing system            | Hardcoded multiples of 8px                                      | Not Customizable | —       |
+| Available skill files     | Extensible via `skills/` directory                              | Not Customizable | —       |
+
+### 14.9 Priority Gap Analysis
+
+#### High-Impact (7 items — blocking customization)
+
+| #   | Gap                             | File                         | Current Value                               |
+| --- | ------------------------------- | ---------------------------- | ------------------------------------------- |
+| 1   | **`visualStyle` hardcoded**     | `av-script.ts` line 511      | `'cinematic, documentary'`                  |
+| 2   | Writer persona hardcoded        | `writing/prompts.ts`         | "seasoned YouTube documentary scriptwriter" |
+| 3   | Audience demographics hardcoded | `writing/prompts.ts`         | "educated adults 25-45"                     |
+| 4   | Spine generator identity        | `writing/prompts.ts`         | "master storyteller and YouTube architect"  |
+| 5   | Banned words list hardcoded     | `writing/prompts.ts`         | 33 words (delve, tapestry, etc.)            |
+| 6   | EDL pacing defaults             | `edit-assembly-prompts.ts`   | "6-10s cuts, 4-6s hooks"                    |
+| 7   | MG aesthetic defaults           | `motion-graphics/prompts.ts` | Dark theme, specific hex colors             |
+
+> **`visualStyle`** is the single most impactful gap — it flows into every image and video prompt generated by the 5 specialized agents. Making this user-configurable unlocks the entire visual style system described in §3 (Dynamic Prompt Generation).
+
+#### Medium-Impact (7 items — parameterized but not exposed in UI)
+
+| #   | Gap                            | Status                                   |
+| --- | ------------------------------ | ---------------------------------------- |
+| 1   | Voice selection UI             | Params exist in `AudioJobData`, needs UI |
+| 2   | Speaking rate / temperature UI | Params exist, needs UI                   |
+| 3   | Aspect ratio selection         | Param exists, needs UI                   |
+| 4   | Stock media level              | Param exists, needs UI                   |
+| 5   | `userPromptOverride` per shot  | Param exists in `AgentContext`, needs UI |
+| 6   | GPU generation toggle          | Param exists, needs UI                   |
+| 7   | LoRA adapter selection         | GPU API supports it, not wired           |
+
+### 14.10 Mapping to Creative Manifest
+
+The 7 high-impact gaps map directly to the Creative Manifest (§11). With these addressed, the Orchestrator's Dynamic Prompt Generation (§3) can fully personalize all workers:
+
+```
+Creative Manifest additions:
+  "writing": {
+    "writer_persona": "free-text override for beat expansion identity",
+    "audience": { "demographics": "25-45", "platform": "youtube" },
+    "banned_words": ["delve", "tapestry", ...],
+    "formality_level": "casual | conversational | formal"
+  },
+  "visual": {
+    "visual_style": "preset + free-text (replaces hardcoded 'cinematic, documentary')",
+    "quality_anchors": ["photorealistic", "cinematic", ...],
+    "image_constraints": ["no text", "no watermark", ...]
+  },
+  "editing": {
+    "pacing_preset": "documentary | fast-paced | cinematic | custom",
+    "default_cut_duration_range": [6, 10],
+    "hook_cut_duration_range": [4, 6]
+  },
+  "motion_graphics": {
+    "theme": "dark | light | colorful | minimal",
+    "color_palette": ["#0A0A0A", "#3B82F6", "#FFFFFF"],
+    "animation_style": "smooth | bouncy | snappy | gentle"
+  }
+```

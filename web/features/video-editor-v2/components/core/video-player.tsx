@@ -7,6 +7,7 @@ import type { TimelineClip } from "../../types/timeline-v2";
 import { selectOverlays } from "../../stores/memoized-render-selectors";
 import { clipIdToNumeric } from "../../utils/clip-to-render-adapter";
 import { SelectionOverlays } from "./selection-overlays";
+import { setPlayheadFrame } from "../../hooks/playhead-frame-bridge";
 
 /**
  * Props for the VideoPlayer component
@@ -69,33 +70,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Use external playerRef if provided, otherwise use context playerRef
   const playerRef = externalPlayerRef || contextPlayerRef;
   
-  // Sync player's current frame to store (for text/shape placement at playhead)
-  // PERF: Writes to store at 2×/sec instead of 10×/sec to avoid cascading re-renders.
-  // Each store write creates a new playback object reference, triggering re-renders
-  // in every component that subscribes to playback state. 500ms is sufficient for
-  // UI features that read currentTime (inspector panel, keyframe nav, etc.).
+  // Sync player's current frame to store and playhead bridge on every frame.
+  // Uses Remotion's `frameupdate` event (fires on playback AND seek) for real-time updates.
   useEffect(() => {
-    const updateStoreTime = () => {
-      // Skip updates while scrubbing to prevent circular updates
+    if (!playerRef?.current) return;
+    const player = playerRef.current;
+
+    const handleFrameUpdate = () => {
       if (isScrubbingRef.current) return;
-      
-      if (playerRef?.current) {
-        const currentFrame = playerRef.current.getCurrentFrame();
-        const timeInSeconds = currentFrame / fps;
-        setCurrentTime(timeInSeconds);
-      }
+      const currentFrame = player.getCurrentFrame();
+      const timeInSeconds = currentFrame / fps;
+      setCurrentTime(timeInSeconds);
+      // Also drive direct DOM/PixiJS playhead updates via bridge
+      setPlayheadFrame(currentFrame, fps);
     };
-    
-    // Update immediately on mount
-    updateStoreTime();
-    
-    // Poll for updates while playing (Remotion Player doesn't have a frame callback)
-    // Throttled to 500ms (2×/sec) to minimize store-triggered re-render cascades
-    const interval = setInterval(() => {
-      updateStoreTime();
-    }, 500);
-    
-    return () => clearInterval(interval);
+
+    // Initialize with current position
+    handleFrameUpdate();
+
+    try {
+      player.addEventListener('frameupdate', handleFrameUpdate as any);
+      console.log('[VideoPlayer] frameupdate listener ATTACHED');
+      return () => {
+        player.removeEventListener('frameupdate', handleFrameUpdate as any);
+      };
+    } catch {
+      // Fallback: poll at 30fps if frameupdate not available
+      const interval = setInterval(handleFrameUpdate, 33);
+      return () => clearInterval(interval);
+    }
   }, [playerRef, fps, setCurrentTime, isScrubbingRef]);
 
   // State to track actual container dimensions

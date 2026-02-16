@@ -216,7 +216,7 @@ export interface VideoEditorActions {
   ) => void;
   removeTransition: (id: string) => void;
   clearAllTransitions: () => void;
-  setTransitions: (transitions: Record<string, TransitionEntity>) => void;
+  setTransitions: (transitions: Record<string, TransitionEntity> | TransitionEntity[]) => void;
   /**
    * Get transitions for a specific clip
    */
@@ -1706,7 +1706,14 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
             },
 
             setTransitions: (transitions) => {
-              set({ transitions, isDirty: true });
+              // Accept both array and Record input for backward compat
+              const transitionsRecord = Array.isArray(transitions)
+                ? (transitions as TransitionEntity[]).reduce(
+                    (acc, t) => { acc[t.id] = t; return acc; },
+                    {} as Record<string, TransitionEntity>,
+                  )
+                : transitions;
+              set({ transitions: transitionsRecord, isDirty: true });
             },
 
             /**

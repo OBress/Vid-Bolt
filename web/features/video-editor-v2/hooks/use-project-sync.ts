@@ -118,6 +118,7 @@ export function useProjectSync(
     const payload = {
       timelineData: {
         tracks: store.tracks,
+        trackOrder: store.trackOrder,
         clips: store.clips,
         transitions: store.transitions,
         version: 2,
@@ -208,7 +209,8 @@ export function useProjectSync(
         const store = useVideoEditorStore.getState();
         const { timelineData, editorPreferences } = savedState as any;
         
-        let clipsToLoad = timelineData.clips || [];
+        const rawClips = timelineData.clips || [];
+        let clipsToLoad = Array.isArray(rawClips) ? rawClips : Object.values(rawClips);
         
         // Validate assets if enabled
         if (validateAssetsOnLoad && clipsToLoad.length > 0) {
@@ -242,14 +244,34 @@ export function useProjectSync(
         }
         
         // Initialize store with loaded data
+        // Note: saved state may store tracks/clips as Record<string, T> objects (store format)
+        // but setTracks/setClips expect arrays — normalize here.
         if (timelineData.tracks) {
-          store.setTracks(timelineData.tracks);
+          const tracksArray = Array.isArray(timelineData.tracks)
+            ? timelineData.tracks
+            : Object.values(timelineData.tracks);
+          // Restore saved track order if available, otherwise sort by track.order
+          if (timelineData.trackOrder && Array.isArray(timelineData.trackOrder)) {
+            const orderMap = new Map(timelineData.trackOrder.map((id: string, idx: number) => [id, idx]));
+            tracksArray.sort((a: any, b: any) => (orderMap.get(a.id) ?? a.order ?? 999) - (orderMap.get(b.id) ?? b.order ?? 999));
+          } else {
+            tracksArray.sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+          }
+          store.setTracks(tracksArray);
         }
-        if (clipsToLoad.length >= 0) {
-          store.setClips(clipsToLoad);
+        
+        const clipsArray = Array.isArray(clipsToLoad)
+          ? clipsToLoad
+          : Object.values(clipsToLoad);
+        if (clipsArray.length >= 0) {
+          store.setClips(clipsArray);
         }
+        
         if (timelineData.transitions) {
-          store.setTransitions(timelineData.transitions);
+          const transitionsArray = Array.isArray(timelineData.transitions)
+            ? timelineData.transitions
+            : Object.values(timelineData.transitions);
+          store.setTransitions(transitionsArray);
         }
         
         // Apply preferences

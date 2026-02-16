@@ -279,6 +279,8 @@ export function VideoCreationWizard({
 
   // Load existing video data when resuming
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
+  // Track if we resumed at step 7 so Step7Editor can skip its import animation
+  const resumedAtStep7Ref = useRef(false);
 
   useEffect(() => {
     async function loadVideoData() {
@@ -505,6 +507,9 @@ export function VideoCreationWizard({
         // Set the current step and max reached step
         setCurrentStep(targetStep);
         setMaxStepReached(targetStep);
+        if (targetStep === 7) {
+          resumedAtStep7Ref.current = true;
+        }
 
         // HOTFIX: If we are in Step 2 (Audio) but find 0 chunks, it means the previous generation failed silently.
         // Instead of trying to use the AsyncLoadingStep (which is getting stuck or invisible),
@@ -564,6 +569,11 @@ export function VideoCreationWizard({
       return;
     }
 
+    // Don't trigger while video data is still loading — edl may arrive shortly
+    if (isLoadingVideo) {
+      return;
+    }
+
     // Guard: don't trigger if already loading, already have a taskId, or no videoId
     if (state.isEdlLoading || state.edlTaskId || !state.videoId || edlTriggerRef.current) {
       return;
@@ -596,10 +606,10 @@ export function VideoCreationWizard({
         edlTriggerRef.current = false;
       }
     })();
-  // Only depend on step changes, videoId, and edl — NOT isEdlLoading/edlTaskId
+  // Only depend on step changes, videoId, edl, and isLoadingVideo — NOT isEdlLoading/edlTaskId
   // because we change those inside the effect and don't want to re-trigger
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentStep, state.videoId, state.edl]);
+  }, [currentStep, state.videoId, state.edl, isLoadingVideo]);
 
   // Helper to get lock state for a step
   const getLockState = (stepId: number) => {
@@ -1180,6 +1190,45 @@ export function VideoCreationWizard({
 
         // OPTIMISTIC: Advance to step 6 immediately
         advanceToStep(6);
+      } else if (currentStep === 6) {
+        // Step 6 → Step 7: Update stage + trigger EDL generation
+        if (state.videoId) {
+          console.log(
+            "[Wizard] Navigating to Step 7, updating stage and triggering EDL...",
+          );
+
+          // Update stage in background
+          fetch(`/api/videos/${state.videoId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ current_stage: "video" }),
+          }).catch((err) =>
+            console.error("[Wizard] Failed to update stage:", err),
+          );
+
+          // Trigger async EDL generation via BullMQ
+          setState((prev) => ({ ...prev, isEdlLoading: true }));
+          fetch('/api/process/edit-assembly', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId: state.videoId }),
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.taskId) {
+                setState((prev) => ({ ...prev, edlTaskId: data.taskId }));
+                console.log('[Wizard] EDL task created:', data.taskId);
+              } else {
+                console.warn('[Wizard] EDL trigger failed, continuing without EDL');
+                setState((prev) => ({ ...prev, isEdlLoading: false }));
+              }
+            })
+            .catch((edlErr) => {
+              console.warn('[Wizard] EDL trigger error:', edlErr);
+              setState((prev) => ({ ...prev, isEdlLoading: false }));
+            });
+        }
+        advanceToStep(7);
       } else {
         // Default: advance immediately
         advanceToStep(nextStep);
@@ -1245,6 +1294,9 @@ export function VideoCreationWizard({
                 stateUpdates.edl = null;
                 stateUpdates.isEdlLoading = false;
                 stateUpdates.edlTaskId = null;
+                // Reset resumedAtStep7Ref so that re-entering step 7
+                // treats it as a fresh wizard import (not a resume)
+                resumedAtStep7Ref.current = false;
                 break;
             }
 
@@ -2213,7 +2265,8 @@ export function VideoCreationWizard({
       case 7: // Editor (restored)
         // Show loading screen while EDL is being generated
         // (either from step 6 onContinue or auto-triggered by useEffect above)
-        if (state.isEdlLoading) {
+        // Skip if we already have an EDL (e.g. resuming a completed step 7)
+        if (state.isEdlLoading && !state.edl) {
           return (
             <AsyncLoadingStep
               title="Generating Edit Decisions"
@@ -2274,6 +2327,7 @@ export function VideoCreationWizard({
             shotList={state.avScriptPart1Output?.shots || state.shotList}
             generatedMedia={state.generatedMedia}
             edl={state.edl}
+            isResuming={resumedAtStep7Ref.current}
             onContinue={async () => {
               if (state.videoId) {
                 try {

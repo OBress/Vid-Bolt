@@ -484,6 +484,26 @@ async function resetStepData(
           delete metadataUpdates.edl;
           result.resetFields.push('metadata.edl');
         }
+
+        // Also delete persisted editor timeline state from separate table.
+        // Without this, useProjectSync.load() restores stale tracks on re-entry.
+        try {
+          const { error: deleteStateError } = await supabase
+            .from('video_project_state')
+            .delete()
+            .eq('project_id', videoId);
+          if (deleteStateError) {
+            result.errors.push(`Failed to delete video_project_state: ${deleteStateError.message}`);
+            console.error('[Reset Step 7] Error deleting video_project_state:', deleteStateError);
+          } else {
+            result.resetFields.push('video_project_state');
+            console.log('[Reset Step 7] Deleted video_project_state row');
+          }
+        } catch (stateDeleteError) {
+          const errorMsg = stateDeleteError instanceof Error ? stateDeleteError.message : String(stateDeleteError);
+          result.errors.push(`video_project_state cleanup failed: ${errorMsg}`);
+          console.error('[Reset Step 7] video_project_state cleanup error:', stateDeleteError);
+        }
         break;
 
       case 8: // Export

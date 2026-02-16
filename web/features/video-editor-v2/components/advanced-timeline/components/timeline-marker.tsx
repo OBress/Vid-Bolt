@@ -1,5 +1,6 @@
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { useOptimizedScrubbing } from "../../../hooks/use-optimized-scrubbing";
+import { subscribeToPlayhead } from "../../../hooks/playhead-frame-bridge";
 
 /**
  * Props for the TimelineMarker component.
@@ -54,6 +55,33 @@ export const TimelineMarker: React.FC<TimelineMarkerProps> = ({
   onDragStateChange,
 }) => {
   const isDraggingRef = useRef(false);
+  const markerRef = useRef<HTMLDivElement>(null);
+  
+  // PERF: Subscribe to the playhead bridge for real-time DOM updates during playback.
+  // This bypasses React re-renders and updates the CSS custom property directly.
+  useEffect(() => {
+    const unsub = subscribeToPlayhead((frame, bridgeFps) => {
+      if (isDraggingRef.current) return; // Don't override drag position
+      const el = markerRef.current;
+      if (!el || !bridgeFps || bridgeFps <= 0) return;
+
+      // Recalculate position using the same logic as the React render path
+      let pos: number;
+      if (viewportDuration && viewportDuration > 0 && visibleStartTime !== undefined) {
+        const playheadTime = frame / bridgeFps;
+        pos = ((playheadTime - visibleStartTime) / viewportDuration) * 100;
+      } else if (totalDuration && totalDuration > 0) {
+        pos = ((frame / bridgeFps) / totalDuration) * 100;
+      } else if (totalDurationInFrames > 0) {
+        pos = (frame / totalDurationInFrames) * 100;
+      } else {
+        pos = 0;
+      }
+
+      el.style.left = `${pos}%`;
+    });
+    return unsub;
+  }, [fps, totalDuration, totalDurationInFrames, visibleStartTime, viewportDuration]);
   
   // Use optimized scrubbing hook for smooth, throttled updates
   const { startScrubbing, updateTime, endScrubbing } = useOptimizedScrubbing({
@@ -151,14 +179,22 @@ export const TimelineMarker: React.FC<TimelineMarkerProps> = ({
     document.addEventListener('mouseup', handleMouseUp);
   }, [totalDuration, visibleStartTime, viewportDuration, startScrubbing, updateTime, endScrubbing]);
 
+  // Set initial position and update when paused (React prop-driven).
+  // During playback, the bridge subscription above handles left updates.
+  useEffect(() => {
+    const el = markerRef.current;
+    if (!el) return;
+    el.style.left = `${clampedPosition}%`;
+  }, [clampedPosition]);
+
   return (
     <div
+      ref={markerRef}
       className="absolute top-0 z-50"
       data-timeline-marker="playhead"
       style={{
-        // Use CSS custom property if set (for exact positioning after clicks),
-        // otherwise fall back to calculated position
-        left: `var(--timeline-marker-position, ${clampedPosition}%)`,
+        // NOTE: `left` is NOT set here — it's controlled imperatively via the ref
+        // to prevent React re-renders from overwriting the bridge's 60fps DOM updates.
         transform: "translateX(-50%)",
         height: "100%",
         width: "2px",

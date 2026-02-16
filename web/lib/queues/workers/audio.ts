@@ -205,7 +205,7 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
         audio_chunks: uploadedChunks.map(c => ({
           chapterNumber: c.chunkIndex,
           url: c.url,
-          durationSeconds: c.durationSeconds,
+          duration_seconds: c.durationSeconds,
           wordTimestamps: c.wordTimestamps,
           text: c.text,
         }))

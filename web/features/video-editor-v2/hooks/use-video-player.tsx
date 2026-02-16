@@ -21,9 +21,15 @@ export const useVideoPlayer = (fps: number = 30, externalPlayerRef?: React.RefOb
     if (playerRef.current) {
       const player = playerRef.current;
       
-      const handlePlay = () => setIsPlaying(true);
-      const handlePause = () => setIsPlaying(false);
-      const handleEnded = () => setIsPlaying(false);
+      const handlePlay = () => {
+        setIsPlaying(true);
+      };
+      const handlePause = () => {
+        setIsPlaying(false);
+      };
+      const handleEnded = () => {
+        setIsPlaying(false);
+      };
       
       // Add event listeners to sync state
       try {
@@ -45,26 +51,9 @@ export const useVideoPlayer = (fps: number = 30, externalPlayerRef?: React.RefOb
     return undefined;
   }, [playerRef]);
 
-  // Frame update via Remotion's frameupdate event (replaces rAF polling)
-  // This only fires when the frame actually changes — during playback or seeking
-  useEffect(() => {
-    if (!playerRef.current) return;
-    const player = playerRef.current;
-
-    const handleFrameUpdate = (e: { detail: { frame: number } }) => {
-      setCurrentFrame(Math.round(e.detail.frame));
-    };
-
-    try {
-      player.addEventListener('frameupdate', handleFrameUpdate as any);
-      return () => {
-        player.removeEventListener('frameupdate', handleFrameUpdate as any);
-      };
-    } catch (e) {
-      console.warn('[useVideoPlayer] frameupdate listener not available:', e);
-      return undefined;
-    }
-  }, [playerRef]);
+  // NOTE: Frame updates (frameupdate event) are handled in video-player.tsx
+  // where the Player ref is guaranteed to be available. This hook only manages
+  // play/pause/seek controls and isPlaying state.
 
   /**
    * Starts playing the video

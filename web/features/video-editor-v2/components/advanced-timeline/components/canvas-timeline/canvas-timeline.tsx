@@ -43,6 +43,7 @@ import {
 } from './canvas-timeline-utils';
 import { useCanvasKeyboard } from './use-canvas-keyboard';
 import { CanvasTimelineAria } from './canvas-timeline-aria';
+import { subscribeToPlayhead } from '../../../../hooks/playhead-frame-bridge';
 import type { CanvasContextMenuData } from './canvas-timeline-item';
 import type { TrackWithClips, TimelineItem } from '../../../../stores/memoized-selectors';
 import { TIMELINE_CONSTANTS, TIMELINE_DIMENSIONS_REM } from '../../constants';
@@ -175,12 +176,25 @@ const CanvasTimelineContent = React.memo(function CanvasTimelineContent({
     [tracks, trackHeight, collapsedGroups],
   );
 
-  // Compute playhead X position
+  // Compute playhead X position (used as initial value; bridge updates imperatively during playback)
   const playheadX = useMemo(() => {
     if (fps <= 0 || scrollableDuration <= 0) return 0;
     const currentTime = currentFrame / fps;
     return timeToX(currentTime, scrollableDuration, scrollableWidth);
   }, [currentFrame, fps, scrollableDuration, scrollableWidth]);
+
+  // PERF: Subscribe to the playhead bridge for real-time PixiJS playhead updates.
+  // This bypasses React.memo and re-renders — the Container.x is set imperatively.
+  const playheadContainerRef = useRef<Container>(null);
+  useEffect(() => {
+    const unsub = subscribeToPlayhead((frame, bridgeFps) => {
+      const container = playheadContainerRef.current;
+      if (!container || bridgeFps <= 0 || scrollableDuration <= 0) return;
+      const time = frame / bridgeFps;
+      container.x = timeToX(time, scrollableDuration, scrollableWidth);
+    });
+    return unsub;
+  }, [scrollableDuration, scrollableWidth]);
 
   // Compute track Y positions (only for non-collapsed groups)
   const trackLayouts = useMemo(() => {
@@ -294,10 +308,12 @@ const CanvasTimelineContent = React.memo(function CanvasTimelineContent({
       />
 
       {/* Playhead line (rendered on top of all tracks) */}
-      <CanvasPlayhead
-        x={playheadX}
-        height={contentHeight}
-      />
+      <pixiContainer ref={playheadContainerRef} x={playheadX} y={0}>
+        <CanvasPlayhead
+          x={0}
+          height={contentHeight}
+        />
+      </pixiContainer>
     </pixiContainer>
   );
 });

@@ -162,7 +162,8 @@ export function importWizardDataToStore(options: WizardData): boolean {
 
   // ─── Phase 1: Audio Track ──────────────────────────────────────
   if (hasAudio) {
-    const audioTrackId = generateId('track');
+    // Reuse existing default audio track to avoid duplicates
+    const audioTrackId = store.tracks['track-audio-1'] ? 'track-audio-1' : generateId('track');
     const audioTrack: TimelineTrack = {
       id: audioTrackId,
       type: 'audio',
@@ -185,7 +186,16 @@ export function importWizardDataToStore(options: WizardData): boolean {
 
     let currentTime = 0;
     for (const chunk of sortedChunks) {
-      const durationSec = chunk.duration_seconds || 5;
+      console.log(`[WizardDataImport] Audio chunk ${chunk.chapterNumber}: duration_seconds=${chunk.duration_seconds}, durationSeconds=${(chunk as any).durationSeconds}, keys=${Object.keys(chunk).join(',')}`);
+      const durationSec = chunk.duration_seconds || (chunk as any).durationSeconds;
+      if (!durationSec || durationSec <= 0) {
+        throw new Error(
+          `[WizardDataImport] Audio chunk ${chunk.chapterNumber} has no valid duration ` +
+          `(duration_seconds=${chunk.duration_seconds}, durationSeconds=${(chunk as any).durationSeconds}). ` +
+          `The audio data is incomplete — aborting import.`
+        );
+      }
+      console.log(`[WizardDataImport] Audio chunk ${chunk.chapterNumber}: resolved duration = ${durationSec}s`);
       const audioSrc = rewriteR2Url(chunk.url);
       const clipId = generateId('clip');
 
@@ -222,7 +232,8 @@ export function importWizardDataToStore(options: WizardData): boolean {
 
   // ─── Phase 2: Visual Track ─────────────────────────────────────
   if (hasShots) {
-    const videoTrackId = generateId('track');
+    // Reuse existing default video track to avoid duplicates
+    const videoTrackId = store.tracks['track-video-1'] ? 'track-video-1' : generateId('track');
     const videoTrack: TimelineTrack = {
       id: videoTrackId,
       type: 'video',
@@ -340,7 +351,8 @@ export function importWizardDataToStore(options: WizardData): boolean {
 
       // 3b. Text overlays
       if (edl.textOverlays && edl.textOverlays.length > 0) {
-        const textTrackId = generateId('track');
+        // Reuse existing default video track 2 for text overlays
+        const textTrackId = store.tracks['track-video-2'] ? 'track-video-2' : generateId('track');
         const textTrack: TimelineTrack = {
           id: textTrackId,
           type: 'video',
@@ -356,8 +368,10 @@ export function importWizardDataToStore(options: WizardData): boolean {
         };
         tracksToAdd[textTrackId] = textTrack;
         // Insert after video track but before audio
-        const videoIdx = trackOrderToAdd.findIndex(id => tracksToAdd[id]?.type === 'video');
-        trackOrderToAdd.splice(videoIdx + 1, 0, textTrackId);
+        if (!trackOrderToAdd.includes(textTrackId)) {
+          const videoIdx = trackOrderToAdd.findIndex(id => tracksToAdd[id]?.type === 'video');
+          trackOrderToAdd.splice(videoIdx + 1, 0, textTrackId);
+        }
 
         for (const overlay of edl.textOverlays) {
           const fontSize = overlay.fontSize || (overlay.style === 'chapterTitle' ? 72 : 36);
@@ -452,26 +466,17 @@ export function importWizardDataToStore(options: WizardData): boolean {
   const transitionCount = Object.keys(transitionsToAdd).length;
 
   console.log(`[WizardDataImport] Committing: ${trackCount} tracks, ${clipCount} clips, ${transitionCount} transitions`);
+  console.log(`[WizardDataImport] tracksToAdd keys:`, Object.keys(tracksToAdd));
+  console.log(`[WizardDataImport] trackOrderToAdd:`, trackOrderToAdd);
+  console.log(`[WizardDataImport] Existing store tracks:`, Object.keys(store.tracks));
+  console.log(`[WizardDataImport] Existing store trackOrder:`, store.trackOrder);
 
   useVideoEditorStore.setState((state) => {
-    // Merge tracks
-    Object.assign(state.tracks, tracksToAdd);
-
-    // Build correct track order: video tracks first, then audio
-    const existingVideoOrder = state.trackOrder.filter(
-      id => state.tracks[id]?.type === 'video'
-    );
-    const existingAudioOrder = state.trackOrder.filter(
-      id => state.tracks[id]?.type === 'audio'
-    );
-    const newVideoTracks = trackOrderToAdd.filter(id => tracksToAdd[id]?.type === 'video');
-    const newAudioTracks = trackOrderToAdd.filter(id => tracksToAdd[id]?.type === 'audio');
-    state.trackOrder = [
-      ...existingVideoOrder,
-      ...newVideoTracks,
-      ...existingAudioOrder,
-      ...newAudioTracks,
-    ];
+    // REPLACE tracks entirely — wizard-built tracks are the source of truth.
+    // The guard at the top (existingClipCount > 0) ensures the store is empty
+    // when this runs, so replacing is safe.
+    state.tracks = tracksToAdd;
+    state.trackOrder = trackOrderToAdd;
 
     // Update track orders
     state.trackOrder.forEach((id, index) => {
@@ -480,11 +485,9 @@ export function importWizardDataToStore(options: WizardData): boolean {
       }
     });
 
-    // Merge clips
-    Object.assign(state.clips, clipsToAdd);
-
-    // Merge transitions
-    Object.assign(state.transitions, transitionsToAdd);
+    // REPLACE clips & transitions entirely
+    state.clips = clipsToAdd;
+    state.transitions = transitionsToAdd;
 
     // Mark dirty for auto-save
     state.isDirty = true;

@@ -213,11 +213,8 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
   const isScrubbingRef = useRef(false);
   
   // Sync playback state to store
-  useEffect(() => {
-    const store = useVideoEditorStore.getState();
-    store.setCurrentFrame(currentFrame);
-  }, [currentFrame]);
-  
+  // NOTE: currentFrame sync is handled directly in useVideoPlayer's frameupdate handler
+  // for real-time performance. Only isPlaying needs the useEffect bridge here.
   useEffect(() => {
     const store = useVideoEditorStore.getState();
     store.setIsPlaying(isPlaying);

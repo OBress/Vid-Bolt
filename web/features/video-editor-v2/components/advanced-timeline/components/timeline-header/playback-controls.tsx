@@ -1,10 +1,11 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 
 import { Play, Pause, SkipBack, SkipForward } from "lucide-react";
 
 import { Button } from "../../../ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../ui/dropdown-menu";
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@radix-ui/react-tooltip";
+import { subscribeToPlayhead } from "../../../../hooks/playhead-frame-bridge";
 
 
 interface PlaybackControlsProps {
@@ -32,6 +33,21 @@ export const PlaybackControls: React.FC<PlaybackControlsProps> = ({
   playbackRate = 1,
   setPlaybackRate,
 }) => {
+  // PERF: Bridge subscription for real-time time display at 60fps during playback.
+  // Without this, the time only updates when the React prop changes (every ~10 frames).
+  const timeDisplayRef = useRef<HTMLSpanElement>(null);
+  const formatTimeRef = useRef(formatTime);
+  formatTimeRef.current = formatTime;
+
+  useEffect(() => {
+    const unsub = subscribeToPlayhead((frame, bridgeFps) => {
+      const el = timeDisplayRef.current;
+      if (!el || bridgeFps <= 0) return;
+      const time = frame / bridgeFps;
+      el.textContent = formatTimeRef.current(time);
+    });
+    return unsub;
+  }, []);
   const handlePlayPause = () => {
     if (isPlaying) {
       onPause?.();
@@ -172,7 +188,7 @@ export const PlaybackControls: React.FC<PlaybackControlsProps> = ({
 
       {/* Time Display */}
       <div className="flex items-center space-x-1 ml-1">
-        <span className="text-xs font-extralight text-text-primary tabular-nums">
+        <span ref={timeDisplayRef} className="text-xs font-extralight text-text-primary tabular-nums">
           {formatTime(currentTime)}
         </span>
         <span className="text-xs font-extralight text-text-tertiary">

@@ -40,6 +40,9 @@ interface Step7EditorProps {
   onBack?: () => void;
   isLocked?: boolean;
   lockedMessage?: string;
+  /** Set to true when resuming a previously-visited step 7 (stage was already 'video').
+   *  Skips the import animation and loads from persisted editor state instead. */
+  isResuming?: boolean;
 }
 
 // ============================================================
@@ -184,11 +187,17 @@ export function Step7Editor({
   onBack,
   isLocked,
   lockedMessage,
+  isResuming = false,
 }: Step7EditorProps) {
-  const [isImporting, setIsImporting] = useState(true);
+  // When resuming, skip animation entirely (synchronous — no API call, no flash)
+  const [isImporting, setIsImporting] = useState(!isResuming);
   const [importProgress, setImportProgress] = useState(0);
   const [importStep, setImportStep] = useState(0);
   const hasStartedImportRef = useRef(false);
+  // If resuming, load from Supabase persisted state instead of re-importing wizard data
+  const hasSavedState = isResuming;
+
+  console.log(`[Step7Editor] Mount: isResuming=${isResuming}, isImporting=${!isResuming}`);
 
   // Memoize wizard data to prevent reference changes between renders
   const wizardData: WizardData = useMemo(() => ({
@@ -204,7 +213,7 @@ export function Step7Editor({
 
   // Simulate progress animation, then check if clips exist before showing editor
   useEffect(() => {
-    if (hasStartedImportRef.current) return;
+    if (hasStartedImportRef.current || isImporting !== true) return;
     hasStartedImportRef.current = true;
 
     const totalDuration = 2000; // 2 seconds total animation
@@ -226,7 +235,7 @@ export function Step7Editor({
         setIsImporting(false);
       }, 500);
     }, totalDuration);
-  }, []);
+  }, [isImporting]);
 
   // If clips appear in the store before the animation finishes, fast-forward
   useEffect(() => {
@@ -244,6 +253,7 @@ export function Step7Editor({
     shotList: shotList?.length || 0,
     generatedMedia: generatedMedia?.length || 0,
     isImporting,
+    hasSavedState,
     clipCount,
   });
 
@@ -298,8 +308,8 @@ export function Step7Editor({
       <div className="flex-1 overflow-hidden bg-background">
         <ReactVideoEditor
           projectId={videoId}
-          skipInitialLoad={true}
-          wizardData={wizardData}
+          skipInitialLoad={!hasSavedState}
+          wizardData={hasSavedState ? undefined : wizardData}
           projectTitle="Video Editor"
           fps={30}
           videoWidth={1920}
