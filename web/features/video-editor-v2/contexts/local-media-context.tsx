@@ -4,6 +4,8 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useMemo,
+  useRef,
 } from "react";
 import { LocalMediaFile } from "../types";
 import { useAuth } from "@/hooks/use-auth";
@@ -72,7 +74,7 @@ export const LocalMediaProvider: React.FC<{
   const [isLoading, setIsLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [totalCount, setTotalCount] = useState(0);
-  const [currentOffset, setCurrentOffset] = useState(0);
+  const currentOffsetRef = useRef(0);
   
   const { user } = useAuth();
 
@@ -82,14 +84,15 @@ export const LocalMediaProvider: React.FC<{
   const loadMediaFiles = useCallback(async (reset = true) => {
     if (!user?.id) {
       console.log('[LocalMedia] No authenticated user, skipping media load');
-      setLocalMediaFiles([]);
-      setTotalCount(0);
+      // Avoid creating new empty array refs if already empty
+      setLocalMediaFiles(prev => prev.length === 0 ? prev : []);
+      setTotalCount(prev => prev === 0 ? prev : 0);
       return;
     }
 
     try {
       setIsLoading(true);
-      const offset = reset ? 0 : currentOffset;
+      const offset = reset ? 0 : currentOffsetRef.current;
       console.log('[LocalMedia] Loading media from S3/Supabase for project:', projectId || 'all', 'offset:', offset);
       
       const { media, total } = await getMedia(projectId, { limit: PAGE_SIZE, offset });
@@ -99,22 +102,22 @@ export const LocalMediaProvider: React.FC<{
       
       if (reset) {
         setLocalMediaFiles(files);
-        setCurrentOffset(PAGE_SIZE);
+        currentOffsetRef.current = PAGE_SIZE;
       } else {
         setLocalMediaFiles((prev) => [...prev, ...files]);
-        setCurrentOffset((prev) => prev + PAGE_SIZE);
+        currentOffsetRef.current += PAGE_SIZE;
       }
       setTotalCount(total);
     } catch (error) {
       console.error("[LocalMedia] Error loading media files:", error);
       if (reset) {
-        setLocalMediaFiles([]);
-        setTotalCount(0);
+        setLocalMediaFiles(prev => prev.length === 0 ? prev : []);
+        setTotalCount(prev => prev === 0 ? prev : 0);
       }
     } finally {
       setIsLoading(false);
     }
-  }, [user?.id, projectId, currentOffset]);
+  }, [user?.id, projectId]);
 
   useEffect(() => {
     loadMediaFiles();
@@ -228,7 +231,7 @@ export const LocalMediaProvider: React.FC<{
     await loadMediaFiles(false);
   }, [loadMediaFiles, hasMore, isLoading]);
 
-  const value = {
+  const value = useMemo(() => ({
     localMediaFiles,
     addMediaFile,
     removeMediaFile,
@@ -239,7 +242,7 @@ export const LocalMediaProvider: React.FC<{
     uploadProgress,
     hasMore,
     totalCount,
-  };
+  }), [localMediaFiles, addMediaFile, removeMediaFile, clearMediaFiles, refreshMedia, loadMore, isLoading, uploadProgress, hasMore, totalCount]);
 
   return (
     <LocalMediaContext.Provider value={value}>

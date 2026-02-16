@@ -113,6 +113,7 @@ export interface WizardState {
   assetReferenceImages: Record<string, string> | null;
   // Edit Decision List (Step 6 → Step 7 transition)
   edl: EditDecisionList | null;
+  agentEdl: any | null; // EditorAgentEDL v2 format
   edlTaskId: string | null;
   isEdlLoading: boolean;
 }
@@ -239,6 +240,7 @@ export function VideoCreationWizard({
     assetImageTaskId: null,
     assetReferenceImages: null,
     edl: null,
+    agentEdl: null,
     edlTaskId: null,
     isEdlLoading: false,
   });
@@ -417,6 +419,7 @@ export function VideoCreationWizard({
           assetReferenceImages:
             (video.metadata as any)?.assetReferenceImages || null,
           edl: (video.metadata as any)?.edl || null,
+          agentEdl: (video.metadata as any)?.agentEdl || null,
           edlTaskId: null,
           isEdlLoading: false,
         });
@@ -2281,6 +2284,7 @@ export function VideoCreationWizard({
               onComplete={async (output) => {
                 console.log('[Wizard] EDL task complete, output:', output);
                 let edl = (output as any)?.edl || null;
+                let agentEdl = (output as any)?.agentEdl || null;
 
                 // Fallback: if task output doesn't contain EDL, fetch from project metadata
                 if (!edl && state.videoId) {
@@ -2290,7 +2294,8 @@ export function VideoCreationWizard({
                     if (res.ok) {
                       const data = await res.json();
                       edl = (data.video?.metadata as any)?.edl || null;
-                      console.log('[Wizard] EDL from metadata:', edl ? 'found' : 'not found');
+                      agentEdl = (data.video?.metadata as any)?.agentEdl || null;
+                      console.log('[Wizard] EDL from metadata:', edl ? 'found' : 'not found', 'agentEdl:', agentEdl ? 'found' : 'not found');
                     }
                   } catch (err) {
                     console.warn('[Wizard] Failed to fetch EDL from metadata:', err);
@@ -2301,6 +2306,7 @@ export function VideoCreationWizard({
                 setState((prev) => ({
                   ...prev,
                   edl,
+                  agentEdl,
                   isEdlLoading: false,
                   edlTaskId: null,
                 }));
@@ -2327,6 +2333,7 @@ export function VideoCreationWizard({
             shotList={state.avScriptPart1Output?.shots || state.shotList}
             generatedMedia={state.generatedMedia}
             edl={state.edl}
+            agentEdl={state.agentEdl}
             isResuming={resumedAtStep7Ref.current}
             onContinue={async () => {
               if (state.videoId) {

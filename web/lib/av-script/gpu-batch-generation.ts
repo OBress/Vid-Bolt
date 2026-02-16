@@ -72,6 +72,10 @@ export interface ShotForGpuGeneration {
   image_count?: number;
   /** Pre-matched stock media refs for multi-image shots */
   stock_media_refs?: Array<{ id: string; url: string; thumbnailUrl: string; description: string; similarity: number }>;
+  /** Routing tags for generation tool selection */
+  visual_elements?: import('@/types/video').RoutingTag[];
+  /** Narration text for MG pacing */
+  narration_text?: string;
 }
 
 export interface GpuGenerationResult {
@@ -227,13 +231,42 @@ export async function processGpuBatchGeneration(
     videosFailed: 0,
   };
 
-  // Separate shots by final output type
+  // -------------------------------------------------------------------------
+  // Separate shots by final output type, distinguishing MG sub-categories:
+  //  - Pure MG (remotion_overlay only): skip GPU entirely, Remotion code is the output
+  //  - Hybrid MG (remotion_image_manipulation / remotion_video_manipulation):
+  //      still need an AI image as input for the Remotion code
+  //  - Video shots: need keyframe image → then video gen
+  //  - Image-only shots (ai_image): just GPU image
+  // -------------------------------------------------------------------------
   const videoShots = shots.filter(s => s.media_type === 'video');
-  const standaloneImageShots = shots.filter(s => s.media_type !== 'video');
-  // ALL shots need keyframe images (motiongraphics as final output, videos as start frames)
+
+  // Helper: does this MG shot need a base AI image?
+  const mgNeedsBaseImage = (s: ShotForGpuGeneration) =>
+    s.media_type === 'motiongraphic' &&
+    s.visual_elements?.some(t => t === 'remotion_image_manipulation' || t === 'remotion_video_manipulation');
+
+  const pureMgShots = shots.filter(
+    s => s.media_type === 'motiongraphic' && !mgNeedsBaseImage(s)
+  );
+  const hybridMgShots = shots.filter(s => mgNeedsBaseImage(s));
+  // Image-only shots: everything that isn't video or motiongraphic
+  const imageOnlyShots = shots.filter(s => s.media_type !== 'video' && s.media_type !== 'motiongraphic');
+  // Standalone images = pure image shots + hybrid MG shots (hybrid need base images)
+  const standaloneImageShots = [...imageOnlyShots, ...hybridMgShots];
+  // ALL shots that need keyframe images: standalone + video
   const allShotsForImages = [...standaloneImageShots, ...videoShots];
 
-  console.log(`${logPrefix} Processing: ${standaloneImageShots.length} standalone images, ${videoShots.length} videos (all ${allShotsForImages.length} shots need keyframe images)`);
+  console.log(`${logPrefix} Processing: ${imageOnlyShots.length} images, ${videoShots.length} videos, ${pureMgShots.length} pure MG (skipped), ${hybridMgShots.length} hybrid MG (need base images)`);
+
+  // Pure MG shots don't need GPU at all — mark them for Remotion processing
+  for (const shot of pureMgShots) {
+    results.push({
+      shot_index: shot.segment_index,
+      media_url: `remotion://${shot.segment_index}`,
+      generation_status: 'completed',
+    });
+  }
 
   // =========================================================================
   // STEP 1: Generate keyframe images for ALL shots

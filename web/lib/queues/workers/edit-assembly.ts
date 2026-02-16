@@ -3,20 +3,19 @@
  * ============================================================================
  * BullMQ worker that generates an Edit Decision List (EDL) via chunked AI calls.
  *
+ * V2: Produces EditorAgentEDL with multi-track, effects, keyframes, text styling.
+ *
  * Phases:
  *   1. Context Analysis (0-10%)  — Load project data from Supabase
  *   2. Chunked EDL  (10-80%)    — Batch shots (~10 per batch), each with prior context
  *   3. Reconciliation (80-90%)  — Merge chunks, validate, fix overlaps
  *   4. Finalize (90-100%)       — Save merged EDL to video_projects.metadata
- *
- * Job data comes from the trigger route: /api/process/edit-assembly
  */
 
 import { Job, Processor } from 'bullmq';
 import {
   getSupabaseServiceClient,
   addTaskStep,
-  updateStepStatus,
   completeStep,
   failStep,
   updateTaskStatus,
@@ -29,6 +28,11 @@ import {
 import type {
   EditDecisionList,
 } from '@/lib/services/edit-assembly/edit-assembly-prompts';
+import type {
+  EditorAgentEDL,
+  AgentClip,
+  AgentTrack,
+} from '@/lib/services/edit-assembly/editor-capability-manifest';
 import type { GeneratedMedia } from '@/types/video';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
 
@@ -100,7 +104,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     const shots = (avScriptPart1.shots || []) as unknown as AssembleEditRequest['shots'];
     const generatedMedia = (metadata.generatedMedia || []) as unknown as GeneratedMedia[];
 
-    // Fix #7: Map audio chunks with correct field names
+    // Map audio chunks with correct field names
     const rawAudioChunks = (metadata.audio_chunks || []) as unknown as Array<Record<string, unknown>>;
     const audioChunks: AssembleEditRequest['audioChunks'] = rawAudioChunks.map((c) => ({
       index: (c.chapterNumber as number) ?? (c.index as number) ?? 0,
@@ -109,7 +113,6 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       audio_url: (c.url as string) || (c.audio_url as string) || undefined,
     }));
 
-    // Fix #8: Use script_content instead of metadata.raw_script
     const scriptText = (project.script_content as string) || (metadata.raw_script as string) || '';
 
     const model = 'google/gemini-3-flash-preview';
@@ -129,7 +132,6 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     // =====================================================================
     // PHASE 2: Chunked EDL Generation (10-80%)
     // =====================================================================
-    // For small projects, process all at once. For larger ones, chunk.
     const totalBatches = Math.ceil(shots.length / SHOTS_PER_BATCH);
     const isChunked = totalBatches > 1;
 
@@ -139,7 +141,8 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       console.log(`[EditAssembly Worker] Single-pass mode: ${shots.length} shots`);
     }
 
-    const chunkEDLs: EditDecisionList[] = [];
+    const chunkAgentEDLs: EditorAgentEDL[] = [];
+    const chunkLegacyEDLs: EditDecisionList[] = [];
 
     for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
       const batchStart = batchIdx * SHOTS_PER_BATCH;
@@ -164,7 +167,6 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
 
       // Filter audio chunks relevant to this batch
       const batchAudioChunks = audioChunks.filter((c) => {
-        // Audio chunks are matched by index to shot indices
         return batchShotIndices.has(c.index);
       });
 
@@ -181,10 +183,18 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
           model,
         });
 
-        if (result.success && result.edl) {
-          chunkEDLs.push(result.edl);
+        if (result.success) {
+          if (result.agentEdl) {
+            chunkAgentEDLs.push(result.agentEdl);
+          }
+          if (result.edl) {
+            chunkLegacyEDLs.push(result.edl);
+          }
           await completeStep(taskId, batchStepId);
-          console.log(`[EditAssembly Worker] Batch ${batchIdx + 1}/${totalBatches} complete: ${result.edl.clips.length} clips`);
+
+          const clipCount = result.agentEdl?.clips.length ?? result.edl?.clips.length ?? 0;
+          const textCount = result.agentEdl?.clips.filter(c => c.type === 'text').length ?? 0;
+          console.log(`[EditAssembly Worker] Batch ${batchIdx + 1}/${totalBatches} complete: ${clipCount} clips, ${textCount} text overlays`);
         } else {
           await failStep(taskId, batchStepId, result.error || 'Unknown EDL generation error');
           console.error(`[EditAssembly Worker] Batch ${batchIdx + 1} failed:`, result.error);
@@ -207,10 +217,17 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       progress_percent: 85,
     });
 
-    // Merge all chunk EDLs into one
-    const mergedEDL = mergeEDLChunks(chunkEDLs);
+    // Merge v2 agent EDLs
+    const mergedAgentEDL = mergeAgentEDLChunks(chunkAgentEDLs);
+    // Merge legacy EDLs for backward compat
+    const mergedLegacyEDL = mergeLegacyEDLChunks(chunkLegacyEDLs);
 
-    console.log(`[EditAssembly Worker] Merged EDL: ${mergedEDL.clips.length} clips, ${mergedEDL.transitions.length} transitions, ${mergedEDL.textOverlays.length} text overlays`);
+    const totalClips = mergedAgentEDL.clips.length;
+    const totalTracks = mergedAgentEDL.tracks.length;
+    const totalTextClips = mergedAgentEDL.clips.filter(c => c.type === 'text').length;
+    const totalKeyframedClips = mergedAgentEDL.clips.filter(c => c.keyframes && c.keyframes.length > 0).length;
+
+    console.log(`[EditAssembly Worker] Merged Agent EDL: ${totalTracks} tracks, ${totalClips} clips, ${totalTextClips} text clips, ${totalKeyframedClips} keyframed clips`);
 
     await completeStep(taskId, reconStepId);
 
@@ -225,11 +242,13 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       progress_percent: 95,
     });
 
-    // Save EDL to video_projects.metadata
+    // Save BOTH formats to video_projects.metadata
     const updatedMetadata = {
       ...metadata,
-      edl: mergedEDL,
+      edl: mergedLegacyEDL,          // Legacy format for backward compat
+      agentEdl: mergedAgentEDL,       // V2 format with full capability support
       edl_generated_at: new Date().toISOString(),
+      edl_version: 'v2',
     };
 
     const { error: updateError } = await supabase
@@ -241,9 +260,10 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       throw new Error(`Failed to save EDL: ${updateError.message}`);
     }
 
-    // Save EDL to task output for the AsyncLoadingStep's onComplete callback
+    // Save to task output for the AsyncLoadingStep's onComplete callback
     await updateTaskOutput(taskId, {
-      edl: mergedEDL as unknown as Record<string, unknown>,
+      edl: mergedLegacyEDL as unknown as Record<string, unknown>,
+      agentEdl: mergedAgentEDL as unknown as Record<string, unknown>,
     } as any);
 
     await completeStep(taskId, finalStepId);
@@ -258,7 +278,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
 
     console.log(`[EditAssembly Worker] Task ${taskId} completed successfully`);
 
-    return { success: true, edl: mergedEDL };
+    return { success: true, agentEdl: mergedAgentEDL, edl: mergedLegacyEDL };
   } catch (error) {
     console.error(`[EditAssembly Worker] Task ${taskId} failed:`, error);
 
@@ -268,34 +288,104 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       completed_at: new Date().toISOString(),
     });
 
-    throw error; // Re-throw so BullMQ retries if applicable
+    throw error;
   }
 };
 
 // ============================================================================
-// EDL CHUNK MERGER
+// AGENT EDL CHUNK MERGER (V2)
 // ============================================================================
 
-/**
- * Merge multiple EDL chunks into a single unified EDL.
- * Concatenates all arrays and validates there are no overlapping clips.
- */
-function mergeEDLChunks(chunks: EditDecisionList[]): EditDecisionList {
+function mergeAgentEDLChunks(chunks: EditorAgentEDL[]): EditorAgentEDL {
   if (chunks.length === 0) {
     return {
+      tracks: [{ id: 'main-video', type: 'video', name: 'Main Video', group: 'video', order: 0 }],
       clips: [],
       transitions: [],
-      effects: [],
-      textOverlays: [],
-      motionGraphics: [],
-      audioEffects: [],
+      audioFades: [],
       mediaIssues: [],
     };
   }
 
-  if (chunks.length === 1) {
-    return chunks[0];
+  if (chunks.length === 1) return chunks[0];
+
+  // Merge tracks (deduplicate by id)
+  const trackMap = new Map<string, AgentTrack>();
+  for (const chunk of chunks) {
+    for (const track of chunk.tracks) {
+      if (!trackMap.has(track.id)) {
+        trackMap.set(track.id, track);
+      }
+    }
   }
+
+  const merged: EditorAgentEDL = {
+    tracks: Array.from(trackMap.values()),
+    clips: [],
+    transitions: [],
+    audioFades: [],
+    mediaIssues: [],
+  };
+
+  for (const chunk of chunks) {
+    merged.clips.push(...(chunk.clips || []));
+    merged.transitions.push(...(chunk.transitions || []));
+    merged.audioFades.push(...(chunk.audioFades || []));
+    merged.mediaIssues.push(...(chunk.mediaIssues || []));
+  }
+
+  // Sort clips by startTime within each track
+  const clipsByTrack = new Map<string, AgentClip[]>();
+  merged.clips.forEach(clip => {
+    const arr = clipsByTrack.get(clip.trackId) || [];
+    arr.push(clip);
+    clipsByTrack.set(clip.trackId, arr);
+  });
+
+  clipsByTrack.forEach(clips => {
+    clips.sort((a, b) => a.startTime - b.startTime);
+    for (let i = 1; i < clips.length; i++) {
+      const prev = clips[i - 1];
+      const curr = clips[i];
+      const prevEnd = prev.startTime + prev.duration;
+      if (curr.startTime < prevEnd) {
+        console.warn(`[EditAssembly Merge] Cross-chunk overlap, adjusting from ${curr.startTime}s to ${prevEnd}s`);
+        curr.startTime = prevEnd;
+      }
+    }
+  });
+
+  // Deduplicate transitions
+  const seenTransitions = new Set<string>();
+  merged.transitions = merged.transitions.filter(t => {
+    const key = `${t.fromShotIndex}-${t.toShotIndex}-${t.type}`;
+    if (seenTransitions.has(key)) return false;
+    seenTransitions.add(key);
+    return true;
+  });
+
+  // Deduplicate audio fades
+  const seenFades = new Set<string>();
+  merged.audioFades = merged.audioFades.filter(f => {
+    const key = `${f.target}-${f.type}-${f.startTime}`;
+    if (seenFades.has(key)) return false;
+    seenFades.add(key);
+    return true;
+  });
+
+  return merged;
+}
+
+// ============================================================================
+// LEGACY EDL CHUNK MERGER (backward compat)
+// ============================================================================
+
+function mergeLegacyEDLChunks(chunks: EditDecisionList[]): EditDecisionList {
+  if (chunks.length === 0) {
+    return { clips: [], transitions: [], effects: [], textOverlays: [], motionGraphics: [], audioEffects: [], mediaIssues: [] };
+  }
+
+  if (chunks.length === 1) return chunks[0];
 
   const merged: EditDecisionList = {
     clips: [],
@@ -317,35 +407,10 @@ function mergeEDLChunks(chunks: EditDecisionList[]): EditDecisionList {
     merged.mediaIssues.push(...(chunk.mediaIssues || []));
   }
 
-  // Sort clips by startTime within each track to handle across-chunk ordering
   merged.clips.sort((a, b) => a.startTime - b.startTime);
 
-  // Fix overlaps across chunk boundaries
-  const clipsByTrack = new Map<string, typeof merged.clips>();
-  merged.clips.forEach((clip) => {
-    const arr = clipsByTrack.get(clip.track) || [];
-    arr.push(clip);
-    clipsByTrack.set(clip.track, arr);
-  });
-
-  clipsByTrack.forEach((clips) => {
-    clips.sort((a, b) => a.startTime - b.startTime);
-    for (let i = 1; i < clips.length; i++) {
-      const prev = clips[i - 1];
-      const curr = clips[i];
-      const prevEnd = prev.startTime + prev.duration;
-      if (curr.startTime < prevEnd) {
-        console.warn(
-          `[EditAssembly Merge] Cross-chunk overlap on track, adjusting clip ${curr.shotIndex} from ${curr.startTime}s to ${prevEnd}s`
-        );
-        curr.startTime = prevEnd;
-      }
-    }
-  });
-
-  // Deduplicate transitions at chunk boundaries
   const seenTransitions = new Set<string>();
-  merged.transitions = merged.transitions.filter((t) => {
+  merged.transitions = merged.transitions.filter(t => {
     const key = `${t.fromShotIndex}-${t.toShotIndex}-${t.type}`;
     if (seenTransitions.has(key)) return false;
     seenTransitions.add(key);

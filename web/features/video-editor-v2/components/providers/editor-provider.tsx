@@ -26,6 +26,23 @@ import {
 import { useProjectSync } from "../../hooks/use-project-sync";
 import { importWizardDataToStore, type WizardData } from "../../hooks/use-wizard-data-import";
 
+// ============================================================
+// STABLE DEFAULT CONSTANTS
+// Module-level objects never change identity between renders,
+// so they won't invalidate useMemo deps.
+// ============================================================
+const DEFAULT_ZOOM_CONSTRAINTS = {
+  min: 0.2,
+  max: 10,
+  step: 0.1,
+  default: 1,
+} as const;
+
+const DEFAULT_SNAPPING_CONFIG = {
+  thresholdFrames: 1,
+  enableVerticalSnapping: true,
+} as const;
+
 
 interface EditorProviderProps {
   children: React.ReactNode;
@@ -97,16 +114,8 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
   baseUrl,
   initialRows = 5,
   maxRows = 8,
-  zoomConstraints = {
-    min: 0.2,
-    max: 10,
-    step: 0.1,
-    default: 1,
-  },
-  snappingConfig = {
-    thresholdFrames: 1,
-    enableVerticalSnapping: true,
-  },
+  zoomConstraints = DEFAULT_ZOOM_CONSTRAINTS,
+  snappingConfig = DEFAULT_SNAPPING_CONFIG,
   disableMobileLayout = false,
   disableVideoKeyframes = false,
   enablePushOnDrag = false,
@@ -122,25 +131,38 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
   const rendererConfig = useRenderer();
   const renderType = rendererConfig.renderer.renderType?.type || "ssr";
 
-  // Track initialization
+  // Track initialization — both refs survive Strict Mode double-mount
   const hasInitialized = useRef(false);
   const audioManagerInitialized = useRef(false);
+  // Deferred destroy timeout ID — lets us cancel destruction if Strict Mode re-mounts
+  const armDestroyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
-  // Initialize AudioResourceManager on mount (before store initialization)
+  // Initialize AudioResourceManager on mount
+  // Uses the singleton's built-in idempotency (isInitialized check) so
+  // re-calling initialize after a Strict Mode remount is safe.
   useEffect(() => {
+    // Cancel any pending destruction from a prior Strict Mode cleanup
+    if (armDestroyTimeoutRef.current !== null) {
+      clearTimeout(armDestroyTimeoutRef.current);
+      armDestroyTimeoutRef.current = null;
+      console.log('[EditorProvider] Cancelled pending ARM destruction (Strict Mode re-mount)');
+    }
+    
     if (!audioManagerInitialized.current) {
-      // Initialize the audio resource manager with store subscription
-      // This must happen BEFORE any clips are added so it can track them
       initializeAudioResourceManager(useVideoEditorStore);
       audioManagerInitialized.current = true;
       console.log('[EditorProvider] AudioResourceManager initialized');
     }
     
-    // Cleanup on unmount
+    // Cleanup: Defer actual destruction so Strict Mode re-mount can cancel it.
+    // If the component truly unmounts (permanent), the timeout fires and destroys the ARM.
     return () => {
-      console.log('[EditorProvider] Destroying AudioResourceManager');
-      destroyAudioResourceManager();
-      audioManagerInitialized.current = false;
+      armDestroyTimeoutRef.current = setTimeout(() => {
+        console.log('[EditorProvider] Destroying AudioResourceManager (permanent unmount)');
+        destroyAudioResourceManager();
+        audioManagerInitialized.current = false;
+        armDestroyTimeoutRef.current = null;
+      }, 50);
     };
   }, []);
   
@@ -151,8 +173,34 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
   
   // Initialize store on mount
   useEffect(() => {
-    if (hasInitialized.current || isLoadingProject) return;
+    console.log('[EditorProvider] Init effect running:', {
+      hasInitialized: hasInitialized.current,
+      isLoadingProject,
+      hasWizardData: !!wizardDataRef.current,
+      wizardDataSummary: wizardDataRef.current ? {
+        audioChunks: wizardDataRef.current.audioChunks?.length || 0,
+        shotList: wizardDataRef.current.shotList?.length || 0,
+        generatedMedia: wizardDataRef.current.generatedMedia?.length || 0,
+        hasAgentEdl: !!wizardDataRef.current.agentEdl,
+        hasLegacyEdl: !!wizardDataRef.current.edl,
+      } : null,
+    });
     
+    if (hasInitialized.current || isLoadingProject) {
+      console.log(`[EditorProvider] Skipping init: hasInitialized=${hasInitialized.current}, isLoadingProject=${isLoadingProject}`);
+      return;
+    }
+    
+    // Defensive: if the store already has clips (e.g. from a prior import
+    // or Zustand persistence), do NOT wipe them with store.initialize().
+    const currentClips = Object.keys(useVideoEditorStore.getState().clips).length;
+    if (currentClips > 0) {
+      console.log(`[EditorProvider] Store already has ${currentClips} clips — skipping initialize`);
+      hasInitialized.current = true;
+      return;
+    }
+    
+    console.log('[EditorProvider] Calling store.initialize()...');
     const store = useVideoEditorStore.getState();
     store.initialize({
       projectId,
@@ -173,7 +221,18 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
     if (wizardDataRef.current) {
       console.log('[EditorProvider] Importing wizard data after store.initialize()');
       importWizardDataToStore(wizardDataRef.current);
+    } else {
+      console.warn('[EditorProvider] ⚠️ No wizard data provided — editor will be empty');
     }
+    
+    // Log resulting store state
+    const resultState = useVideoEditorStore.getState();
+    console.log('[EditorProvider] Post-init store state:', {
+      tracks: Object.keys(resultState.tracks).length,
+      trackOrder: resultState.trackOrder,
+      clips: Object.keys(resultState.clips).length,
+      transitions: Object.keys(resultState.transitions).length,
+    });
     
     hasInitialized.current = true;
   }, [projectId, defaultTracks, defaultClips, fps, defaultAspectRatio, defaultResolution, defaultBackgroundColor, isLoadingProject]);

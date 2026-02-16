@@ -459,6 +459,10 @@ export interface GeneratedMediaItem {
   media_items?: import('@/types/video').MediaItem[];
   /** Planned image count from AI */
   image_count?: number;
+  /** Remotion code for motion graphics */
+  remotion_code?: string;
+  /** Icon names used in motion graphics */
+  used_icons?: string[];
   /** Error message if generation failed */
   error_message?: string;
   created_at?: string;
@@ -617,6 +621,8 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
         duration_seconds: shot.duration_seconds || 5,
         image_count: shot.image_count,
         stock_media_refs: shot.stock_media_refs,
+        visual_elements: shot.visual_elements,
+        narration_text: shot.text,
       }));
       
       // Progress callback for UI updates
@@ -674,6 +680,113 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
       });
       
       console.log(`${logPrefix} GPU generation complete: ${gpuResult.stats.imagesGenerated} images, ${gpuResult.stats.videosGenerated} videos`);
+
+      // =====================================================================
+      // Step 2b: Generate Remotion code for motiongraphic shots
+      // =====================================================================
+      const mgShots = shots.filter(s => s.media_type === 'motiongraphic');
+      if (mgShots.length > 0) {
+        console.log(`${logPrefix} Step 2b: Generating Remotion code for ${mgShots.length} motion graphic shots...`);
+
+        if (taskId) {
+          await updateTaskStatus(taskId, {
+            status: 'running',
+            progress_percent: 70,
+            current_step: `Generating ${mgShots.length} motion graphics...`,
+          });
+        }
+
+        // Fetch user's OpenRouter API key + model
+        const { generateMotionGraphic } = await import('@/lib/services/motion-graphics/pipeline-motion-graphics');
+        const { data: apiKeyData } = await supabase
+          .from('user_api_keys')
+          .select('openrouter_key, openrouter_model')
+          .eq('user_id', userId)
+          .single();
+
+        const openrouterKey = apiKeyData?.openrouter_key;
+        const openrouterModel = apiKeyData?.openrouter_model || 'google/gemini-2.5-flash-preview';
+
+        if (!openrouterKey) {
+          console.warn(`${logPrefix} No OpenRouter API key found — skipping MG Remotion code generation`);
+        } else {
+          // Process MG shots in parallel with concurrency limit
+          const MG_CONCURRENCY = 3;
+          const mgQueue = [...mgShots];
+          const mgResults = new Map<number, { remotionCode: string; usedIcons?: string[] }>();
+
+          while (mgQueue.length > 0) {
+            const batch = mgQueue.splice(0, MG_CONCURRENCY);
+            const batchPromises = batch.map(async (shot) => {
+              const shotIndex = shot.segment_index;
+              const detailedPrompt = detailedPrompts.find(p => p.index === shots.indexOf(shot))?.prompt || shot.summary;
+              const routingTags = shot.visual_elements || [];
+
+              // Build image assets from GPU results for hybrid MG shots
+              const imageAssets: Array<{ url: string; description: string; suggestedUsage: string }> = [];
+              const gpuMedia = generatedMedia.find(m => m.shot_index === shotIndex);
+              if (gpuMedia?.media_url && !gpuMedia.media_url.startsWith('remotion://')) {
+                imageAssets.push({
+                  url: gpuMedia.media_url,
+                  description: detailedPrompt,
+                  suggestedUsage: gpuMedia.media_type === 'video'
+                    ? 'Use as the main video background with <OffthreadVideo src={url} />'
+                    : 'Use as the main background image, apply slow Ken Burns zoom-in over the duration',
+                });
+              }
+
+              // Determine context hint from routing tags
+              let contextHint: string | undefined;
+              if (routingTags.includes('remotion_overlay')) contextHint = 'text/graphics overlay';
+              else if (routingTags.includes('remotion_image_manipulation')) contextHint = 'image manipulation with Ken Burns/montage';
+              else if (routingTags.includes('remotion_video_manipulation')) contextHint = 'video annotation/overlay';
+
+              try {
+                const result = await generateMotionGraphic({
+                  prompt: detailedPrompt,
+                  duration: shot.duration_seconds || 5,
+                  shotIndex,
+                  videoId,
+                  apiKey: openrouterKey,
+                  model: openrouterModel,
+                  routingTags,
+                  imageAssets,
+                  contextHint,
+                  narrationText: shot.text,
+                });
+
+                if (result.success && result.remotionCode) {
+                  mgResults.set(shotIndex, {
+                    remotionCode: result.remotionCode,
+                    usedIcons: result.usedIcons,
+                  });
+                  console.log(`${logPrefix} Shot ${shotIndex}: MG Remotion code generated (${result.remotionCode.length} chars)`);
+                } else {
+                  console.warn(`${logPrefix} Shot ${shotIndex}: MG generation failed: ${result.error}`);
+                }
+              } catch (err) {
+                console.error(`${logPrefix} Shot ${shotIndex}: MG generation error:`, err);
+              }
+            });
+
+            await Promise.all(batchPromises);
+          }
+
+          // Merge Remotion results into generatedMedia
+          for (const mediaItem of generatedMedia) {
+            const mgResult = mgResults.get(mediaItem.shot_index);
+            if (mgResult) {
+              mediaItem.remotion_code = mgResult.remotionCode;
+              mediaItem.used_icons = mgResult.usedIcons;
+              mediaItem.media_url = `remotion://${mediaItem.shot_index}`;
+              mediaItem.generation_status = 'completed';
+              mediaItem.updated_at = new Date().toISOString();
+            }
+          }
+
+          console.log(`${logPrefix} MG Remotion generation complete: ${mgResults.size}/${mgShots.length} succeeded`);
+        }
+      }
       
     } else {
       // GPU disabled - use placeholder URLs

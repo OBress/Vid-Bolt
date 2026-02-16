@@ -1,117 +1,87 @@
 /**
  * Edit Assembly Prompts
  * ============================================================================
- * System prompt, user prompt templates, and EDL JSON schema for the
- * AI Edit Assembly Service. Encodes documentary-style defaults and
- * YouTube best practices.
+ * System prompt, user prompt templates, and EDL types for the
+ * AI Edit Assembly Service.
+ *
+ * V2 ARCHITECTURE:
+ * - Uses EditorAgentEDL from editor-capability-manifest.ts
+ * - System prompt includes the full capability manifest
+ * - AI can use multi-track, effects, keyframes, text styling, etc.
+ *
+ * Legacy EDL types are preserved for backward compatibility with
+ * the fallback EDL generator and existing stored EDLs.
  */
 
+import {
+  getEditorCapabilityPrompt,
+  type EditorAgentEDL,
+  AGENT_EDL_JSON_SCHEMA,
+} from './editor-capability-manifest';
+
 // ============================================================
-// EDL TYPES (Edit Decision List)
+// LEGACY EDL TYPES (kept for backward compat + fallback)
 // ============================================================
 
 export interface EDLClip {
-  /** Shot index from the shot list */
   shotIndex: number;
-  /** Track to place on: 'video-1', 'video-2', etc. */
   track: string;
-  /** Start time on timeline in seconds */
   startTime: number;
-  /** Duration on timeline in seconds */
   duration: number;
-  /** Media type */
   mediaType: 'image' | 'video' | 'motiongraphic';
-  /** Source URL or remotion identifier */
   sourceUrl?: string;
 }
 
 export interface EDLTransition {
-  /** Type of transition (maps to VideoTransitionType enum) */
   type: 'crossfade' | 'fadeToBlack' | 'fade' | 'wipeLeft' | 'dissolve';
-  /** Duration of transition in seconds */
   duration: number;
-  /** Shot index of clip BEFORE the transition */
   fromShotIndex: number;
-  /** Shot index of clip AFTER the transition */
   toShotIndex: number;
-  /** Position qualifier */
   position: 'between';
 }
 
 export interface EDLEffect {
-  /** Shot index to apply the effect to */
   shotIndex: number;
-  /** Effect type (simplified set for AI to choose from) */
   type: 'kenBurns' | 'slowZoomIn' | 'slowZoomOut' | 'panLeft' | 'panRight';
-  /** Effect parameters */
   params: {
-    /** Start scale (1.0 = 100%) */
     startScale?: number;
-    /** End scale */
     endScale?: number;
-    /** Start X position (normalized 0-1) */
     startX?: number;
-    /** End X position */
     endX?: number;
-    /** Start Y position (normalized 0-1) */
     startY?: number;
-    /** End Y position */
     endY?: number;
   };
 }
 
 export interface EDLTextOverlay {
-  /** Text content to display */
   text: string;
-  /** Start time on timeline in seconds */
   startTime: number;
-  /** Duration in seconds */
   duration: number;
-  /** Style preset */
   style: 'chapterTitle' | 'lowerThird' | 'callout' | 'subtitle';
-  /** Font size (in px) */
   fontSize?: number;
-  /** Position on canvas */
-  position?: {
-    x: number; // normalized 0-1 from left
-    y: number; // normalized 0-1 from top
-  };
+  position?: { x: number; y: number };
 }
 
 export interface EDLMotionGraphic {
-  /** Shot index of the motion graphic */
   shotIndex: number;
-  /** Which track to place on: 'effects-1', 'effects-2' */
   track: string;
-  /** Start time on timeline in seconds */
   startTime: number;
-  /** Duration in seconds */
   duration: number;
 }
 
 export interface EDLAudioEffect {
-  /** What to apply to: 'main' for main audio, or specific chunk index */
   target: 'main' | number;
-  /** Effect type */
   type: 'fadeIn' | 'fadeOut' | 'volumeAutomation';
-  /** Start time in seconds */
   startTime: number;
-  /** Duration in seconds */
   duration: number;
-  /** Volume level (0-1) for automation */
   volume?: number;
 }
 
 export interface MediaIssueEDL {
-  /** Shot index */
   shotIndex: number;
-  /** Severity */
   severity: 'error' | 'warning';
-  /** Issue type */
   type: 'generation_failed' | 'placeholder' | 'missing_media';
-  /** Human-readable title */
   title: string;
-  /** Description of the issue */
   description: string;
 }
 
@@ -125,22 +95,29 @@ export interface EditDecisionList {
   mediaIssues: MediaIssueEDL[];
 }
 
+// Re-export new types
+export type { EditorAgentEDL };
+export { AGENT_EDL_JSON_SCHEMA };
+
 // ============================================================
-// SYSTEM PROMPT
+// V2 SYSTEM PROMPT — includes capability manifest
 // ============================================================
 
-export const EDIT_ASSEMBLY_SYSTEM_PROMPT = `You are a professional video editor AI assistant. Your job is to analyze a video project's content (script, shots, audio, media) and produce a structured Edit Decision List (EDL) that creates a polished, YouTube-optimized video.
+export const EDIT_ASSEMBLY_SYSTEM_PROMPT = `You are a professional video editor AI. You produce structured EDLs (Edit Decision Lists) that create polished, YouTube-optimized videos.
+
+You have FULL CONTROL over a professional video editor. Use the capabilities below to create the best possible edit.
+
+${getEditorCapabilityPrompt()}
 
 ## YOUR STYLE: DOCUMENTARY
 
 Apply these documentary style defaults:
 - Average cut duration: 6-10 seconds
 - Transition density: LOW (mostly hard cuts)
-- Use crossfades only for topic/section shifts
-- Use fade-to-black for major section boundaries
-- Apply slow Ken Burns effect on static images (subtle zoom 1.0→1.05 over 8s)
-- Apply gentle zoom on video clips (1.0→1.02 for micro-movement)
-- Text overlays: chapter titles at section starts, minimal callouts for key points
+- Use crossfade transitions only for topic/section shifts
+- Use fadeToBlack for major section boundaries
+- Apply Ken Burns / slow zoom keyframe animations on ALL static images
+- Text overlays: chapter titles at section starts, lowerThirds for key stats/names
 - Pacing: steady and measured — breathing room between points
 
 ## YOUTUBE BEST PRACTICES
@@ -150,33 +127,34 @@ Apply these documentary style defaults:
 3. **Hook pattern**: Slightly faster pacing in the first 15 seconds (4-6s cuts vs 6-10s default)
 4. **Text reinforcement**: Surface key phrases as text overlays on emotional or important beats
 
+## TRACK STRATEGY
+
+Create tracks based on content needs:
+- Always create a "main-video" track (type: video, group: video) for primary visuals
+- Create a "text-overlays" track (type: video, group: text) for text clips
+- If there are motion graphics shots, create an "effects" track (type: video, group: effects)
+- Audio tracks are handled separately by the import system
+
 ## CRITICAL RULES
 
 1. NEVER create overlapping clips on the same track
 2. Every transition duration must be <= min(fromClipDuration, toClipDuration) / 2
-3. Transition types you can use: crossfade, fadeToBlack, fade, wipeLeft, dissolve
-4. Effects you can use: kenBurns, slowZoomIn, slowZoomOut, panLeft, panRight
-5. Text styles you can use: chapterTitle, lowerThird, callout, subtitle
-6. Audio effect types: fadeIn, fadeOut, volumeAutomation
-7. For motion graphics shots, place them at their shot timing - they are self-contained
-8. For failed shots (listed in failedShots), include them as mediaIssues
-9. Always start with a fadeIn on the first clip's audio
-10. Always end with a fadeOut on the last clip's audio
+3. For failed shots (listed in failedShots), include them as mediaIssues
+4. ALL image clips MUST have keyframe animations (Ken Burns or zoom) — static images look dead on video
+5. Add chapter title text overlays at major topic shifts
+6. Add lowerThird text overlays for key statistics, names, or important facts
+7. Always include audio fades: fadeIn on start, fadeOut on end
 
-Respond with ONLY valid JSON matching the EditDecisionList schema. No markdown, no code fences, no commentary.`;
+Respond with ONLY valid JSON matching the EditorAgentEDL schema. No markdown, no code fences, no commentary.`;
 
 // ============================================================
 // USER PROMPT BUILDER
 // ============================================================
 
 export interface EditAssemblyContext {
-  /** Summary of the video topic */
   videoTitle: string;
-  /** Total duration in seconds */
   totalDuration: number;
-  /** FPS */
   fps: number;
-  /** Shot list with timing and media info */
   shots: Array<{
     index: number;
     startSeconds: number;
@@ -187,11 +165,8 @@ export interface EditAssemblyContext {
     hasMedia: boolean;
     mediaUrl?: string;
   }>;
-  /** Script section markers (sentence boundaries) */
   scriptSentences: string[];
-  /** Shot indices that failed generation */
   failedShots: number[];
-  /** Audio chunk info */
   audioChunks: Array<{
     index: number;
     durationSeconds: number;
@@ -241,67 +216,34 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
     lines.push('');
   }
 
-  lines.push('Generate the EDL JSON now. Place all clips sequentially on video-1 track. Add transitions, effects, text overlays, and audio fades as appropriate for documentary style.');
+  lines.push('## Instructions');
+  lines.push('');
+  lines.push('Generate the EditorAgentEDL JSON now. Create appropriate tracks, place all visual clips with keyframe animations, add text overlays at topic shifts, and include transitions between sections.');
+  lines.push('');
+  lines.push('Remember:');
+  lines.push('- Every image clip MUST have keyframes (slowZoomIn or kenBurns pattern)');
+  lines.push('- Add chapterTitle text clips at major topic transitions');
+  lines.push('- Add lowerThird text clips for key facts/statistics mentioned in the script');
+  lines.push('- Use crossfade transitions between topic/section changes');
+  lines.push('- Include fadeIn and fadeOut audio fades');
 
   return lines.join('\n');
 }
 
 // ============================================================
-// EDL JSON SCHEMA (for validation reference)
+// LEGACY JSON SCHEMA (kept for reference)
 // ============================================================
 
 export const EDL_JSON_SCHEMA = {
   type: 'object',
   required: ['clips', 'transitions', 'effects', 'textOverlays', 'motionGraphics', 'audioEffects', 'mediaIssues'],
   properties: {
-    clips: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['shotIndex', 'track', 'startTime', 'duration', 'mediaType'],
-      },
-    },
-    transitions: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['type', 'duration', 'fromShotIndex', 'toShotIndex', 'position'],
-      },
-    },
-    effects: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['shotIndex', 'type', 'params'],
-      },
-    },
-    textOverlays: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['text', 'startTime', 'duration', 'style'],
-      },
-    },
-    motionGraphics: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['shotIndex', 'track', 'startTime', 'duration'],
-      },
-    },
-    audioEffects: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['target', 'type', 'startTime', 'duration'],
-      },
-    },
-    mediaIssues: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['shotIndex', 'severity', 'type', 'title', 'description'],
-      },
-    },
+    clips: { type: 'array', items: { type: 'object', required: ['shotIndex', 'track', 'startTime', 'duration', 'mediaType'] } },
+    transitions: { type: 'array', items: { type: 'object', required: ['type', 'duration', 'fromShotIndex', 'toShotIndex', 'position'] } },
+    effects: { type: 'array', items: { type: 'object', required: ['shotIndex', 'type', 'params'] } },
+    textOverlays: { type: 'array', items: { type: 'object', required: ['text', 'startTime', 'duration', 'style'] } },
+    motionGraphics: { type: 'array', items: { type: 'object', required: ['shotIndex', 'track', 'startTime', 'duration'] } },
+    audioEffects: { type: 'array', items: { type: 'object', required: ['target', 'type', 'startTime', 'duration'] } },
+    mediaIssues: { type: 'array', items: { type: 'object', required: ['shotIndex', 'severity', 'type', 'title', 'description'] } },
   },
 };

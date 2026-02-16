@@ -176,6 +176,13 @@ export function Step6SceneReview({
     return 'image';
   }, []);
 
+  /** Returns true if the shot needs a Remotion overlay (separate from or instead of base media) */
+  const hasOverlayTags = useCallback((elements?: RoutingTag[]): boolean => {
+    if (!elements || elements.length === 0) return false;
+    return elements.some(e => e.startsWith('remotion_'));
+  }, []);
+
+
   // =========================================================================
   // IMAGE ASSET COLLECTION (for MG prompt enrichment)
   // =========================================================================
@@ -321,6 +328,7 @@ export function Step6SceneReview({
               routingTags,
               imageAssets,
               contextHint,
+              narrationText: shot.text,
             }),
           });
         } else {
@@ -359,18 +367,98 @@ export function Step6SceneReview({
           updated_at: new Date().toISOString(),
         };
 
-        // Store remotion_code in metadata if available
+        // Store remotion_code and usedIcons if available (proper fields on GeneratedMedia)
         if (result.remotion_code) {
-          (generatedItem as GeneratedMedia & { remotion_code?: string }).remotion_code = result.remotion_code;
+          generatedItem.remotion_code = result.remotion_code;
+        }
+        if (result.usedIcons) {
+          generatedItem.used_icons = result.usedIcons;
         }
 
-        setPendingChanges((prev) => {
-          const newMap = new Map(prev);
-          newMap.set(shotIndex, generatedItem);
-          return newMap;
-        });
+        // For image/video: poll the GPU task until it completes, then update
+        // pendingChanges with the real media URL and 'completed' status.
+        // Without this, the data stays as 'generating' with no URL, and the
+        // wizard import would produce placeholder PNGs for every clip.
+        if (generationType !== 'motiongraphic' && result.taskId) {
+          // Show immediate 'generating' state in pending changes
+          setPendingChanges((prev) => {
+            const newMap = new Map(prev);
+            newMap.set(shotIndex, generatedItem);
+            return newMap;
+          });
 
-        console.log(`[Step6] Shot ${shotIndex} generation triggered, taskId: ${result.taskId}`);
+          // Poll for task completion
+          const POLL_INTERVAL = 3000; // 3 seconds
+          const MAX_POLLS = 120;      // 6 minutes max
+          let pollCount = 0;
+          let taskComplete = false;
+
+          while (pollCount < MAX_POLLS && !taskComplete) {
+            await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+            pollCount++;
+
+            try {
+              const taskRes = await fetch(`/api/tasks/${result.taskId}`);
+              if (!taskRes.ok) continue;
+
+              const taskData = await taskRes.json();
+              const status = taskData.task?.status || taskData.status;
+
+              if (status === 'completed') {
+                taskComplete = true;
+                const outputData = taskData.task?.output_data || taskData.output_data || {};
+                const mediaUrl = outputData.imageUrl || outputData.videoUrl;
+
+                if (mediaUrl) {
+                  const completedItem: GeneratedMedia = {
+                    ...generatedItem,
+                    generation_status: 'completed',
+                    media_url: mediaUrl,
+                    updated_at: new Date().toISOString(),
+                  };
+                  setPendingChanges((prev) => {
+                    const newMap = new Map(prev);
+                    newMap.set(shotIndex, completedItem);
+                    return newMap;
+                  });
+                  console.log(`[Step6] Shot ${shotIndex} completed: ${mediaUrl.substring(0, 60)}...`);
+                } else {
+                  console.warn(`[Step6] Shot ${shotIndex} task completed but no media URL in output`);
+                }
+              } else if (status === 'failed') {
+                taskComplete = true;
+                const errorMsg = taskData.task?.error_message || taskData.error_message || 'GPU task failed';
+                console.error(`[Step6] Shot ${shotIndex} GPU task failed: ${errorMsg}`);
+                const failedItem: GeneratedMedia = {
+                  ...generatedItem,
+                  generation_status: 'failed',
+                  error_message: errorMsg,
+                  updated_at: new Date().toISOString(),
+                };
+                setPendingChanges((prev) => {
+                  const newMap = new Map(prev);
+                  newMap.set(shotIndex, failedItem);
+                  return newMap;
+                });
+              }
+            } catch (pollError) {
+              console.warn(`[Step6] Poll attempt ${pollCount} for shot ${shotIndex} failed:`, pollError);
+            }
+          }
+
+          if (!taskComplete) {
+            console.warn(`[Step6] Shot ${shotIndex} polling timed out after ${MAX_POLLS * POLL_INTERVAL / 1000}s`);
+          }
+        } else {
+          // Motion graphics: already completed, just store
+          setPendingChanges((prev) => {
+            const newMap = new Map(prev);
+            newMap.set(shotIndex, generatedItem);
+            return newMap;
+          });
+        }
+
+        console.log(`[Step6] Shot ${shotIndex} generation complete`);
       } catch (error) {
         console.error(`[Step6] Shot ${shotIndex} generation failed:`, error);
         // Track failed shot for Media Issues panel
@@ -398,6 +486,97 @@ export function Step6SceneReview({
       }
     },
     [shots, mediaMap, pendingChanges, videoId, getGenerationType, gpuEnabled, collectImageAssets],
+  );
+
+  // =========================================================================
+  // OVERLAY GENERATION (for hybrid shots: base media + MG overlay)
+  // =========================================================================
+
+  /**
+   * Generate a motion graphics overlay for a hybrid shot.
+   * Called in Phase 2 after base media is available.
+   * Merges remotion_code into the existing GeneratedMedia entry.
+   */
+  const handleGenerateOverlay = useCallback(
+    async (shotIndex: number) => {
+      const shot = shots.find((s) => s.segment_index === shotIndex);
+      if (!shot) return;
+
+      const existingMedia = pendingChanges.get(shotIndex) || mediaMap.get(shotIndex);
+      if (!existingMedia || existingMedia.generation_status !== 'completed') {
+        console.warn(`[Step6] Overlay gen: Shot ${shotIndex} has no completed base media, skipping`);
+        return;
+      }
+
+      // Already has remotion_code — skip
+      if (existingMedia.remotion_code) {
+        console.log(`[Step6] Shot ${shotIndex} already has remotion_code, skipping overlay gen`);
+        return;
+      }
+
+      try {
+        setGeneratingShots((prev) => new Set(prev).add(shotIndex));
+
+        const imageAssets = collectImageAssets(shotIndex);
+        const routingTags = shot.visual_elements || [];
+
+        let contextHint: string | undefined;
+        if (routingTags.includes('remotion_overlay')) contextHint = 'text/graphics overlay on top of base media';
+        else if (routingTags.includes('remotion_image_manipulation')) contextHint = 'image manipulation with Ken Burns/montage';
+        else if (routingTags.includes('remotion_video_manipulation')) contextHint = 'video annotation/overlay';
+
+        const prompt = existingMedia.visual_prompt || shot.summary || shot.text.substring(0, 200);
+
+        const response = await fetch(`/api/videos/${videoId}/generate/motiongraphic`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shotIndex,
+            prompt,
+            duration: shot.duration_seconds,
+            routingTags,
+            imageAssets,
+            contextHint,
+            narrationText: shot.text,
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to generate overlay');
+        }
+
+        const result = await response.json();
+        console.log(`[Step6] Overlay for shot ${shotIndex} generated:`, result);
+
+        // Merge remotion_code into the existing GeneratedMedia entry
+        if (result.remotion_code) {
+          const updatedMedia: GeneratedMedia = {
+            ...existingMedia,
+            remotion_code: result.remotion_code,
+            used_icons: result.usedIcons || undefined,
+            visual_elements: shot.visual_elements,
+            updated_at: new Date().toISOString(),
+          };
+
+          setPendingChanges((prev) => {
+            const newMap = new Map(prev);
+            newMap.set(shotIndex, updatedMedia);
+            return newMap;
+          });
+        }
+      } catch (error) {
+        console.error(`[Step6] Overlay gen for shot ${shotIndex} failed:`, error);
+        // Don't overwrite the existing media on overlay failure — base media is still valid
+      } finally {
+        setGeneratingShots((prev) => {
+          const newSet = new Set(prev);
+          newSet.delete(shotIndex);
+          return newSet;
+        });
+      }
+    },
+    [shots, mediaMap, pendingChanges, videoId, collectImageAssets],
   );
 
   // =========================================================================
@@ -429,10 +608,17 @@ export function Step6SceneReview({
 
     pendingShotsList.forEach((shot) => {
       const genType = getGenerationType(shot.visual_elements);
+      const needsOverlay = hasOverlayTags(shot.visual_elements);
       if (genType === 'motiongraphic') {
+        // Pure MG shots go straight to Phase 2
         phase2Shots.push(shot);
       } else if (genType !== 'stock') {
+        // Base media (image/video) goes to Phase 1
         phase1Shots.push(shot);
+        // Hybrid shots with overlay tags also need Phase 2 MG generation
+        if (needsOverlay) {
+          phase2Shots.push(shot);
+        }
       }
     });
 
@@ -441,7 +627,10 @@ export function Step6SceneReview({
     // Concurrency-limited parallel execution
     const CONCURRENCY_LIMIT = 3;
 
-    const runWithConcurrency = async (shotList: ShotData[]) => {
+    const runWithConcurrency = async (
+      shotList: ShotData[],
+      handler: (shotIndex: number) => Promise<void> = handleGenerateShot,
+    ) => {
       const results: PromiseSettledResult<void>[] = [];
       const queue = [...shotList];
       const active: Promise<void>[] = [];
@@ -450,9 +639,9 @@ export function Step6SceneReview({
         // Fill up to concurrency limit
         while (queue.length > 0 && active.length < CONCURRENCY_LIMIT) {
           const shot = queue.shift()!;
-          const promise = handleGenerateShot(shot.segment_index).then(
+          const promise = handler(shot.segment_index).then(
             () => { /* resolved */ },
-            () => { /* rejected - error already handled in handleGenerateShot */ }
+            () => { /* rejected - error already handled in handler */ }
           );
           active.push(promise);
         }
@@ -480,19 +669,43 @@ export function Step6SceneReview({
     // Phase 1: Generate all images and videos first
     if (phase1Shots.length > 0) {
       console.log(`[Step6] Phase 1: Generating ${phase1Shots.length} images/videos...`);
-      await runWithConcurrency(phase1Shots);
+      await runWithConcurrency(phase1Shots, handleGenerateShot);
       console.log(`[Step6] Phase 1 complete`);
     }
 
     // Phase 2: Generate motion graphics (images are now available for prompt enrichment)
     if (phase2Shots.length > 0) {
       console.log(`[Step6] Phase 2: Generating ${phase2Shots.length} motion graphics...`);
-      await runWithConcurrency(phase2Shots);
+
+      // Separate pure MG shots from hybrid shots (which already have base media)
+      const pureMGShots: ShotData[] = [];
+      const hybridShots: ShotData[] = [];
+      phase2Shots.forEach((shot) => {
+        const genType = getGenerationType(shot.visual_elements);
+        if (genType === 'motiongraphic') {
+          pureMGShots.push(shot);
+        } else {
+          hybridShots.push(shot);
+        }
+      });
+
+      // Pure MG shots: use handleGenerateShot (creates new media entry)
+      if (pureMGShots.length > 0) {
+        console.log(`[Step6] Phase 2a: ${pureMGShots.length} pure MG shots`);
+        await runWithConcurrency(pureMGShots, handleGenerateShot);
+      }
+
+      // Hybrid shots: use handleGenerateOverlay (merges into existing media)
+      if (hybridShots.length > 0) {
+        console.log(`[Step6] Phase 2b: ${hybridShots.length} hybrid overlay shots`);
+        await runWithConcurrency(hybridShots, handleGenerateOverlay);
+      }
+
       console.log(`[Step6] Phase 2 complete`);
     }
 
     console.log(`[Step6] All generation complete. Failed shots: ${failedShotsRef.current.length}`);
-  }, [shots, mediaMap, pendingChanges, handleGenerateShot, getGenerationType]);
+  }, [shots, mediaMap, pendingChanges, handleGenerateShot, handleGenerateOverlay, getGenerationType, hasOverlayTags]);
 
   // Save all pending changes to database
   const handleSaveAll = useCallback(async () => {

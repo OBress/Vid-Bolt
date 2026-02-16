@@ -341,6 +341,10 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
   onToggleCompact,
 }) => {
   const formatTime = (timeInSeconds: number) => {
+    // Guard against NaN, Infinity, or negative values
+    if (!Number.isFinite(timeInSeconds) || timeInSeconds < 0) {
+      return '0:00.00';
+    }
     // Convert seconds to milliseconds
     const milliseconds = Math.round(timeInSeconds * 1000);
     // Use date-fns-tz to format in UTC timezone, avoiding local timezone offset issues

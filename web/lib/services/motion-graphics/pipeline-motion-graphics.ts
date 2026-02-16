@@ -48,6 +48,8 @@ export interface PipelineGenerationRequest {
   imageAssets?: ImageAsset[];
   /** Context hint for the type of motion graphic */
   contextHint?: string;
+  /** Narration text spoken during this shot — used for timing visual elements */
+  narrationText?: string;
   /** QC feedback from a previous failed attempt */
   previousQCFeedback?: string;
   /** If true, generate a simplified fallback animation */
@@ -81,7 +83,8 @@ export function buildEnrichedMGPrompt(
   routingTags: RoutingTag[],
   imageAssets: ImageAsset[],
   duration: number,
-  contextHint?: string
+  contextHint?: string,
+  narrationText?: string,
 ): string {
   const parts: string[] = [];
 
@@ -94,6 +97,12 @@ export function buildEnrichedMGPrompt(
   // Context hint
   if (contextHint) {
     parts.push(`\nType: ${contextHint}`);
+  }
+
+  // Narration text — helps the AI time visual elements to match spoken content
+  if (narrationText) {
+    parts.push(`\n\nNARRATION (spoken during this shot — time visual elements to match):\n"${narrationText}"`);
+    parts.push(`\nUse the narration to pace animations: reveal text/graphics roughly when the narrator mentions them.`);
   }
 
   // Image assets — only for image/video manipulation tags
@@ -157,6 +166,7 @@ export async function generateMotionGraphic(
     routingTags = [],
     imageAssets = [],
     contextHint,
+    narrationText,
     previousQCFeedback,
     simplifiedRetry = false,
   } = request;
@@ -168,7 +178,7 @@ export async function generateMotionGraphic(
     finalPrompt = buildSimplifiedPrompt(prompt, duration);
     console.log(`[PipelineMG] Shot ${request.shotIndex}: Using simplified fallback prompt`);
   } else {
-    finalPrompt = buildEnrichedMGPrompt(prompt, routingTags, imageAssets, duration, contextHint);
+    finalPrompt = buildEnrichedMGPrompt(prompt, routingTags, imageAssets, duration, contextHint, narrationText);
     console.log(`[PipelineMG] Shot ${request.shotIndex}: Enriched prompt (${imageAssets.length} assets)`);
   }
 

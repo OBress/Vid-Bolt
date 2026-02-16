@@ -4,11 +4,8 @@
  * Orchestrates AI-driven edit decisions. Takes project context (shots, audio,
  * media, script) and calls an LLM to produce an Edit Decision List (EDL).
  *
- * Key responsibilities:
- * - Build project context from video project data
- * - Call OpenRouter API with documentary-style system prompt
- * - Parse and validate the returned EDL JSON
- * - Fallback with simplified prompt on failure
+ * V2: Returns EditorAgentEDL with multi-track, effects, keyframes, text styling.
+ * Falls back to a richer fallback EDL when LLM fails.
  */
 
 import {
@@ -16,9 +13,13 @@ import {
   buildEditAssemblyUserPrompt,
   type EditAssemblyContext,
   type EditDecisionList,
-  type EDLClip,
-  type EDLTransition,
 } from './edit-assembly-prompts';
+import type {
+  EditorAgentEDL,
+  AgentClip,
+  AgentTrack,
+  AgentTransition,
+} from './editor-capability-manifest';
 import type { GeneratedMedia } from '@/types/video';
 
 // ============================================================
@@ -38,33 +39,27 @@ interface ShotDataInput {
 }
 
 export interface AssembleEditRequest {
-  /** Video project ID */
   videoId: string;
-  /** Shot list from the pipeline */
   shots: ShotDataInput[];
-  /** Generated media entries */
   generatedMedia: GeneratedMedia[];
-  /** Video title/topic */
   videoTitle: string;
-  /** Audio chunks from TTS */
   audioChunks: Array<{
     index: number;
     duration_seconds: number;
     text?: string;
     audio_url?: string;
   }>;
-  /** Full script text (for sentence extraction) */
   scriptText?: string;
-  /** FPS setting */
   fps?: number;
-  /** OpenRouter API key */
   apiKey: string;
-  /** Model to use */
   model?: string;
 }
 
 export interface AssembleEditResult {
   success: boolean;
+  /** V2 EDL format (preferred) */
+  agentEdl?: EditorAgentEDL;
+  /** Legacy EDL format (for backward compat) */
   edl?: EditDecisionList;
   error?: string;
 }
@@ -75,6 +70,8 @@ export interface AssembleEditResult {
 
 /**
  * Generate an Edit Decision List for a video project using AI.
+ * Returns the new EditorAgentEDL format. Legacy `edl` field is populated
+ * by converting the agent EDL for backward compat.
  */
 export async function assembleEdit(request: AssembleEditRequest): Promise<AssembleEditResult> {
   const {
@@ -99,23 +96,27 @@ export async function assembleEdit(request: AssembleEditRequest): Promise<Assemb
 
     console.log(`[EditAssembly] Context: ${context.shots.length} shots, ${context.failedShots.length} failed, ${context.audioChunks.length} audio chunks`);
 
-    // 3. Call LLM
-    let edl = await callLLM(apiKey, model, EDIT_ASSEMBLY_SYSTEM_PROMPT, userPrompt);
+    // 3. Call LLM for v2 format
+    let agentEdl = await callLLMv2(apiKey, model, EDIT_ASSEMBLY_SYSTEM_PROMPT, userPrompt);
 
-    // 4. Validate and fix common issues
-    edl = validateAndFix(edl, shots);
+    // 4. Validate and fix
+    agentEdl = validateAndFixV2(agentEdl, shots);
 
-    console.log(`[EditAssembly] EDL generated: ${edl.clips.length} clips, ${edl.transitions.length} transitions, ${edl.effects.length} effects, ${edl.textOverlays.length} text overlays`);
+    console.log(`[EditAssembly] Agent EDL: ${agentEdl.tracks.length} tracks, ${agentEdl.clips.length} clips, ${agentEdl.transitions.length} transitions, ${agentEdl.clips.filter(c => c.type === 'text').length} text clips`);
 
-    return { success: true, edl };
+    // 5. Convert to legacy format for backward compat
+    const legacyEdl = agentEdlToLegacy(agentEdl);
+
+    return { success: true, agentEdl, edl: legacyEdl };
   } catch (error) {
     console.error('[EditAssembly] EDL generation failed:', error);
 
-    // Fallback: generate a simple sequential EDL without AI
+    // Fallback: generate a rich EDL without AI
     try {
-      console.log('[EditAssembly] Falling back to simple sequential EDL');
-      const fallbackEDL = generateFallbackEDL(shots, generatedMedia, fps);
-      return { success: true, edl: fallbackEDL };
+      console.log('[EditAssembly] Falling back to enhanced fallback EDL');
+      const agentEdl = generateFallbackAgentEDL(shots, generatedMedia, fps, scriptText);
+      const legacyEdl = agentEdlToLegacy(agentEdl);
+      return { success: true, agentEdl, edl: legacyEdl };
     } catch (fallbackError) {
       return {
         success: false,
@@ -137,16 +138,13 @@ function buildContext(
   scriptText: string,
   fps: number
 ): EditAssemblyContext {
-  // Build media lookup
   const mediaByShot = new Map<number, GeneratedMedia>();
   generatedMedia.forEach(m => mediaByShot.set(m.shot_index, m));
 
-  // Identify failed shots
   const failedShots = generatedMedia
     .filter(m => m.generation_status === 'failed')
     .map(m => m.shot_index);
 
-  // Also include shots with no media at all
   shots.forEach(shot => {
     const media = mediaByShot.get(shot.segment_index);
     if (!media && !failedShots.includes(shot.segment_index)) {
@@ -154,13 +152,11 @@ function buildContext(
     }
   });
 
-  // Extract sentences from script
   const scriptSentences = scriptText
     .split(/[.!?]+/)
     .map(s => s.trim())
     .filter(s => s.length > 10);
 
-  // Calculate total duration
   const totalDuration = shots.length > 0
     ? shots[shots.length - 1].end_seconds
     : audioChunks.reduce((sum, c) => sum + c.duration_seconds, 0);
@@ -193,15 +189,15 @@ function buildContext(
 }
 
 // ============================================================
-// LLM CALLER
+// LLM CALLER (V2 — EditorAgentEDL)
 // ============================================================
 
-async function callLLM(
+async function callLLMv2(
   apiKey: string,
   model: string,
   systemPrompt: string,
   userPrompt: string
-): Promise<EditDecisionList> {
+): Promise<EditorAgentEDL> {
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -216,7 +212,7 @@ async function callLLM(
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.3,
-      max_tokens: 8000,
+      max_tokens: 16000,
       response_format: { type: 'json_object' },
     }),
   });
@@ -233,54 +229,227 @@ async function callLLM(
     throw new Error('Empty response from LLM');
   }
 
+  // Log raw response for debugging
+  console.log(`[EditAssembly] Raw LLM response length: ${content.length} chars`);
+  console.log(`[EditAssembly] Raw LLM response preview: ${content.substring(0, 200)}...`);
+
   // Parse JSON — strip any markdown fences if present
   let jsonStr = content.trim();
   if (jsonStr.startsWith('```')) {
     jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
   }
 
-  const parsed = JSON.parse(jsonStr) as EditDecisionList;
-
-  // Minimal structural validation
-  if (!parsed.clips || !Array.isArray(parsed.clips)) {
-    throw new Error('EDL missing required "clips" array');
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch (e) {
+    console.error(`[EditAssembly] JSON parse error. Raw content:\n${content.substring(0, 500)}`);
+    throw new Error(`Failed to parse LLM response as JSON: ${e instanceof Error ? e.message : 'unknown'}`);
   }
 
-  // Ensure all required arrays exist
-  parsed.transitions = parsed.transitions || [];
-  parsed.effects = parsed.effects || [];
-  parsed.textOverlays = parsed.textOverlays || [];
-  parsed.motionGraphics = parsed.motionGraphics || [];
-  parsed.audioEffects = parsed.audioEffects || [];
-  parsed.mediaIssues = parsed.mediaIssues || [];
+  // Detect format: is this v2 (EditorAgentEDL) or legacy (EditDecisionList)?
+  if (Array.isArray(parsed.tracks) && Array.isArray(parsed.clips)) {
+    // V2 format — validate
+    const agentEdl = parsed as unknown as EditorAgentEDL;
+    agentEdl.transitions = agentEdl.transitions || [];
+    agentEdl.audioFades = agentEdl.audioFades || [];
+    agentEdl.mediaIssues = agentEdl.mediaIssues || [];
+    return agentEdl;
+  }
 
-  return parsed;
+  // Legacy format detection — convert to v2
+  if (Array.isArray(parsed.clips) && !Array.isArray(parsed.tracks)) {
+    console.log('[EditAssembly] LLM returned legacy EDL format, converting to v2');
+    const legacy = parsed as unknown as EditDecisionList;
+    legacy.transitions = legacy.transitions || [];
+    legacy.effects = legacy.effects || [];
+    legacy.textOverlays = legacy.textOverlays || [];
+    legacy.motionGraphics = legacy.motionGraphics || [];
+    legacy.audioEffects = legacy.audioEffects || [];
+    legacy.mediaIssues = legacy.mediaIssues || [];
+    return legacyToAgentEdl(legacy);
+  }
+
+  console.error(`[EditAssembly] Unrecognized EDL format. Keys: ${Object.keys(parsed).join(', ')}`);
+  throw new Error(`EDL missing required 'clips' array. Got keys: ${Object.keys(parsed).join(', ')}`);
 }
 
 // ============================================================
-// VALIDATION & FIX
+// FORMAT CONVERTERS
 // ============================================================
 
-function validateAndFix(edl: EditDecisionList, shots: ShotDataInput[]): EditDecisionList {
+/** Convert legacy EditDecisionList to EditorAgentEDL */
+function legacyToAgentEdl(legacy: EditDecisionList): EditorAgentEDL {
+  // Collect unique tracks from clips
+  const trackIds = new Set(legacy.clips.map(c => c.track));
+  const tracks: AgentTrack[] = [];
+  let order = 0;
+  for (const trackId of trackIds) {
+    tracks.push({
+      id: trackId,
+      type: 'video',
+      name: trackId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      group: 'video',
+      order: order++,
+    });
+  }
+
+  // Add text track if there are text overlays
+  if (legacy.textOverlays.length > 0) {
+    tracks.push({
+      id: 'text-overlays',
+      type: 'video',
+      name: 'Text Overlays',
+      group: 'text',
+      order: order++,
+    });
+  }
+
+  // Convert clips
+  const clips: AgentClip[] = legacy.clips.map(c => ({
+    trackId: c.track,
+    shotIndex: c.shotIndex,
+    type: c.mediaType === 'motiongraphic' ? 'motion-graphics' as const : c.mediaType as 'image' | 'video',
+    startTime: c.startTime,
+    duration: c.duration,
+    // Apply effects from legacy format
+    keyframes: legacy.effects
+      .filter(e => e.shotIndex === c.shotIndex)
+      .flatMap(e => effectToKeyframes(e.type, e.params, c.duration) || []),
+  }));
+
+  // Convert text overlays to text clips
+  for (const text of legacy.textOverlays) {
+    clips.push({
+      trackId: 'text-overlays',
+      type: 'text',
+      startTime: text.startTime,
+      duration: text.duration,
+      text: {
+        text: text.text,
+        fontSize: text.fontSize,
+      },
+      label: text.text.substring(0, 30),
+    });
+  }
+
+  // Convert transitions
+  const transitions: AgentTransition[] = legacy.transitions.map(t => ({
+    type: t.type,
+    fromShotIndex: t.fromShotIndex,
+    toShotIndex: t.toShotIndex,
+    duration: t.duration,
+  }));
+
+  return {
+    tracks,
+    clips,
+    transitions,
+    audioFades: legacy.audioEffects
+      .filter(a => a.type === 'fadeIn' || a.type === 'fadeOut')
+      .map(a => ({
+        target: (typeof a.target === 'string' ? a.target : 'main') as 'main' | 'music',
+        type: a.type as 'fadeIn' | 'fadeOut',
+        startTime: a.startTime,
+        duration: a.duration,
+      })),
+    mediaIssues: legacy.mediaIssues.map(m => ({
+      shotIndex: m.shotIndex,
+      severity: m.severity as 'error' | 'warning' | 'info',
+      type: m.type,
+      title: m.title,
+      description: m.description,
+    })),
+  };
+}
+
+/** Convert EditorAgentEDL to legacy EditDecisionList for backward compat */
+function agentEdlToLegacy(agentEdl: EditorAgentEDL): EditDecisionList {
+  return {
+    clips: agentEdl.clips
+      .filter(c => c.type !== 'text' && c.type !== 'caption' && c.type !== 'shape')
+      .map(c => ({
+        shotIndex: c.shotIndex ?? 0,
+        track: c.trackId,
+        startTime: c.startTime,
+        duration: c.duration,
+        mediaType: (c.type === 'motion-graphics' ? 'motiongraphic' : c.type) as 'image' | 'video' | 'motiongraphic',
+      })),
+    transitions: agentEdl.transitions.map(t => ({
+      type: t.type as 'crossfade' | 'fadeToBlack' | 'fade' | 'wipeLeft' | 'dissolve',
+      duration: t.duration,
+      fromShotIndex: t.fromShotIndex,
+      toShotIndex: t.toShotIndex,
+      position: 'between' as const,
+    })),
+    effects: [],
+    textOverlays: agentEdl.clips
+      .filter(c => c.type === 'text')
+      .map(c => ({
+        text: c.text?.text || '',
+        startTime: c.startTime,
+        duration: c.duration,
+        style: 'lowerThird' as const,
+        fontSize: c.text?.fontSize,
+      })),
+    motionGraphics: agentEdl.clips
+      .filter(c => c.type === 'motion-graphics')
+      .map(c => ({
+        shotIndex: c.shotIndex ?? 0,
+        track: c.trackId,
+        startTime: c.startTime,
+        duration: c.duration,
+      })),
+    audioEffects: agentEdl.audioFades.map(a => ({
+      target: a.target as 'main',
+      type: a.type as 'fadeIn' | 'fadeOut',
+      startTime: a.startTime,
+      duration: a.duration,
+    })),
+    mediaIssues: agentEdl.mediaIssues.map(m => ({
+      shotIndex: m.shotIndex,
+      severity: m.severity as 'error' | 'warning',
+      type: m.type as 'generation_failed' | 'placeholder' | 'missing_media',
+      title: m.title,
+      description: m.description,
+    })),
+  };
+}
+
+// ============================================================
+// VALIDATION & FIX (V2)
+// ============================================================
+
+function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAgentEDL {
   const fixed = { ...edl };
 
+  // Ensure at least one video track exists
+  if (!fixed.tracks.some(t => t.type === 'video')) {
+    fixed.tracks.push({
+      id: 'main-video',
+      type: 'video',
+      name: 'Main Video',
+      group: 'video',
+      order: 0,
+    });
+  }
+
   // Fix: ensure no overlapping clips on same track
-  const clipsByTrack = new Map<string, EDLClip[]>();
+  const clipsByTrack = new Map<string, AgentClip[]>();
   fixed.clips.forEach(clip => {
-    const arr = clipsByTrack.get(clip.track) || [];
+    const arr = clipsByTrack.get(clip.trackId) || [];
     arr.push(clip);
-    clipsByTrack.set(clip.track, arr);
+    clipsByTrack.set(clip.trackId, arr);
   });
 
-  clipsByTrack.forEach((clips, track) => {
+  clipsByTrack.forEach((clips, trackId) => {
     clips.sort((a, b) => a.startTime - b.startTime);
     for (let i = 1; i < clips.length; i++) {
       const prev = clips[i - 1];
       const curr = clips[i];
       const prevEnd = prev.startTime + prev.duration;
       if (curr.startTime < prevEnd) {
-        // Push this clip to start after previous
-        console.warn(`[EditAssembly] Fix: Clip ${curr.shotIndex} overlapped on ${track}, adjusted from ${curr.startTime}s to ${prevEnd}s`);
+        console.warn(`[EditAssembly] Fix: Clip overlapped on ${trackId}, adjusted from ${curr.startTime}s to ${prevEnd}s`);
         curr.startTime = prevEnd;
       }
     }
@@ -295,10 +464,10 @@ function validateAndFix(edl: EditDecisionList, shots: ShotDataInput[]): EditDeci
     return true;
   });
 
-  // Fix: text overlay durations must be reasonable
-  fixed.textOverlays = fixed.textOverlays.filter(t => {
-    if (t.duration <= 0 || t.duration > 30) {
-      console.warn(`[EditAssembly] Fix: Removed text overlay with invalid duration ${t.duration}s`);
+  // Fix: text clip durations must be reasonable
+  fixed.clips = fixed.clips.filter(c => {
+    if (c.type === 'text' && (c.duration <= 0 || c.duration > 30)) {
+      console.warn(`[EditAssembly] Fix: Removed text clip with invalid duration ${c.duration}s`);
       return false;
     }
     return true;
@@ -308,20 +477,27 @@ function validateAndFix(edl: EditDecisionList, shots: ShotDataInput[]): EditDeci
 }
 
 // ============================================================
-// FALLBACK: Simple sequential EDL (no AI)
+// ENHANCED FALLBACK EDL (no AI, but uses v2 format)
 // ============================================================
 
-function generateFallbackEDL(
+function generateFallbackAgentEDL(
   shots: ShotDataInput[],
   generatedMedia: GeneratedMedia[],
-  fps: number
-): EditDecisionList {
+  fps: number,
+  scriptText: string = ''
+): EditorAgentEDL {
   const mediaByShot = new Map<number, GeneratedMedia>();
   generatedMedia.forEach(m => mediaByShot.set(m.shot_index, m));
 
-  const clips: EDLClip[] = [];
-  const transitions: EDLTransition[] = [];
-  const mediaIssues: EditDecisionList['mediaIssues'] = [];
+  // --- TRACKS ---
+  const tracks: AgentTrack[] = [
+    { id: 'main-video', type: 'video', name: 'Main Video', group: 'video', order: 0 },
+    { id: 'text-overlays', type: 'video', name: 'Text Overlays', group: 'text', order: 1 },
+  ];
+
+  // --- CLIPS ---
+  const clips: AgentClip[] = [];
+  const mediaIssues: EditorAgentEDL['mediaIssues'] = [];
   let currentTime = 0;
 
   for (const shot of shots) {
@@ -338,65 +514,184 @@ function generateFallbackEDL(
       });
     }
 
-    clips.push({
+    const clipType = media?.media_type === 'motiongraphic'
+      ? 'motion-graphics' as const
+      : (media?.media_type || 'image') as 'image' | 'video';
+
+    const clip: AgentClip = {
+      trackId: 'main-video',
       shotIndex: shot.segment_index,
-      track: 'video-1',
+      type: clipType,
       startTime: currentTime,
       duration: shot.duration_seconds,
-      mediaType: (media?.media_type || 'image') as 'image' | 'video' | 'motiongraphic',
-      sourceUrl: media?.media_url,
-    });
+      label: shot.text?.substring(0, 40),
+    };
 
+    // Add keyframe animations for image clips (Ken Burns effect)
+    if (clipType === 'image') {
+      clip.keyframes = [{
+        property: 'transform.scale',
+        points: [
+          { time: 0, value: 1.0, easing: 'easeInOut' },
+          { time: shot.duration_seconds, value: 1.05 },
+        ],
+      }];
+    }
+
+    clips.push(clip);
     currentTime += shot.duration_seconds;
   }
 
-  // Add simple crossfade between major transitions (every 3 clips)
-  for (let i = 2; i < clips.length; i += 3) {
-    if (i < clips.length) {
+  // --- TEXT OVERLAYS (extract from script) ---
+  // Add chapter titles at roughly evenly-spaced intervals
+  const sentences = scriptText
+    .split(/[.!?]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 10);
+
+  if (sentences.length > 0 && shots.length > 0) {
+    // Place a chapter title every ~5 shots (or at section breaks)
+    const interval = Math.max(3, Math.floor(shots.length / 4));
+    for (let i = 0; i < shots.length; i += interval) {
+      const shot = shots[i];
+      // Find a good sentence near this shot
+      const sentenceIndex = Math.min(
+        Math.floor((i / shots.length) * sentences.length),
+        sentences.length - 1
+      );
+      const titleText = sentences[sentenceIndex].substring(0, 50);
+
+      clips.push({
+        trackId: 'text-overlays',
+        type: 'text',
+        startTime: shot.start_seconds,
+        duration: Math.min(4, shot.duration_seconds),
+        text: {
+          text: titleText,
+          fontFamily: 'Inter',
+          fontSize: 48,
+          color: '#ffffff',
+          backgroundColor: 'transparent',
+          textAlign: 'center',
+        },
+        transform: {
+          x: 460,
+          y: 440,
+          width: 1000,
+          height: 200,
+          opacity: 1,
+        },
+        keyframes: [{
+          property: 'transform.opacity',
+          points: [
+            { time: 0, value: 0, easing: 'easeOut' },
+            { time: 0.5, value: 1, easing: 'linear' },
+            { time: Math.min(3.5, shot.duration_seconds - 0.5), value: 1, easing: 'easeIn' },
+            { time: Math.min(4, shot.duration_seconds), value: 0 },
+          ],
+        }],
+        label: titleText.substring(0, 20),
+      });
+    }
+  }
+
+  // --- TRANSITIONS ---
+  const transitions: AgentTransition[] = [];
+  // Add crossfade between sections (every ~4 clips)
+  const mainClips = clips.filter(c => c.trackId === 'main-video');
+  for (let i = 3; i < mainClips.length; i += 4) {
+    const fromClip = mainClips[i - 1];
+    const toClip = mainClips[i];
+    if (fromClip.shotIndex != null && toClip.shotIndex != null) {
       transitions.push({
         type: 'crossfade',
+        fromShotIndex: fromClip.shotIndex,
+        toShotIndex: toClip.shotIndex,
         duration: 0.5,
-        fromShotIndex: clips[i - 1].shotIndex,
-        toShotIndex: clips[i].shotIndex,
-        position: 'between',
       });
     }
   }
 
   return {
+    tracks,
     clips,
     transitions,
-    effects: shots
-      .filter(s => {
-        const m = mediaByShot.get(s.segment_index);
-        return m?.media_type === 'image';
-      })
-      .map(s => ({
-        shotIndex: s.segment_index,
-        type: 'slowZoomIn' as const,
-        params: { startScale: 1.0, endScale: 1.05 },
-      })),
-    textOverlays: [],
-    motionGraphics: shots
-      .filter(s => {
-        const m = mediaByShot.get(s.segment_index);
-        return m?.media_type === 'motiongraphic' && m?.generation_status === 'completed';
-      })
-      .map(s => ({
-        shotIndex: s.segment_index,
-        track: 'effects-1',
-        startTime: s.start_seconds,
-        duration: s.duration_seconds,
-      })),
-    audioEffects: [
-      { target: 'main' as const, type: 'fadeIn' as const, startTime: 0, duration: 1 },
-      {
-        target: 'main' as const,
-        type: 'fadeOut' as const,
-        startTime: currentTime - 2,
-        duration: 2,
-      },
+    audioFades: [
+      { target: 'main', type: 'fadeIn', startTime: 0, duration: 1 },
+      { target: 'main', type: 'fadeOut', startTime: Math.max(0, currentTime - 2), duration: 2 },
     ],
     mediaIssues,
   };
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+/** Convert legacy effect type to keyframe animations */
+function effectToKeyframes(
+  effectType: string,
+  params: Record<string, number | undefined>,
+  duration: number
+): AgentClip['keyframes'] {
+  const keyframes: NonNullable<AgentClip['keyframes']> = [];
+
+  switch (effectType) {
+    case 'kenBurns':
+      keyframes.push({
+        property: 'transform.scale',
+        points: [
+          { time: 0, value: params.startScale ?? 1.0, easing: 'easeInOut' },
+          { time: duration, value: params.endScale ?? 1.05 },
+        ],
+      });
+      if (params.startX != null || params.endX != null) {
+        keyframes.push({
+          property: 'transform.x',
+          points: [
+            { time: 0, value: (params.startX ?? 0) * 1920, easing: 'easeInOut' },
+            { time: duration, value: (params.endX ?? 0) * 1920 },
+          ],
+        });
+      }
+      break;
+    case 'slowZoomIn':
+      keyframes.push({
+        property: 'transform.scale',
+        points: [
+          { time: 0, value: params.startScale ?? 1.0, easing: 'easeInOut' },
+          { time: duration, value: params.endScale ?? 1.05 },
+        ],
+      });
+      break;
+    case 'slowZoomOut':
+      keyframes.push({
+        property: 'transform.scale',
+        points: [
+          { time: 0, value: params.startScale ?? 1.05, easing: 'easeInOut' },
+          { time: duration, value: params.endScale ?? 1.0 },
+        ],
+      });
+      break;
+    case 'panLeft':
+      keyframes.push({
+        property: 'transform.x',
+        points: [
+          { time: 0, value: 0, easing: 'easeInOut' },
+          { time: duration, value: -50 },
+        ],
+      });
+      break;
+    case 'panRight':
+      keyframes.push({
+        property: 'transform.x',
+        points: [
+          { time: 0, value: 0, easing: 'easeInOut' },
+          { time: duration, value: 50 },
+        ],
+      });
+      break;
+  }
+
+  return keyframes;
 }

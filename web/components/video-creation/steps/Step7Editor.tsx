@@ -36,6 +36,7 @@ interface Step7EditorProps {
   shotList?: ShotEvent[];
   generatedMedia?: GeneratedMedia[];
   edl?: EditDecisionList | null;
+  agentEdl?: any | null;
   onContinue?: () => void;
   onBack?: () => void;
   isLocked?: boolean;
@@ -183,6 +184,7 @@ export function Step7Editor({
   shotList,
   generatedMedia,
   edl,
+  agentEdl,
   onContinue,
   onBack,
   isLocked,
@@ -206,7 +208,8 @@ export function Step7Editor({
     shotList,
     generatedMedia,
     edl,
-  }), [audioChunks, audioUrl, shotList, generatedMedia, edl]);
+    agentEdl,
+  }), [audioChunks, audioUrl, shotList, generatedMedia, edl, agentEdl]);
 
   // Monitor store clip count to know when import is truly done
   const clipCount = useVideoEditorStore((s) => Object.keys(s.clips).length);
@@ -252,10 +255,27 @@ export function Step7Editor({
     audioChunks: audioChunks?.length || 0,
     shotList: shotList?.length || 0,
     generatedMedia: generatedMedia?.length || 0,
+    edlType: agentEdl ? 'agentEdl' : edl ? 'legacyEdl' : 'none',
     isImporting,
     hasSavedState,
     clipCount,
   });
+
+  // Detailed media debug: show what data Step 7 is receiving from upstream steps
+  if (generatedMedia && generatedMedia.length > 0 && clipCount === 0) {
+    console.log("[Step7Editor] 📊 GeneratedMedia breakdown:");
+    for (const media of generatedMedia) {
+      const urlType = !media.media_url ? '❌ NO_URL'
+        : media.media_url.startsWith('remotion://') ? '🎬 remotion://'
+        : media.media_url.startsWith('data:') ? '📦 data-uri'
+        : '✅ real URL';
+      console.log(
+        `  Shot ${media.shot_index}: ${urlType} | status=${media.generation_status} | type=${media.media_type}` +
+        `${media.remotion_code ? ' | has remotion_code' : ''}` +
+        `${media.media_url && !media.media_url.startsWith('remotion://') ? ` | url=${media.media_url.substring(0, 60)}...` : ''}`
+      );
+    }
+  }
 
   // Show loading screen during import
   if (isImporting) {
@@ -308,8 +328,8 @@ export function Step7Editor({
       <div className="flex-1 overflow-hidden bg-background">
         <ReactVideoEditor
           projectId={videoId}
-          skipInitialLoad={!hasSavedState}
-          wizardData={hasSavedState ? undefined : wizardData}
+          skipInitialLoad={false}
+          wizardData={wizardData}
           projectTitle="Video Editor"
           fps={30}
           videoWidth={1920}

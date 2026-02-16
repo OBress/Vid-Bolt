@@ -329,7 +329,12 @@ export const selectDurationInSeconds = createSelector(
   (clips): number => {
     const clipsArr = Object.values(clips);
     if (clipsArr.length === 0) return 0;
-    return Math.max(...clipsArr.map((c) => c.startTime + c.duration));
+    // Guard: filter out clips with NaN/Infinity timing to prevent Math.max → NaN
+    const validEnds = clipsArr
+      .map((c) => c.startTime + c.duration)
+      .filter((v) => Number.isFinite(v));
+    if (validEnds.length === 0) return 0;
+    return Math.max(...validEnds);
   },
 );
 

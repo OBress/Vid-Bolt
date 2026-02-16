@@ -102,9 +102,24 @@ export interface ReactVideoEditorProviderProps {
   hideThemeToggle?: boolean;
   defaultTheme?: string;
 }
-
 // Default renderer (lazy singleton)
 let _defaultRenderer: VideoRenderer | null = null;
+
+// ============================================================
+// STABLE DEFAULT CONSTANTS
+// Module-level objects never change identity between renders.
+// ============================================================
+const DEFAULT_ZOOM_CONSTRAINTS = {
+  min: 0.2,
+  max: 10,
+  step: 0.1,
+  default: 1,
+} as const;
+
+const DEFAULT_SNAPPING_CONFIG = {
+  thresholdFrames: 1,
+  enableVerticalSnapping: true,
+} as const;
 function getDefaultRenderer(): VideoRenderer {
   if (!_defaultRenderer) {
     _defaultRenderer = new HttpRenderer("/api/render", {
@@ -137,16 +152,8 @@ export const ReactVideoEditorProvider: React.FC<ReactVideoEditorProviderProps> =
   adaptors,
   initialRows = 5,
   maxRows = 8,
-  zoomConstraints = {
-    min: 0.2,
-    max: 10,
-    step: 0.1,
-    default: 1,
-  },
-  snappingConfig = {
-    thresholdFrames: 1,
-    enableVerticalSnapping: true,
-  },
+  zoomConstraints = DEFAULT_ZOOM_CONSTRAINTS,
+  snappingConfig = DEFAULT_SNAPPING_CONFIG,
   disableMobileLayout = false,
   disableVideoKeyframes = false,
   enablePushOnDrag = false,

@@ -29,6 +29,7 @@ interface GenerateMotionGraphicBody {
   contextHint?: string;
   routingTags?: RoutingTag[];
   imageAssets?: ImageAsset[];
+  narrationText?: string;
   previousQCFeedback?: string;
   simplifiedRetry?: boolean;
 }
@@ -76,6 +77,7 @@ export async function POST(
       contextHint,
       routingTags = [],
       imageAssets = [],
+      narrationText,
       previousQCFeedback,
       simplifiedRetry = false,
     } = body;
@@ -154,6 +156,7 @@ export async function POST(
       routingTags,
       imageAssets,
       contextHint,
+      narrationText,
       previousQCFeedback,
       simplifiedRetry,
     };

@@ -79,6 +79,9 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
   // Use prop baseUrl first, then context baseUrl
   const resolvedBaseUrl = baseUrl || contextBaseUrl;
 
+
+
+
   // Safety check - don't render if src is missing
   if (!overlay.src || overlay.src.trim() === '') {
     console.warn('VideoLayerContent: No src provided for video overlay', overlay);
@@ -96,6 +99,30 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
         }}
       >
         Video source missing
+      </div>
+    );
+  }
+
+  // Safety check - data:image/ URIs cannot be played as video by OffthreadVideo.
+  // This happens when the wizard import falls back to a transparent PNG placeholder
+  // because the generated media URL is not available yet.
+  if (overlay.src.startsWith('data:image/')) {
+    console.warn(`VideoLayerContent: src is an image data URI, cannot render as video (id=${overlay.id})`);
+    return (
+      <div 
+        style={{ 
+          width: '100%', 
+          height: '100%', 
+          backgroundColor: '#1a1a2e',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#888',
+          fontSize: '13px',
+          fontFamily: 'monospace',
+        }}
+      >
+        Media pending…
       </div>
     );
   }

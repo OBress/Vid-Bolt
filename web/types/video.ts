@@ -209,6 +209,10 @@ export interface GeneratedMedia {
   };
   /** Error message if generation failed */
   error_message?: string;
+  /** Generated Remotion component code (for motiongraphic media) */
+  remotion_code?: string;
+  /** Lucide-react icon names used in the generated Remotion code */
+  used_icons?: string[];
   /** Timestamps */
   created_at?: string;
   updated_at?: string;
