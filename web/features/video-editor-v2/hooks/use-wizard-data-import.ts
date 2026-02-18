@@ -424,9 +424,9 @@ export function importWizardDataToStore(options: WizardData): boolean {
       tracksToAdd[overlaysTrackId] = {
         id: overlaysTrackId,
         type: 'video',
-        name: 'Overlays',
+        name: 'Video 2',
         order: 1,
-        group: 'overlays',
+        group: 'video',
         locked: false,
         visible: true,
         muted: false,
@@ -554,8 +554,12 @@ export function importWizardDataToStore(options: WizardData): boolean {
               }
             : undefined;
 
-          // Route pre-rendered MG clips to the overlays track instead of main-video
-          const finalTrackId = (mgType && clipType !== 'motion-graphics') ? overlaysTrackId : internalTrackId;
+          // Route clips to the overlays track when:
+          // 1) The agent EDL explicitly placed them on "overlays" (via agentToInternalTrackId mapping)
+          // 2) They're pre-rendered MG clips (mgType but retyped as 'video' by media URL map)
+          const isOnOverlaysTrack = trackId === 'overlays';
+          const isPreRenderedMG = mgType && clipType !== 'motion-graphics';
+          const finalTrackId = (isOnOverlaysTrack || isPreRenderedMG) ? overlaysTrackId : internalTrackId;
 
           clipsToAdd[clipId] = {
             id: clipId,

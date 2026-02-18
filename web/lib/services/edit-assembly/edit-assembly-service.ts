@@ -176,6 +176,7 @@ function buildContext(
         mediaType: (media?.media_type || 'none') as 'image' | 'video' | 'motiongraphic' | 'none',
         hasMedia: !!media && media.generation_status === 'completed',
         mediaUrl: media?.media_url,
+        hasRemotionCode: !!media?.remotion_code,
       };
     }),
     scriptSentences,
@@ -623,10 +624,10 @@ function generateFallbackAgentEDL(
   generatedMedia.forEach(m => mediaByShot.set(m.shot_index, m));
 
   // --- TRACKS ---
-  // All visual clips (video, image, motion-graphics) go on one unified video track.
-  // Motion graphics render as transparent overlays on top of underlying media.
+  // Base visual clips on main-video, MG overlays on overlays track.
   const tracks: AgentTrack[] = [
     { id: 'main-video', type: 'video', name: 'Main Video', group: 'video', order: 0 },
+    { id: 'overlays', type: 'video', name: 'Video 2', group: 'video', order: 1 },
   ];
 
   // --- CLIPS ---
@@ -643,20 +644,21 @@ function generateFallbackAgentEDL(
         shotIndex: shot.segment_index,
         severity: 'error',
         type: media?.generation_status === 'failed' ? 'generation_failed' : 'missing_media',
-        title: `Shot ${shot.segment_index + 1} media unavailable`,
+        title: `Shot ${shot.segment_index} media unavailable`,
         description: `Media for this shot is ${media?.generation_status || 'missing'}. A placeholder will be shown.`,
       });
     }
 
-    const clipType = media?.media_type === 'motiongraphic'
+    const isStandaloneMG = media?.media_type === 'motiongraphic' && !media?.remotion_code;
+    const isHybrid = hasMedia && media?.media_type !== 'motiongraphic' && !!media?.remotion_code;
+
+    const clipType = isStandaloneMG
       ? 'motion-graphics' as const
       : (media?.media_type || 'image') as 'image' | 'video';
 
-    // All clips go on main-video — motion graphics render as transparent overlays
-    const trackId = 'main-video';
-
+    // Base media clip always goes on main-video
     const clip: AgentClip = {
-      trackId,
+      trackId: 'main-video',
       shotIndex: shot.segment_index,
       type: clipType,
       startTime: currentTime,
@@ -676,6 +678,19 @@ function generateFallbackAgentEDL(
     }
 
     clips.push(clip);
+
+    // For hybrid shots, add a separate overlay clip on the overlays track
+    if (isHybrid) {
+      clips.push({
+        trackId: 'overlays',
+        shotIndex: shot.segment_index,
+        type: 'motion-graphics',
+        startTime: currentTime,
+        duration: shot.duration_seconds,
+        label: `${shot.text?.substring(0, 30)} (overlay)`,
+      });
+    }
+
     currentTime += shot.duration_seconds;
   }
 

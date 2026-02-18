@@ -299,7 +299,10 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
 function mergeAgentEDLChunks(chunks: EditorAgentEDL[]): EditorAgentEDL {
   if (chunks.length === 0) {
     return {
-      tracks: [{ id: 'main-video', type: 'video', name: 'Main Video', group: 'video', order: 0 }],
+      tracks: [
+        { id: 'main-video', type: 'video', name: 'Main Video', group: 'video', order: 0 },
+        { id: 'overlays', type: 'video', name: 'Video 2', group: 'video', order: 1 },
+      ],
       clips: [],
       transitions: [],
       audioFades: [],
@@ -319,6 +322,11 @@ function mergeAgentEDLChunks(chunks: EditorAgentEDL[]): EditorAgentEDL {
     }
   }
 
+  // Ensure overlays track exists
+  if (!trackMap.has('overlays')) {
+    trackMap.set('overlays', { id: 'overlays', type: 'video', name: 'Video 2', group: 'video', order: 1 });
+  }
+
   const merged: EditorAgentEDL = {
     tracks: Array.from(trackMap.values()),
     clips: [],
@@ -334,7 +342,7 @@ function mergeAgentEDLChunks(chunks: EditorAgentEDL[]): EditorAgentEDL {
     merged.mediaIssues.push(...(chunk.mediaIssues || []));
   }
 
-  // Sort clips by startTime within each track
+  // Sort clips by startTime within each track and fix overlaps
   const clipsByTrack = new Map<string, AgentClip[]>();
   merged.clips.forEach(clip => {
     const arr = clipsByTrack.get(clip.trackId) || [];
@@ -342,14 +350,40 @@ function mergeAgentEDLChunks(chunks: EditorAgentEDL[]): EditorAgentEDL {
     clipsByTrack.set(clip.trackId, arr);
   });
 
-  clipsByTrack.forEach(clips => {
-    clips.sort((a, b) => a.startTime - b.startTime);
+  clipsByTrack.forEach((clips, trackId) => {
+    // Sort by shotIndex first (preserves correct shot order when AI generates
+    // each batch starting from time 0), then by startTime as tiebreaker for
+    // clips within the same shot (e.g., overlay + base at same shotIndex).
+    clips.sort((a, b) => {
+      const aShot = a.shotIndex ?? Infinity;
+      const bShot = b.shotIndex ?? Infinity;
+      if (aShot !== bShot) return aShot - bShot;
+      return a.startTime - b.startTime;
+    });
+
+    // Fix ALL overlaps by snapping to the previous clip's end.
+    // This handles the case where each AI batch produces timing relative
+    // to its own batch rather than the absolute timeline — the sorted order
+    // (by shotIndex naturally ascending) ensures correct sequencing.
     for (let i = 1; i < clips.length; i++) {
       const prev = clips[i - 1];
       const curr = clips[i];
       const prevEnd = prev.startTime + prev.duration;
       if (curr.startTime < prevEnd) {
-        console.warn(`[EditAssembly Merge] Cross-chunk overlap, adjusting from ${curr.startTime}s to ${prevEnd}s`);
+        const overlapAmount = prevEnd - curr.startTime;
+        console.log(`[EditAssembly Merge] Fixing ${overlapAmount.toFixed(2)}s overlap on ${trackId}: ${curr.startTime}s → ${prevEnd}s`);
+        curr.startTime = prevEnd;
+      }
+    }
+
+    // Gap-closer pass: fill gaps between 0.1s–2s by shifting clips backward
+    for (let i = 1; i < clips.length; i++) {
+      const prev = clips[i - 1];
+      const curr = clips[i];
+      const prevEnd = prev.startTime + prev.duration;
+      const gap = curr.startTime - prevEnd;
+      if (gap > 0.1 && gap < 2) {
+        console.log(`[EditAssembly Merge] Closing ${gap.toFixed(2)}s gap on ${trackId}: ${curr.startTime}s → ${prevEnd}s`);
         curr.startTime = prevEnd;
       }
     }

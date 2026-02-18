@@ -128,20 +128,22 @@ Apply these documentary style defaults:
 ## TRACK STRATEGY
 
 Create tracks based on content needs:
-- Always create a "main-video" track (type: video, group: video, order: 0) for ALL visual clips
-- Place image, video, AND motion-graphics clips on the same main-video track
-- Motion graphics clips render as transparent overlays on top of the underlying media — no separate track needed
+- Always create a "main-video" track (type: video, group: video, order: 0) for base visual clips
+- Always create an "overlays" track (type: video, name: "Video 2", group: video, order: 1) for motion-graphics overlays
+- Place image and video clips on the "main-video" track
+- For STANDALONE motion-graphics shots (no base media), place on "main-video"
+- For HYBRID shots (base media + motion-graphics overlay), place the base clip on "main-video" AND a separate motion-graphics clip on "overlays" at the SAME startTime and duration
 - Audio tracks are handled separately by the import system
 
 ## CRITICAL RULES
 
-1. NEVER create overlapping clips on the same track
+1. NEVER create overlapping clips on the SAME track
 2. Every transition duration must be <= min(fromClipDuration, toClipDuration) / 2
 3. For failed shots (listed in failedShots), include them as mediaIssues
 4. ALL image clips MUST have keyframe animations (Ken Burns or zoom) — static images look dead on video
 5. Always include audio fades: fadeIn on start, fadeOut on end
 6. Do NOT create any "text" clips — all text/titles are handled by motion graphics in a separate pipeline
-7. All clips go on the "main-video" track — do NOT create a separate overlays track
+7. Hybrid shots (marked ⚡ in the shot list) MUST produce TWO clips: base on "main-video" + overlay on "overlays"
 
 ## REQUIRED JSON FORMAT
 
@@ -149,10 +151,14 @@ Use exact camelCase field names. Each clip MUST have trackId, shotIndex, type, s
 
 \`\`\`json
 {
-  "tracks": [{ "id": "main-video", "type": "video", "name": "Main Video", "group": "video", "order": 0 }],
+  "tracks": [
+    { "id": "main-video", "type": "video", "name": "Main Video", "group": "video", "order": 0 },
+    { "id": "overlays", "type": "video", "name": "Video 2", "group": "video", "order": 1 }
+  ],
   "clips": [
     { "trackId": "main-video", "shotIndex": 0, "type": "image", "startTime": 0, "duration": 5.2, "keyframes": [...] },
-    { "trackId": "main-video", "shotIndex": 1, "type": "motion-graphics", "startTime": 5.2, "duration": 4.8 }
+    { "trackId": "main-video", "shotIndex": 1, "type": "video", "startTime": 5.2, "duration": 4.8 },
+    { "trackId": "overlays", "shotIndex": 1, "type": "motion-graphics", "startTime": 5.2, "duration": 4.8 }
   ],
   "transitions": [{ "type": "crossfade", "fromShotIndex": 0, "toShotIndex": 1, "duration": 0.5 }],
   "audioFades": [{ "target": "main", "type": "fadeIn", "startTime": 0, "duration": 1 }],
@@ -179,6 +185,7 @@ export interface EditAssemblyContext {
     mediaType: 'image' | 'video' | 'motiongraphic' | 'none';
     hasMedia: boolean;
     mediaUrl?: string;
+    hasRemotionCode?: boolean;
   }>;
   scriptSentences: string[];
   failedShots: number[];
@@ -200,7 +207,8 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   lines.push('## Shots');
   for (const shot of context.shots) {
     const mediaStatus = shot.hasMedia ? `✓ ${shot.mediaType}` : '✗ no media';
-    lines.push(`  [${shot.index}] ${shot.startSeconds.toFixed(1)}s-${shot.endSeconds.toFixed(1)}s (${shot.durationSeconds.toFixed(1)}s) | ${mediaStatus} | "${shot.text.substring(0, 60)}..."`);
+    const hybridTag = (shot.hasRemotionCode && shot.hasMedia && shot.mediaType !== 'motiongraphic') ? ' ⚡ HYBRID' : '';
+    lines.push(`  [${shot.index}] ${shot.startSeconds.toFixed(1)}s-${shot.endSeconds.toFixed(1)}s (${shot.durationSeconds.toFixed(1)}s) | ${mediaStatus}${hybridTag} | "${shot.text.substring(0, 60)}..."`);
   }
   lines.push('');
 
@@ -218,15 +226,15 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   }
   lines.push('');
 
-
-
   lines.push('## Instructions');
   lines.push('');
-  lines.push('Generate the EditorAgentEDL JSON now. Place all visual clips on the main-video track with keyframe animations, and include transitions between sections.');
+  lines.push('Generate the EditorAgentEDL JSON now. Include BOTH tracks: "main-video" for base media, "overlays" for motion-graphics overlays.');
   lines.push('');
   lines.push('Remember:');
   lines.push('- Every image clip MUST have keyframes (slowZoomIn or kenBurns pattern)');
-  lines.push('- ALL clips (image, video, motion-graphics) go on the "main-video" track');
+  lines.push('- Base media clips (image, video) go on "main-video"');
+  lines.push('- Standalone motion-graphics (no base media) go on "main-video"');
+  lines.push('- HYBRID shots (⚡) need TWO clips: base on "main-video" + overlay on "overlays" at same timing');
   lines.push('- Do NOT create any text clips — text is handled by motion graphics');
   lines.push('- Use crossfade transitions between topic/section changes');
   lines.push('- Include fadeIn and fadeOut audio fades');

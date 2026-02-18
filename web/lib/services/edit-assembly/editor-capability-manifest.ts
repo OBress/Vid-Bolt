@@ -166,7 +166,7 @@ export interface AgentTrack {
   /** Display name */
   name: string;
   /** Track group for UI organization */
-  group: 'video' | 'audio' | 'text' | 'effects';
+  group: 'video' | 'audio' | 'text' | 'effects' | 'overlays';
   /** Visual stacking order (0 = bottom) */
   order: number;
 }
@@ -361,7 +361,7 @@ export const AGENT_EDL_JSON_SCHEMA = {
           id: { type: 'string', description: 'Your assigned ID (e.g. "main-video")' },
           type: { type: 'string', enum: ['video', 'audio'] },
           name: { type: 'string', description: 'Display name' },
-          group: { type: 'string', enum: ['video', 'audio', 'text', 'effects'] },
+          group: { type: 'string', enum: ['video', 'audio', 'text', 'effects', 'overlays'] },
           order: { type: 'number', description: 'Stacking order (0 = bottom)' },
         },
       },

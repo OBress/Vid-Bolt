@@ -109,6 +109,17 @@ export function buildEnrichedMGPrompt(
   const hasImageManipulation = routingTags.includes('remotion_image_manipulation');
   const hasVideoManipulation = routingTags.includes('remotion_video_manipulation');
 
+  // Video overlay constraints — prevent precision positioning on dynamic video
+  if (hasVideoManipulation) {
+    parts.push('\n\nVIDEO OVERLAY CONSTRAINTS (this is a transparent overlay on dynamic video):');
+    parts.push('\n- Do NOT attempt to track, circle, highlight, or point to specific objects in the video');
+    parts.push('\n- Do NOT use position-specific annotations — the underlying video is dynamic and unpredictable');
+    parts.push('\n- DO use: full-screen text overlays, lower-thirds, corner graphics, border effects, general screen tints/vignettes, animated titles/labels, info boxes in fixed screen positions');
+    parts.push('\n- Keep overlays in screen-edge/corner safe zones — never rely on center-positioning to "match" video content');
+    parts.push('\n- Prefer semi-transparent backgrounds behind text for readability over dynamic video');
+    parts.push('\n- Think of this as a HUD or broadcast-style overlay, NOT a video annotation tool');
+  }
+
   if ((hasImageManipulation || hasVideoManipulation) && imageAssets.length > 0) {
     parts.push('\n\nAVAILABLE MEDIA ASSETS (use via Remotion\'s <Img> or <OffthreadVideo> components):');
 
