@@ -16,6 +16,7 @@ import {
   callGpuBatchVideoGenerate,
   callGpuGetMode,
   callGpuSwitchMode,
+  forceUpdateGpuActivity,
   getImageDimensions,
   getVideoDimensions,
   type AspectRatio,
@@ -498,6 +499,10 @@ async function processImageBatch(
   // Wait for all webhooks with calculated timeout
   const timeout = calculateTimeout('image_generation', items.length);
   console.log(`${logPrefix} Webhook timeout: ${Math.round(timeout / 1000)}s for ${items.length} items`);
+
+  // Force-update GPU activity before long webhook wait to prevent VM shutdown
+  forceUpdateGpuActivity().catch(() => {});
+
   const results = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'image', onItemComplete);
 
   return results;
@@ -679,6 +684,9 @@ async function processVideoBatch(
   // Calculate timeout based on average duration
   const avgDuration = shots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0) / shots.length;
   const timeout = calculateTimeout('video_generation', items.length, avgDuration);
+  
+  // Force-update GPU activity before long webhook wait to prevent VM shutdown
+  forceUpdateGpuActivity().catch(() => {});
   
   const webhookResults = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'video', onItemComplete);
 

@@ -99,7 +99,7 @@ export function SceneCard({
       <div className="px-4 py-3 flex items-center gap-2 border-b border-white/5 bg-neutral-900/30">
         <GripVertical className="w-4 h-4 text-neutral-600" />
         <span className="text-sm font-medium text-neutral-300">
-          Shot {shot.segment_index + 1}
+          Shot {shot.segment_index}
         </span>
 
         {/* Duration badge */}
@@ -143,7 +143,7 @@ export function SceneCard({
           ) : (
             <img
               src={media.media_url}
-              alt={`Shot ${shot.segment_index + 1}`}
+              alt={`Shot ${shot.segment_index}`}
               className="absolute inset-0 w-full h-full object-cover"
             />
           )

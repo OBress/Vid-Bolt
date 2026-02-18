@@ -117,22 +117,20 @@ Apply these documentary style defaults:
 - Use crossfade transitions only for topic/section shifts
 - Use fadeToBlack for major section boundaries
 - Apply Ken Burns / slow zoom keyframe animations on ALL static images
-- Text overlays: chapter titles at section starts, lowerThirds for key stats/names
 - Pacing: steady and measured — breathing room between points
 
 ## YOUTUBE BEST PRACTICES
 
-1. **5-second visual change rule**: Ensure a visual change every ~5s (transition, zoom, text overlay, or cut)
+1. **5-second visual change rule**: Ensure a visual change every ~5s (transition, zoom, or cut)
 2. **Audio-visual sync**: Align transitions with phrase/sentence boundaries, not mid-word
 3. **Hook pattern**: Slightly faster pacing in the first 15 seconds (4-6s cuts vs 6-10s default)
-4. **Text reinforcement**: Surface key phrases as text overlays on emotional or important beats
 
 ## TRACK STRATEGY
 
 Create tracks based on content needs:
-- Always create a "main-video" track (type: video, group: video) for primary visuals
-- Create a "text-overlays" track (type: video, group: text) for text clips
-- If there are motion graphics shots, create an "effects" track (type: video, group: effects)
+- Always create a "main-video" track (type: video, group: video, order: 0) for ALL visual clips
+- Place image, video, AND motion-graphics clips on the same main-video track
+- Motion graphics clips render as transparent overlays on top of the underlying media — no separate track needed
 - Audio tracks are handled separately by the import system
 
 ## CRITICAL RULES
@@ -141,11 +139,28 @@ Create tracks based on content needs:
 2. Every transition duration must be <= min(fromClipDuration, toClipDuration) / 2
 3. For failed shots (listed in failedShots), include them as mediaIssues
 4. ALL image clips MUST have keyframe animations (Ken Burns or zoom) — static images look dead on video
-5. Add chapter title text overlays at major topic shifts
-6. Add lowerThird text overlays for key statistics, names, or important facts
-7. Always include audio fades: fadeIn on start, fadeOut on end
+5. Always include audio fades: fadeIn on start, fadeOut on end
+6. Do NOT create any "text" clips — all text/titles are handled by motion graphics in a separate pipeline
+7. All clips go on the "main-video" track — do NOT create a separate overlays track
 
-Respond with ONLY valid JSON matching the EditorAgentEDL schema. No markdown, no code fences, no commentary.`;
+## REQUIRED JSON FORMAT
+
+Use exact camelCase field names. Each clip MUST have trackId, shotIndex, type, startTime, and duration:
+
+\`\`\`json
+{
+  "tracks": [{ "id": "main-video", "type": "video", "name": "Main Video", "group": "video", "order": 0 }],
+  "clips": [
+    { "trackId": "main-video", "shotIndex": 0, "type": "image", "startTime": 0, "duration": 5.2, "keyframes": [...] },
+    { "trackId": "main-video", "shotIndex": 1, "type": "motion-graphics", "startTime": 5.2, "duration": 4.8 }
+  ],
+  "transitions": [{ "type": "crossfade", "fromShotIndex": 0, "toShotIndex": 1, "duration": 0.5 }],
+  "audioFades": [{ "target": "main", "type": "fadeIn", "startTime": 0, "duration": 1 }],
+  "mediaIssues": []
+}
+\`\`\`
+
+Respond with ONLY valid JSON matching this schema. No markdown, no code fences, no commentary.`;
 
 // ============================================================
 // USER PROMPT BUILDER
@@ -203,27 +218,16 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   }
   lines.push('');
 
-  // Script (abbreviated)
-  if (context.scriptSentences.length > 0) {
-    lines.push('## Script Sentences (for text overlay placement)');
-    const maxSentences = Math.min(context.scriptSentences.length, 20);
-    for (let i = 0; i < maxSentences; i++) {
-      lines.push(`  ${i + 1}. "${context.scriptSentences[i].substring(0, 80)}"`);
-    }
-    if (context.scriptSentences.length > maxSentences) {
-      lines.push(`  ... and ${context.scriptSentences.length - maxSentences} more`);
-    }
-    lines.push('');
-  }
+
 
   lines.push('## Instructions');
   lines.push('');
-  lines.push('Generate the EditorAgentEDL JSON now. Create appropriate tracks, place all visual clips with keyframe animations, add text overlays at topic shifts, and include transitions between sections.');
+  lines.push('Generate the EditorAgentEDL JSON now. Place all visual clips on the main-video track with keyframe animations, and include transitions between sections.');
   lines.push('');
   lines.push('Remember:');
   lines.push('- Every image clip MUST have keyframes (slowZoomIn or kenBurns pattern)');
-  lines.push('- Add chapterTitle text clips at major topic transitions');
-  lines.push('- Add lowerThird text clips for key facts/statistics mentioned in the script');
+  lines.push('- ALL clips (image, video, motion-graphics) go on the "main-video" track');
+  lines.push('- Do NOT create any text clips — text is handled by motion graphics');
   lines.push('- Use crossfade transitions between topic/section changes');
   lines.push('- Include fadeIn and fadeOut audio fades');
 

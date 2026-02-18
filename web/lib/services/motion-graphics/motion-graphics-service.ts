@@ -214,7 +214,6 @@ class MotionGraphicsService {
   private getClassificationModel(requestedModel: string): string {
     const cheapModels = [
       'google/gemini-3-flash-preview',
-      'google/gemini-2.5-flash-preview',
       'google/gemini-2.0-flash',
       'meta-llama/llama-3.1-8b-instruct',
     ];

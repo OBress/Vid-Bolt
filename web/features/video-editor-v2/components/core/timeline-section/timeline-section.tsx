@@ -34,6 +34,7 @@ const getDefaultColorForType = (type: string): string => {
     case 'caption': return '#ec4899';
     case 'shape': return '#8b5cf6';
     case 'sticker': return '#14b8a6';
+    case 'motion-graphics': return '#8b5cf6';
     default: return '#6b7280';
   }
 };
@@ -126,10 +127,20 @@ export const TimelineSection: React.FC<TimelineSectionProps> = () => {
   const timelineTracks = React.useMemo<TimelineTrack[]>(() => {
     if (!timelineV2Tracks || !timelineV2Clips) return [];
     
-    // Sort tracks: video tracks first (by order), then audio tracks (by order)
+    // Sort tracks: video group first, then text, effects, audio at bottom.
+    // Within the same group, sort by track.order ascending.
+    const groupOrder: Record<string, number> = {
+      'video': 0,
+      'text': 1,
+      'effects': 2,
+      'audio': 3,
+    };
     const sortedTracks = [...timelineV2Tracks].sort((a, b) => {
-      if (a.type === 'video' && b.type === 'audio') return -1;
-      if (a.type === 'audio' && b.type === 'video') return 1;
+      const aGroup = (a as any).group || (a.type === 'audio' ? 'audio' : 'video');
+      const bGroup = (b as any).group || (b.type === 'audio' ? 'audio' : 'video');
+      const aGroupIdx = groupOrder[aGroup] ?? 2;
+      const bGroupIdx = groupOrder[bGroup] ?? 2;
+      if (aGroupIdx !== bGroupIdx) return aGroupIdx - bGroupIdx;
       return a.order - b.order;
     });
     

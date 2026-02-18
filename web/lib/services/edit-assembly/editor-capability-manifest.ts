@@ -31,12 +31,12 @@ You can create any number of tracks. Each track has:
 - \`id\`: Your assigned ID (e.g. "main-video", "b-roll", "text-overlays", "narration")
 - \`type\`: "video" | "audio"
 - \`name\`: Display name (e.g. "Main Video", "B-Roll", "Chapter Titles")
-- \`group\`: "video" | "audio" | "text" | "effects" | "overlays"
-- \`order\`: Visual stacking order (0 = bottom, higher = on top). Video tracks render top-down, so higher-order video tracks overlay lower ones.
+- \`group\`: "video" | "audio" | "text" | "effects"
+- \`order\`: Visual stacking order (0 = bottom, higher = on top).
 
 Common track layouts:
-- Documentary: main-video (order:0), text-overlays (order:1), narration (audio, order:0)
-- Dynamic: main-video (order:0), b-roll (order:1), text-overlays (order:2), sfx (audio, order:1), narration (audio, order:0)
+- Standard: main-video (order:0) for all visual clips (images, videos, motion graphics), narration (audio, order:0)
+- Dynamic: main-video (order:0), b-roll (order:1), sfx (audio, order:1), narration (audio, order:0)
 
 ### CLIP TYPES
 
@@ -44,11 +44,12 @@ Common track layouts:
 |------|----------|-------------------|
 | \`image\` | Static visuals, photos, AI images | transform, media.src |
 | \`video\` | Video footage, stock clips | transform, media.src, media.speed |
-| \`text\` | Titles, lower thirds, callouts | transform, text.* |
 | \`audio\` | Narration, music, SFX | media.src, media.volume |
 | \`caption\` | Subtitles, word-level captions | text.* |
 | \`shape\` | Rectangles, circles, dividers | transform |
-| \`motion-graphics\` | Animated templates | properties.template |
+| \`motion-graphics\` | Animated templates, titles, overlays | properties.template |
+
+> **Note**: Do NOT use \`text\` clips. All text/titles are generated as motion graphics by a separate pipeline.
 
 ### TRANSFORM (all visual clips)
 
@@ -65,24 +66,6 @@ Full-screen: { x: 0, y: 0, width: 1920, height: 1080 }
 Lower-third box: { x: 100, y: 800, width: 600, height: 200 }
 Center title: { x: 460, y: 440, width: 1000, height: 200 }
 
-### TEXT PROPERTIES (text clips)
-
-\`\`\`json
-{
-  "text": "Chapter 1: Introduction",
-  "fontFamily": "Inter",       // Inter, Roboto, Outfit, Montserrat, Playfair Display
-  "fontSize": 72,             // px
-  "color": "#ffffff",
-  "backgroundColor": "rgba(0,0,0,0.7)",  // or "transparent"
-  "textAlign": "center"       // left, center, right
-}
-\`\`\`
-
-Style presets for quick reference:
-- **chapterTitle**: fontSize 72, transparent bg, centered, white text
-- **lowerThird**: fontSize 36, rgba(0,0,0,0.7) bg, left-aligned, 600px wide
-- **callout**: fontSize 42, semi-transparent bg, centered
-- **subtitle**: fontSize 28, rgba(0,0,0,0.5) bg, bottom-center
 
 ### VISUAL EFFECTS
 
@@ -183,7 +166,7 @@ export interface AgentTrack {
   /** Display name */
   name: string;
   /** Track group for UI organization */
-  group: 'video' | 'audio' | 'text' | 'effects' | 'overlays';
+  group: 'video' | 'audio' | 'text' | 'effects';
   /** Visual stacking order (0 = bottom) */
   order: number;
 }
@@ -378,7 +361,7 @@ export const AGENT_EDL_JSON_SCHEMA = {
           id: { type: 'string', description: 'Your assigned ID (e.g. "main-video")' },
           type: { type: 'string', enum: ['video', 'audio'] },
           name: { type: 'string', description: 'Display name' },
-          group: { type: 'string', enum: ['video', 'audio', 'text', 'effects', 'overlays'] },
+          group: { type: 'string', enum: ['video', 'audio', 'text', 'effects'] },
           order: { type: 'number', description: 'Stacking order (0 = bottom)' },
         },
       },

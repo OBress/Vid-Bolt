@@ -191,11 +191,16 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
       return;
     }
     
-    // Defensive: if the store already has clips (e.g. from a prior import
-    // or Zustand persistence), do NOT wipe them with store.initialize().
+    // When wizard data is provided, ALWAYS clear old state and re-import.
+    // This prevents stale clips/tracks from a previous session persisting
+    // after the user navigates back to step 6 and returns.
     const currentClips = Object.keys(useVideoEditorStore.getState().clips).length;
-    if (currentClips > 0) {
-      console.log(`[EditorProvider] Store already has ${currentClips} clips — skipping initialize`);
+    if (currentClips > 0 && wizardDataRef.current) {
+      console.log(`[EditorProvider] ⚠️ Store has ${currentClips} stale clips but wizard data is available — clearing and re-importing`);
+    } else if (currentClips > 0 && !wizardDataRef.current) {
+      // No wizard data provided — this is a standalone editor session.
+      // Keep existing clips (e.g. restored from Supabase or persisted state).
+      console.log(`[EditorProvider] Store already has ${currentClips} clips and no wizard data — keeping existing state`);
       hasInitialized.current = true;
       return;
     }

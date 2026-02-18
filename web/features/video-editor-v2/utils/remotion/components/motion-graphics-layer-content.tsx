@@ -405,20 +405,24 @@ export const MotionGraphicsLayerContent: React.FC<MotionGraphicsLayerContentProp
       );
     }
 
-    // No template - show placeholder
+    // No template - show informative placeholder
     if (!template) {
+      console.warn(`[MotionGraphicsLayerContent] ⚠️ No template data for overlay: id=${overlay.id}, hasCompositionDef=${!!compositionDefinition}`);
       return (
         <div style={{
           position: 'absolute',
           inset: 0,
           display: 'flex',
+          flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: 'rgba(0,0,0,0.8)',
+          backgroundColor: '#1a1a2e',
           color: '#FFFFFF',
           fontFamily: 'Inter, system-ui, sans-serif',
+          gap: 8,
         }}>
-          <span>No template data</span>
+          <span style={{ fontSize: 28 }}>✨</span>
+          <span style={{ fontSize: 14, opacity: 0.7 }}>Motion graphic loading…</span>
         </div>
       );
     }
@@ -461,6 +465,7 @@ export const MotionGraphicsLayerContent: React.FC<MotionGraphicsLayerContentProp
     }
 
     // PRIORITY 3: Built-in components by category (for legacy templates without compositionDefinition)
+    console.log(`[MotionGraphicsLayerContent] No effectiveComposition, falling through to built-in: category=${template.category}, templateId=${template.id}, templateName=${template.name}`);
     const categoryContent = renderBuiltInComponent(
       template.category,
       template.id,
@@ -475,6 +480,7 @@ export const MotionGraphicsLayerContent: React.FC<MotionGraphicsLayerContentProp
     }
 
     // Final fallback - show template info
+    console.warn(`[MotionGraphicsLayerContent] ⚠️ Final fallback for: template=${template.name} (${template.category}), hasComposition=${!!effectiveComposition}, hasRemotionCode=${!!(effectiveComposition as any)?.originalRemotionCode}`);
     return (
       <div style={{
         position: 'absolute',

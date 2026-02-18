@@ -380,7 +380,7 @@ export function MediaEditModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             <span className="text-xs font-bold px-2 py-1 rounded bg-neutral-800 text-neutral-300 border border-neutral-700">
-              SHOT {shot.segment_index + 1}
+              SHOT {shot.segment_index}
             </span>
             <span>Edit Visual Media</span>
           </DialogTitle>
@@ -488,7 +488,7 @@ export function MediaEditModal({
                   ) : (
                     <img
                       src={displayUrl}
-                      alt={`Shot ${shot.segment_index + 1}${isMultiImage ? ` - Item ${selectedItemIndex + 1}` : ''}`}
+                      alt={`Shot ${shot.segment_index}${isMultiImage ? ` - Item ${selectedItemIndex + 1}` : ''}`}
                       className="w-full h-full object-cover"
                     />
                   )

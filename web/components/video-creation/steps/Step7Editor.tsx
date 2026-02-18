@@ -328,7 +328,7 @@ export function Step7Editor({
       <div className="flex-1 overflow-hidden bg-background">
         <ReactVideoEditor
           projectId={videoId}
-          skipInitialLoad={false}
+          skipInitialLoad={!isResuming}
           wizardData={wizardData}
           projectTitle="Video Editor"
           fps={30}

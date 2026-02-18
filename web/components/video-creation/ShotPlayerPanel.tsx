@@ -262,7 +262,7 @@ export function ShotPlayerPanel({
       {currentShot && (
         <div className="shrink-0 px-4 py-2 bg-neutral-900/50 border-t border-neutral-800">
           <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">
-            Now Playing: Shot {currentShot.segment_index + 1}
+            Now Playing: Shot {currentShot.segment_index}
           </div>
           <div className="text-xs text-neutral-400 line-clamp-2">
             {currentShot.summary || currentShot.text.substring(0, 100)}

@@ -789,7 +789,7 @@ export function Step5ShotCreation({
                                 : "text-neutral-600 bg-neutral-900 border-neutral-800 group-hover:border-neutral-700",
                             )}
                           >
-                            SHOT {shot.segment_index + 1}
+                            SHOT {shot.segment_index}
                           </span>
                           {hasChanges ? (
                             <span className="text-[9px] text-amber-400 font-medium">
@@ -1122,7 +1122,7 @@ export function Step5ShotCreation({
         <DialogContent className="bg-neutral-950 border-neutral-800 text-white sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
-              Edit Shot {editingShot ? editingShot.segment_index + 1 : ""}
+              Edit Shot {editingShot ? editingShot.segment_index : ""}
             </DialogTitle>
             <DialogDescription className="text-neutral-400">
               Modify the shot details. Changes will be saved when you click

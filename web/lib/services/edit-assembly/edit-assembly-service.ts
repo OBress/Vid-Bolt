@@ -82,7 +82,7 @@ export async function assembleEdit(request: AssembleEditRequest): Promise<Assemb
     scriptText = '',
     fps = 30,
     apiKey,
-    model = 'google/gemini-2.5-flash-preview',
+    model = 'google/gemini-3-flash-preview',
   } = request;
 
   console.log(`[EditAssembly] Starting EDL generation for "${videoTitle}" (${shots.length} shots, ${generatedMedia.length} media items)`);
@@ -249,11 +249,8 @@ async function callLLMv2(
 
   // Detect format: is this v2 (EditorAgentEDL) or legacy (EditDecisionList)?
   if (Array.isArray(parsed.tracks) && Array.isArray(parsed.clips)) {
-    // V2 format — validate
-    const agentEdl = parsed as unknown as EditorAgentEDL;
-    agentEdl.transitions = agentEdl.transitions || [];
-    agentEdl.audioFades = agentEdl.audioFades || [];
-    agentEdl.mediaIssues = agentEdl.mediaIssues || [];
+    // V2 format — normalize fields (AI may use snake_case) and validate
+    const agentEdl = normalizeAgentEdl(parsed);
     return agentEdl;
   }
 
@@ -417,6 +414,102 @@ function agentEdlToLegacy(agentEdl: EditorAgentEDL): EditDecisionList {
 }
 
 // ============================================================
+// FIELD NORMALIZATION (handle AI snake_case vs camelCase)
+// ============================================================
+
+/**
+ * The AI may return field names in snake_case (shot_index, start_time, track_id)
+ * or camelCase (shotIndex, startTime, trackId). This normalizes everything to camelCase
+ * to match the EditorAgentEDL TypeScript interfaces.
+ */
+function normalizeAgentEdl(parsed: Record<string, unknown>): EditorAgentEDL {
+  const raw = parsed as any;
+
+  // Normalize tracks
+  const tracks: AgentTrack[] = (raw.tracks || []).map((t: any) => ({
+    id: t.id,
+    type: t.type,
+    name: t.name,
+    group: t.group || 'video',
+    order: t.order ?? 0,
+  }));
+
+  // Normalize clips — handle both snake_case and camelCase field names
+  const clips: AgentClip[] = (raw.clips || []).map((c: any) => {
+    const clip: AgentClip = {
+      trackId: c.trackId ?? c.track_id ?? c.track ?? 'main-video',
+      shotIndex: c.shotIndex ?? c.shot_index ?? c.shotindex,
+      type: normalizeClipType(c.type ?? c.mediaType ?? c.media_type ?? 'image'),
+      startTime: parseFiniteNumber(c.startTime ?? c.start_time ?? c.start),
+      duration: parseFiniteNumber(c.duration ?? c.dur) || 3,
+      label: c.label,
+    };
+
+    // Carry over optional properties
+    if (c.transform) clip.transform = c.transform;
+    if (c.text) clip.text = c.text;
+    if (c.effects) clip.effects = c.effects;
+    if (c.keyframes) clip.keyframes = c.keyframes;
+    if (c.audioEffects ?? c.audio_effects) {
+      clip.audioEffects = c.audioEffects ?? c.audio_effects;
+    }
+
+    return clip;
+  });
+
+  // Normalize transitions
+  const transitions = (raw.transitions || []).map((t: any) => ({
+    type: t.type,
+    fromShotIndex: t.fromShotIndex ?? t.from_shot_index ?? t.from,
+    toShotIndex: t.toShotIndex ?? t.to_shot_index ?? t.to,
+    duration: parseFiniteNumber(t.duration) || 0.5,
+  }));
+
+  // Normalize audio fades (AI may use audioFades or audio_fades)
+  const audioFades = (raw.audioFades ?? raw.audio_fades ?? []).map((a: any) => ({
+    target: a.target || 'main',
+    type: a.type,
+    startTime: parseFiniteNumber(a.startTime ?? a.start_time) || 0,
+    duration: parseFiniteNumber(a.duration) || 1,
+  }));
+
+  // Normalize media issues
+  const mediaIssues = (raw.mediaIssues ?? raw.media_issues ?? []).map((m: any) => ({
+    shotIndex: m.shotIndex ?? m.shot_index,
+    severity: m.severity || 'warning',
+    type: m.type || 'missing_media',
+    title: m.title || '',
+    description: m.description || '',
+  }));
+
+  console.log(`[EditAssembly] Normalized agent EDL: ${tracks.length} tracks, ${clips.length} clips, ` +
+    `${clips.filter(c => c.startTime !== undefined && Number.isFinite(c.startTime)).length}/${clips.length} have valid startTime, ` +
+    `${clips.filter(c => c.shotIndex !== undefined).length}/${clips.length} have shotIndex`);
+
+  return { tracks, clips, transitions, audioFades, mediaIssues };
+}
+
+/** Parse a value to a finite number, returning undefined if not valid */
+function parseFiniteNumber(v: unknown): number {
+  if (v === undefined || v === null) return NaN;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+/** Normalize clip type to our canonical values */
+function normalizeClipType(raw: string): AgentClip['type'] {
+  const t = raw.toLowerCase().replace(/[_\s-]/g, '');
+  if (t === 'motiongraphic' || t === 'motiongraphics' || t === 'mg') return 'motion-graphics';
+  if (t === 'video') return 'video';
+  if (t === 'image') return 'image';
+  if (t === 'audio') return 'audio';
+  if (t === 'text') return 'text';
+  if (t === 'caption') return 'caption';
+  if (t === 'shape') return 'shape';
+  return raw as AgentClip['type'];
+}
+
+// ============================================================
 // VALIDATION & FIX (V2)
 // ============================================================
 
@@ -434,16 +527,56 @@ function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAg
     });
   }
 
-  // Fix: ensure no overlapping clips on same track
+  // Build shot lookup for timing fallbacks
+  const shotByIndex = new Map<number, ShotDataInput>();
+  shots.forEach(s => shotByIndex.set(s.segment_index, s));
+
+  // Fix clips with missing startTime by using shot timing or sequential placement
   const clipsByTrack = new Map<string, AgentClip[]>();
   fixed.clips.forEach(clip => {
+    // Fix missing duration first
+    if (!Number.isFinite(clip.duration) || clip.duration <= 0) {
+      const shot = clip.shotIndex != null ? shotByIndex.get(clip.shotIndex) : undefined;
+      clip.duration = shot?.duration_seconds || 3;
+      console.warn(`[EditAssembly] Fix: Clip (shot ${clip.shotIndex}) had invalid duration, set to ${clip.duration}s`);
+    }
+
+    // Fix missing startTime
+    if (!Number.isFinite(clip.startTime)) {
+      const shot = clip.shotIndex != null ? shotByIndex.get(clip.shotIndex) : undefined;
+      if (shot) {
+        clip.startTime = shot.start_seconds;
+        console.warn(`[EditAssembly] Fix: Clip (shot ${clip.shotIndex}) had no startTime, using shot timing ${clip.startTime}s`);
+      }
+      // If still NaN, will be fixed by sequential placement below
+    }
+
     const arr = clipsByTrack.get(clip.trackId) || [];
     arr.push(clip);
     clipsByTrack.set(clip.trackId, arr);
   });
 
+  // Sort and fix overlaps/gaps within each track
   clipsByTrack.forEach((clips, trackId) => {
-    clips.sort((a, b) => a.startTime - b.startTime);
+    // Sort by startTime, putting NaN clips at the end
+    clips.sort((a, b) => {
+      const aTime = Number.isFinite(a.startTime) ? a.startTime : Infinity;
+      const bTime = Number.isFinite(b.startTime) ? b.startTime : Infinity;
+      return aTime - bTime;
+    });
+
+    // Fix remaining NaN startTimes by placing sequentially after last known clip
+    let lastEnd = 0;
+    for (const clip of clips) {
+      if (!Number.isFinite(clip.startTime)) {
+        clip.startTime = lastEnd;
+        console.warn(`[EditAssembly] Fix: Clip (shot ${clip.shotIndex}) placed at ${clip.startTime}s (sequential fallback)`);
+      }
+      const clipEnd = clip.startTime + clip.duration;
+      if (clipEnd > lastEnd) lastEnd = clipEnd;
+    }
+
+    // Fix overlapping clips (unless on allowOverlap track)
     for (let i = 1; i < clips.length; i++) {
       const prev = clips[i - 1];
       const curr = clips[i];
@@ -490,9 +623,10 @@ function generateFallbackAgentEDL(
   generatedMedia.forEach(m => mediaByShot.set(m.shot_index, m));
 
   // --- TRACKS ---
+  // All visual clips (video, image, motion-graphics) go on one unified video track.
+  // Motion graphics render as transparent overlays on top of underlying media.
   const tracks: AgentTrack[] = [
     { id: 'main-video', type: 'video', name: 'Main Video', group: 'video', order: 0 },
-    { id: 'text-overlays', type: 'video', name: 'Text Overlays', group: 'text', order: 1 },
   ];
 
   // --- CLIPS ---
@@ -518,8 +652,11 @@ function generateFallbackAgentEDL(
       ? 'motion-graphics' as const
       : (media?.media_type || 'image') as 'image' | 'video';
 
+    // All clips go on main-video — motion graphics render as transparent overlays
+    const trackId = 'main-video';
+
     const clip: AgentClip = {
-      trackId: 'main-video',
+      trackId,
       shotIndex: shot.segment_index,
       type: clipType,
       startTime: currentTime,
@@ -542,58 +679,6 @@ function generateFallbackAgentEDL(
     currentTime += shot.duration_seconds;
   }
 
-  // --- TEXT OVERLAYS (extract from script) ---
-  // Add chapter titles at roughly evenly-spaced intervals
-  const sentences = scriptText
-    .split(/[.!?]+/)
-    .map(s => s.trim())
-    .filter(s => s.length > 10);
-
-  if (sentences.length > 0 && shots.length > 0) {
-    // Place a chapter title every ~5 shots (or at section breaks)
-    const interval = Math.max(3, Math.floor(shots.length / 4));
-    for (let i = 0; i < shots.length; i += interval) {
-      const shot = shots[i];
-      // Find a good sentence near this shot
-      const sentenceIndex = Math.min(
-        Math.floor((i / shots.length) * sentences.length),
-        sentences.length - 1
-      );
-      const titleText = sentences[sentenceIndex].substring(0, 50);
-
-      clips.push({
-        trackId: 'text-overlays',
-        type: 'text',
-        startTime: shot.start_seconds,
-        duration: Math.min(4, shot.duration_seconds),
-        text: {
-          text: titleText,
-          fontFamily: 'Inter',
-          fontSize: 48,
-          color: '#ffffff',
-          backgroundColor: 'transparent',
-          textAlign: 'center',
-        },
-        transform: {
-          x: 460,
-          y: 440,
-          width: 1000,
-          height: 200,
-          opacity: 1,
-        },
-        keyframes: [{
-          property: 'transform.opacity',
-          points: [
-            { time: 0, value: 0, easing: 'easeOut' },
-            { time: 0.5, value: 1, easing: 'linear' },
-            { time: Math.min(3.5, shot.duration_seconds - 0.5), value: 1, easing: 'easeIn' },
-            { time: Math.min(4, shot.duration_seconds), value: 0 },
-          ],
-        }],
-        label: titleText.substring(0, 20),
-      });
-    }
-  }
 
   // --- TRANSITIONS ---
   const transitions: AgentTransition[] = [];

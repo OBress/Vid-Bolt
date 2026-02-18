@@ -73,7 +73,7 @@ function rewriteR2Url(url: string): string {
 /** Determine the visual clip type from a shot event. */
 function getVisualClipType(
   shot: ShotEvent,
-  mediaMap: Map<number, { url: string; type: 'image' | 'video' | 'motion-graphics'; remotionCode?: string; usedIcons?: string[] }>,
+  mediaMap: Map<number, { url: string | undefined; type: 'image' | 'video' | 'motion-graphics'; remotionCode?: string; usedIcons?: string[] }>,
 ): ClipType {
   const media = mediaMap.get(shot.segment_index);
   if (media) return media.type;
@@ -89,13 +89,13 @@ function getVisualClipType(
 /** Build a shot_index → media info map, rewriting R2 URLs and preserving MG type/code. */
 function buildMediaUrlMap(
   generatedMedia?: GeneratedMedia[],
-): Map<number, { url: string; type: 'image' | 'video' | 'motion-graphics'; remotionCode?: string; usedIcons?: string[] }> {
-  const map = new Map<number, { url: string; type: 'image' | 'video' | 'motion-graphics'; remotionCode?: string; usedIcons?: string[] }>();
+): Map<number, { url: string | undefined; type: 'image' | 'video' | 'motion-graphics'; remotionCode?: string; usedIcons?: string[] }> {
+  const map = new Map<number, { url: string | undefined; type: 'image' | 'video' | 'motion-graphics'; remotionCode?: string; usedIcons?: string[] }>();
   if (!generatedMedia) return map;
   for (const media of generatedMedia) {
-    // Accept any media that has a URL — don't require generation_status === 'completed'
-    // as a defensive fallback. The primary fix is in Step 6 polling for task completion.
-    if (media.media_url) {
+    // Accept any media that has a URL OR remotion code — don't require generation_status === 'completed'
+    // as a defensive fallback.
+    if (media.media_url || media.remotion_code) {
       if (media.generation_status !== 'completed') {
         console.warn(`[WizardDataImport] Shot ${media.shot_index} has URL but status="${media.generation_status}" — using anyway`);
       }
@@ -106,19 +106,50 @@ function buildMediaUrlMap(
       
       // Handle remotion:// marker URLs — these are NOT real loadable URLs.
       // They indicate the shot has Remotion code for programmatic rendering.
-      // Replace with empty string so the clip falls back to transparent placeholder,
-      // but preserve the remotionCode/usedIcons for downstream rendering.
-      const isRemotionMarker = media.media_url.startsWith('remotion://');
-      const url = isRemotionMarker ? '' : rewriteR2Url(media.media_url);
+      // Use undefined for URL so downstream code uses the transparent placeholder,
+      // but preserve the remotionCode/usedIcons for the rendering pipeline.
+      const isRemotionMarker = media.media_url?.startsWith('remotion://');
+      const url = isRemotionMarker ? undefined : (media.media_url ? rewriteR2Url(media.media_url) : undefined);
       
-      if (isRemotionMarker) {
-        console.log(`[WizardDataImport] Shot ${media.shot_index} uses Remotion code (no static URL)`);
+      if (isRemotionMarker || media.remotion_code) {
+        console.log(`[WizardDataImport] Shot ${media.shot_index} uses Remotion code (no static URL) | remotion_code length=${media.remotion_code?.length ?? 0}`);
+      }
+
+      // KEY FIX: Pre-rendered motion graphics that have been converted to media files
+      // by the GPU pipeline should render as regular media, not as motion-graphics.
+      // Only keep 'motion-graphics' type if the clip actually has remotion_code
+      // (i.e., it should be dynamically rendered via Remotion/CompositionRenderer).
+      let effectiveType = type;
+      if (type === 'motion-graphics' && url && !media.remotion_code) {
+        // Detect whether the pre-rendered file is an image or video based on extension
+        const urlLower = (media.media_url || '').toLowerCase();
+        const isImageFile = /\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(urlLower);
+        effectiveType = isImageFile ? 'image' : 'video';
+        console.log(`[WizardDataImport] Shot ${media.shot_index}: Pre-rendered MG with real URL → retyped as '${effectiveType}'`);
       }
       
-      map.set(media.shot_index, { url, type, remotionCode: media.remotion_code, usedIcons: media.used_icons });
+      map.set(media.shot_index, { url, type: effectiveType, remotionCode: media.remotion_code, usedIcons: media.used_icons });
     }
   }
-  console.log(`[WizardDataImport] buildMediaUrlMap: ${map.size}/${generatedMedia.length} shots have URLs`);
+  console.log(`[WizardDataImport] buildMediaUrlMap: ${map.size}/${generatedMedia.length} shots have URLs or code`);
+  
+  // Diagnostic: check if motiongraphic entries lack remotion_code
+  if (generatedMedia.length > 0) {
+    const mgEntries = generatedMedia.filter(m => m.media_type === 'motiongraphic');
+    const mgWithCode = mgEntries.filter(m => !!m.remotion_code);
+    if (mgEntries.length > 0) {
+      console.log(`[WizardDataImport] 📊 Motion graphics: ${mgWithCode.length}/${mgEntries.length} have remotion_code`);
+      if (mgWithCode.length < mgEntries.length) {
+        const missing = mgEntries.filter(m => !m.remotion_code);
+        console.warn(`[WizardDataImport] ⚠️ Motion graphics WITHOUT remotion_code:`, missing.map(m => ({
+          shot_index: m.shot_index,
+          status: m.generation_status,
+          hasUrl: !!m.media_url,
+        })));
+      }
+    }
+  }
+  
   return map;
 }
 
@@ -387,117 +418,148 @@ export function importWizardDataToStore(options: WizardData): boolean {
         }
       }
 
+      // Auto-create an overlays track for pre-rendered motion graphics
+      // This separates MG clips from regular video clips for a cleaner multi-track layout
+      const overlaysTrackId = generateId('track');
+      tracksToAdd[overlaysTrackId] = {
+        id: overlaysTrackId,
+        type: 'video',
+        name: 'Overlays',
+        order: 1,
+        group: 'overlays',
+        locked: false,
+        visible: true,
+        muted: false,
+        allowOverlap: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      trackOrderToAdd.unshift(overlaysTrackId); // Overlays above main video
+
       // Place clips from agent EDL
+      // Track running time per internal track for sequential NaN fallback
+      const trackRunningTime = new Map<string, number>();
+
+      // Detect 0-based vs 1-based shot indices from agent EDL.
+      // AI sometimes uses 0-based indices (shotIndex=0,1,2,...) while actual
+      // shots use 1-based segment_index (1,2,3,...). Detect and offset.
+      const minShotSegment = shotList.length > 0 ? Math.min(...shotList.map(s => s.segment_index)) : 1;
+      const hasZeroIndexClip = agentEdl.clips.some(c => {
+        const si = (c as any).shotIndex ?? (c as any).shot_index;
+        return si === 0;
+      });
+      const hasMatchForZero = shotList.some(s => s.segment_index === 0);
+      const shotIndexOffset = (hasZeroIndexClip && !hasMatchForZero && minShotSegment >= 1) ? 1 : 0;
+      if (shotIndexOffset > 0) {
+        console.log(`[WizardDataImport] 🔧 Detected 0-based shot indices in agent EDL — applying +${shotIndexOffset} offset`);
+      }
+
       for (const agentClip of agentEdl.clips) {
-        const internalTrackId = agentToInternalTrackId.get(agentClip.trackId);
+        // Normalize field names — handle snake_case from AI or stale DB data
+        const trackId = (agentClip as any).trackId ?? (agentClip as any).track_id ?? (agentClip as any).track ?? 'main-video';
+        const shotIdxRaw: number | undefined = (agentClip as any).shotIndex ?? (agentClip as any).shot_index;
+        const shotIdx: number | undefined = shotIdxRaw != null ? shotIdxRaw + shotIndexOffset : undefined;
+        const rawStartTime: number | undefined = (agentClip as any).startTime ?? (agentClip as any).start_time;
+        const rawDuration: number | undefined = (agentClip as any).duration;
+        const clipTypeRaw: string = agentClip.type ?? (agentClip as any).mediaType ?? (agentClip as any).media_type ?? 'image';
+
+        const internalTrackId = agentToInternalTrackId.get(trackId);
         if (!internalTrackId) {
-          console.warn(`[WizardDataImport] Unknown agent track: ${agentClip.trackId}, skipping clip`);
+          console.warn(`[WizardDataImport] Unknown agent track: ${trackId}, skipping clip`);
           continue;
         }
 
-        if (agentClip.type === 'text') {
-          // ─── Text clip ────────────────────────────────────
-          const clipId = generateId('clip');
-          const text = agentClip.text || { text: '' };
-          const fontSize = text.fontSize || 48;
-
-          // Guard against undefined/NaN timing from agent EDL
-          const textStart = Number.isFinite(agentClip.startTime) ? agentClip.startTime : 0;
-          const textDur = Number.isFinite(agentClip.duration) ? agentClip.duration : 3;
-          if (!Number.isFinite(agentClip.startTime) || !Number.isFinite(agentClip.duration)) {
-            console.warn(`[WizardDataImport] Text clip has NaN timing: startTime=${agentClip.startTime}, duration=${agentClip.duration}`);
-          }
-
-          clipsToAdd[clipId] = {
-            id: clipId,
-            trackId: internalTrackId,
-            startTime: textStart,
-            duration: textDur,
-            type: 'text',
-            sourceId: `text-${textStart}`,
-            label: agentClip.label || text.text?.substring(0, 30),
-            transform: {
-              x: agentClip.transform?.x ?? 460,
-              y: agentClip.transform?.y ?? 440,
-              width: agentClip.transform?.width ?? 1000,
-              height: agentClip.transform?.height ?? (fontSize * 2),
-              rotation: agentClip.transform?.rotation ?? 0,
-              opacity: agentClip.transform?.opacity ?? 1,
-            },
-            text: {
-              text: text.text,
-              fontFamily: text.fontFamily || 'Inter',
-              fontSize,
-              color: text.color || '#ffffff',
-              backgroundColor: text.backgroundColor || 'transparent',
-              textAlign: text.textAlign || 'center',
-            },
-            // Apply keyframes if provided
-            keyframes: agentClip.keyframes
-              ? agentKeyframesToPropertyKeyframes(agentClip.keyframes)
-              : undefined,
-            data: {
-              edlStyle: text.textAlign,
-            },
-            createdAt: now,
-            updatedAt: now,
-          };
-        } else if (agentClip.type === 'audio') {
+        if (clipTypeRaw === 'text') {
+          // Text clips are no longer generated by the AI — all text is handled by Remotion motion graphics.
+          // If an old cached EDL still has text clips, skip them.
+          console.warn(`[WizardDataImport] ⚠️ Skipping text clip from agent EDL (text should use motion graphics): "${agentClip.text?.text?.substring(0, 40) || ''}"`);
+          continue;
+        } else if (clipTypeRaw === 'audio') {
           // Audio clips handled in Phase 1, skip
           continue;
         } else {
           // ─── Visual clip (image, video, motion-graphics) ──────
-          const shot = shotList.find(s => s.segment_index === agentClip.shotIndex);
-          if (!shot && agentClip.shotIndex != null) {
-            console.warn(`[WizardDataImport] No shot found for index ${agentClip.shotIndex}`);
+          const shot = shotIdx != null ? shotList.find(s => s.segment_index === shotIdx) : undefined;
+          if (!shot && shotIdx != null) {
+            console.warn(`[WizardDataImport] No shot found for shotIndex=${shotIdx} (available: ${shotList.map(s => s.segment_index).join(',')})`);
             continue;
           }
 
-          const resolvedMedia = agentClip.shotIndex != null
-            ? mediaUrlMap.get(agentClip.shotIndex)
+          const resolvedMedia = shotIdx != null
+            ? mediaUrlMap.get(shotIdx)
             : undefined;
-          const src = resolvedMedia?.url || transparentPng;
-          const clipType = resolvedMedia?.type || (agentClip.type as ClipType);
+          // Use transparent placeholder when URL is undefined/empty (e.g. remotion markers).
+          // Motion graphics clips don't need a real media URL — they render via Remotion code.
+          const src = resolvedMedia?.url ?? transparentPng;
+          const mgType = clipTypeRaw === 'motion-graphics' || clipTypeRaw === 'motiongraphic';
+          // Use media URL map type as source of truth — it already handles retyping
+          // pre-rendered MG clips (with real video URLs but no remotion_code) as 'video'.
+          // Only fall back to agent EDL type if media map has no entry.
+          const clipType: ClipType = resolvedMedia?.type as ClipType || (mgType ? 'motion-graphics' : clipTypeRaw as ClipType);
           const color = shot ? contentTypeColors[shot.content_type] || '#6b7280' : '#6b7280';
           const clipId = generateId('clip');
 
+          // Debug: log every visual clip creation
+          console.log(`[WizardDataImport] 🎬 Creating clip: type=${clipType} | track=${trackId} | shotIndex=${shotIdx} | src=${src.substring(0, 60)}... | hasMG=${clipType === 'motion-graphics'} | hasRemotionCode=${!!resolvedMedia?.remotionCode}`);
+
           // Guard against undefined/NaN timing from agent EDL
-          const visualStart = Number.isFinite(agentClip.startTime) ? agentClip.startTime : 0;
-          const visualDur = Number.isFinite(agentClip.duration) ? agentClip.duration : 3;
-          if (!Number.isFinite(agentClip.startTime) || !Number.isFinite(agentClip.duration)) {
-            console.warn(`[WizardDataImport] Visual clip (shot ${agentClip.shotIndex}) has NaN timing: startTime=${agentClip.startTime}, duration=${agentClip.duration}`);
+          // Priority: 1) agent EDL timing, 2) shot timing, 3) sequential placement
+          let visualDur = Number.isFinite(rawDuration) ? rawDuration! : (shot?.duration_seconds || 3);
+          let visualStart: number;
+          if (Number.isFinite(rawStartTime)) {
+            visualStart = rawStartTime!;
+          } else if (shot) {
+            visualStart = shot.start_seconds;
+            console.warn(`[WizardDataImport] Visual clip (shot ${shotIdx}) had NaN startTime, using shot timing ${visualStart}s`);
+          } else {
+            // Sequential fallback — place after last clip on this track
+            visualStart = trackRunningTime.get(internalTrackId) || 0;
+            console.warn(`[WizardDataImport] Visual clip (shot ${shotIdx}) had NaN startTime, placing sequentially at ${visualStart}s`);
           }
 
-          // Build motion-graphics properties if this clip has remotionCode
-          const mgProperties = (clipType === 'motion-graphics' && resolvedMedia?.remotionCode)
+          // Update running time for this track
+          trackRunningTime.set(internalTrackId, Math.max(
+            trackRunningTime.get(internalTrackId) || 0,
+            visualStart + visualDur
+          ));
+
+          // Build motion-graphics properties for the rendering pipeline
+          // Always populate for motion-graphics clips, even without remotion code,
+          // to avoid "No template data" errors in the renderer
+          const mgProperties = clipType === 'motion-graphics'
             ? {
                 template: {
                   id: `mg-wizard-${clipId}`,
-                  name: shot?.text?.substring(0, 40) || `Shot ${agentClip.shotIndex}`,
+                  name: shot?.text?.substring(0, 40) || `Motion Graphic ${shotIdx ?? ''}`.trim(),
                   description: shot?.visual_prompt || 'AI-generated motion graphic',
                   category: MotionGraphicsCategory.CUSTOM,
                   duration: Math.round(visualDur * 30), // seconds → frames at 30fps
                   editableProperties: [],
                 },
-                compositionDefinition: {
-                  id: `comp-${clipId}`,
-                  name: shot?.text?.substring(0, 40) || `Shot ${agentClip.shotIndex}`,
-                  duration: Math.round(visualDur * 30),
-                  fps: 30,
-                  width: 1920,
-                  height: 1080,
-                  backgroundColor: '#000000',
-                  layers: [],
-                  originalRemotionCode: resolvedMedia.remotionCode,
-                  generatedFromJSX: true,
-                  usedIcons: resolvedMedia.usedIcons,
-                },
+                ...(resolvedMedia?.remotionCode ? {
+                  compositionDefinition: {
+                    id: `comp-${clipId}`,
+                    name: shot?.text?.substring(0, 40) || `Motion Graphic ${shotIdx ?? ''}`.trim(),
+                    duration: Math.round(visualDur * 30),
+                    fps: 30,
+                    width: 1920,
+                    height: 1080,
+                    backgroundColor: '#000000',
+                    layers: [],
+                    originalRemotionCode: resolvedMedia.remotionCode,
+                    generatedFromJSX: true,
+                    usedIcons: resolvedMedia.usedIcons,
+                  },
+                } : {}),
               }
             : undefined;
 
+          // Route pre-rendered MG clips to the overlays track instead of main-video
+          const finalTrackId = (mgType && clipType !== 'motion-graphics') ? overlaysTrackId : internalTrackId;
+
           clipsToAdd[clipId] = {
             id: clipId,
-            trackId: internalTrackId,
+            trackId: finalTrackId,
             startTime: visualStart,
             duration: visualDur,
             type: clipType,
@@ -526,7 +588,7 @@ export function importWizardDataToStore(options: WizardData): boolean {
               ? agentKeyframesToPropertyKeyframes(agentClip.keyframes)
               : undefined,
             data: {
-              shotIndex: agentClip.shotIndex,
+              shotIndex: shotIdx,
               contentType: shot?.content_type,
               visualPrompt: shot?.visual_prompt || shot?.text,
               text: shot?.text,
@@ -538,8 +600,8 @@ export function importWizardDataToStore(options: WizardData): boolean {
             updatedAt: now,
           };
 
-          if (agentClip.shotIndex != null) {
-            clipIdByShotIndex.set(agentClip.shotIndex, clipId);
+          if (shotIdx != null) {
+            clipIdByShotIndex.set(shotIdx, clipId);
           }
         }
       }
@@ -704,36 +766,42 @@ export function importWizardDataToStore(options: WizardData): boolean {
       for (const shot of shotList) {
         const clipType = getVisualClipType(shot, mediaUrlMap);
         const resolvedMedia = mediaUrlMap.get(shot.segment_index);
-        const src = resolvedMedia?.url || transparentPng;
+        const src = resolvedMedia?.url ?? transparentPng;
         const color = contentTypeColors[shot.content_type] || '#6b7280';
         const clipId = generateId('clip');
 
-        // Build motion-graphics properties if this clip has remotionCode
-        const mgProperties = (clipType === 'motion-graphics' && resolvedMedia?.remotionCode)
+        // Build motion-graphics properties for the rendering pipeline
+        // Always populate for motion-graphics clips, even without remotion code
+        const mgProperties = clipType === 'motion-graphics'
           ? {
               template: {
                 id: `mg-wizard-${clipId}`,
-                name: shot.text?.substring(0, 40) || `Shot ${shot.segment_index}`,
+                name: shot.text?.substring(0, 40) || `Motion Graphic ${shot.segment_index}`,
                 description: shot.visual_prompt || 'AI-generated motion graphic',
                 category: MotionGraphicsCategory.CUSTOM,
                 duration: Math.round(shot.duration_seconds * 30),
                 editableProperties: [],
               },
-              compositionDefinition: {
-                id: `comp-${clipId}`,
-                name: shot.text?.substring(0, 40) || `Shot ${shot.segment_index}`,
-                duration: Math.round(shot.duration_seconds * 30),
-                fps: 30,
-                width: 1920,
-                height: 1080,
-                backgroundColor: '#000000',
-                layers: [],
-                originalRemotionCode: resolvedMedia.remotionCode,
-                generatedFromJSX: true,
-                usedIcons: resolvedMedia.usedIcons,
-              },
+              ...(resolvedMedia?.remotionCode ? {
+                compositionDefinition: {
+                  id: `comp-${clipId}`,
+                  name: shot.text?.substring(0, 40) || `Motion Graphic ${shot.segment_index}`,
+                  duration: Math.round(shot.duration_seconds * 30),
+                  fps: 30,
+                  width: 1920,
+                  height: 1080,
+                  backgroundColor: '#000000',
+                  layers: [],
+                  originalRemotionCode: resolvedMedia.remotionCode,
+                  generatedFromJSX: true,
+                  usedIcons: resolvedMedia.usedIcons,
+                },
+              } : {}),
             }
           : undefined;
+
+        // Debug: log every visual clip creation in legacy path
+        console.log(`[WizardDataImport] 🎬 Legacy clip: type=${clipType} | shot=${shot.segment_index} | src=${src.substring(0, 60)}... | hasMG=${clipType === 'motion-graphics'} | hasRemotionCode=${!!resolvedMedia?.remotionCode}`);
 
         clipsToAdd[clipId] = {
           id: clipId,
@@ -952,32 +1020,9 @@ export function importWizardDataToStore(options: WizardData): boolean {
     }
 
     if (mgShotEntries.length > 0) {
-      // Create a dedicated 'Motion Graphics' overlay track
-      const mgTrackId = generateId('track');
-      const mgTrack: TimelineTrack = {
-        id: mgTrackId,
-        type: 'video',
-        name: 'Motion Graphics',
-        order: 1, // Will be re-ordered at commit time
-        group: 'overlays',
-        locked: false,
-        visible: true,
-        muted: false,
-        allowOverlap: true,
-        createdAt: now,
-        updatedAt: now,
-      };
-      tracksToAdd[mgTrackId] = mgTrack;
-
-      // Insert MG track right after the first video track in track order
-      const firstVideoIdx = trackOrderToAdd.findIndex(
-        id => tracksToAdd[id]?.type === 'video'
-      );
-      if (firstVideoIdx >= 0) {
-        trackOrderToAdd.splice(firstVideoIdx + 1, 0, mgTrackId);
-      } else {
-        trackOrderToAdd.unshift(mgTrackId);
-      }
+      // Motion graphics clips go on the same video track as other visual clips.
+      // Pure MG: convert the existing clip in-place to motion-graphics type.
+      // Hybrid: create an additional MG clip on the video track (overlapping the base media).
 
       for (const { shotIndex, remotionCode, usedIcons, isPureMG } of mgShotEntries) {
         const shot = shotList?.find(s => s.segment_index === shotIndex);
@@ -987,9 +1032,6 @@ export function importWizardDataToStore(options: WizardData): boolean {
         const durationFrames = Math.round(shot.duration_seconds * 30);
 
         // Build the MG template from the generated Remotion code
-        // CRITICAL: Wrap remotionCode into a CompositionDefinition so that
-        // MotionGraphicsLayerContent → DynamicComposition can render the preview.
-        // The rendering chain checks compositionDefinition.originalRemotionCode + generatedFromJSX.
         const mgCompositionDefinition = {
           id: `comp-wizard-mg-${shotIndex}`,
           name: `MG Shot ${shotIndex}`,
@@ -1017,9 +1059,8 @@ export function importWizardDataToStore(options: WizardData): boolean {
         };
 
         if (isPureMG && existingClipId && clipsToAdd[existingClipId]) {
-          // Pure MG: Convert the existing clip to motion-graphics type on the MG track
+          // Pure MG: Convert the existing clip to motion-graphics type (stays on video track)
           const clip = clipsToAdd[existingClipId];
-          clip.trackId = mgTrackId;
           clip.type = 'motion-graphics';
           clip.sourceId = `mg-${shotIndex}`;
           clip.color = '#9333ea'; // Purple for MG clips
@@ -1027,11 +1068,17 @@ export function importWizardDataToStore(options: WizardData): boolean {
             template: mgTemplate,
           };
         } else if (!isPureMG) {
-          // Hybrid: Base media stays on its track; create a NEW MG clip on the overlay track
+          // Hybrid: Base media stays on its track; create a NEW MG clip on the same video track
+          // Find the first video track from tracksToAdd
+          const targetVideoTrackId = Object.values(tracksToAdd).find(t => t.type === 'video')?.id;
+          if (!targetVideoTrackId) {
+            console.warn(`[WizardDataImport] No video track found for hybrid MG clip at shot ${shotIndex}`);
+            continue;
+          }
           const mgClipId = generateId('clip');
           clipsToAdd[mgClipId] = {
             id: mgClipId,
-            trackId: mgTrackId,
+            trackId: targetVideoTrackId,
             startTime: shot.start_seconds,
             duration: shot.duration_seconds,
             type: 'motion-graphics',
@@ -1062,7 +1109,7 @@ export function importWizardDataToStore(options: WizardData): boolean {
       }
 
       console.log(
-        `[WizardDataImport] Created Motion Graphics track with ${mgShotEntries.length} clips ` +
+        `[WizardDataImport] Added ${mgShotEntries.length} motion graphics clips to video track ` +
         `(${mgShotEntries.filter(e => e.isPureMG).length} pure MG, ` +
         `${mgShotEntries.filter(e => !e.isPureMG).length} hybrid overlays)`
       );
@@ -1100,7 +1147,7 @@ export function importWizardDataToStore(options: WizardData): boolean {
   const postCommitState = useVideoEditorStore.getState();
   const actualClips = Object.keys(postCommitState.clips).length;
   const actualTracks = Object.keys(postCommitState.tracks).length;
-  const clipsArr = Object.values(postCommitState.clips);
+  const clipsArr = Object.values(postCommitState.clips) as Array<{ id: string; type: string; trackId: string; startTime: number; duration: number; media?: { src?: string } }>;
   const computedDuration = clipsArr.length > 0 
     ? Math.max(...clipsArr.map(c => c.startTime + c.duration)) 
     : 0;

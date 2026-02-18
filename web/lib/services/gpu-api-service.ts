@@ -1116,6 +1116,8 @@ export async function callGpuSwitchMode(
       };
     }
     const data = await response.json();
+    // Force-update activity on mode switch (significant action)
+    forceUpdateGpuActivity().catch(() => {});
     return { success: true, data };
   } catch (error) {
     return {
@@ -1605,6 +1607,9 @@ export async function callGpuBatchImageGenerate(
 
     const data = await response.json();
     
+    // Track GPU activity for auto-shutdown timer (batch calls bypass callGpuApi)
+    updateGpuActivity().catch(() => {});
+    
     if (response.status === 202) {
       const submitResponse = data as BatchSubmitResponse;
       return {
@@ -1665,6 +1670,9 @@ export async function callGpuBatchImageEdit(
 
     const data = await response.json();
     
+    // Track GPU activity for auto-shutdown timer (batch calls bypass callGpuApi)
+    updateGpuActivity().catch(() => {});
+    
     if (response.status === 202) {
       const submitResponse = data as BatchSubmitResponse;
       return {
@@ -1724,6 +1732,9 @@ export async function callGpuBatchVideoGenerate(
     });
 
     const data = await response.json();
+    
+    // Track GPU activity for auto-shutdown timer (batch calls bypass callGpuApi)
+    updateGpuActivity().catch(() => {});
     
     if (response.status === 202) {
       const submitResponse = data as BatchSubmitResponse;

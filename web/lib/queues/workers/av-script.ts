@@ -10,6 +10,7 @@
 
 import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus, updateTaskOutput } from '@/lib/queues/shared';
+import { getOpenRouterApiKey, getUserApiKeys } from '@/lib/services/api-keys';
 import type { ShotForGpuGeneration } from '@/lib/av-script/gpu-batch-generation';
 
 // ============================================================================
@@ -696,20 +697,26 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
           });
         }
 
-        // Fetch user's OpenRouter API key + model
+        // Fetch user's OpenRouter API key (user DB → env var fallback) + model
         const { generateMotionGraphic } = await import('@/lib/services/motion-graphics/pipeline-motion-graphics');
-        const { data: apiKeyData } = await supabase
-          .from('user_api_keys')
-          .select('openrouter_key, openrouter_model')
-          .eq('user_id', userId)
-          .single();
 
-        const openrouterKey = apiKeyData?.openrouter_key;
-        const openrouterModel = apiKeyData?.openrouter_model || 'google/gemini-2.5-flash-preview';
+        let openrouterKey: string | undefined;
+        let openrouterModel = 'google/gemini-3-flash-preview';
+        try {
+          openrouterKey = await getOpenRouterApiKey(userId);
+          // Also fetch model preference if user has one
+          const userKeys = await getUserApiKeys(userId);
+          if ((userKeys as any)?.openrouter_model) {
+            openrouterModel = (userKeys as any).openrouter_model;
+          }
+        } catch (keyErr) {
+          console.error(`${logPrefix} Failed to get OpenRouter API key:`, keyErr);
+        }
 
         if (!openrouterKey) {
-          console.warn(`${logPrefix} No OpenRouter API key found — skipping MG Remotion code generation`);
+          console.error(`${logPrefix} ❌ No OpenRouter API key found (checked user_api_keys + OPENROUTER_API_KEY env var) — MG Remotion code generation SKIPPED`);
         } else {
+          console.log(`${logPrefix} ✅ OpenRouter key found, generating Remotion code for ${mgShots.length} MG shots...`);
           // Process MG shots in parallel with concurrency limit
           const MG_CONCURRENCY = 3;
           const mgQueue = [...mgShots];
