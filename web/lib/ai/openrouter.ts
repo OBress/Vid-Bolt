@@ -244,6 +244,17 @@ export async function callOpenRouter(
           endIndex: a.url_citation!.end_index,
         }));
 
+      // Record usage to active CostTracker (if any worker is tracking costs)
+      const { getActiveCostTracker } = await import('@/lib/queues/cost-tracker');
+      const tracker = getActiveCostTracker();
+      if (tracker) {
+        tracker.addLlmCall(data.model || mergedConfig.model!, {
+          promptTokens: data.usage?.prompt_tokens || 0,
+          completionTokens: data.usage?.completion_tokens || 0,
+          totalTokens: data.usage?.total_tokens || 0,
+        });
+      }
+
       return {
         content: choice.message.content,
         model: data.model || mergedConfig.model!,

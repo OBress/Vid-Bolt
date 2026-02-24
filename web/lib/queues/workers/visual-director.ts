@@ -26,6 +26,7 @@ import type {
   MediaGenerationProgress,
 } from '@/types/media-generation';
 import type { AspectRatio } from '@/lib/services/gpu-api-service';
+import { CostTracker } from '@/lib/queues/cost-tracker';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -206,7 +207,11 @@ export const visualDirectorProcessor: Processor<VisualDirectorJobData> = async (
 
   console.log(`${LOG_PREFIX} Starting job ${job.id} for video ${videoId} (GPU: ${gpuEnabled})`);
 
+  // Cost tracking for Step 6 (Visual Director / GPU)
+  const costTracker = new CostTracker(6);
+
   try {
+    const result = await costTracker.run(async () => {
     const supabase = getSupabaseServiceClient();
 
     // =========================================================================
@@ -369,6 +374,10 @@ export const visualDirectorProcessor: Processor<VisualDirectorJobData> = async (
         onProgress,
         onItemComplete
       );
+
+      // Track GPU compute time (approximate: ~3s/image, ~8s/video on A100)
+      const totalGpuSeconds = gpuResult.stats.imagesGenerated * 3 + gpuResult.stats.videosGenerated * 8;
+      costTracker.addGpuTime(totalGpuSeconds);
 
       console.log(`${LOG_PREFIX} GPU batch complete: ${gpuResult.stats.imagesGenerated} images, ${gpuResult.stats.videosGenerated} videos`);
       console.log(`${LOG_PREFIX} Failed: ${gpuResult.stats.imagesFailed} images, ${gpuResult.stats.videosFailed} videos`);
@@ -540,8 +549,16 @@ export const visualDirectorProcessor: Processor<VisualDirectorJobData> = async (
         stats: { totalScenes: gpuShots.length, totalShots: gpuShots.length, gpuDisabled: true },
       };
     }
+    }); // end costTracker.run()
+
+    // Save cost data (GPU time)
+    await costTracker.save(videoId);
+    return result;
   } catch (error) {
     console.error(`${LOG_PREFIX} Failed for video ${videoId}:`, error);
+
+    // Still try to save partial cost data
+    await costTracker.save(videoId);
 
     if (taskId) {
       await updateTaskStatus(taskId, {

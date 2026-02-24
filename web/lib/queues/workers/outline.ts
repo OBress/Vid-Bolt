@@ -38,6 +38,8 @@ import type {
   DurationDecision,
 } from '@/lib/queues/writing/types';
 
+import { CostTracker } from '@/lib/queues/cost-tracker';
+
 // ============================================================================
 // JOB DATA & OUTPUT INTERFACES
 // ============================================================================
@@ -71,6 +73,9 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
     `[Outline] Genre: ${input.genre}, Duration: ${input.durationRange.minMinutes}-${input.durationRange.maxMinutes} min`
   );
 
+  // Cost tracking for Step 1 (Outline)
+  const costTracker = new CostTracker(1);
+
   // Store results across phases
   let researchDossier: ResearchDossier | null = null;
   let durationDecision: DurationDecision | null = null;
@@ -80,6 +85,8 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
   const supabase = getSupabaseServiceClient();
 
   try {
+    // Wrap in costTracker.run() so all LLM calls are automatically recorded
+    const result = await costTracker.run(async () => {
     // Update task status to in progress
     await updateTaskStatus(taskId, {
       status: 'running',
@@ -114,6 +121,11 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
 
         await completeStep(taskId, stepId);
         researchDossier = result.dossier;
+
+        // Track Valyu usage — research phase typically makes 2-4 Valyu calls
+        if (input.researchToggle !== 'off') {
+          costTracker.addValyuSearch(3); // Default Valyu search count
+        }
       } catch (error) {
         await failStep(taskId, stepId, String(error));
         throw error;
@@ -276,8 +288,6 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
       throw new Error(`Failed to save video metadata: ${videoError.message}`);
     }
 
-    console.log(`[Outline] Workflow completed for task ${taskId}`);
-
     return {
       success: true,
       taskId,
@@ -288,8 +298,18 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
         (assetRegistry?.locations?.length || 0) +
         (assetRegistry?.objects?.length || 0),
     };
+    }); // end costTracker.run()
+
+    // Save cost data (non-blocking, won't fail the pipeline)
+    await costTracker.save(videoId);
+
+    console.log(`[Outline] Workflow completed for task ${taskId}`);
+    return result;
   } catch (error) {
     console.error(`[Outline] Workflow failed for task ${taskId}:`, error);
+
+    // Still try to save partial cost data on failure
+    await costTracker.save(videoId);
 
     await updateTaskStatus(taskId, {
       status: 'failed',

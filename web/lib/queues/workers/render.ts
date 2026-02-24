@@ -17,6 +17,7 @@ import {
   type StartRenderResult,
 } from '@/lib/services/render/lambda-renderer';
 import { validateRenderProps, type SerializedRenderProps } from '@/lib/services/render/render-serializer';
+import { CostTracker } from '@/lib/queues/cost-tracker';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -149,6 +150,11 @@ export const videoRenderProcessor: Processor<VideoRenderJobData, VideoRenderJobR
           `[VideoRender] Completed in ${(durationMs / 1000).toFixed(1)}s — ` +
             `${progress.outputUrl}`
         );
+
+        // Save cost data (render duration)
+        const costTracker = new CostTracker(8);
+        costTracker.setRenderDuration(durationMs / 60000); // Convert ms to minutes
+        await costTracker.save(_videoId);
 
         return {
           success: true,

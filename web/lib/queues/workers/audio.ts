@@ -13,6 +13,7 @@ import {
   failStep, 
   updateTaskStatus 
 } from '@/lib/queues/shared';
+import { CostTracker } from '@/lib/queues/cost-tracker';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -51,6 +52,9 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
   console.log(`[Audio] Starting job ${job.id} for task ${taskId}`);
 
   try {
+    // Cost tracking for Step 4 (Audio/TTS)
+    const costTracker = new CostTracker(4);
+
     // Link task to video project
     const { linkTaskToVideo, updateVideoProgress } = await import('@/lib/services/video-service');
     await linkTaskToVideo(videoId, taskId, 'audio');
@@ -195,6 +199,10 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
       progress_percent: 100,
       completed_at: new Date().toISOString(),
     });
+
+    // Save cost data (TTS character count)
+    costTracker.setTtsUsage(script.length, voiceModel || voiceName || 'inworld-tts-1.5-max');
+    await costTracker.save(videoId);
 
     // Update video project
     const { updateVideoContent } = await import('@/lib/services/video-service');

@@ -10,6 +10,7 @@
 
 import { Job, Processor } from 'bullmq';
 import { generateText, generateJSON } from '@/lib/ai/openrouter';
+import { CostTracker } from '@/lib/queues/cost-tracker';
 import { withRateLimitHandling } from '../rate-limiter';
 import type { 
   MasterOutline, 
@@ -57,7 +58,12 @@ export const writingProcessor: Processor<WritingWorkflowJobData> = async (job: J
   console.log(`[WritingWorkflow] Starting job ${job.id} for task ${taskId}`);
   console.log(`[WritingWorkflow] Script type: ${scriptType}, Chapters: ${numberOfChapters}`);
 
+  // Cost tracking for Step 3 (Script Writing)
+  const costTracker = new CostTracker(3);
+
   try {
+    // Wrap in costTracker.run() so all LLM calls are automatically recorded
+    const result = await costTracker.run(async () => {
     // Link task to video project if videoId provided
     if (videoId) {
       const { linkTaskToVideo, updateVideoProgress } = await import('@/lib/services/video-service');
@@ -623,9 +629,18 @@ ${chapter}`
       chaptersWritten: allChapters.length,
       finalScriptLength: normalizedScript.length,
     };
+    }); // end costTracker.run()
+
+    // Save cost data
+    if (videoId) await costTracker.save(videoId);
+
+    return result;
 
   } catch (error) {
     console.error(`[WritingWorkflow] Job ${job.id} failed:`, error);
+
+    // Still try to save partial cost data on failure
+    if (videoId) await costTracker.save(videoId);
 
     // Update task status to failed
     await updateTaskStatus(taskId, {

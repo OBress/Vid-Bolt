@@ -35,6 +35,7 @@ import type {
 } from '@/lib/services/edit-assembly/editor-capability-manifest';
 import type { GeneratedMedia } from '@/types/video';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { CostTracker } from '@/lib/queues/cost-tracker';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -66,6 +67,9 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
   console.log(`[EditAssembly Worker] Starting for video ${videoId}, task ${taskId}`);
 
   try {
+    // Cost tracking for Step 7 (Edit Assembly)
+    const costTracker = new CostTracker(7);
+    const result = await costTracker.run(async () => {
     // =====================================================================
     // PHASE 1: Context Analysis (0-10%)
     // =====================================================================
@@ -279,6 +283,11 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     console.log(`[EditAssembly Worker] Task ${taskId} completed successfully`);
 
     return { success: true, agentEdl: mergedAgentEDL, edl: mergedLegacyEDL };
+    }); // end costTracker.run()
+
+    // Save cost data
+    await costTracker.save(videoId);
+    return result;
   } catch (error) {
     console.error(`[EditAssembly Worker] Task ${taskId} failed:`, error);
 

@@ -12,6 +12,7 @@ import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus, updateTaskOutput } from '@/lib/queues/shared';
 import { getOpenRouterApiKey, getUserApiKeys } from '@/lib/services/api-keys';
 import type { ShotForGpuGeneration } from '@/lib/av-script/gpu-batch-generation';
+import { CostTracker } from '@/lib/queues/cost-tracker';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -145,7 +146,11 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
   
   console.log(`${logPrefix} Starting job ${job.id} for video ${videoId} (mode: ${mode})`);
 
+  // Cost tracking for Step 5 (AV Script)
+  const costTracker = new CostTracker(5);
+
   try {
+    const result = await costTracker.run(async () => {
     const supabase = getSupabaseServiceClient();
     
     // Update task status if taskId provided
@@ -386,6 +391,11 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
       segmentCount: finalShots.length,
       output: avScriptPart1Output,
     };
+    }); // end costTracker.run()
+
+    // Save cost data
+    await costTracker.save(videoId);
+    return result;
 
   } catch (error) {
     console.error(`${logPrefix} Failed for video ${videoId}:`, error);

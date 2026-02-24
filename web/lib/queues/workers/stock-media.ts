@@ -23,6 +23,7 @@ import {
   generateVideoStockImageKey,
 } from '@/lib/services/r2-storage';
 import { v4 as uuidv4 } from 'uuid';
+import { CostTracker } from '@/lib/queues/cost-tracker';
 
 // ==========================================================================
 // Types
@@ -184,6 +185,10 @@ export async function stockMediaProcessor(
   const startTime = Date.now();
   const supabase = getSupabaseClient();
   
+  // Cost tracking for Step 2 (Stock Media)
+  const costTracker = new CostTracker(2);
+  let serperSearchCount = 0;
+  
   console.log(`[StockMediaWorker] Starting job ${job.id} for video ${videoId} (${level})`);
   
   const allMedia: MediaItem[] = [];
@@ -233,6 +238,7 @@ export async function stockMediaProcessor(
           maxResults: limits.resultsToCheck,  // Only check first 10 results
           // Don't filter by size - allow medium and large images
         });
+        serperSearchCount++; // Track Serper API calls
         
         let imagesFromThisQuery = 0;  // Track images collected from this query
         let imagesChecked = 0;  // Track total images checked (for limiting API calls)
@@ -754,6 +760,10 @@ export async function stockMediaProcessor(
     console.log(`[StockMediaWorker]   Images: ${stats.serperImages}, Videos: ${stats.pexelsVideos}, YouTube: ${stats.youtubeClips}`);
     console.log(`[StockMediaWorker]   Classified: ${stats.classified}, Stored: ${stats.stored}, Rejected: ${stats.rejected}`);
     
+    // Save cost data (Serper search count)
+    costTracker.addSerperSearch(serperSearchCount);
+    await costTracker.save(videoId);
+    
     return {
       videoId,
       media: allMedia,
@@ -762,6 +772,10 @@ export async function stockMediaProcessor(
     
   } catch (error) {
     console.error(`[StockMediaWorker] ✗ Job ${job.id} failed:`, error);
+    
+    // Still try to save partial cost data
+    costTracker.addSerperSearch(serperSearchCount);
+    await costTracker.save(videoId);
     
     // Mark task failed
     await supabase
