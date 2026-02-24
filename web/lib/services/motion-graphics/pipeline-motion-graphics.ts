@@ -158,6 +158,110 @@ Requirements:
 - Keep it minimal and elegant`;
 }
 
+/**
+ * Generate a static hardcoded Remotion fallback component.
+ * This is the absolute last resort — guaranteed to produce valid, renderable
+ * Remotion code without any LLM call. Used when both full generation and
+ * simplified retry have failed. The pipeline must never halt.
+ *
+ * @param narrationText - The text spoken during this shot
+ * @param duration - Duration in seconds
+ * @param shotIndex - Shot index for identification
+ */
+export function getStaticRemotionFallback(
+  narrationText: string,
+  duration: number,
+  shotIndex: number,
+): PipelineGenerationResult {
+  // Extract first ~60 chars of narration for visual display
+  const displayText = narrationText
+    ? narrationText.substring(0, 60) + (narrationText.length > 60 ? '...' : '')
+    : `Scene ${shotIndex + 1}`;
+
+  const fps = 30;
+  const totalFrames = Math.max(fps, Math.round(duration * fps));
+
+  const code = `import React from 'react';
+import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig, spring } from 'remotion';
+
+const StaticFallback: React.FC = () => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  // Smooth fade in over 0.5s
+  const fadeIn = interpolate(frame, [0, Math.round(fps * 0.5)], [0, 1], {
+    extrapolateRight: 'clamp',
+  });
+
+  // Gentle scale spring
+  const scale = spring({
+    frame,
+    fps,
+    config: { damping: 200, mass: 1, stiffness: 100 },
+  });
+
+  // Subtle gradient shift
+  const gradientOffset = interpolate(frame, [0, ${totalFrames}], [0, 30]);
+
+  return (
+    <AbsoluteFill
+      style={{
+        background: \`linear-gradient(\${135 + gradientOffset}deg, #0f0c29 0%, #302b63 50%, #24243e 100%)\`,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 60,
+      }}
+    >
+      <div
+        style={{
+          opacity: fadeIn,
+          transform: \`scale(\${0.9 + scale * 0.1})\`,
+          textAlign: 'center',
+          maxWidth: '80%',
+        }}
+      >
+        <div
+          style={{
+            fontSize: 42,
+            fontWeight: 700,
+            color: '#ffffff',
+            lineHeight: 1.4,
+            fontFamily: 'Inter, Arial, sans-serif',
+            textShadow: '0 2px 20px rgba(0,0,0,0.5)',
+          }}
+        >
+          ${JSON.stringify(displayText)}
+        </div>
+        <div
+          style={{
+            marginTop: 20,
+            width: 60,
+            height: 3,
+            background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+            borderRadius: 2,
+            margin: '20px auto 0',
+            opacity: fadeIn,
+          }}
+        />
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+export default StaticFallback;`;
+
+  console.log(`[PipelineMG] Shot ${shotIndex}: Using STATIC FALLBACK (no LLM call)`);
+
+  return {
+    success: true,
+    remotionCode: code,
+    skills: ['text-animation'],
+    durationFrames: totalFrames,
+    usedIcons: [],
+  };
+}
+
 // ============================================================
 // PIPELINE GENERATOR
 // ============================================================

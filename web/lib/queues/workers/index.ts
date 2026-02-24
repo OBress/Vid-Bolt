@@ -28,3 +28,8 @@ export { researchCompareProcessor } from './research-compare';
 export { gpuShutdownCheckProcessor, checkForInactiveVMs } from './gpu-shutdown-checker';
 export { videoRenderProcessor } from './render';
 export { editAssemblyProcessor } from './edit-assembly';
+export { orchestratorProcessor } from './orchestrator';
+export { shotPlannerProcessor } from './shot-planner';
+export { assetScoutProcessor } from './asset-scout';
+export { imageGenProcessor } from './image-gen';
+export { videoGenProcessor } from './video-gen';

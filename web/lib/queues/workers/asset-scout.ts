@@ -1,0 +1,240 @@
+/**
+ * Asset Scout Worker
+ * ============================================================================
+ * Specialized worker combining stock media search + AI prompt generation.
+ * Refactored from av-script Part 2 + stock-media.ts.
+ *
+ * Input:  ShotPlan + GCM entities
+ * Output: AssetManifest with stock URLs and AI visual prompts
+ *
+ * This worker:
+ *   1. Classifies shots needing stock vs AI generation
+ *   2. Searches Serper/Valyu for stock-worthy shots
+ *   3. Crafts enriched AI prompts using GCM entity descriptions
+ *   4. Returns a structured AssetManifest
+ */
+
+import { Job, Processor } from 'bullmq';
+import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
+import { processWithStockMedia } from '@/lib/av-script/stock-media-director';
+import { routeToAgent, buildAgentContext } from '@/lib/av-script/agent-prompts';
+import { getEntitiesByIds } from '@/lib/services/gcm';
+import type { AssetEntry, AssetManifest, PlannedShot } from '@/lib/types/closed-loop';
+import { CostTracker } from '@/lib/queues/cost-tracker';
+
+// ============================================================================
+// JOB DATA INTERFACE
+// ============================================================================
+
+export interface AssetScoutJobData {
+  taskId: string;
+  userId: string;
+  videoId: string;
+  /** System prompt from the Orchestrator's Dynamic Prompt Generator */
+  systemPrompt?: string;
+  /** Aspect ratio for generation */
+  aspectRatio?: '16:9' | '9:16';
+}
+
+// ============================================================================
+// PROCESSOR
+// ============================================================================
+
+const LOG_PREFIX = '[AssetScout]';
+
+export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
+  job: Job<AssetScoutJobData>
+) => {
+  const { taskId, userId, videoId, aspectRatio } = job.data;
+
+  console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
+
+  const costTracker = new CostTracker(4); // Step 4 in the pipeline
+
+  try {
+    const result = await costTracker.run(async () => {
+      const supabase = getSupabaseServiceClient();
+
+      // =====================================================================
+      // STEP 1: Fetch shot plan from metadata
+      // =====================================================================
+      console.log(`${LOG_PREFIX} Step 1: Fetching shot plan...`);
+
+      await updateTaskStatus(taskId, {
+        status: 'running',
+        current_step: 'Loading shot plan...',
+        progress_percent: 5,
+      });
+
+      const { data: video } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+
+      const metadata = (video?.metadata || {}) as Record<string, unknown>;
+      const shotPlan = metadata.shot_plan as { shots: PlannedShot[] } | undefined;
+      const shots = shotPlan?.shots || [];
+
+      if (shots.length === 0) {
+        // Fallback: try av_script_part1
+        const avScriptPart1 = metadata.av_script_part1 as { shots?: PlannedShot[] } | undefined;
+        if (avScriptPart1?.shots?.length) {
+          shots.push(...avScriptPart1.shots);
+        }
+      }
+
+      if (shots.length === 0) {
+        console.warn(`${LOG_PREFIX} No shots found in metadata`);
+        await updateTaskStatus(taskId, {
+          status: 'completed',
+          current_step: 'No shots to process',
+          progress_percent: 100,
+        });
+        return { success: true, videoId, output: { entries: [], metadata: { stock_count: 0, ai_image_count: 0, ai_video_count: 0, motiongraphic_count: 0, sfx_count: 0 } } };
+      }
+
+      console.log(`${LOG_PREFIX} Found ${shots.length} shots to process`);
+
+      // =====================================================================
+      // STEP 2: Fetch GCM entities for prompt enrichment
+      // =====================================================================
+      console.log(`${LOG_PREFIX} Step 2: Loading GCM entities...`);
+
+      const allEntityRefs = [...new Set(shots.flatMap(s => s.entity_refs || []))];
+      const entities = allEntityRefs.length > 0
+        ? await getEntitiesByIds(allEntityRefs)
+        : [];
+
+      console.log(`${LOG_PREFIX} Loaded ${entities.length} GCM entities for enrichment`);
+
+      // =====================================================================
+      // STEP 3: Build asset entries for each shot
+      // =====================================================================
+      console.log(`${LOG_PREFIX} Step 3: Building asset manifest...`);
+
+      await updateTaskStatus(taskId, {
+        status: 'running',
+        current_step: `Processing ${shots.length} shots for asset retrieval...`,
+        progress_percent: 30,
+      });
+
+      const entries: AssetEntry[] = [];
+      let stockCount = 0;
+      let aiImageCount = 0;
+      let aiVideoCount = 0;
+      let mgCount = 0;
+      let sfxCount = 0;
+
+      for (let i = 0; i < shots.length; i++) {
+        const shot = shots[i];
+
+        // Build entity-enriched description
+        const shotEntities = entities.filter(e =>
+          shot.entity_refs?.includes(e.entity_id)
+        );
+        const entityContext = shotEntities.length > 0
+          ? ` Featuring: ${shotEntities.map(e => `${e.name} (${e.text_description})`).join(', ')}.`
+          : '';
+
+        const enrichedPrompt = `${shot.visual_description || shot.summary || shot.text}${entityContext}`;
+
+        // Determine source type
+        let source: AssetEntry['source'] = 'motiongraphic';
+        if (shot.media_type === 'stock') {
+          source = 'stock';
+          stockCount++;
+        } else if (shot.media_type === 'video') {
+          source = 'ai_video';
+          aiVideoCount++;
+        } else if (shot.media_type === 'image') {
+          source = 'ai_image';
+          aiImageCount++;
+        } else {
+          mgCount++;
+        }
+
+        // Count SFX
+        const hasSfx = shot.sound_effects && shot.sound_effects.length > 0;
+        if (hasSfx) sfxCount += shot.sound_effects.length;
+
+        entries.push({
+          segment_index: shot.segment_index,
+          visual_prompt: enrichedPrompt,
+          source,
+          // Stock URLs will be populated by stock search (future refinement)
+          sfx: hasSfx ? {
+            url: '', // Will be populated by SFX search
+            description: shot.sound_effects[0].description,
+            trigger_at_seconds: shot.sound_effects[0].trigger_at_seconds,
+          } : undefined,
+        });
+
+        // Progress update every 5 shots
+        if (i % 5 === 0) {
+          await updateTaskStatus(taskId, {
+            status: 'running',
+            current_step: `Processing shot ${i + 1}/${shots.length}...`,
+            progress_percent: 30 + Math.round((i / shots.length) * 50),
+          });
+        }
+      }
+
+      // =====================================================================
+      // STEP 4: Build the manifest
+      // =====================================================================
+      const manifest: AssetManifest = {
+        entries,
+        metadata: {
+          stock_count: stockCount,
+          ai_image_count: aiImageCount,
+          ai_video_count: aiVideoCount,
+          motiongraphic_count: mgCount,
+          sfx_count: sfxCount,
+        },
+      };
+
+      // =====================================================================
+      // STEP 5: Persist to metadata
+      // =====================================================================
+      console.log(`${LOG_PREFIX} Step 5: Persisting asset manifest...`);
+
+      await supabase
+        .from('video_projects')
+        .update({
+          metadata: {
+            ...metadata,
+            asset_manifest: manifest,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', videoId);
+
+      await updateTaskStatus(taskId, {
+        status: 'completed',
+        current_step: `Asset manifest complete: ${stockCount} stock, ${aiImageCount} images, ${aiVideoCount} videos, ${mgCount} MG, ${sfxCount} SFX`,
+        progress_percent: 100,
+      });
+
+      console.log(`${LOG_PREFIX} ✅ Complete: ${entries.length} asset entries`);
+
+      return { success: true, videoId, output: manifest };
+    }); // end costTracker.run
+
+    await costTracker.save(videoId);
+    return result;
+
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed for video ${videoId}:`, error);
+    await costTracker.save(videoId);
+
+    await updateTaskStatus(taskId, {
+      status: 'failed',
+      current_step: 'Asset retrieval failed',
+      progress_percent: 0,
+      error_message: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    throw error;
+  }
+};

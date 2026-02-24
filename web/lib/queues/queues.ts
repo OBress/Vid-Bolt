@@ -127,6 +127,27 @@ export const videoRenderQueue = createQueue('video-render', {
 /** AI-driven edit assembly (chunked EDL generation) */
 export const editAssemblyQueue = createQueue('edit-assembly-workflow');
 
+/** Closed-loop orchestrator (Phase I→V pipeline coordinator) */
+export const orchestratorQueue = createQueue('orchestrator', {
+  defaultJobOptions: {
+    attempts: 1,  // Orchestrator handles retries internally per-phase
+    removeOnComplete: { count: 20, age: 60 * 60 * 24 * 7 },  // 7 days
+    removeOnFail: { count: 100, age: 60 * 60 * 24 * 14 },    // 14 days
+  },
+});
+
+/** Shot planner (Phase II: script + timestamps → ShotPlan) */
+export const shotPlannerQueue = createQueue('shot-planner');
+
+/** Asset scout (Phase III: stock search + AI prompt generation) */
+export const assetScoutQueue = createQueue('asset-scout');
+
+/** Image generation (Phase IV: batch Z-Image Turbo) */
+export const imageGenQueue = createQueue('image-gen');
+
+/** Video generation (Phase IV: sequential LTX-2) */
+export const videoGenQueue = createQueue('video-gen');
+
 /**
  * All active queues for graceful shutdown.
  */
@@ -153,6 +174,11 @@ export const allQueues = [
   gpuShutdownCheckQueue,
   videoRenderQueue,
   editAssemblyQueue,
+  orchestratorQueue,
+  shotPlannerQueue,
+  assetScoutQueue,
+  imageGenQueue,
+  videoGenQueue,
 ];
 
 /**

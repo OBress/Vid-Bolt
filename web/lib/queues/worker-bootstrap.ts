@@ -56,6 +56,11 @@ import {
   gpuShutdownCheckProcessor,
   videoRenderProcessor,
   editAssemblyProcessor,
+  orchestratorProcessor,
+  shotPlannerProcessor,
+  assetScoutProcessor,
+  imageGenProcessor,
+  videoGenProcessor,
 } from './workers';
 
 // ============================================================================
@@ -202,6 +207,36 @@ const workerConfigs: WorkerConfig[] = [
     processor: editAssemblyProcessor,
     concurrency: 3,
     description: 'AI-driven EDL generation for video editing',
+  },
+  {
+    queue: 'orchestrator',
+    processor: orchestratorProcessor,
+    concurrency: 2,
+    description: 'Closed-loop pipeline orchestrator (Phase I→V)',
+  },
+  {
+    queue: 'shot-planner',
+    processor: shotPlannerProcessor,
+    concurrency: 3,
+    description: 'Shot planning (Phase II)',
+  },
+  {
+    queue: 'asset-scout',
+    processor: assetScoutProcessor,
+    concurrency: 3,
+    description: 'Asset retrieval + prompt generation (Phase III)',
+  },
+  {
+    queue: 'image-gen',
+    processor: imageGenProcessor,
+    concurrency: 3,
+    description: 'Batch AI image generation (Phase IV)',
+  },
+  {
+    queue: 'video-gen',
+    processor: videoGenProcessor,
+    concurrency: 2,
+    description: 'Sequential AI video generation (Phase IV)',
   },
 ];
 

@@ -3,81 +3,27 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { WizardProgress } from "./WizardProgress";
 import { StepNavigationConfirmDialog } from "./StepNavigationConfirmDialog";
-import { GPUToggle } from "./GPUToggle";
-import { StockMediaOverrideToggle } from "./StockMediaOverrideToggle";
-import { VMStartupWarningDialog } from "./VMStartupWarningDialog";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { createClient } from "@/lib/supabase/client";
-import { useGCPVM } from "@/hooks/use-gcp-vm";
-// Legacy imports removed: Step4UniversalScript, StepMediaGeneration
 import { Step1Outline } from "./steps/Step1Outline";
 import { Step3Script } from "./steps/Step3Script";
-import { Step4Audio } from "./steps/Step4Audio";
 import { Step2StockMedia } from "./steps/Step2StockMedia";
-import { Step5ShotCreation } from "./steps/Step5ShotCreation";
-import { Step6SceneReview } from "./steps/Step6SceneReview";
 import { Step7Editor } from "./steps/Step7Editor";
 import { Step8Export } from "./steps/Step8Export";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
 import { useVideos } from "@/hooks/use-videos";
 import { Loader2 } from "lucide-react";
-import type { VideoStage, VideoProject, GeneratedMedia } from "@/types/video";
+import type { VideoStage, VideoProject } from "@/types/video";
 import type { EditDecisionList } from "@/lib/services/edit-assembly/edit-assembly-prompts";
 
-export interface AudioChunk {
-  chapterNumber: number;
-  url: string;
-  duration_seconds?: number;
-  text?: string;
-}
-
-export interface ShotEvent {
-  segment_index: number;
-  start_seconds: number;
-  end_seconds: number;
-  duration_seconds: number;
-  content_type:
-    | "list-item"
-    | "comparison"
-    | "concept"
-    | "transition"
-    | "emotional-beat";
-  text: string;
-  visual_prompt?: string;
-  summary?: string;
-  media_type?: "image" | "video";
-  character_refs?: string[];
-  location_refs?: string[];
-  object_refs?: string[];
-}
-
-// Type for universal script output
-interface UniversalScriptOutput {
-  researchDossier?: any;
-  spine?: any;
-  assetRegistry?: any;
-  expandedBeats?: Array<{
-    beatIndex: number;
-    narration: string;
-    wordCount: number;
-    qualityScore?: number;
-  }>;
-  finalScript?: string;
-  qualityValidation?: any;
-}
 
 export interface WizardState {
   prompt: string;
   expandedIdea: string;
   script: string;
-  audioUrl: string | null;
-  audioChunks: AudioChunk[];
-  shotList: ShotEvent[];
-  avScript: { timestamp: string; visual: string; audio: string }[];
   videoId: string | null;
   expandTaskId: string | null;
   writeTaskId: string | null;
-  audioTaskId: string | null;
   // Outline output (Step 1)
   outlineOutput: any | null;
   outlineConfig: any | null;
@@ -86,51 +32,27 @@ export interface WizardState {
   isStockMediaLoading: boolean;
   stockMediaTaskId: string | null;
   stockMediaResults: any[] | null;
-  // Universal script output (Step 3)
+  // Script output (Step 3)
   scriptConfig: any; // Store script generation configuration
-  universalScriptOutput: UniversalScriptOutput | null;
   scriptOutput: any | null; // Output from script-writing worker
   isScriptLoading: boolean; // Flag for auto-triggering script gen (Step 2→3)
   scriptTaskId: string | null; // Task ID for script generation
-  // AV Script Part 1 (Step 4→5 transition)
-  avScriptTaskId: string | null;
-  avScriptPart1Output: any | null;
-  isAvScriptLoading: boolean; // Flag to show loading immediately
-  isAudioLoading: boolean; // Flag to show audio loading immediately (Step 3→4)
-  // AV Script Part 2 + Media Generation (Step 5→6 transition)
-  avScriptPart2TaskId: string | null;
-  isMediaGenerating: boolean; // Flag to show media gen loading immediately
-  // Step 6: Scene Review - generated media
-  generatedMedia: GeneratedMedia[];
-  generationError?: string | null;
-  // GPU Generation Toggle (admin-only)
-  gpuEnabled: boolean;
-  // Stock Media Override (admin-only) - enables stock media in Step 5 even if disabled in Step 1
-  stockMediaOverride: boolean;
-  // Asset Reference Image Generation (Step 4→5 transition, parallel with AV Script)
-  assetImageTaskId: string | null;
-  // Generated reference images for assets { assetId: imageUrl }
-  assetReferenceImages: Record<string, string> | null;
-  // Edit Decision List (Step 6 → Step 7 transition)
+  // Edit Decision List (Step 3 → Step 4 transition)
   edl: EditDecisionList | null;
   agentEdl: any | null; // EditorAgentEDL v2 format
   edlTaskId: string | null;
   isEdlLoading: boolean;
 }
 
-// Step configuration for the wizard - 8 steps
+// Step configuration for the wizard - 5 steps
 const STEPS = [
-  { id: 1, label: "Outline", type: "outline" }, // New Placeholder
-  { id: 2, label: "Stock Media", type: "stock" }, // New Placeholder
-  { id: 3, label: "Script", type: "script" }, // Old Step 1
-  { id: 4, label: "Audio", type: "audio" }, // Old Step 2
-  { id: 5, label: "Shot Creation", type: "generations" }, // Moved from Step 6
-  { id: 6, label: "Scene Review", type: "refs" }, // Moved from Step 7
-  { id: 7, label: "Editor", type: "editor" }, // Restored Editor
-  { id: 8, label: "Export", type: "final" }, // Old Step 5
+  { id: 1, label: "Outline", type: "outline" },
+  { id: 2, label: "Stock Media", type: "stock" },
+  { id: 3, label: "Script", type: "script" },
+  { id: 4, label: "Editor", type: "editor" },
+  { id: 5, label: "Export", type: "final" },
 ] as const;
 
-// Helper function to map video stage to wizard step number
 // Helper function to map video stage to wizard step number
 function stageToStepNumber(stage: VideoStage): number {
   const stageMapping: Record<VideoStage, number> = {
@@ -138,13 +60,13 @@ function stageToStepNumber(stage: VideoStage): number {
     outline: 1, // Step 1
     stock: 2, // Step 2
     script: 3, // Step 3
-    audio: 4, // Step 4
-    media: 5, // Legacy -> Step 5
-    shot_planning: 5, // Step 5
-    shot_creation: 6, // Step 6
-    video: 7, // Step 7
-    export: 8, // Step 8
-    completed: 8, // Step 8
+    audio: 3, // Legacy (removed) -> Step 3
+    media: 3, // Legacy (removed) -> Step 3
+    shot_planning: 3, // Legacy (removed) -> Step 3
+    shot_creation: 3, // Legacy (removed) -> Step 3
+    video: 4, // Step 4 (Editor)
+    export: 5, // Step 5
+    completed: 5, // Step 5
   };
   return stageMapping[stage] || 1;
 }
@@ -196,27 +118,15 @@ export function VideoCreationWizard({
   });
   const [_isSaving, _setIsSaving] = useState(false);
 
-  // GPU VM status for Step 4->5 transition warning
-  const { displayStatus: vmDisplayStatus, startVM } = useGCPVM();
-  const [showVMWarning, setShowVMWarning] = useState(false);
-  const [isVMStarting, setIsVMStarting] = useState(false);
-  // Track if user has confirmed VM warning to bypass re-check
-  const vmWarningConfirmedRef = useRef(false);
-
   const [currentStep, setCurrentStep] = useState(1);
   const [maxStepReached, setMaxStepReached] = useState(1);
   const [state, setState] = useState<WizardState>({
     prompt: "",
     expandedIdea: "",
     script: "",
-    audioUrl: null,
-    audioChunks: [],
-    shotList: [],
-    avScript: [],
     videoId: initialVideoId,
     expandTaskId: null,
     writeTaskId: null,
-    audioTaskId: null,
     outlineOutput: null,
     outlineConfig: null,
     outlineTaskId: null,
@@ -224,21 +134,9 @@ export function VideoCreationWizard({
     stockMediaTaskId: null,
     stockMediaResults: null,
     scriptConfig: null,
-    universalScriptOutput: null,
     scriptOutput: null,
     isScriptLoading: false,
     scriptTaskId: null,
-    avScriptTaskId: null,
-    avScriptPart1Output: null,
-    isAvScriptLoading: false,
-    isAudioLoading: false,
-    avScriptPart2TaskId: null,
-    isMediaGenerating: false,
-    generatedMedia: [],
-    gpuEnabled: true, // Default: GPU enabled for full generation
-    stockMediaOverride: false, // Default: no override, respect Step 1 setting
-    assetImageTaskId: null,
-    assetReferenceImages: null,
     edl: null,
     agentEdl: null,
     edlTaskId: null,
@@ -255,7 +153,7 @@ export function VideoCreationWizard({
     };
   }, [setCurrentVideoName]);
 
-  // Admin status for GPU toggle visibility
+  // Admin status
   const [isAdmin, setIsAdmin] = useState(false);
   const supabase = createClient();
 
@@ -281,8 +179,8 @@ export function VideoCreationWizard({
 
   // Load existing video data when resuming
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
-  // Track if we resumed at step 7 so Step7Editor can skip its import animation
-  const resumedAtStep7Ref = useRef(false);
+  // Track if we resumed at step 4 (editor) so Step7Editor can skip its import animation
+  const resumedAtEditorRef = useRef(false);
 
   useEffect(() => {
     async function loadVideoData() {
@@ -306,36 +204,13 @@ export function VideoCreationWizard({
         // Get expanded idea from metadata if available
         const expandedIdea = (video.metadata as any)?.expanded_idea || "";
 
-        // Load shot list from metadata if available
-        const shotList = (video.metadata as any)?.shot_list || [];
-
         // Update state with loaded video data
         const scriptConfig = (video.metadata as any)?.scriptConfig || null;
-        const universalScriptOutput =
-          (video.metadata as any)?.universalScriptOutput || null;
-
-        // Normalize audio chunks from API
-        const rawAudioChunks = data.audioChunks || [];
-        console.log(
-          "[Wizard DEBUG] rawAudioChunks from API:",
-          JSON.stringify(rawAudioChunks, null, 2),
-        );
-
-        const normalizedAudioChunks = rawAudioChunks.map((c: any) => ({
-          ...c,
-          chapterNumber: c.chapterNumber ?? c.chunkIndex,
-        }));
-
-        console.log(
-          "[Wizard DEBUG] normalizedAudioChunks:",
-          JSON.stringify(normalizedAudioChunks, null, 2),
-        );
 
         // Load outline data from metadata
         let outlineOutput = (video.metadata as any)?.outlineOutput || null;
 
         // RECOVERY: If outline missing in metadata, try to recover from linked task
-        // This handles cases where metadata was inadvertently overwritten
         if (!outlineOutput && (video as any).outline_task_id) {
           console.log(
             "[Wizard] Attempting to recover outline from task:",
@@ -356,12 +231,6 @@ export function VideoCreationWizard({
             console.error("[Wizard] Outline recovery failed:", err);
           }
         }
-        console.log(
-          "[Wizard DEBUG] Loaded outlineOutput:",
-          outlineOutput
-            ? `Present (assetRegistry keys: ${Object.keys(outlineOutput.assetRegistry || {}).join(", ")})`
-            : "NULL",
-        );
 
         const outlineConfig = (video.metadata as any)?.outlineConfig || null;
         const scriptOutput = (video.metadata as any)?.scriptOutput || null;
@@ -387,37 +256,19 @@ export function VideoCreationWizard({
           prompt: video.idea || "",
           expandedIdea: expandedIdea,
           script: video.script_content || "",
-          audioUrl: video.audio_url || null,
-          audioChunks: normalizedAudioChunks,
-          shotList: shotList,
-          avScript: (video.metadata as any)?.avScript || [],
           videoId: video.id,
           expandTaskId: null,
           writeTaskId: null,
-          audioTaskId: video.audio_task_id || null,
           outlineOutput,
           outlineConfig,
           outlineTaskId: null,
           isStockMediaLoading: false,
           stockMediaTaskId: (video.metadata as any)?.stockMediaTaskId || null,
-          stockMediaResults, // Use fetched stock media from database
+          stockMediaResults,
           scriptConfig,
-          universalScriptOutput,
           scriptOutput,
           isScriptLoading: false,
           scriptTaskId: null,
-          avScriptTaskId: null,
-          avScriptPart1Output: (video.metadata as any)?.av_script_part1 || null,
-          isAvScriptLoading: false,
-          isAudioLoading: false,
-          avScriptPart2TaskId: null,
-          isMediaGenerating: false,
-          generatedMedia: (video.metadata as any)?.generatedMedia || [],
-          gpuEnabled: true, // Default to enabled when loading video
-          stockMediaOverride: false, // Override is session-only, always starts false
-          assetImageTaskId: (video.metadata as any)?.assetImageTaskId || null,
-          assetReferenceImages:
-            (video.metadata as any)?.assetReferenceImages || null,
           edl: (video.metadata as any)?.edl || null,
           agentEdl: (video.metadata as any)?.agentEdl || null,
           edlTaskId: null,
@@ -427,15 +278,10 @@ export function VideoCreationWizard({
         // =====================================================================
         // RESTORE IN-PROGRESS LOADING STATES FROM ACTIVE TASKS
         // =====================================================================
-        // When resuming a video mid-generation, the API returns any active
-        // (pending/running) tasks. We map each task type to the corresponding
-        // loading flag and task ID so the wizard shows the loading screen.
         const activeTasks = data.activeTasks || [];
         if (activeTasks.length > 0) {
           const loadingUpdates: Partial<WizardState> = {};
 
-          // The stockMediaTaskId stored in metadata uses generic type 'video',
-          // so we check it separately
           const metadataStockTaskId = (video.metadata as any)?.stockMediaTaskId;
 
           for (const task of activeTasks) {
@@ -445,40 +291,11 @@ export function VideoCreationWizard({
                 loadingUpdates.scriptTaskId = task.id;
                 console.log(`[Wizard] Restoring active script task: ${task.id}`);
                 break;
-              case "audio":
-                // Only restore audio loading if we have no audio chunks yet
-                if (normalizedAudioChunks.length === 0) {
-                  loadingUpdates.isAudioLoading = true;
-                  loadingUpdates.audioTaskId = task.id;
-                  console.log(`[Wizard] Restoring active audio task: ${task.id}`);
-                }
-                break;
-              case "av_script_part1":
-                // Only restore if we don't already have the output
-                if (!(video.metadata as any)?.av_script_part1) {
-                  loadingUpdates.isAvScriptLoading = true;
-                  loadingUpdates.avScriptTaskId = task.id;
-                  console.log(`[Wizard] Restoring active AV Script Part 1 task: ${task.id}`);
-                }
-                break;
-              case "av_script_part2":
-                // Only restore if we don't already have generated media
-                if (!((video.metadata as any)?.generatedMedia?.length > 0)) {
-                  loadingUpdates.isMediaGenerating = true;
-                  loadingUpdates.avScriptPart2TaskId = task.id;
-                  console.log(`[Wizard] Restoring active AV Script Part 2 task: ${task.id}`);
-                }
-                break;
               case "video":
-                // Generic 'video' type is used for both stock media and asset reference images
-                // Disambiguate using metadata-stored task ID or task name
                 if (metadataStockTaskId && task.id === metadataStockTaskId) {
                   loadingUpdates.isStockMediaLoading = true;
                   loadingUpdates.stockMediaTaskId = task.id;
                   console.log(`[Wizard] Restoring active stock media task: ${task.id}`);
-                } else if (task.name?.includes("Asset Reference")) {
-                  loadingUpdates.assetImageTaskId = task.id;
-                  console.log(`[Wizard] Restoring active asset reference image task: ${task.id}`);
                 }
                 break;
               case "outline":
@@ -486,7 +303,6 @@ export function VideoCreationWizard({
                 console.log(`[Wizard] Restoring active outline task: ${task.id}`);
                 break;
               case "edit_assembly":
-                // Only restore if we don't already have an EDL
                 if (!(video.metadata as any)?.edl) {
                   loadingUpdates.isEdlLoading = true;
                   loadingUpdates.edlTaskId = task.id;
@@ -510,30 +326,8 @@ export function VideoCreationWizard({
         // Set the current step and max reached step
         setCurrentStep(targetStep);
         setMaxStepReached(targetStep);
-        if (targetStep === 7) {
-          resumedAtStep7Ref.current = true;
-        }
-
-        // HOTFIX: If we are in Step 2 (Audio) but find 0 chunks, it means the previous generation failed silently.
-        // Instead of trying to use the AsyncLoadingStep (which is getting stuck or invisible),
-        // we force the Error UI immediately so the user can regenerate.
-        let initialError: string | null = null;
-        if (targetStep === 2 && normalizedAudioChunks.length === 0) {
-          initialError = "Audio data missing. Please regenerate.";
-          // Also clear the junk task ID so we don't pollute the next attempt
-          if (video.audio_task_id) {
-            setState((prev) => ({ ...prev, audioTaskId: null }));
-            // Fire and forget cleanup
-            fetch(`/api/videos/${video.id}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ audio_task_id: null }),
-            }).catch(console.error);
-          }
-        }
-
-        if (initialError) {
-          setState((prev) => ({ ...prev, generationError: initialError }));
+        if (targetStep === 4) {
+          resumedAtEditorRef.current = true;
         }
 
         console.log(
@@ -562,57 +356,7 @@ export function VideoCreationWizard({
     setMaxStepReached((prev) => Math.max(prev, step));
   }, []);
 
-  // Auto-trigger EDL generation when step 7 is active but no EDL exists
-  // This handles: page reload at step 7, or going back to step 6 then forward
-  const edlTriggerRef = useRef(false);
-  useEffect(() => {
-    // Reset trigger flag when leaving step 7 or getting an EDL
-    if (currentStep !== 7 || state.edl) {
-      edlTriggerRef.current = false;
-      return;
-    }
 
-    // Don't trigger while video data is still loading — edl may arrive shortly
-    if (isLoadingVideo) {
-      return;
-    }
-
-    // Guard: don't trigger if already loading, already have a taskId, or no videoId
-    if (state.isEdlLoading || state.edlTaskId || !state.videoId || edlTriggerRef.current) {
-      return;
-    }
-
-    edlTriggerRef.current = true;
-    console.log('[Wizard] Step 7 loaded without EDL — triggering generation');
-    setState((prev) => ({ ...prev, isEdlLoading: true }));
-
-    (async () => {
-      try {
-        const edlRes = await fetch('/api/process/edit-assembly', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ videoId: state.videoId }),
-        });
-        if (edlRes.ok) {
-          const { taskId } = await edlRes.json();
-          setState((prev) => ({ ...prev, edlTaskId: taskId }));
-          console.log('[Wizard] EDL task created:', taskId);
-        } else {
-          const errBody = await edlRes.text().catch(() => 'unknown');
-          console.warn('[Wizard] EDL trigger failed:', edlRes.status, errBody);
-          setState((prev) => ({ ...prev, isEdlLoading: false }));
-          edlTriggerRef.current = false;
-        }
-      } catch (edlErr) {
-        console.warn('[Wizard] EDL trigger error:', edlErr);
-        setState((prev) => ({ ...prev, isEdlLoading: false }));
-        edlTriggerRef.current = false;
-      }
-    })();
-  // Only depend on step changes, videoId, edl, and isLoadingVideo — NOT isEdlLoading/edlTaskId
-  // because we change those inside the effect and don't want to re-trigger
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentStep, state.videoId, state.edl, isLoadingVideo]);
 
   // Helper to get lock state for a step
   const getLockState = (stepId: number) => {
@@ -642,22 +386,15 @@ export function VideoCreationWizard({
           return true; // Always completable (optional step)
         case 3: // Script
           return !!state.scriptOutput || !!state.script;
-        case 4: // Audio
-          return state.audioChunks.length > 0;
-        case 5: // Shot Creation
-          // Only allow navigation once AV Script Part 1 is generated
-          return !!state.avScriptPart1Output?.shots?.length;
-        case 6: // Scene Review
+        case 4: // Editor
           return true; // No blocking requirements
-        case 7: // Editor
-          return true; // No blocking requirements
-        case 8: // Export
+        case 5: // Export
           return true; // Final step, always completable
         default:
           return false;
       }
     },
-    [state.outlineOutput, state.scriptOutput, state.script, state.audioChunks, state.avScriptPart1Output],
+    [state.outlineOutput, state.scriptOutput, state.script],
   );
 
   const canGoNext = useMemo(
@@ -687,24 +424,15 @@ export function VideoCreationWizard({
           return null; // No persistent data to reset
         case 3: // Script
           return "Your generated script content";
-        case 4: // Audio
-          const chunkCount = state.audioChunks.length;
-          return chunkCount > 0
-            ? `Generated TTS audio files (${chunkCount} chunks)`
-            : "Generated TTS audio files";
-        case 5: // Shot Creation
-          return "AV Script shot list and timing data";
-        case 6: // Scene Review
-          return "Generated scene images and videos";
-        case 7: // Editor
+        case 4: // Editor
           return "Editor timeline and settings";
-        case 8: // Export
+        case 5: // Export
           return "Exported video file";
         default:
           return null;
       }
     },
-    [state.audioChunks.length],
+    [],
   );
 
   // Get skipped steps for navigation calculations
@@ -746,30 +474,6 @@ export function VideoCreationWizard({
     setConfirmDialog({ isOpen: true, direction: "next" });
   }, [canGoNext]);
 
-  // Handle VM startup confirmation when GPU is enabled but VM is OFF
-  const handleVMConfirm = useCallback(async () => {
-    setIsVMStarting(true);
-    console.log("[Wizard] User confirmed, starting VM...");
-
-    try {
-      // Start the VM (fire and forget - don't wait for completion)
-      startVM?.();
-
-      // Close the warning dialog
-      setShowVMWarning(false);
-      setIsVMStarting(false);
-
-      // Set flag to bypass VM check on re-trigger
-      vmWarningConfirmedRef.current = true;
-
-      // Trigger the navigation again - this time the code will skip VM check
-      setConfirmDialog({ isOpen: true, direction: "next" });
-    } catch (err) {
-      console.error("[Wizard] Failed to start VM:", err);
-      setIsVMStarting(false);
-    }
-  }, [startVM]);
-
   const handleConfirmNavigation = useCallback(async () => {
     if (!confirmDialog) return;
 
@@ -781,7 +485,7 @@ export function VideoCreationWizard({
       const nextStep = getNextStep(currentStep);
 
       if (nextStep > STEPS.length) {
-        // Final step - trigger completion immediately, fire backend in background
+        // Final step - trigger completion immediately
         onComplete(state.videoId!);
         if (state.videoId) {
           updateVideo(state.videoId, { status: "completed" }).catch((err) =>
@@ -817,11 +521,8 @@ export function VideoCreationWizard({
                 : "standard",
               outlineAssets: state.outlineOutput?.assetRegistry,
               topic: state.outlineConfig?.topic,
-              // Pass spine data for per-scene query generation
               spine: state.outlineOutput?.spine,
               expandedBeats: state.outlineOutput?.expandedBeats,
-              // Map stockMediaLevel to mediaDensity
-              // Images-only levels use images_only, video levels use minimal/heavy
               mediaDensity: (() => {
                 const level = state.outlineConfig?.stockMediaLevel;
                 switch (level) {
@@ -920,330 +621,16 @@ export function VideoCreationWizard({
       } else if (currentStep === 3 && step3Ref.current) {
         // Step 3 → 4: Trigger script completion (which handles its own optimistic navigation)
         step3Ref.current.handleConfirm();
-      } else if (currentStep === 4 && state.audioChunks.length > 0) {
-        // Step 4 → Step 5: Check GPU toggle and VM status
-
-        // If GPU is disabled, skip VM check and proceed with AV Script only (placeholders)
-        if (!state.gpuEnabled) {
-          console.log("[Wizard] GPU disabled, proceeding with placeholders...");
-          // Fall through to standard AV Script flow below
-        } else if (vmDisplayStatus !== "ON" && !vmWarningConfirmedRef.current) {
-          // GPU enabled but VM is OFF and user hasn't confirmed yet - show warning dialog
-          console.log("[Wizard] VM not running, showing warning dialog");
-          setShowVMWarning(true);
-          return; // Exit early, will be called again from handleVMConfirm
-        } else if (vmWarningConfirmedRef.current) {
-          // User already confirmed VM startup, reset flag and proceed
-          console.log(
-            "[Wizard] VM warning confirmed, proceeding with VM startup in progress...",
-          );
-          vmWarningConfirmedRef.current = false;
-        }
-
-        // Proceed with AV Script (and optional GPU generation if enabled)
-        if (state.videoId) {
-          // Prepare data for background call
-          // IMPORTANT: Apply cumulative time offset to word timestamps from each chunk
-          // Each chunk's word timestamps start from 0, so we need to add the offset
-          const sortedChunks = [...state.audioChunks].sort(
-            (a: any, b: any) =>
-              (a.chapterNumber || a.chunkIndex || 0) -
-              (b.chapterNumber || b.chunkIndex || 0),
-          );
-
-          let timeOffset = 0;
-          const wordTimestamps: Array<{
-            word: string;
-            start_seconds: number;
-            end_seconds: number;
-          }> = [];
-
-          for (const chunk of sortedChunks) {
-            const chunkData = chunk as any;
-            const chunkTimestamps =
-              chunkData.wordTimestamps || chunkData.word_timestamps || [];
-            for (const wt of chunkTimestamps) {
-              wordTimestamps.push({
-                word: wt.word,
-                start_seconds: wt.start_seconds + timeOffset,
-                end_seconds: wt.end_seconds + timeOffset,
-              });
-            }
-            // Add this chunk's duration to the offset for the next chunk
-            timeOffset +=
-              chunkData.duration_seconds || chunkData.durationSeconds || 0;
-          }
-
-          const totalDuration = sortedChunks.reduce(
-            (sum, chunk) =>
-              sum +
-              ((chunk as any).duration_seconds ||
-                (chunk as any).durationSeconds ||
-                0),
-            0,
-          );
-
-          console.log(
-            `[Wizard] Prepared ${wordTimestamps.length} word timestamps spanning ${totalDuration.toFixed(1)}s`,
-          );
-
-          // Fire background API calls (non-blocking)
-          console.log(
-            "[Wizard] OPTIMISTIC: Navigating to Step 5, firing AV Script task in background...",
-          );
-
-          // Set loading flag IMMEDIATELY so Step 5 shows loading screen
-          setState((prev) => ({
-            ...prev,
-            isAvScriptLoading: true,
-          }));
-
-          // Update stage in background
-          fetch(`/api/videos/${state.videoId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ current_stage: "shot_planning" }),
-          }).catch((err) =>
-            console.error("[Wizard] Failed to update stage:", err),
-          );
-
-          // Trigger AV Script in background and update state when ready
-          fetch("/api/process/av-script-part1", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              videoId: state.videoId,
-              script: state.script,
-              wordTimestamps,
-              totalDurationSeconds: totalDuration,
-              outlineAssets: state.outlineOutput?.assetRegistry || null,
-              // Use override if enabled, otherwise respect Step 1 setting
-              stockMediaLevel: state.stockMediaOverride
-                ? "standard_images"
-                : (state.outlineConfig?.stockMediaLevel || "none"),
-            }),
-          })
-            .then((response) => response.json())
-            .then((data) => {
-              if (data.taskId) {
-                console.log(
-                  "[Wizard] AV Script Part 1 task created:",
-                  data.taskId,
-                );
-                setState((prev) => ({
-                  ...prev,
-                  avScriptTaskId: data.taskId,
-                }));
-              } else {
-                console.error(
-                  "[Wizard] Failed to create AV Script task:",
-                  data,
-                );
-                // Clear loading on failure
-                setState((prev) => ({
-                  ...prev,
-                  isAvScriptLoading: false,
-                }));
-              }
-            })
-            .catch((err) => {
-              console.error(
-                "[Wizard] Failed to trigger AV Script Part 1:",
-                err,
-              );
-              // Clear loading on error
-              setState((prev) => ({
-                ...prev,
-                isAvScriptLoading: false,
-              }));
-            });
-
-          // PARALLEL: If GPU enabled, also trigger asset reference image generation
-          if (state.gpuEnabled && state.outlineOutput?.assetRegistry) {
-            const assetCount =
-              (state.outlineOutput.assetRegistry.characters?.length || 0) +
-              (state.outlineOutput.assetRegistry.locations?.length || 0) +
-              (state.outlineOutput.assetRegistry.objects?.length || 0);
-
-            if (assetCount > 0) {
-              console.log(
-                `[Wizard] GPU enabled, triggering asset reference image generation for ${assetCount} assets...`,
-              );
-
-              fetch("/api/process/asset-reference-images", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  videoId: state.videoId,
-                  outlineAssets: state.outlineOutput.assetRegistry,
-                }),
-              })
-                .then((response) => response.json())
-                .then((data) => {
-                  if (data.taskId) {
-                    console.log(
-                      "[Wizard] Asset reference image task created:",
-                      data.taskId,
-                    );
-                    setState((prev) => ({
-                      ...prev,
-                      assetImageTaskId: data.taskId,
-                    }));
-                  } else {
-                    console.error(
-                      "[Wizard] Failed to create asset image task:",
-                      data,
-                    );
-                  }
-                })
-                .catch((err) => {
-                  console.error(
-                    "[Wizard] Failed to trigger asset image generation:",
-                    err,
-                  );
-                });
-            } else {
-              console.log(
-                "[Wizard] No assets to generate reference images for",
-              );
-            }
-          } else if (!state.gpuEnabled) {
-            console.log(
-              "[Wizard] GPU disabled, skipping asset reference image generation",
-            );
-          }
-        }
-
-        // OPTIMISTIC: Advance to step 5 immediately
-        advanceToStep(5);
-      } else if (
-        currentStep === 5 &&
-        state.avScriptPart1Output?.shots?.length > 0
-      ) {
-        // Step 5 → Step 6: OPTIMISTIC - Navigate immediately, start media generation in background
-        // The media generation loading screen will appear because isMediaGenerating will be set
-
-        if (state.videoId) {
-          console.log(
-            "[Wizard] OPTIMISTIC: Navigating to Step 6, firing AV Script Part 2 in background...",
-          );
-
-          // Set loading flag IMMEDIATELY so Step 6 shows loading screen
-          setState((prev) => ({
-            ...prev,
-            isMediaGenerating: true,
-          }));
-
-          // Update stage in background
-          fetch(`/api/videos/${state.videoId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ current_stage: "shot_creation" }),
-          }).catch((err) =>
-            console.error("[Wizard] Failed to update stage:", err),
-          );
-
-          // Trigger AV Script Part 2 (visual prompts + placeholder media) in background
-          fetch("/api/process/av-script-part2", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              videoId: state.videoId,
-              shots: state.avScriptPart1Output.shots,
-              outlineAssets: state.outlineOutput?.assetRegistry || null,
-              gpuEnabled: state.gpuEnabled,
-              aspectRatio: "16:9", // TODO: Get from project config
-            }),
-          })
-            .then((response) => response.json())
-            .then((data) => {
-              if (data.taskId) {
-                console.log(
-                  "[Wizard] AV Script Part 2 task created:",
-                  data.taskId,
-                );
-                setState((prev) => ({
-                  ...prev,
-                  avScriptPart2TaskId: data.taskId,
-                }));
-              } else {
-                console.error(
-                  "[Wizard] Failed to create AV Script Part 2 task:",
-                  data,
-                );
-                // Clear loading on failure
-                setState((prev) => ({
-                  ...prev,
-                  isMediaGenerating: false,
-                }));
-              }
-            })
-            .catch((err) => {
-              console.error(
-                "[Wizard] Failed to trigger AV Script Part 2:",
-                err,
-              );
-              // Clear loading on error
-              setState((prev) => ({
-                ...prev,
-                isMediaGenerating: false,
-              }));
-            });
-        }
-
-        // OPTIMISTIC: Advance to step 6 immediately
-        advanceToStep(6);
-      } else if (currentStep === 6) {
-        // Step 6 → Step 7: Update stage + trigger EDL generation
-        if (state.videoId) {
-          console.log(
-            "[Wizard] Navigating to Step 7, updating stage and triggering EDL...",
-          );
-
-          // Update stage in background
-          fetch(`/api/videos/${state.videoId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ current_stage: "video" }),
-          }).catch((err) =>
-            console.error("[Wizard] Failed to update stage:", err),
-          );
-
-          // Trigger async EDL generation via BullMQ
-          setState((prev) => ({ ...prev, isEdlLoading: true }));
-          fetch('/api/process/edit-assembly', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ videoId: state.videoId }),
-          })
-            .then((res) => res.json())
-            .then((data) => {
-              if (data.taskId) {
-                setState((prev) => ({ ...prev, edlTaskId: data.taskId }));
-                console.log('[Wizard] EDL task created:', data.taskId);
-              } else {
-                console.warn('[Wizard] EDL trigger failed, continuing without EDL');
-                setState((prev) => ({ ...prev, isEdlLoading: false }));
-              }
-            })
-            .catch((edlErr) => {
-              console.warn('[Wizard] EDL trigger error:', edlErr);
-              setState((prev) => ({ ...prev, isEdlLoading: false }));
-            });
-        }
-        advanceToStep(7);
       } else {
-        // Default: advance immediately
         advanceToStep(nextStep);
       }
     } else {
-      // PREV navigation - call reset API then navigate
+      // PREV: Reset data and go back
       const prevStep = getPrevStep(currentStep);
 
-      // If we have a videoId, call the reset API
+      // If we have a video, call the reset API
       if (state.videoId) {
         setIsResetting(true);
-
         try {
           const response = await fetch(
             `/api/videos/${state.videoId}/reset-step`,
@@ -1257,55 +644,32 @@ export function VideoCreationWizard({
             },
           );
 
-          const data = await response.json();
+          // Get result before closing dialog
+          const result = await response.json();
+          console.log(
+            `[Wizard] Reset step ${currentStep} → ${prevStep}:`,
+            result,
+          );
 
-          if (!response.ok) {
-            console.error("[Wizard] Reset step failed:", data.error);
-            // Still allow navigation even if reset fails
-          } else {
-            console.log(
-              `[Wizard] Reset step ${currentStep} -> ${prevStep}:`,
-              data,
-            );
+          // Also reset relevant local wizard state based on the step we're leaving
+          const stateUpdates: Partial<WizardState> = {};
+          switch (currentStep) {
+            case 3: // Script
+              stateUpdates.script = "";
+              stateUpdates.scriptOutput = null;
+              stateUpdates.scriptTaskId = null;
+              stateUpdates.isScriptLoading = false;
+              break;
+            case 4: // Editor
+              stateUpdates.edl = null;
+              stateUpdates.agentEdl = null;
+              stateUpdates.edlTaskId = null;
+              stateUpdates.isEdlLoading = false;
+              break;
+          }
 
-            // Clear local state based on what was reset
-            const stateUpdates: Partial<WizardState> = {};
-
-            switch (currentStep) {
-              case 3: // Script
-                stateUpdates.script = "";
-                stateUpdates.scriptOutput = null;
-                break;
-              case 4: // Audio
-                stateUpdates.audioUrl = null;
-                stateUpdates.audioChunks = [];
-                stateUpdates.audioTaskId = null;
-                stateUpdates.isAudioLoading = false;
-                break;
-              case 5: // Shot Creation
-                stateUpdates.shotList = [];
-                stateUpdates.avScriptTaskId = null;
-                stateUpdates.avScriptPart1Output = null;
-                stateUpdates.isAvScriptLoading = false;
-                break;
-              case 6: // Scene Review - only clear Step 6 data, NOT Step 5's shot data
-                stateUpdates.generatedMedia = [];
-                stateUpdates.avScriptPart2TaskId = null;
-                stateUpdates.isMediaGenerating = false;
-                break;
-              case 7: // Editor - clear EDL + editor state
-                stateUpdates.edl = null;
-                stateUpdates.isEdlLoading = false;
-                stateUpdates.edlTaskId = null;
-                // Reset resumedAtStep7Ref so that re-entering step 7
-                // treats it as a fresh wizard import (not a resume)
-                resumedAtStep7Ref.current = false;
-                break;
-            }
-
-            if (Object.keys(stateUpdates).length > 0) {
-              updateState(stateUpdates);
-            }
+          if (Object.keys(stateUpdates).length > 0) {
+            updateState(stateUpdates);
           }
         } catch (err) {
           console.error("[Wizard] Reset step error:", err);
@@ -1317,7 +681,7 @@ export function VideoCreationWizard({
 
       // Close dialog and navigate
       setConfirmDialog(null);
-      setMaxStepReached(prevStep); // Reset max step to match navigation target
+      setMaxStepReached(prevStep);
       goToStep(prevStep);
     }
   }, [
@@ -1328,7 +692,6 @@ export function VideoCreationWizard({
     advanceToStep,
     goToStep,
     state.videoId,
-    state.audioChunks,
     state.script,
     state.outlineOutput,
     state.outlineConfig,
@@ -1349,15 +712,46 @@ export function VideoCreationWizard({
       : STEPS.find((s) => s.id === getPrevStep(currentStep))?.label ||
         "Previous";
 
+  // =========================================================================
+  // AUTO-TRIGGER EDL GENERATION ON ENTERING STEP 4 (EDITOR)
+  // =========================================================================
+  const edlTriggerRef = useRef(false);
+  useEffect(() => {
+    if (
+      currentStep === 4 &&
+      !state.edl &&
+      !state.isEdlLoading &&
+      !edlTriggerRef.current &&
+      state.videoId
+    ) {
+      edlTriggerRef.current = true;
+      console.log("[Wizard] Auto-triggering EDL generation for Step 4 (Editor)...");
+      setState((prev) => ({ ...prev, isEdlLoading: true }));
+
+      fetch("/api/process/edit-assembly", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId: state.videoId }),
+      })
+        .then((res) => {
+          if (res.ok) return res.json();
+          throw new Error(`EDL trigger failed: ${res.status}`);
+        })
+        .then(({ taskId }) => {
+          setState((prev) => ({ ...prev, edlTaskId: taskId }));
+          console.log("[Wizard] EDL task created:", taskId);
+        })
+        .catch((err) => {
+          console.warn("[Wizard] EDL trigger error:", err);
+          edlTriggerRef.current = false;
+          setState((prev) => ({ ...prev, isEdlLoading: false }));
+        });
+    }
+  }, [currentStep, state.edl, state.isEdlLoading, state.videoId]);
+
   // Render the appropriate step content
   const renderStep = () => {
     const lock = getLockState(currentStep);
-
-    console.log(
-      `[Wizard Render] Step: ${currentStep}, AudioChunks: ${
-        state.audioChunks.length
-      }, Error: ${state.generationError ? "YES" : "NO"}`,
-    );
 
     switch (currentStep) {
       case 1: // Outline Generation + Research
@@ -1369,13 +763,11 @@ export function VideoCreationWizard({
             initialOutput={state.outlineOutput}
             initialConfig={state.outlineConfig}
             onSave={async (outlineOutput, config) => {
-              // Update local state
               updateState({
                 outlineOutput,
                 outlineConfig: config,
               });
 
-              // Persist to database (Auto-save)
               if (state.videoId) {
                 try {
                   console.log("[Wizard] Auto-saving outline data...");
@@ -1404,13 +796,11 @@ export function VideoCreationWizard({
               });
             }}
             onComplete={async (outlineOutput, config) => {
-              // Save the outline and update state
               updateState({
                 outlineOutput,
                 outlineConfig: config,
               });
 
-              // Persist to database and update stage
               if (state.videoId) {
                 try {
                   await fetch(`/api/videos/${state.videoId}`, {
@@ -1431,7 +821,6 @@ export function VideoCreationWizard({
 
               // Check if we should skip step 2 (Stock Media)
               if (config?.stockMediaLevel === "none") {
-                // OPTIMISTIC: Set loading flag and navigate immediately (matching Step 2 -> 3 pattern)
                 console.log(
                   "[Wizard] OPTIMISTIC: Stock media disabled, skipping to Step 3 with script generation...",
                 );
@@ -1499,11 +888,8 @@ export function VideoCreationWizard({
                         : "standard",
                       outlineAssets: outlineOutput?.assetRegistry,
                       topic: config?.topic,
-                      // Pass spine data for per-scene query generation
                       spine: outlineOutput?.spine,
                       expandedBeats: (outlineOutput as any)?.expandedBeats,
-                      // Map stockMediaLevel to mediaDensity
-                      // Images-only levels use images_only, video levels use minimal/heavy
                       mediaDensity: (() => {
                         const level = config?.stockMediaLevel;
                         switch (level) {
@@ -1642,10 +1028,7 @@ export function VideoCreationWizard({
             isLoading={state.isScriptLoading}
             taskId={state.scriptTaskId}
             onSave={(script) => {
-              // Update local state
               updateState({ script });
-
-              // Persist to database (Auto-save)
               if (state.videoId) {
                 fetch(`/api/videos/${state.videoId}`, {
                   method: "PATCH",
@@ -1657,81 +1040,62 @@ export function VideoCreationWizard({
               }
             }}
             onScriptGenerated={(script, scriptOutput) => {
-              // Update wizard state so navigation button gets enabled
               updateState({ script, scriptOutput });
             }}
             onComplete={async (script, scriptOutput) => {
-              // Set loading flag and navigate immediately for snappy UX
+              // Save script and navigate to Editor (Step 4)
               updateState({
                 script,
                 scriptOutput,
-                isAudioLoading: true,
               });
 
-              // Navigate to Step 4 immediately (loading screen will wait for taskId)
-              advanceToStep(4);
-
-              // Now fetch the taskId in the background
+              // Persist script and update stage
               if (state.videoId) {
-                console.log(
-                  "[Wizard] Starting audio: saving script and creating task...",
-                );
-
                 try {
-                  // First, persist script to database
                   await fetch(`/api/videos/${state.videoId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                       script_content: script,
-                      current_stage: "audio",
+                      current_stage: "video",
                       metadata: {
                         scriptOutput,
                       },
                     }),
                   });
-
-                  // Trigger audio generation workflow and wait for taskId
-                  const response = await fetch(
-                    `/api/videos/${state.videoId}/resume`,
-                    {
-                      method: "POST",
-                    },
-                  );
-                  const data = await response.json();
-
-                  if (data.taskId) {
-                    console.log("[Wizard] Audio task created:", data.taskId);
-                    // Set taskId - AsyncLoadingStep will pick it up and start polling
-                    setState((prev) => ({
-                      ...prev,
-                      audioTaskId: data.taskId,
-                    }));
-                  } else {
-                    console.error("[Wizard] No taskId in response:", data);
-                    setState((prev) => ({
-                      ...prev,
-                      isAudioLoading: false,
-                      generationError:
-                        data.error || "Failed to start audio generation",
-                    }));
-                  }
                 } catch (err) {
-                  console.error(
-                    "[Wizard] Failed to save script or start audio:",
-                    err,
-                  );
-                  setState((prev) => ({
-                    ...prev,
-                    isAudioLoading: false,
-                    generationError:
-                      "Failed to start audio generation. Please try again.",
-                  }));
+                  console.error("Failed to save script:", err);
+                }
+
+                // Trigger EDL generation in background
+                console.log(
+                  "[Wizard] OPTIMISTIC: Navigating to Step 4 (Editor), firing EDL generation...",
+                );
+                setState((prev) => ({ ...prev, isEdlLoading: true }));
+
+                try {
+                  const edlRes = await fetch("/api/process/edit-assembly", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ videoId: state.videoId }),
+                  });
+                  if (edlRes.ok) {
+                    const { taskId } = await edlRes.json();
+                    setState((prev) => ({ ...prev, edlTaskId: taskId }));
+                    console.log("[Wizard] EDL task created:", taskId);
+                  } else {
+                    console.warn("[Wizard] EDL trigger failed, continuing without EDL");
+                    setState((prev) => ({ ...prev, isEdlLoading: false }));
+                  }
+                } catch (edlErr) {
+                  console.warn("[Wizard] EDL trigger error:", edlErr);
+                  setState((prev) => ({ ...prev, isEdlLoading: false }));
                 }
               }
+
+              advanceToStep(4);
             }}
             onBack={() => {
-              // Check if we should skip back to step 1
               if (state.outlineConfig?.stockMediaLevel === "none") {
                 goToStep(1);
               } else {
@@ -1742,563 +1106,37 @@ export function VideoCreationWizard({
           />
         );
 
-      case 4: // Old Step 2: Audio Generation & Review
-        // Check for explicit generation error
-        if (state.generationError) {
-          console.log("[Wizard Render] FORCE RENDERING FIXED ERROR UI");
-          return (
-            <div className="fixed inset-0 z-[100] bg-black/90 flex flex-col items-center justify-center p-8 backdrop-blur-sm">
-              <div className="bg-neutral-900 border border-red-500 rounded-xl p-8 max-w-lg w-full text-center shadow-2xl space-y-6">
-                <div className="w-16 h-16 bg-red-500 mx-auto rounded-full flex items-center justify-center text-white text-3xl font-bold">
-                  !
-                </div>
-                <div className="space-y-2">
-                  <h3 className="text-2xl font-bold text-white">
-                    Generation Failed
-                  </h3>
-                  <p className="text-red-200">{state.generationError}</p>
-                </div>
-                <button
-                  onClick={() => {
-                    console.log("[Wizard] Resetting error");
-                    updateState({ generationError: null });
-                    goToStep(3);
-                  }}
-                  className="w-full py-3 bg-white hover:bg-neutral-200 text-black font-bold rounded-lg transition-colors"
-                >
-                  Return to Script
-                </button>
-              </div>
-            </div>
-          );
-        }
-
-        // If we have audio chunks, show the editor/review screen
-        if (state.audioChunks.length > 0) {
-          return (
-            <Step4Audio
-              videoId={state.videoId!}
-              audioChunks={state.audioChunks}
-              audioUrl={state.audioUrl}
-              onUpdateChunks={(newChunks) =>
-                updateState({ audioChunks: newChunks })
-              }
-              onComplete={async () => {
-                // This path is for internal button - use global nav for loading screen
-                // Just advance to step 5, the isAvScriptLoading check will handle the rest
-                advanceToStep(5);
-              }}
-              onBack={() => {
-                // If they want to go back to script
-                goToStep(3);
-              }}
-            />
-          );
-        }
-
-        // Show loading screen while audio is being generated
-        // Check both isAudioLoading (immediate flag) and audioTaskId (task in progress)
-        return (
-          <AsyncLoadingStep
-            title="Generating Audio"
-            subtitle="Creating TTS audio from your script..."
-            steps={[
-              "Splitting script into chunks",
-              "Generating TTS audio",
-              "Uploading audio files",
-              "Finalizing audio",
-            ]}
-            taskId={state.audioTaskId}
-            onComplete={async (output) => {
-              // Use audio data from task output
-              const audioOutput = output as any;
-              const audioUrl =
-                audioOutput?.final_audio || "/placeholder-audio.mp3";
-
-              // Extract audio chunks if available
-              let audioChunks: AudioChunk[] = (
-                audioOutput?.tts_chunks || []
-              ).map((c: any) => ({
-                ...c,
-                chapterNumber: c.chapterNumber ?? c.chunkIndex,
-              }));
-
-              // Handle "silent failure" where task completes but 0 chunks are produced
-              if (audioChunks.length === 0) {
-                // Try to recover from metadata first
-                if (state.videoId) {
-                  try {
-                    const response = await fetch(
-                      `/api/videos/${state.videoId}`,
-                    );
-                    const data = await response.json();
-                    if (data.audioChunks && data.audioChunks.length > 0) {
-                      audioChunks = data.audioChunks.map((c: any) => ({
-                        ...c,
-                        chapterNumber: c.chapterNumber ?? c.chunkIndex,
-                      }));
-                      console.log(
-                        "[Wizard] Recovered audio chunks from metadata",
-                      );
-                    }
-                  } catch (e) {
-                    console.error("[Wizard] Failed to recover audio chunks", e);
-                  }
-                }
-
-                // Double check after recovery attempt
-                if (audioChunks.length === 0) {
-                  console.error(
-                    "[Wizard] Audio generation completed with 0 chunks.",
-                  );
-
-                  // Clear invalid task ID from DB so it doesn't persist
-                  if (state.videoId) {
-                    fetch(`/api/videos/${state.videoId}`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ audio_task_id: null }),
-                    }).catch(console.error);
-                  }
-
-                  setState((prev) => ({
-                    ...prev,
-                    audioTaskId: null,
-                    isAudioLoading: false,
-                    generationError:
-                      "Audio generation completed but produced no audio. This usually happens if the script was too short or the AI service timed out. Please try regenerating.",
-                  }));
-                  return;
-                }
-              }
-
-              // Update state with audio chunks and clear loading flag
-              console.log(
-                "[Wizard] Audio generation complete. chunks:",
-                audioChunks.length,
-              );
-
-              updateState({
-                audioUrl,
-                audioChunks,
-                shotList: [],
-                avScript: [],
-                audioTaskId: null,
-                isAudioLoading: false,
-              });
-            }}
-            onError={(error) => {
-              console.error("Audio generation failed:", error);
-              setState((prev) => ({
-                ...prev,
-                audioTaskId: null,
-                isAudioLoading: false,
-                generationError: `Audio generation failed: ${error}`,
-              }));
-            }}
-            fallbackDuration={8000}
-          />
-        );
-
-      case 5: // Shot Creation (was Step 6)
-        // Phase 1: Show loading screen while AV Script is being generated
-        if (
-          (state.isAvScriptLoading || state.avScriptTaskId) &&
-          !state.avScriptPart1Output
-        ) {
-          console.log("[Wizard] Step 5: Showing AV Script loading screen");
-          return (
-            <AsyncLoadingStep
-              title="Creating Shot Breakdown"
-              subtitle="Analyzing script and generating scene structure..."
-              steps={[
-                "Analyzing content structure",
-                "Segmenting timeline",
-                "Generating shot summaries",
-                "Finalizing breakdown",
-              ]}
-              taskId={state.avScriptTaskId}
-              onComplete={async (output) => {
-                console.log(
-                  "[Wizard] AV Script Part 1 complete - raw output:",
-                  JSON.stringify(output).slice(0, 500),
-                );
-                console.log(
-                  "[Wizard] AV Script Part 1 - shots array exists?",
-                  !!(output as any)?.shots,
-                );
-                console.log(
-                  "[Wizard] AV Script Part 1 - shots count:",
-                  (output as any)?.shots?.length || 0,
-                );
-                const avOutput = output as any;
-
-                // Update state with AV script output and clear loading flag
-                updateState({
-                  avScriptPart1Output: avOutput,
-                  avScriptTaskId: null,
-                  isAvScriptLoading: false,
-                });
-
-                // Refresh stock media to include on-demand Serper images from Step 5
-                if (state.videoId) {
-                  try {
-                    const stockRes = await fetch(
-                      `/api/stock-media/by-video?videoId=${state.videoId}`,
-                    );
-                    if (stockRes.ok) {
-                      const stockData = await stockRes.json();
-                      updateState({
-                        stockMediaResults: stockData.stockMedia || null,
-                      });
-                      console.log(
-                        `[Wizard] Refreshed stock media after AV Script: ${stockData.stockMedia?.length || 0} items`,
-                      );
-                    }
-                  } catch (err) {
-                    console.error("[Wizard] Failed to refresh stock media:", err);
-                  }
-                }
-              }}
-              onError={(error) => {
-                console.error("[Wizard] AV Script Part 1 failed:", error);
-                updateState({
-                  avScriptTaskId: null,
-                  isAvScriptLoading: false,
-                  generationError: `Shot breakdown failed: ${error}`,
-                });
-              }}
-              fallbackDuration={15000}
-            />
-          );
-        }
-
-        // Phase 2: Show loading screen while asset reference images are being generated
-        // This runs AFTER AV Script completes but GPU reference image task is still in progress
-        if (
-          state.gpuEnabled &&
-          state.assetImageTaskId &&
-          !state.assetReferenceImages
-        ) {
-          console.log("[Wizard] Step 5: Showing asset reference image loading screen");
-          return (
-            <AsyncLoadingStep
-              title="Generating Reference Images"
-              subtitle="Creating AI reference images for your assets..."
-              steps={[
-                "Preparing asset descriptions",
-                "Generating character images",
-                "Generating location images",
-                "Generating object images",
-                "Finalizing references",
-              ]}
-              taskId={state.assetImageTaskId}
-              onComplete={async (output) => {
-                console.log(
-                  "[Wizard] Asset reference images task complete:",
-                  JSON.stringify(output).slice(0, 300),
-                );
-
-                // Fetch the saved reference images from video metadata
-                if (state.videoId) {
-                  try {
-                    const videoRes = await fetch(
-                      `/api/videos/${state.videoId}`,
-                    );
-                    if (videoRes.ok) {
-                      const videoData = await videoRes.json();
-                      const refImages =
-                        (videoData.video?.metadata as any)
-                          ?.assetReferenceImages || null;
-                      if (refImages) {
-                        updateState({
-                          assetReferenceImages: refImages,
-                          assetImageTaskId: null,
-                        });
-                        console.log(
-                          `[Wizard] Loaded asset reference images: ${Object.keys(refImages).length} assets`,
-                        );
-                      } else {
-                        // Task completed but no images in metadata — clear task ID to proceed
-                        console.warn("[Wizard] Asset image task completed but no images in metadata");
-                        updateState({ assetImageTaskId: null });
-                      }
-                    }
-                  } catch (err) {
-                    console.error(
-                      "[Wizard] Failed to fetch asset reference images:",
-                      err,
-                    );
-                    updateState({ assetImageTaskId: null });
-                  }
-                } else {
-                  updateState({ assetImageTaskId: null });
-                }
-              }}
-              onError={(error) => {
-                console.error("[Wizard] Asset reference image generation failed:", error);
-                // Don't block Step 5 — just clear the task and proceed without images
-                updateState({ assetImageTaskId: null });
-              }}
-              fallbackDuration={30000}
-            />
-          );
-        }
-
-        console.log(
-          "[Wizard] Rendering Step 5 with outlineAssets:",
-          state.outlineOutput?.assetRegistry
-            ? `Present (characters: ${state.outlineOutput.assetRegistry.characters?.length || 0}, locations: ${state.outlineOutput.assetRegistry.locations?.length || 0})`
-            : "NULL - will show mock data",
-        );
-        return (
-          <Step5ShotCreation
-            onNext={async () => {
-              if (state.videoId) {
-                try {
-                  await fetch(`/api/videos/${state.videoId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ current_stage: "shot_creation" }),
-                  });
-                } catch (err) {
-                  console.error("Failed to save step:", err);
-                }
-              }
-              advanceToStep(6);
-            }}
-            onBack={async () => {
-              // Clear Step 5 data (including on-demand stock media) before going back
-              if (state.videoId) {
-                try {
-                  console.log('[Wizard] Resetting Step 5 data before going back...');
-                  const response = await fetch(`/api/videos/${state.videoId}/reset-step`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fromStep: 5, toStep: 4 }),
-                  });
-                  const result = await response.json();
-                  if (result.r2FilesDeleted) {
-                    console.log(`[Wizard] Cleaned up ${result.r2FilesDeleted} R2 files`);
-                  }
-                  // Also clear local state
-                  updateState({
-                    avScriptPart1Output: undefined,
-                    stockMediaResults: undefined,
-                  });
-                } catch (err) {
-                  console.error('[Wizard] Failed to reset Step 5 data:', err);
-                }
-              }
-              goToStep(4);
-            }}
-            outlineAssets={state.outlineOutput?.assetRegistry}
-            avScriptShots={state.avScriptPart1Output?.shots}
-            audioChunks={state.audioChunks}
-            script={state.script}
-            stockMediaResults={state.stockMediaResults}
-            assetReferenceImages={state.assetReferenceImages}
-            onUpdateShots={async (updatedShots) => {
-              console.log("[Wizard] Updating shots:", updatedShots.length);
-
-              // 1. Update local state immediately
-              const currentOutput = state.avScriptPart1Output || {
-                shots: [],
-                metadata: {},
-              };
-              const updatedOutput = {
-                ...currentOutput,
-                shots: updatedShots,
-                metadata: {
-                  ...currentOutput.metadata,
-                  total_segments: updatedShots.length,
-                  total_duration_seconds: updatedShots.reduce(
-                    (acc, s) => acc + s.duration_seconds,
-                    0,
-                  ),
-                },
-              };
-
-              // Update the state using any cast to avoid strict type issues with differing local/global types
-              updateState({
-                avScriptPart1Output: updatedOutput as any,
-              });
-
-              // 2. Persist to Database
-              if (state.videoId) {
-                try {
-                  await fetch(`/api/videos/${state.videoId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      metadata: {
-                        av_script_part1: updatedOutput,
-                      },
-                    }),
-                  });
-                  console.log("[Wizard] Persisted updated shots to DB");
-                } catch (err) {
-                  console.error("Failed to save updated shots to DB:", err);
-                  // Optionally resort to previous state or show error
-                }
-              }
-            }}
-            {...lock}
-          />
-        );
-
-      case 6: // Scene Review (was Step 7)
-        // Show loading screen while media is being generated
-        if (
-          (state.isMediaGenerating || state.avScriptPart2TaskId) &&
-          (!state.generatedMedia || state.generatedMedia.length === 0)
-        ) {
-          console.log(
-            "[Wizard] Step 6: Showing media generation loading screen",
-          );
-          return (
-            <AsyncLoadingStep
-              title="Generating Scene Media"
-              subtitle="Creating visuals for each shot..."
-              steps={[
-                "Generating visual prompts",
-                "Processing images",
-                "Processing videos",
-                "Finalizing media",
-              ]}
-              taskId={state.avScriptPart2TaskId}
-              onComplete={async (output) => {
-                console.log("[Wizard] AV Script Part 2 complete:", output);
-                const mediaOutput = output as any;
-
-                // Extract generated media from output
-                const generatedMedia = mediaOutput?.generatedMedia || [];
-
-                // Update state with generated media and clear loading flags
-                updateState({
-                  generatedMedia,
-                  avScriptPart2TaskId: null,
-                  isMediaGenerating: false,
-                });
-              }}
-              onError={(error) => {
-                console.error("[Wizard] AV Script Part 2 failed:", error);
-                updateState({
-                  avScriptPart2TaskId: null,
-                  isMediaGenerating: false,
-                  generationError: `Media generation failed: ${error}`,
-                });
-              }}
-              fallbackDuration={20000}
-            />
-          );
-        }
-
-        return (
-          <Step6SceneReview
-            videoId={state.videoId!}
-            projectId={projectId}
-            shots={state.avScriptPart1Output?.shots || []}
-            outlineAssets={state.outlineOutput?.assetRegistry}
-            generatedMedia={state.generatedMedia}
-            gpuEnabled={state.gpuEnabled}
-            onUpdateMedia={async (media) => {
-              console.log("[Wizard] Updating generated media:", media.length);
-              updateState({ generatedMedia: media });
-
-              // Persist to database
-              if (state.videoId) {
-                try {
-                  await fetch(`/api/videos/${state.videoId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      metadata: {
-                        generatedMedia: media,
-                      },
-                    }),
-                  });
-                  console.log("[Wizard] Persisted generated media to DB");
-                } catch (err) {
-                  console.error("Failed to save generated media:", err);
-                }
-              }
-            }}
-            onContinue={async () => {
-              if (state.videoId) {
-                try {
-                  // Save stage
-                  await fetch(`/api/videos/${state.videoId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ current_stage: "video" }),
-                  });
-
-                  // Trigger async EDL generation via BullMQ
-                  setState((prev) => ({ ...prev, isEdlLoading: true }));
-                  try {
-                    const edlRes = await fetch('/api/process/edit-assembly', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ videoId: state.videoId }),
-                    });
-                    if (edlRes.ok) {
-                      const { taskId } = await edlRes.json();
-                      setState((prev) => ({ ...prev, edlTaskId: taskId }));
-                      console.log('[Wizard] EDL task created:', taskId);
-                    } else {
-                      console.warn('[Wizard] EDL trigger failed, continuing without EDL');
-                      setState((prev) => ({ ...prev, isEdlLoading: false }));
-                    }
-                  } catch (edlErr) {
-                    console.warn('[Wizard] EDL trigger error:', edlErr);
-                    setState((prev) => ({ ...prev, isEdlLoading: false }));
-                  }
-                } catch (err) {
-                  console.error("Failed to save step:", err);
-                }
-              }
-              advanceToStep(7);
-            }}
-            onBack={() => goToStep(5)}
-            {...lock}
-          />
-        );
-
-      case 7: // Editor (restored)
+      case 4: // Editor
         // Show loading screen while EDL is being generated
-        // (either from step 6 onContinue or auto-triggered by useEffect above)
-        // Skip if we already have an EDL (e.g. resuming a completed step 7)
         if (state.isEdlLoading && !state.edl) {
           return (
             <AsyncLoadingStep
               title="Generating Edit Decisions"
-              subtitle="AI is analyzing your shots and creating edit decisions..."
+              subtitle="AI is analyzing your script and creating edit decisions..."
               steps={[
                 "Loading project context",
-                "Analyzing shots & media",
+                "Analyzing script & media",
                 "Generating edit decisions",
                 "Validating & finalizing",
               ]}
               taskId={state.edlTaskId}
               onComplete={async (output) => {
-                console.log('[Wizard] EDL task complete, output:', output);
+                console.log("[Wizard] EDL task complete, output:", output);
                 let edl = (output as any)?.edl || null;
                 let agentEdl = (output as any)?.agentEdl || null;
 
                 // Fallback: if task output doesn't contain EDL, fetch from project metadata
                 if (!edl && state.videoId) {
-                  console.log('[Wizard] EDL not in task output, fetching from project metadata...');
+                  console.log("[Wizard] EDL not in task output, fetching from project metadata...");
                   try {
                     const res = await fetch(`/api/videos/${state.videoId}`);
                     if (res.ok) {
                       const data = await res.json();
                       edl = (data.video?.metadata as any)?.edl || null;
                       agentEdl = (data.video?.metadata as any)?.agentEdl || null;
-                      console.log('[Wizard] EDL from metadata:', edl ? 'found' : 'not found', 'agentEdl:', agentEdl ? 'found' : 'not found');
                     }
                   } catch (err) {
-                    console.warn('[Wizard] Failed to fetch EDL from metadata:', err);
+                    console.warn("[Wizard] Failed to fetch EDL from metadata:", err);
                   }
                 }
 
@@ -2312,7 +1150,7 @@ export function VideoCreationWizard({
                 }));
               }}
               onError={(error) => {
-                console.warn('[Wizard] EDL task failed:', error);
+                console.warn("[Wizard] EDL task failed:", error);
                 edlTriggerRef.current = false;
                 setState((prev) => ({
                   ...prev,
@@ -2328,13 +1166,13 @@ export function VideoCreationWizard({
           <Step7Editor
             videoId={state.videoId!}
             projectId={projectId}
-            audioUrl={state.audioUrl}
-            audioChunks={state.audioChunks}
-            shotList={state.avScriptPart1Output?.shots || state.shotList}
-            generatedMedia={state.generatedMedia}
+            audioUrl={null}
+            audioChunks={[]}
+            shotList={[]}
+            generatedMedia={[]}
             edl={state.edl}
             agentEdl={state.agentEdl}
-            isResuming={resumedAtStep7Ref.current}
+            isResuming={resumedAtEditorRef.current}
             onContinue={async () => {
               if (state.videoId) {
                 try {
@@ -2347,19 +1185,19 @@ export function VideoCreationWizard({
                   console.error("Failed to save step:", err);
                 }
               }
-              advanceToStep(8);
+              advanceToStep(5);
             }}
             onBack={async () => {
               // Call reset-step API to revert current_stage and clean up DB
               if (state.videoId) {
                 try {
                   await fetch(`/api/videos/${state.videoId}/reset-step`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fromStep: 7, toStep: 6 }),
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ fromStep: 4, toStep: 3 }),
                   });
                 } catch (err) {
-                  console.error('[Wizard] Reset step 7→6 error:', err);
+                  console.error("[Wizard] Reset step 4→3 error:", err);
                 }
               }
               // Clear local EDL + editor state
@@ -2368,14 +1206,14 @@ export function VideoCreationWizard({
                 isEdlLoading: false,
                 edlTaskId: null,
               });
-              setMaxStepReached(6);
-              goToStep(6);
+              setMaxStepReached(3);
+              goToStep(3);
             }}
             {...lock}
           />
         );
 
-      case 8: // Old Step 5: Export
+      case 5: // Export
         return (
           <Step8Export
             videoId={state.videoId!}
@@ -2399,25 +1237,12 @@ export function VideoCreationWizard({
     }
   };
 
-  // Check if current step needs full width (Script, Audio, References, Generations, Editor)
-  // Basically everything except Placeholder steps 1 & 2 maybe?
-  // Actually, Script (3), Audio (4), Editor (7) are full width confirmed.
-  // Original: 1, 2, 3, 4 were full width. 5 was narrow.
-  // New map:
-  // 3 (Script) -> Full
-  // 4 (Audio) -> Full
-  // 7 (Editor) -> Full
-  // 8 (Export) -> Narrow? (Original 5 was narrow).
-  // Placeholders: Default narrow is fine, but maybe full width looks better?
-  // Let's keep strict equality for now.
+  // All steps except Export (5) are full width
   const isFullWidthStep =
     currentStep === 1 ||
     currentStep === 2 ||
     currentStep === 3 ||
-    currentStep === 4 ||
-    currentStep === 5 ||
-    currentStep === 6 ||
-    currentStep === 7;
+    currentStep === 4;
 
   return (
     <div className="flex flex-col h-full w-full mx-auto">
@@ -2438,26 +1263,6 @@ export function VideoCreationWizard({
               canGoNext={canGoNext}
               isFirstStep={isFirstStep}
               isLastStep={isLastStep}
-            />
-          </div>
-          {/* Admin Toggles - Stock Override above GPU */}
-          <div className="flex-shrink-0 pr-6 flex flex-col gap-2">
-            <StockMediaOverrideToggle
-              enabled={state.stockMediaOverride}
-              onToggle={(enabled) =>
-                setState((prev) => ({ ...prev, stockMediaOverride: enabled }))
-              }
-              disabled={currentStep >= 5} // Lock after Step 4
-              isAdmin={isAdmin}
-              showOverride={state.outlineConfig?.stockMediaLevel === "none"}
-            />
-            <GPUToggle
-              enabled={state.gpuEnabled}
-              onToggle={(enabled) =>
-                setState((prev) => ({ ...prev, gpuEnabled: enabled }))
-              }
-              disabled={currentStep >= 5} // Lock after Step 4
-              isAdmin={isAdmin}
             />
           </div>
         </div>
@@ -2497,14 +1302,6 @@ export function VideoCreationWizard({
             : null
         }
         isResetting={isResetting}
-      />
-
-      {/* VM Startup Warning Dialog */}
-      <VMStartupWarningDialog
-        isOpen={showVMWarning}
-        onClose={() => setShowVMWarning(false)}
-        onConfirm={handleVMConfirm}
-        isLoading={isVMStarting}
       />
     </div>
   );

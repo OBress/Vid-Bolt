@@ -2,7 +2,7 @@
  * Video Project Types
  * ============================================================================
  * Type definitions for individual video projects tracked through the
- * production pipeline (idea → script → audio → video → export → completed)
+ * production pipeline (outline → stock → script → video → export → completed)
  */
 
 // ============================================================================
@@ -12,19 +12,16 @@
 export const VIDEO_STATUSES = ['draft', 'processing', 'completed', 'failed', 'cancelled'] as const;
 export type VideoStatus = typeof VIDEO_STATUSES[number];
 
-// 8-Step Workflow Stages
+// 5-Step Workflow Stages
 export const VIDEO_STAGES = [
   'outline',       // Step 1
   'stock',         // Step 2
   'script',        // Step 3
-  'audio',         // Step 4
-  'shot_planning', // Step 5
-  'shot_creation', // Step 6
-  'video',         // Step 7 (Editor)
-  'export',        // Step 8
+  'video',         // Step 4 (Editor)
+  'export',        // Step 5
   'completed'
 ] as const;
-export type VideoStage = typeof VIDEO_STAGES[number] | 'idea' | 'media'; // Keep legacy for types
+export type VideoStage = typeof VIDEO_STAGES[number] | 'idea' | 'media' | 'audio' | 'shot_planning' | 'shot_creation'; // Keep legacy for types
 
 // ============================================================================
 // ROUTING TAGS (for shot generation routing)
@@ -505,11 +502,11 @@ export const STAGE_PROGRESSION: Record<VideoStage, VideoStage | null> = {
   idea: 'stock', // Legacy map to Step 2
   outline: 'stock',
   stock: 'script',
-  script: 'audio',
-  audio: 'shot_planning',
-  media: 'shot_creation', // Legacy map
-  shot_planning: 'shot_creation',
-  shot_creation: 'video',
+  script: 'video', // Steps 4-6 removed — script goes directly to editor
+  audio: 'video', // Legacy map (removed step)
+  media: 'video', // Legacy map (removed step)
+  shot_planning: 'video', // Legacy map (removed step)
+  shot_creation: 'video', // Legacy map (removed step)
   video: 'export',
   export: 'completed',
   completed: null,
@@ -529,14 +526,14 @@ export function calculateStageProgress(stage: VideoStage): number {
   const stageProgress: Record<VideoStage, number> = {
     idea: 0,
     outline: 0,        // Step 1
-    stock: 15,         // Step 2
-    script: 30,        // Step 3
-    audio: 45,         // Step 4
-    media: 60,         // Legacy
-    shot_planning: 60, // Step 5
-    shot_creation: 75, // Step 6
-    video: 85,         // Step 7
-    export: 95,        // Step 8
+    stock: 20,         // Step 2
+    script: 40,        // Step 3
+    audio: 40,         // Legacy (removed step) — maps to script
+    media: 40,         // Legacy (removed step)
+    shot_planning: 40, // Legacy (removed step)
+    shot_creation: 40, // Legacy (removed step)
+    video: 65,         // Step 4 (Editor)
+    export: 90,        // Step 5
     completed: 100,
   };
   return stageProgress[stage] || 0;
