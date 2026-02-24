@@ -10,6 +10,9 @@ import {
   Layers,
   Film,
   Music,
+  Bug,
+  Wrench,
+  Settings,
 } from "lucide-react";
 import { UniversalScriptTester } from "@/components/features/dev/UniversalScriptTester";
 import { AVScriptTester } from "@/components/features/dev/AVScriptTester";
@@ -18,13 +21,99 @@ import { StockScraperTester } from "@/components/features/dev/StockScraperTester
 import { MotionGraphicsTester } from "@/components/features/dev/MotionGraphicsTester";
 import { VideoEditorTester } from "@/components/features/dev/VideoEditorTester";
 import { AudioCleaningTester } from "@/components/features/dev/AudioCleaningTester";
+import { PipelineDebugger } from "@/components/features/pipeline-debugger/PipelineDebugger";
 
-type ActiveTester = "universal" | "av" | "gpu" | "stock" | "motion" | "video-editor" | "audio-cleaning" | null;
+type ActiveTester =
+  | "universal"
+  | "av"
+  | "gpu"
+  | "stock"
+  | "motion"
+  | "video-editor"
+  | "audio-cleaning"
+  | "pipeline-debugger"
+  | null;
+
+// ============================================================================
+// TOOL DEFINITIONS
+// ============================================================================
+
+interface ToolCard {
+  id: ActiveTester;
+  name: string;
+  description: string;
+  icon: typeof FileText;
+  color: string; // Tailwind color name
+}
+
+const PIPELINE_TOOLS: ToolCard[] = [
+  {
+    id: "universal",
+    name: "Universal Script",
+    description: "6-phase script generation pipeline with research, spine, and assets.",
+    icon: FileText,
+    color: "purple",
+  },
+  {
+    id: "av",
+    name: "Visual Director",
+    description: "Visual director pipeline for scene planning, image gen, and video creation.",
+    icon: Video,
+    color: "teal",
+  },
+  {
+    id: "motion",
+    name: "Motion Graphics",
+    description: "Create and test motion graphic templates and animations.",
+    icon: Layers,
+    color: "pink",
+  },
+  {
+    id: "video-editor",
+    name: "Video Editor",
+    description: "Timeline-based video editor with tracks, clips, and playback.",
+    icon: Film,
+    color: "cyan",
+  },
+];
+
+const INFRA_TOOLS: ToolCard[] = [
+  {
+    id: "gpu",
+    name: "GPU API",
+    description: "Test individual GPU API endpoints (Image, Edit, Video).",
+    icon: Cpu,
+    color: "orange",
+  },
+  {
+    id: "stock",
+    name: "Stock Scraper",
+    description: "Search and download stock assets from various sources.",
+    icon: Download,
+    color: "blue",
+  },
+  {
+    id: "audio-cleaning",
+    name: "Audio Cleaning",
+    description: "Remove AI fingerprints, watermarks & metadata from audio.",
+    icon: Music,
+    color: "green",
+  },
+];
+
+// ============================================================================
+// COMPONENT
+// ============================================================================
 
 export function DevToolsTab() {
   const [activeTester, setActiveTester] = useState<ActiveTester>(null);
 
-  // Render the active tester inline
+  // ——— Active tester views ———
+
+  if (activeTester === "pipeline-debugger") {
+    return <PipelineDebugger onClose={() => setActiveTester(null)} />;
+  }
+
   if (activeTester === "universal") {
     return (
       <UniversalScriptTester
@@ -95,156 +184,129 @@ export function DevToolsTab() {
     );
   }
 
-  // Default view - tool selection cards
+  // ——— Default view: tool selection dashboard ———
   return (
-    <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-      {/* Universal Script Section */}
-      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
-        <div className="h-10 w-10 rounded-full bg-purple-500/10 flex items-center justify-center">
-          <FileText className="w-5 h-5 text-purple-500" />
+    <div className="p-6 space-y-8">
+      {/* ================================================================ */}
+      {/* PIPELINE DEBUGGER — Hero card */}
+      {/* ================================================================ */}
+      <button
+        onClick={() => setActiveTester("pipeline-debugger")}
+        className="w-full p-5 rounded-xl border border-red-500/20 bg-gradient-to-r from-red-950/30 via-neutral-900/50 to-neutral-900/50 hover:from-red-950/40 hover:border-red-500/30 transition-all group text-left"
+      >
+        <div className="flex items-center gap-4">
+          <div className="h-12 w-12 rounded-xl bg-red-500/10 flex items-center justify-center group-hover:bg-red-500/15 transition-colors">
+            <Bug className="w-6 h-6 text-red-400" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+              Pipeline Debugger
+            </h3>
+            <p className="text-neutral-400 text-xs mt-0.5">
+              Full-pipeline inspection, A/B comparison, breakpoints, snapshots, and quality scoring.
+              Debug every step of video creation from Outline to Export.
+            </p>
+          </div>
+          <span className="px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 text-[10px] font-semibold uppercase">
+            Open
+          </span>
         </div>
-        <div>
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
-            Universal Script
-          </h3>
-          <p className="text-neutral-400 text-xs h-10">
-            6-phase script generation pipeline with research, spine, and assets.
-          </p>
+      </button>
+
+      {/* ================================================================ */}
+      {/* PIPELINE TOOLS */}
+      {/* ================================================================ */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <Wrench className="w-4 h-4 text-neutral-500" />
+          <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-wider">
+            Pipeline Tools
+          </h2>
+          <span className="text-[10px] text-neutral-600">
+            — Video creation logic testers
+          </span>
         </div>
-        <Button
-          onClick={() => setActiveTester("universal")}
-          className="w-full bg-purple-600 hover:bg-purple-700"
-        >
-          Open Tester
-        </Button>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          {PIPELINE_TOOLS.map((tool) => (
+            <ToolCardComponent
+              key={tool.id}
+              tool={tool}
+              onClick={() => setActiveTester(tool.id)}
+            />
+          ))}
+        </div>
       </div>
 
-      {/* AV Script Section */}
-      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
-        <div className="h-10 w-10 rounded-full bg-teal-500/10 flex items-center justify-center">
-          <Video className="w-5 h-5 text-teal-500" />
+      {/* ================================================================ */}
+      {/* INFRASTRUCTURE TOOLS */}
+      {/* ================================================================ */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <Settings className="w-4 h-4 text-neutral-500" />
+          <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-wider">
+            Infrastructure Tools
+          </h2>
+          <span className="text-[10px] text-neutral-600">
+            — Standalone utility testers
+          </span>
         </div>
-        <div>
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
-            Visual Director
-          </h3>
-          <p className="text-neutral-400 text-xs h-10">
-            Visual director pipeline for scene planning, image gen, and video
-            creation.
-          </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {INFRA_TOOLS.map((tool) => (
+            <ToolCardComponent
+              key={tool.id}
+              tool={tool}
+              onClick={() => setActiveTester(tool.id)}
+            />
+          ))}
         </div>
-        <Button
-          onClick={() => setActiveTester("av")}
-          className="w-full bg-teal-600 hover:bg-teal-700"
-        >
-          Open Tester
-        </Button>
       </div>
+    </div>
+  );
+}
 
-      {/* GPU API Tester Section */}
-      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
-        <div className="h-10 w-10 rounded-full bg-orange-500/10 flex items-center justify-center">
-          <Cpu className="w-5 h-5 text-orange-500" />
-        </div>
-        <div>
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
-            GPU API
-          </h3>
-          <p className="text-neutral-400 text-xs h-10">
-            Test individual GPU API endpoints (Image, Edit, Video).
-          </p>
-        </div>
-        <Button
-          onClick={() => setActiveTester("gpu")}
-          className="w-full bg-orange-600 hover:bg-orange-700"
-        >
-          Open Tester
-        </Button>
-      </div>
+// ============================================================================
+// TOOL CARD
+// ============================================================================
 
-      {/* Stock Scraper Section */}
-      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
-        <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center">
-          <Download className="w-5 h-5 text-blue-500" />
-        </div>
-        <div>
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
-            Stock Scraper
-          </h3>
-          <p className="text-neutral-400 text-xs h-10">
-            Search and download stock assets from various sources.
-          </p>
-        </div>
-        <Button
-          onClick={() => setActiveTester("stock")}
-          className="w-full bg-blue-600 hover:bg-blue-700"
-        >
-          Open Tester
-        </Button>
-      </div>
+function ToolCardComponent({
+  tool,
+  onClick,
+}: {
+  tool: ToolCard;
+  onClick: () => void;
+}) {
+  const Icon = tool.icon;
+  const colorMap: Record<string, { bg: string; text: string; btn: string }> = {
+    purple: { bg: "bg-purple-500/10", text: "text-purple-500", btn: "bg-purple-600 hover:bg-purple-700" },
+    teal: { bg: "bg-teal-500/10", text: "text-teal-500", btn: "bg-teal-600 hover:bg-teal-700" },
+    pink: { bg: "bg-pink-500/10", text: "text-pink-500", btn: "bg-pink-600 hover:bg-pink-700" },
+    cyan: { bg: "bg-cyan-500/10", text: "text-cyan-500", btn: "bg-cyan-600 hover:bg-cyan-700" },
+    orange: { bg: "bg-orange-500/10", text: "text-orange-500", btn: "bg-orange-600 hover:bg-orange-700" },
+    blue: { bg: "bg-blue-500/10", text: "text-blue-500", btn: "bg-blue-600 hover:bg-blue-700" },
+    green: { bg: "bg-green-500/10", text: "text-green-500", btn: "bg-green-600 hover:bg-green-700" },
+  };
+  const colors = colorMap[tool.color] || colorMap.purple;
 
-      {/* Motion Graphics Section */}
-      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
-        <div className="h-10 w-10 rounded-full bg-pink-500/10 flex items-center justify-center">
-          <Layers className="w-5 h-5 text-pink-500" />
-        </div>
-        <div>
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
-            Motion Graphics
-          </h3>
-          <p className="text-neutral-400 text-xs h-10">
-            Create and test motion graphic templates and animations.
-          </p>
-        </div>
-        <Button
-          onClick={() => setActiveTester("motion")}
-          className="w-full bg-pink-600 hover:bg-pink-700"
-        >
-          Open Tester
-        </Button>
+  return (
+    <div className="p-4 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-3">
+      <div className={`h-9 w-9 rounded-full ${colors.bg} flex items-center justify-center`}>
+        <Icon className={`w-4 h-4 ${colors.text}`} />
       </div>
-
-      {/* Video Editor Section */}
-      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
-        <div className="h-10 w-10 rounded-full bg-cyan-500/10 flex items-center justify-center">
-          <Film className="w-5 h-5 text-cyan-500" />
-        </div>
-        <div>
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
-            Video Editor
-          </h3>
-          <p className="text-neutral-400 text-xs h-10">
-            Timeline-based video editor with tracks, clips, and playback.
-          </p>
-        </div>
-        <Button
-          onClick={() => setActiveTester("video-editor")}
-          className="w-full bg-cyan-600 hover:bg-cyan-700"
-        >
-          Open Tester
-        </Button>
+      <div>
+        <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-0.5">
+          {tool.name}
+        </h3>
+        <p className="text-neutral-400 text-[11px] leading-relaxed h-8 line-clamp-2">
+          {tool.description}
+        </p>
       </div>
-
-      {/* Audio Cleaning Section */}
-      <div className="p-6 rounded-lg border border-neutral-800 bg-neutral-900/50 space-y-4">
-        <div className="h-10 w-10 rounded-full bg-green-500/10 flex items-center justify-center">
-          <Music className="w-5 h-5 text-green-500" />
-        </div>
-        <div>
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
-            Audio Cleaning
-          </h3>
-          <p className="text-neutral-400 text-xs h-10">
-            Remove AI fingerprints, watermarks & metadata from audio.
-          </p>
-        </div>
-        <Button
-          onClick={() => setActiveTester("audio-cleaning")}
-          className="w-full bg-green-600 hover:bg-green-700"
-        >
-          Open Tester
-        </Button>
-      </div>
+      <Button
+        onClick={onClick}
+        size="sm"
+        className={`w-full ${colors.btn} text-xs`}
+      >
+        Open Tester
+      </Button>
     </div>
   );
 }
