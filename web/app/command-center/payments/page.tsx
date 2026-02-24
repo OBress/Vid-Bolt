@@ -1,6 +1,7 @@
 import { startOfMonth, format } from "date-fns";
 import { getMonthlyStatements } from "./actions";
 import { FinancialForm } from "./components/FinancialForm";
+import { FinancialOverview } from "./components/FinancialOverview";
 import { MonthSelector } from "./components/MonthSelector";
 import { Suspense } from "react";
 import { Loader2, Receipt } from "lucide-react";
@@ -8,7 +9,7 @@ import { Loader2, Receipt } from "lucide-react";
 export default async function PaymentsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string }>;
+  searchParams: Promise<{ month?: string; view?: string }>;
 }) {
   const statements = await getMonthlyStatements();
 
@@ -16,9 +17,12 @@ export default async function PaymentsPage({
   const today = new Date();
   const currentMonthDate = format(startOfMonth(today), "yyyy-MM-dd");
 
-  // Determine selected month from URL or default to current
+  // Determine selected month and view from URL
   const resolvedSearchParams = await searchParams;
   const selectedMonth = resolvedSearchParams.month || currentMonthDate;
+  const isOverview =
+    resolvedSearchParams.view === "overview" ||
+    (!resolvedSearchParams.month && !resolvedSearchParams.view);
 
   // Find statement for selected month
   const initialStatement = statements.find(
@@ -28,7 +32,6 @@ export default async function PaymentsPage({
   // If no statement for this month, try to find the most recent previous statement to pre-fill cost items
   let defaultCosts: { name: string; amount: number; id: string }[] = [];
   if (!initialStatement) {
-    // Sort desc by date, find first one
     const lastStatement = statements
       .filter((s) => s.month_date < selectedMonth)
       .sort((a, b) => b.month_date.localeCompare(a.month_date))[0];
@@ -36,8 +39,8 @@ export default async function PaymentsPage({
     if (lastStatement) {
       defaultCosts = lastStatement.costs.map((c) => ({
         ...c,
-        id: crypto.randomUUID(), // New IDs for new month
-        amount: 0, // Reset amount
+        id: crypto.randomUUID(),
+        amount: 0,
       }));
     }
   }
@@ -86,21 +89,25 @@ export default async function PaymentsPage({
             </Suspense>
           </aside>
 
-          {/* Main Content - Form */}
+          {/* Main Content */}
           <main className="flex-1 min-w-0 h-full overflow-y-auto pb-10 pr-2 scrollbar-thin">
             <Suspense
-              key={selectedMonth}
+              key={isOverview ? "overview" : selectedMonth}
               fallback={
                 <div className="flex items-center justify-center p-12">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
               }
             >
-              <FinancialForm
-                currentDate={selectedMonth}
-                initialStatement={initialStatement}
-                defaultCosts={defaultCosts}
-              />
+              {isOverview ? (
+                <FinancialOverview statements={statements} />
+              ) : (
+                <FinancialForm
+                  currentDate={selectedMonth}
+                  initialStatement={initialStatement}
+                  defaultCosts={defaultCosts}
+                />
+              )}
             </Suspense>
           </main>
         </div>

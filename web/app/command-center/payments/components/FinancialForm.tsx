@@ -22,14 +22,11 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import {
-  ArrowDownRight,
-  ArrowUpRight,
   DollarSign,
   Loader2,
   Minus,
   Plus,
   Save,
-  TrendingUp,
   Trash2,
   Wallet,
   ImageIcon,
@@ -69,59 +66,6 @@ type CostItemFormState = {
   isCustom?: boolean;
 };
 
-/* ─── Summary Stat Card ─── */
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  prefix = "$",
-  color,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: number;
-  prefix?: string;
-  color: "emerald" | "red" | "blue" | "primary";
-}) {
-  const colorMap = {
-    emerald: {
-      bg: "bg-emerald-500/10",
-      icon: "text-emerald-500",
-      value: "text-emerald-600 dark:text-emerald-400",
-    },
-    red: {
-      bg: "bg-red-500/10",
-      icon: "text-red-500",
-      value: "text-red-600 dark:text-red-400",
-    },
-    blue: {
-      bg: "bg-blue-500/10",
-      icon: "text-blue-500",
-      value: "text-blue-600 dark:text-blue-400",
-    },
-    primary: {
-      bg: "bg-primary/10",
-      icon: "text-primary",
-      value: "text-primary",
-    },
-  };
-
-  const c = colorMap[color];
-
-  return (
-    <div className="flex items-center gap-3 p-4 rounded-xl border bg-card transition-all duration-200 hover:shadow-sm">
-      <div className={cn("flex items-center justify-center w-10 h-10 rounded-lg shrink-0", c.bg)}>
-        <Icon className={cn("w-5 h-5", c.icon)} />
-      </div>
-      <div className="min-w-0">
-        <p className="text-xs font-medium text-muted-foreground truncate">{label}</p>
-        <p className={cn("text-lg font-bold tabular-nums tracking-tight", c.value)}>
-          {prefix}{value.toFixed(2)}
-        </p>
-      </div>
-    </div>
-  );
-}
 
 /* ─── Status Badge ─── */
 function StatusBadge({ status }: { status: PaymentStatus }) {
@@ -300,18 +244,10 @@ export function FinancialForm({ currentDate, initialStatement, defaultCosts = []
       {/* Header row */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Financial Overview</h2>
-          <p className="text-sm text-muted-foreground">Manage your monthly revenue and expenses.</p>
+          <h2 className="text-2xl font-bold tracking-tight">Monthly Statement</h2>
+          <p className="text-sm text-muted-foreground">Manage your revenue and expenses for this period.</p>
         </div>
         <StatusBadge status={status} />
-      </div>
-
-      {/* ─── Summary Stats Row ─── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={ArrowUpRight} label="Revenue" value={revenueNum} color="emerald" />
-        <StatCard icon={ArrowDownRight} label="Total Costs" value={totalCosts} color="red" />
-        <StatCard icon={TrendingUp} label="Net Profit" value={profit} color="blue" />
-        <StatCard icon={Wallet} label="Amount Due" value={commission} color="primary" />
       </div>
 
       {/* ─── Revenue Card ─── */}

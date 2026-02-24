@@ -10,6 +10,7 @@ import {
   FolderOpen,
   Folder,
   CalendarDays,
+  BarChart3,
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -51,6 +52,8 @@ export function MonthSelector({
   currentMonthDate,
 }: MonthSelectorProps) {
   const searchParams = useSearchParams();
+  const currentView = searchParams.get("view");
+  const isOverview = currentView === "overview" || (!searchParams.get("month") && !currentView);
   const selectedMonth = searchParams.get("month") || currentMonthDate;
   const selectedYear = getYear(parseISO(selectedMonth));
 
@@ -100,6 +103,22 @@ export function MonthSelector({
 
   return (
     <div className="flex flex-col gap-1 w-full">
+      {/* Overview Tab */}
+      <Link
+        href="/command-center/payments?view=overview"
+        className={cn(
+          "flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 mb-1",
+          isOverview
+            ? "bg-primary/10 text-primary border-l-2 border-primary"
+            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+        )}
+      >
+        <BarChart3 className={cn("w-4 h-4", isOverview ? "text-primary" : "text-muted-foreground/60")} />
+        Overview
+      </Link>
+
+      <div className="h-px bg-border mx-2 mb-2" />
+
       <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 px-2">
         Billing Periods
       </h3>
