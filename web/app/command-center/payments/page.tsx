@@ -3,7 +3,7 @@ import { getMonthlyStatements } from "./actions";
 import { FinancialForm } from "./components/FinancialForm";
 import { MonthSelector } from "./components/MonthSelector";
 import { Suspense } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Receipt } from "lucide-react";
 
 export default async function PaymentsPage({
   searchParams,
@@ -43,48 +43,67 @@ export default async function PaymentsPage({
   }
 
   return (
-    <div className="flex h-full flex-col space-y-8 p-8 max-w-[1600px] mx-auto overflow-hidden">
-      <div className="flex items-center justify-between space-y-2">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">
-            Payments & Financials
-          </h2>
-          <p className="text-muted-foreground">
-            Track revenue, manage costs, and handle platform commissions.
-          </p>
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* Header */}
+      <div className="shrink-0 px-8 pt-8 pb-6 max-w-[1600px] w-full mx-auto">
+        <div className="flex items-center gap-3 mb-1">
+          <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-primary/10">
+            <Receipt className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight">
+              Payments & Financials
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Track revenue, manage costs, and handle platform commissions.
+            </p>
+          </div>
         </div>
+        <div className="mt-4 h-px bg-gradient-to-r from-primary/20 via-primary/10 to-transparent" />
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8 items-start h-full">
-        {/* Sidebar - Month Selection */}
-        <aside className="w-full lg:w-64 shrink-0 h-full overflow-y-auto pb-4">
-          <Suspense
-            fallback={<div className="h-32 bg-muted rounded animate-pulse" />}
-          >
-            <MonthSelector
-              statements={statements}
-              currentMonthDate={currentMonthDate}
-            />
-          </Suspense>
-        </aside>
+      {/* Content area */}
+      <div className="flex-1 min-h-0 px-8 pb-8 max-w-[1600px] w-full mx-auto">
+        <div className="flex gap-8 h-full items-start">
+          {/* Sidebar - Year Folder Navigation */}
+          <aside className="hidden lg:flex w-[260px] shrink-0 flex-col h-full overflow-y-auto pb-4 pr-2 scrollbar-thin">
+            <Suspense
+              fallback={
+                <div className="space-y-3">
+                  {[...Array(3)].map((_, i) => (
+                    <div
+                      key={i}
+                      className="h-10 bg-muted rounded-lg animate-pulse"
+                    />
+                  ))}
+                </div>
+              }
+            >
+              <MonthSelector
+                statements={statements}
+                currentMonthDate={currentMonthDate}
+              />
+            </Suspense>
+          </aside>
 
-        {/* Main Content - Form */}
-        <main className="flex-1 min-w-0 h-full overflow-y-auto pb-10 pr-2">
-          <Suspense
-            key={selectedMonth}
-            fallback={
-              <div className="flex items-center justify-center p-12">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
-            }
-          >
-            <FinancialForm
-              currentDate={selectedMonth}
-              initialStatement={initialStatement}
-              defaultCosts={defaultCosts}
-            />
-          </Suspense>
-        </main>
+          {/* Main Content - Form */}
+          <main className="flex-1 min-w-0 h-full overflow-y-auto pb-10 pr-2 scrollbar-thin">
+            <Suspense
+              key={selectedMonth}
+              fallback={
+                <div className="flex items-center justify-center p-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+              }
+            >
+              <FinancialForm
+                currentDate={selectedMonth}
+                initialStatement={initialStatement}
+                defaultCosts={defaultCosts}
+              />
+            </Suspense>
+          </main>
+        </div>
       </div>
     </div>
   );
