@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-The security scan identified **5 critical/high-risk vulnerabilities** that require immediate attention. The most significant finding is a **Broken Access Control** in the video listing API, which allows any user to view any other user's data. Additionally, the GPU API is vulnerable to **SSRF**, and the frontend authentication logic is easily bypassable.
+The security scan identified **5 critical/high-risk vulnerabilities** that require immediate attention. The most significant finding is a **Broken Access Control** in the video listing API, which allows any user to view any other user's data. Additionally the GPU API is vulnerable to **SSRF**, and the frontend authentication logic is easily bypassable.
 
 ---
 
