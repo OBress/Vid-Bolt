@@ -57,8 +57,9 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
   job: Job<ShotPlannerJobData>
 ) => {
   const { taskId, userId, videoId, script, wordTimestamps, totalDurationSeconds } = job.data;
+  const isClosedLoop = job.name.startsWith('closed-loop-');
 
-  console.log(`${LOG_PREFIX} Starting for video ${videoId} (${wordTimestamps.length} words, ${totalDurationSeconds}s)`);
+  console.log(`${LOG_PREFIX} Starting for video ${videoId} (${wordTimestamps.length} words, ${totalDurationSeconds}s)${isClosedLoop ? ' (closed-loop)' : ''}`);
 
   const costTracker = new CostTracker(3); // Step 3 in the pipeline
 
@@ -71,11 +72,13 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 1: Analyzing content structure...`);
 
-      await updateTaskStatus(taskId, {
-        status: 'running',
-        current_step: 'Analyzing content structure...',
-        progress_percent: 10,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: 'Analyzing content structure...',
+          progress_percent: 10,
+        });
+      }
 
       const analysis = analyzeContentStructure(
         script,
@@ -89,11 +92,13 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 2: Segmenting timeline...`);
 
-      await updateTaskStatus(taskId, {
-        status: 'running',
-        current_step: 'Segmenting narration timeline...',
-        progress_percent: 25,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: 'Segmenting narration timeline...',
+          progress_percent: 25,
+        });
+      }
 
       const segments = segmentTimeline(wordTimestamps, analysis);
       console.log(`${LOG_PREFIX} Produced ${segments.length} temporal segments`);
@@ -103,11 +108,13 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 3: Generating shot summaries via chunked processing...`);
 
-      await updateTaskStatus(taskId, {
-        status: 'running',
-        current_step: `Generating summaries for ${segments.length} shots...`,
-        progress_percent: 40,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: `Generating summaries for ${segments.length} shots...`,
+          progress_percent: 40,
+        });
+      }
 
       // Fetch outline assets from metadata for context
       const { data: video } = await supabase
@@ -125,11 +132,13 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         outlineAssets,
         undefined,
         async (progress: number, step: string) => {
-          await updateTaskStatus(taskId, {
-            status: 'running',
-            current_step: step,
-            progress_percent: 40 + Math.round(progress * 0.4),
-          });
+          if (!isClosedLoop) {
+            await updateTaskStatus(taskId, {
+              status: 'running',
+              current_step: step,
+              progress_percent: 40 + Math.round(progress * 0.4),
+            });
+          }
         }
       );
 
@@ -140,11 +149,13 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 4: Building structured ShotPlan...`);
 
-      await updateTaskStatus(taskId, {
-        status: 'running',
-        current_step: 'Building shot plan...',
-        progress_percent: 85,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: 'Building shot plan...',
+          progress_percent: 85,
+        });
+      }
 
       const plannedShots: PlannedShot[] = shotSummaries.map((shot, idx) => ({
         segment_index: shot.segment_index ?? idx,
@@ -201,11 +212,13 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         })
         .eq('id', videoId);
 
-      await updateTaskStatus(taskId, {
-        status: 'completed',
-        current_step: `Shot plan complete: ${plannedShots.length} shots`,
-        progress_percent: 100,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'completed',
+          current_step: `Shot plan complete: ${plannedShots.length} shots`,
+          progress_percent: 100,
+        });
+      }
 
       console.log(`${LOG_PREFIX} ✅ Complete: ${plannedShots.length} shots planned`);
 
@@ -224,12 +237,14 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
 
     await costTracker.save(videoId);
 
-    await updateTaskStatus(taskId, {
-      status: 'failed',
-      current_step: 'Shot planning failed',
-      progress_percent: 0,
-      error_message: error instanceof Error ? error.message : 'Unknown error',
-    });
+    if (!isClosedLoop) {
+      await updateTaskStatus(taskId, {
+        status: 'failed',
+        current_step: 'Shot planning failed',
+        progress_percent: 0,
+        error_message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
 
     throw error;
   }

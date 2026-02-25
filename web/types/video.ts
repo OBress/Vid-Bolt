@@ -2,7 +2,7 @@
  * Video Project Types
  * ============================================================================
  * Type definitions for individual video projects tracked through the
- * production pipeline (outline → stock → script → video → export → completed)
+ * production pipeline (outline → script → production → video → export → completed)
  */
 
 // ============================================================================
@@ -15,13 +15,13 @@ export type VideoStatus = typeof VIDEO_STATUSES[number];
 // 5-Step Workflow Stages
 export const VIDEO_STAGES = [
   'outline',       // Step 1
-  'stock',         // Step 2
-  'script',        // Step 3
+  'script',        // Step 2
+  'production',    // Step 3 (Closed-Loop Pipeline)
   'video',         // Step 4 (Editor)
   'export',        // Step 5
   'completed'
 ] as const;
-export type VideoStage = typeof VIDEO_STAGES[number] | 'idea' | 'media' | 'audio' | 'shot_planning' | 'shot_creation'; // Keep legacy for types
+export type VideoStage = typeof VIDEO_STAGES[number] | 'idea' | 'stock' | 'media' | 'audio' | 'shot_planning' | 'shot_creation'; // Keep legacy for types
 
 // ============================================================================
 // ROUTING TAGS (for shot generation routing)
@@ -77,6 +77,10 @@ export interface SoundEffect {
   anchor_word?: string;
   /** Optional reasoning for this effect */
   reasoning?: string;
+  /** Resolved audio file URL (populated by SFX resolver via Freesound search) */
+  audio_url?: string;
+  /** Freesound sound ID for attribution tracking */
+  freesound_id?: number;
 }
 
 // ============================================================================
@@ -499,14 +503,15 @@ export type VideoProjectInsert = Omit<
  * Stage progression map
  */
 export const STAGE_PROGRESSION: Record<VideoStage, VideoStage | null> = {
-  idea: 'stock', // Legacy map to Step 2
-  outline: 'stock',
-  stock: 'script',
-  script: 'video', // Steps 4-6 removed — script goes directly to editor
-  audio: 'video', // Legacy map (removed step)
-  media: 'video', // Legacy map (removed step)
-  shot_planning: 'video', // Legacy map (removed step)
-  shot_creation: 'video', // Legacy map (removed step)
+  idea: 'script', // Legacy map to Step 2
+  outline: 'script',
+  stock: 'script', // Legacy (removed step) — maps to script
+  script: 'production',
+  production: 'video',
+  audio: 'production', // Legacy map (removed step)
+  media: 'production', // Legacy map (removed step)
+  shot_planning: 'production', // Legacy map (removed step)
+  shot_creation: 'production', // Legacy map (removed step)
   video: 'export',
   export: 'completed',
   completed: null,
@@ -526,13 +531,14 @@ export function calculateStageProgress(stage: VideoStage): number {
   const stageProgress: Record<VideoStage, number> = {
     idea: 0,
     outline: 0,        // Step 1
-    stock: 20,         // Step 2
-    script: 40,        // Step 3
-    audio: 40,         // Legacy (removed step) — maps to script
-    media: 40,         // Legacy (removed step)
-    shot_planning: 40, // Legacy (removed step)
-    shot_creation: 40, // Legacy (removed step)
-    video: 65,         // Step 4 (Editor)
+    stock: 20,         // Legacy (removed step)
+    script: 20,        // Step 2
+    production: 50,    // Step 3 (Closed-Loop)
+    audio: 50,         // Legacy (removed step) — maps to production
+    media: 50,         // Legacy (removed step)
+    shot_planning: 50, // Legacy (removed step)
+    shot_creation: 50, // Legacy (removed step)
+    video: 70,         // Step 4 (Editor)
     export: 90,        // Step 5
     completed: 100,
   };

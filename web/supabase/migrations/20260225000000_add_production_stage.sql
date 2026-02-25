@@ -1,0 +1,19 @@
+-- Add 'production' to the current_stage check constraint
+-- This stage is used while the closed-loop orchestrator runs (between script and video)
+
+ALTER TABLE video_projects DROP CONSTRAINT IF EXISTS video_projects_current_stage_check;
+
+ALTER TABLE video_projects ADD CONSTRAINT video_projects_current_stage_check
+  CHECK (current_stage IN ('idea', 'outline', 'stock', 'script', 'production', 'video', 'export', 'completed'));
+
+COMMENT ON COLUMN video_projects.current_stage IS '5-step workflow: idea → outline → script → production → video → export → completed';
+
+-- Add 'closed_loop' to the tasks type check constraint
+ALTER TABLE public.tasks DROP CONSTRAINT IF EXISTS tasks_type_check;
+ALTER TABLE public.tasks ADD CONSTRAINT tasks_type_check
+  CHECK (type = ANY (ARRAY[
+    'writing'::text, 'writing_workflow'::text, 'audio'::text, 'video'::text,
+    'export'::text, 'outline'::text, 'script_writing'::text,
+    'av_script_part1'::text, 'av_script_part2'::text, 'edit_assembly'::text,
+    'closed_loop'::text
+  ]));

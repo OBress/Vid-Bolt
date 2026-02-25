@@ -1,5 +1,6 @@
 import { SoundOverlayAdaptor } from '../types/overlay-adaptors';
 import { StandardAudio } from '../types/media-adaptors';
+import { freesoundAudioAdaptor } from './freesound-audio-adaptor';
 
 // Default audio tracks - using the user's examples
 const defaultAudioTracks: StandardAudio[] = [
@@ -76,5 +77,5 @@ export const defaultAudioAdaptor = createStaticAudioAdaptor(defaultAudioTracks, 
  * This provides a consistent way to include default audio content
  */
 export const getDefaultAudioAdaptors = (): SoundOverlayAdaptor[] => {
-  return [defaultAudioAdaptor];
+  return [freesoundAudioAdaptor, defaultAudioAdaptor];
 }; 

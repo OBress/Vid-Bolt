@@ -408,7 +408,7 @@ Write the improved version now:`;
 // ============================================================================
 
 /** Fast model for batch rating - much cheaper than pro */
-const BATCH_RATING_MODEL = 'google/gemini-2.0-flash-001';
+const BATCH_RATING_MODEL = 'google/gemini-3-flash-preview';
 
 const _BATCH_RATING_PROMPT = `You are a script quality rater. Rate each beat on a 1-10 scale based on:
 - Natural language (no AI-isms like "delve", "tapestry", "unprecedented")

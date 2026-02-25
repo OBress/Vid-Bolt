@@ -420,3 +420,88 @@ export async function generateMotionGraphic(
     usedIcons,
   };
 }
+
+// ============================================================
+// TWO-PASS PATTERN: PASS 2 (Asset Swap)
+// ============================================================
+
+/**
+ * Pass 2 of the MG Two-Pass Pattern.
+ *
+ * During Phase IV, MG Pass 1 runs on CPU in parallel with GPU work,
+ * using placeholder asset URLs. After the GPU pipeline completes,
+ * Pass 2 swaps placeholder URLs for real R2 URLs in the Remotion code.
+ *
+ * @param pass1Code - The Remotion composition code from Pass 1
+ * @param assetMap - Mapping of placeholder URLs to real R2 URLs
+ * @returns Updated Remotion code with real asset URLs
+ */
+export function generateMotionGraphicPass2(
+  pass1Code: string,
+  assetMap: Record<string, string>
+): PipelineGenerationResult {
+  const LOG = '[MG-Pass2]';
+
+  if (!pass1Code) {
+    console.error(`${LOG} No Pass 1 code provided`);
+    return { success: false, error: 'No Pass 1 code to update' };
+  }
+
+  let updatedCode = pass1Code;
+  let swapCount = 0;
+
+  // Replace all placeholder URLs with real R2 URLs
+  for (const [placeholder, realUrl] of Object.entries(assetMap)) {
+    if (!realUrl) continue;
+
+    // Match placeholder patterns: "placeholder://shot-N", "PLACEHOLDER_IMAGE_N", etc.
+    const escapedPlaceholder = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escapedPlaceholder, 'g');
+    const matches = updatedCode.match(regex);
+
+    if (matches) {
+      updatedCode = updatedCode.replace(regex, realUrl);
+      swapCount += matches.length;
+      console.log(`${LOG} Swapped ${matches.length}x: ${placeholder.substring(0, 40)} → ${realUrl.substring(0, 40)}...`);
+    }
+  }
+
+  console.log(`${LOG} Total swaps: ${swapCount}`);
+
+  // Validate the updated code
+  const validation = validateCode(updatedCode);
+  if (!validation.isValid) {
+    console.error(`${LOG} Post-swap validation failed: ${validation.errors?.join(', ')}`);
+    // Return the code anyway — it's better than nothing and the user can fix it
+  }
+
+  return {
+    success: true,
+    remotionCode: updatedCode,
+  };
+}
+
+/**
+ * Build placeholder asset URLs for MG Pass 1.
+ * These placeholders will be replaced with real R2 URLs in Pass 2.
+ *
+ * @param shotIndex - The shot index
+ * @param assetCount - Number of assets needed for this composition
+ * @returns Map of placeholder key → placeholder URL
+ */
+export function buildPlaceholderAssets(
+  shotIndex: number,
+  assetCount: number = 1
+): ImageAsset[] {
+  const assets: ImageAsset[] = [];
+
+  for (let i = 0; i < assetCount; i++) {
+    assets.push({
+      url: `placeholder://shot-${shotIndex}/asset-${i}`,
+      description: `Placeholder for AI-generated asset ${i + 1} (will be swapped in Pass 2)`,
+      suggestedUsage: 'primary',
+    });
+  }
+
+  return assets;
+}

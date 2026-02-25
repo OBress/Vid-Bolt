@@ -7,7 +7,7 @@ import { useNavigationStore } from "@/store/use-navigation-store";
 import { createClient } from "@/lib/supabase/client";
 import { Step1Outline } from "./steps/Step1Outline";
 import { Step3Script } from "./steps/Step3Script";
-import { Step2StockMedia } from "./steps/Step2StockMedia";
+import { Step3Production } from "./steps/Step3Production";
 import { Step7Editor } from "./steps/Step7Editor";
 import { Step8Export } from "./steps/Step8Export";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
@@ -28,18 +28,17 @@ export interface WizardState {
   outlineOutput: any | null;
   outlineConfig: any | null;
   outlineTaskId: string | null;
-  // Stock Media (Step 1→2 transition)
-  isStockMediaLoading: boolean;
-  stockMediaTaskId: string | null;
-  stockMediaResults: any[] | null;
-  // Script output (Step 3)
-  scriptConfig: any; // Store script generation configuration
-  scriptOutput: any | null; // Output from script-writing worker
-  isScriptLoading: boolean; // Flag for auto-triggering script gen (Step 2→3)
-  scriptTaskId: string | null; // Task ID for script generation
-  // Edit Decision List (Step 3 → Step 4 transition)
+  // Script output (Step 2)
+  scriptConfig: any;
+  scriptOutput: any | null;
+  isScriptLoading: boolean;
+  scriptTaskId: string | null;
+  // Production (Step 3 — Closed-Loop Pipeline)
+  isProductionLoading: boolean;
+  productionTaskId: string | null;
+  // Edit Decision List (produced by orchestrator Phase V)
   edl: EditDecisionList | null;
-  agentEdl: any | null; // EditorAgentEDL v2 format
+  agentEdl: any | null;
   edlTaskId: string | null;
   isEdlLoading: boolean;
 }
@@ -47,8 +46,8 @@ export interface WizardState {
 // Step configuration for the wizard - 5 steps
 const STEPS = [
   { id: 1, label: "Outline", type: "outline" },
-  { id: 2, label: "Stock Media", type: "stock" },
-  { id: 3, label: "Script", type: "script" },
+  { id: 2, label: "Script", type: "script" },
+  { id: 3, label: "Production", type: "production" },
   { id: 4, label: "Editor", type: "editor" },
   { id: 5, label: "Export", type: "final" },
 ] as const;
@@ -58,8 +57,9 @@ function stageToStepNumber(stage: VideoStage): number {
   const stageMapping: Record<VideoStage, number> = {
     idea: 1, // Legacy -> Step 1
     outline: 1, // Step 1
-    stock: 2, // Step 2
-    script: 3, // Step 3
+    stock: 2, // Legacy (removed) -> Step 2
+    script: 2, // Step 2
+    production: 3, // Step 3 (Closed-Loop)
     audio: 3, // Legacy (removed) -> Step 3
     media: 3, // Legacy (removed) -> Step 3
     shot_planning: 3, // Legacy (removed) -> Step 3
@@ -130,21 +130,20 @@ export function VideoCreationWizard({
     outlineOutput: null,
     outlineConfig: null,
     outlineTaskId: null,
-    isStockMediaLoading: false,
-    stockMediaTaskId: null,
-    stockMediaResults: null,
     scriptConfig: null,
     scriptOutput: null,
     isScriptLoading: false,
     scriptTaskId: null,
+    isProductionLoading: false,
+    productionTaskId: null,
     edl: null,
     agentEdl: null,
     edlTaskId: null,
     isEdlLoading: false,
   });
 
-  // Step 3 ref for manual trigger
-  const step3Ref = useRef<any>(null);
+  // Step 2 ref for manual trigger (Script step)
+  const step2ScriptRef = useRef<any>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -235,23 +234,6 @@ export function VideoCreationWizard({
         const outlineConfig = (video.metadata as any)?.outlineConfig || null;
         const scriptOutput = (video.metadata as any)?.scriptOutput || null;
 
-        // Fetch stock media from database for this video
-        let stockMediaResults: any[] | null = null;
-        try {
-          const stockRes = await fetch(
-            `/api/stock-media/by-video?videoId=${video.id}`,
-          );
-          if (stockRes.ok) {
-            const stockData = await stockRes.json();
-            stockMediaResults = stockData.stockMedia || null;
-            console.log(
-              `[Wizard] Loaded ${stockMediaResults?.length || 0} stock media items`,
-            );
-          }
-        } catch (err) {
-          console.error("[Wizard] Failed to fetch stock media:", err);
-        }
-
         setState({
           prompt: video.idea || "",
           expandedIdea: expandedIdea,
@@ -262,13 +244,12 @@ export function VideoCreationWizard({
           outlineOutput,
           outlineConfig,
           outlineTaskId: null,
-          isStockMediaLoading: false,
-          stockMediaTaskId: (video.metadata as any)?.stockMediaTaskId || null,
-          stockMediaResults,
           scriptConfig,
           scriptOutput,
           isScriptLoading: false,
           scriptTaskId: null,
+          isProductionLoading: false,
+          productionTaskId: null,
           edl: (video.metadata as any)?.edl || null,
           agentEdl: (video.metadata as any)?.agentEdl || null,
           edlTaskId: null,
@@ -282,8 +263,6 @@ export function VideoCreationWizard({
         if (activeTasks.length > 0) {
           const loadingUpdates: Partial<WizardState> = {};
 
-          const metadataStockTaskId = (video.metadata as any)?.stockMediaTaskId;
-
           for (const task of activeTasks) {
             switch (task.type) {
               case "script_writing":
@@ -291,12 +270,10 @@ export function VideoCreationWizard({
                 loadingUpdates.scriptTaskId = task.id;
                 console.log(`[Wizard] Restoring active script task: ${task.id}`);
                 break;
-              case "video":
-                if (metadataStockTaskId && task.id === metadataStockTaskId) {
-                  loadingUpdates.isStockMediaLoading = true;
-                  loadingUpdates.stockMediaTaskId = task.id;
-                  console.log(`[Wizard] Restoring active stock media task: ${task.id}`);
-                }
+              case "closed_loop":
+                loadingUpdates.isProductionLoading = true;
+                loadingUpdates.productionTaskId = task.id;
+                console.log(`[Wizard] Restoring active production task: ${task.id}`);
                 break;
               case "outline":
                 loadingUpdates.outlineTaskId = task.id;
@@ -382,10 +359,10 @@ export function VideoCreationWizard({
       switch (stepId) {
         case 1: // Outline
           return !!state.outlineOutput?.spine?.beats?.length;
-        case 2: // Stock Media
-          return true; // Always completable (optional step)
-        case 3: // Script
+        case 2: // Script
           return !!state.scriptOutput || !!state.script;
+        case 3: // Production
+          return true; // Step3Production handles its own gating
         case 4: // Editor
           return true; // No blocking requirements
         case 5: // Export
@@ -420,10 +397,10 @@ export function VideoCreationWizard({
   const getResetWarning = useCallback(
     (stepId: number): string | null => {
       switch (stepId) {
-        case 2: // Stock Media
-          return null; // No persistent data to reset
-        case 3: // Script
+        case 2: // Script
           return "Your generated script content";
+        case 3: // Production
+          return "Generated audio, shots, images, videos, and edit decisions";
         case 4: // Editor
           return "Editor timeline and settings";
         case 5: // Export
@@ -435,11 +412,8 @@ export function VideoCreationWizard({
     [],
   );
 
-  // Get skipped steps for navigation calculations
-  const skippedSteps = useMemo(
-    () => (state.outlineConfig?.stockMediaLevel === "none" ? [2] : []),
-    [state.outlineConfig?.stockMediaLevel],
-  );
+  // No skipped steps in the new 5-step flow
+  const skippedSteps = useMemo(() => [] as number[], []);
 
   // Calculate actual next/prev step accounting for skips
   const getNextStep = useCallback(
@@ -492,100 +466,17 @@ export function VideoCreationWizard({
             console.error("Failed to mark video as completed:", err),
           );
         }
-      } else if (
-        currentStep === 1 &&
-        state.outlineOutput &&
-        state.outlineConfig?.stockMediaLevel !== "none"
-      ) {
-        // Step 1 → Step 2: OPTIMISTIC - Navigate immediately, start stock media scraping in background
+      } else if (currentStep === 1 && state.outlineOutput) {
+        // Step 1 → Step 2: OPTIMISTIC - Navigate immediately, start script generation in background
         console.log(
-          "[Wizard] OPTIMISTIC: Navigating to Step 2, firing stock media scraping...",
-        );
-
-        setState((prev) => ({
-          ...prev,
-          isStockMediaLoading: true,
-          stockMediaResults: null,
-        }));
-        advanceToStep(2);
-
-        // Fire stock media scraping in background
-        if (state.videoId) {
-          fetch("/api/stock-media/batch-scrape", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              videoId: state.videoId,
-              level: state.outlineConfig?.stockMediaLevel?.includes("extensive")
-                ? "extensive"
-                : "standard",
-              outlineAssets: state.outlineOutput?.assetRegistry,
-              topic: state.outlineConfig?.topic,
-              spine: state.outlineOutput?.spine,
-              expandedBeats: state.outlineOutput?.expandedBeats,
-              mediaDensity: (() => {
-                const level = state.outlineConfig?.stockMediaLevel;
-                switch (level) {
-                  case "none":
-                    return "none";
-                  case "standard_images":
-                    return "images_only";
-                  case "extensive_images":
-                    return "images_only";
-                  case "standard_images_video":
-                    return "images_minimal_video";
-                  case "extensive_images_video":
-                    return "images_heavy_video";
-                  default:
-                    return "images_only";
-                }
-              })(),
-            }),
-          })
-            .then((res) => res.json())
-            .then((data) => {
-              if (data.taskId) {
-                console.log("[Wizard] Stock media task created:", data.taskId);
-                setState((prev) => ({
-                  ...prev,
-                  stockMediaTaskId: data.taskId,
-                }));
-              } else {
-                console.error(
-                  "[Wizard] Failed to create stock media task:",
-                  data,
-                );
-                setState((prev) => ({
-                  ...prev,
-                  isStockMediaLoading: false,
-                }));
-              }
-            })
-            .catch((err) => {
-              console.error("[Wizard] Stock media scraping failed:", err);
-              setState((prev) => ({
-                ...prev,
-                isStockMediaLoading: false,
-              }));
-            });
-        }
-      } else if (
-        currentStep === 1 &&
-        state.outlineConfig?.stockMediaLevel === "none"
-      ) {
-        // Step 1 → Step 3: Skip Step 2 when stock media is disabled
-        advanceToStep(3);
-      } else if (currentStep === 2) {
-        // Step 2 → Step 3: OPTIMISTIC - Navigate immediately, start script generation in background
-        console.log(
-          "[Wizard] OPTIMISTIC: Navigating to Step 3, firing script generation...",
+          "[Wizard] OPTIMISTIC: Navigating to Step 2, firing script generation...",
         );
 
         setState((prev) => ({
           ...prev,
           isScriptLoading: true,
         }));
-        advanceToStep(3);
+        advanceToStep(2);
 
         // Trigger script generation in background
         if (state.videoId) {
@@ -618,9 +509,9 @@ export function VideoCreationWizard({
               }));
             });
         }
-      } else if (currentStep === 3 && step3Ref.current) {
-        // Step 3 → 4: Trigger script completion (which handles its own optimistic navigation)
-        step3Ref.current.handleConfirm();
+      } else if (currentStep === 2 && step2ScriptRef.current) {
+        // Step 2 → 3: Trigger script completion (which handles its own navigation)
+        step2ScriptRef.current.handleConfirm();
       } else {
         advanceToStep(nextStep);
       }
@@ -654,11 +545,19 @@ export function VideoCreationWizard({
           // Also reset relevant local wizard state based on the step we're leaving
           const stateUpdates: Partial<WizardState> = {};
           switch (currentStep) {
-            case 3: // Script
+            case 2: // Script
               stateUpdates.script = "";
               stateUpdates.scriptOutput = null;
               stateUpdates.scriptTaskId = null;
               stateUpdates.isScriptLoading = false;
+              break;
+            case 3: // Production
+              stateUpdates.isProductionLoading = false;
+              stateUpdates.productionTaskId = null;
+              stateUpdates.edl = null;
+              stateUpdates.agentEdl = null;
+              stateUpdates.edlTaskId = null;
+              stateUpdates.isEdlLoading = false;
               break;
             case 4: // Editor
               stateUpdates.edl = null;
@@ -712,42 +611,8 @@ export function VideoCreationWizard({
       : STEPS.find((s) => s.id === getPrevStep(currentStep))?.label ||
         "Previous";
 
-  // =========================================================================
-  // AUTO-TRIGGER EDL GENERATION ON ENTERING STEP 4 (EDITOR)
-  // =========================================================================
+  // EDL auto-trigger removed — the orchestrator's Phase V generates the EDL
   const edlTriggerRef = useRef(false);
-  useEffect(() => {
-    if (
-      currentStep === 4 &&
-      !state.edl &&
-      !state.isEdlLoading &&
-      !edlTriggerRef.current &&
-      state.videoId
-    ) {
-      edlTriggerRef.current = true;
-      console.log("[Wizard] Auto-triggering EDL generation for Step 4 (Editor)...");
-      setState((prev) => ({ ...prev, isEdlLoading: true }));
-
-      fetch("/api/process/edit-assembly", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId: state.videoId }),
-      })
-        .then((res) => {
-          if (res.ok) return res.json();
-          throw new Error(`EDL trigger failed: ${res.status}`);
-        })
-        .then(({ taskId }) => {
-          setState((prev) => ({ ...prev, edlTaskId: taskId }));
-          console.log("[Wizard] EDL task created:", taskId);
-        })
-        .catch((err) => {
-          console.warn("[Wizard] EDL trigger error:", err);
-          edlTriggerRef.current = false;
-          setState((prev) => ({ ...prev, isEdlLoading: false }));
-        });
-    }
-  }, [currentStep, state.edl, state.isEdlLoading, state.videoId]);
 
   // Render the appropriate step content
   const renderStep = () => {
@@ -807,7 +672,7 @@ export function VideoCreationWizard({
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                      current_stage: "stock",
+                      current_stage: "script",
                       metadata: {
                         outlineOutput,
                         outlineConfig: config,
@@ -819,162 +684,15 @@ export function VideoCreationWizard({
                 }
               }
 
-              // Check if we should skip step 2 (Stock Media)
-              if (config?.stockMediaLevel === "none") {
-                console.log(
-                  "[Wizard] OPTIMISTIC: Stock media disabled, skipping to Step 3 with script generation...",
-                );
-                setState((prev) => ({
-                  ...prev,
-                  isScriptLoading: true,
-                }));
-                advanceToStep(3);
-
-                // Trigger script generation in background
-                if (state.videoId) {
-                  fetch("/api/process/script-writing", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ videoId: state.videoId }),
-                  })
-                    .then((res) => res.json())
-                    .then((data) => {
-                      if (data.taskId) {
-                        console.log("[Wizard] Script task created:", data.taskId);
-                        setState((prev) => ({
-                          ...prev,
-                          scriptTaskId: data.taskId,
-                        }));
-                      } else {
-                        console.error(
-                          "[Wizard] Failed to create script task:",
-                          data,
-                        );
-                        setState((prev) => ({
-                          ...prev,
-                          isScriptLoading: false,
-                        }));
-                      }
-                    })
-                    .catch((err) => {
-                      console.error("[Wizard] Script generation failed:", err);
-                      setState((prev) => ({
-                        ...prev,
-                        isScriptLoading: false,
-                      }));
-                    });
-                }
-              } else {
-                // OPTIMISTIC: Set loading and navigate immediately
-                console.log(
-                  "[Wizard] OPTIMISTIC: Navigating to Step 2, firing stock media scraping...",
-                );
-                setState((prev) => ({
-                  ...prev,
-                  isStockMediaLoading: true,
-                  stockMediaResults: null,
-                }));
-                advanceToStep(2);
-
-                // Fire stock media scraping in background
-                if (state.videoId) {
-                  fetch("/api/stock-media/batch-scrape", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      videoId: state.videoId,
-                      level: config?.stockMediaLevel?.includes("extensive")
-                        ? "extensive"
-                        : "standard",
-                      outlineAssets: outlineOutput?.assetRegistry,
-                      topic: config?.topic,
-                      spine: outlineOutput?.spine,
-                      expandedBeats: (outlineOutput as any)?.expandedBeats,
-                      mediaDensity: (() => {
-                        const level = config?.stockMediaLevel;
-                        switch (level) {
-                          case "none":
-                            return "none";
-                          case "standard_images":
-                            return "images_only";
-                          case "extensive_images":
-                            return "images_only";
-                          case "standard_images_video":
-                            return "images_minimal_video";
-                          case "extensive_images_video":
-                            return "images_heavy_video";
-                          default:
-                            return "images_only";
-                        }
-                      })(),
-                    }),
-                  })
-                    .then((res) => res.json())
-                    .then((data) => {
-                      if (data.taskId) {
-                        console.log(
-                          "[Wizard] Stock media task created:",
-                          data.taskId,
-                        );
-                        setState((prev) => ({
-                          ...prev,
-                          stockMediaTaskId: data.taskId,
-                        }));
-                      } else {
-                        console.error(
-                          "[Wizard] Failed to create stock media task:",
-                          data,
-                        );
-                        setState((prev) => ({
-                          ...prev,
-                          isStockMediaLoading: false,
-                        }));
-                      }
-                    })
-                    .catch((err) => {
-                      console.error(
-                        "[Wizard] Stock media scraping failed:",
-                        err,
-                      );
-                      setState((prev) => ({
-                        ...prev,
-                        isStockMediaLoading: false,
-                      }));
-                    });
-                }
-              }
-            }}
-            onBack={onBack}
-            {...lock}
-          />
-        );
-      case 2:
-        return (
-          <Step2StockMedia
-            videoId={state.videoId!}
-            isLoading={state.isStockMediaLoading}
-            taskId={state.stockMediaTaskId}
-            initialMedia={state.stockMediaResults || []}
-            stockMediaLevel={
-              state.outlineConfig?.stockMediaLevel || "standard_images"
-            }
-            onMediaLoaded={(results) => {
-              setState((prev) => ({
-                ...prev,
-                stockMediaResults: results,
-                isStockMediaLoading: false,
-              }));
-            }}
-            onNext={async () => {
-              // OPTIMISTIC: Set loading flag and navigate immediately
+              // Navigate to Step 2 (Script) with script generation
               console.log(
-                "[Wizard] OPTIMISTIC: Navigating to Step 3, firing script generation...",
+                "[Wizard] OPTIMISTIC: Navigating to Step 2 (Script), firing script generation...",
               );
               setState((prev) => ({
                 ...prev,
                 isScriptLoading: true,
               }));
-              advanceToStep(3);
+              advanceToStep(2);
 
               // Trigger script generation in background
               if (state.videoId) {
@@ -1011,15 +729,14 @@ export function VideoCreationWizard({
                   });
               }
             }}
-            onBack={() => goToStep(1)}
+            onBack={onBack}
             {...lock}
           />
         );
-
-      case 3: // Script Writing (uses outline from Step 1)
+      case 2: // Script Writing (uses outline from Step 1)
         return (
           <Step3Script
-            ref={step3Ref}
+            ref={step2ScriptRef}
             videoId={state.videoId!}
             projectId={projectId}
             outlineData={state.outlineOutput}
@@ -1043,7 +760,7 @@ export function VideoCreationWizard({
               updateState({ script, scriptOutput });
             }}
             onComplete={async (script, scriptOutput) => {
-              // Save script and navigate to Editor (Step 4)
+              // Save script and navigate to Production (Step 3)
               updateState({
                 script,
                 scriptOutput,
@@ -1057,7 +774,7 @@ export function VideoCreationWizard({
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                       script_content: script,
-                      current_stage: "video",
+                      current_stage: "production",
                       metadata: {
                         scriptOutput,
                       },
@@ -1066,48 +783,76 @@ export function VideoCreationWizard({
                 } catch (err) {
                   console.error("Failed to save script:", err);
                 }
+              }
 
-                // Trigger EDL generation in background
-                console.log(
-                  "[Wizard] OPTIMISTIC: Navigating to Step 4 (Editor), firing EDL generation...",
-                );
-                setState((prev) => ({ ...prev, isEdlLoading: true }));
+              advanceToStep(3);
+            }}
+            onBack={() => goToStep(1)}
+            {...lock}
+          />
+        );
 
+      case 3: // Production (Closed-Loop Pipeline)
+        return (
+          <Step3Production
+            videoId={state.videoId!}
+            isLoading={state.isProductionLoading}
+            taskId={state.productionTaskId}
+            onTaskStarted={(taskId) => {
+              updateState({
+                isProductionLoading: true,
+                productionTaskId: taskId,
+              });
+            }}
+            onComplete={async () => {
+              // Fetch completed EDL/agentEdl from project metadata
+              let edl = null;
+              let agentEdl = null;
+              if (state.videoId) {
                 try {
-                  const edlRes = await fetch("/api/process/edit-assembly", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ videoId: state.videoId }),
-                  });
-                  if (edlRes.ok) {
-                    const { taskId } = await edlRes.json();
-                    setState((prev) => ({ ...prev, edlTaskId: taskId }));
-                    console.log("[Wizard] EDL task created:", taskId);
-                  } else {
-                    console.warn("[Wizard] EDL trigger failed, continuing without EDL");
-                    setState((prev) => ({ ...prev, isEdlLoading: false }));
+                  const res = await fetch(`/api/videos/${state.videoId}`);
+                  if (res.ok) {
+                    const data = await res.json();
+                    edl = (data.video?.metadata as any)?.edl || null;
+                    agentEdl = (data.video?.metadata as any)?.agentEdl || null;
                   }
-                } catch (edlErr) {
-                  console.warn("[Wizard] EDL trigger error:", edlErr);
-                  setState((prev) => ({ ...prev, isEdlLoading: false }));
+                } catch (err) {
+                  console.warn("[Wizard] Failed to fetch EDL after production:", err);
+                }
+
+                // Update stage to video (editor)
+                try {
+                  await fetch(`/api/videos/${state.videoId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ current_stage: "video" }),
+                  });
+                } catch (err) {
+                  console.error("Failed to update stage:", err);
                 }
               }
 
+              updateState({
+                isProductionLoading: false,
+                productionTaskId: null,
+                edl,
+                agentEdl,
+              });
               advanceToStep(4);
             }}
-            onBack={() => {
-              if (state.outlineConfig?.stockMediaLevel === "none") {
-                goToStep(1);
-              } else {
-                goToStep(2);
-              }
+            onError={(error) => {
+              console.warn("[Wizard] Production error:", error);
+              updateState({
+                isProductionLoading: false,
+              });
             }}
+            onBack={() => goToStep(2)}
             {...lock}
           />
         );
 
       case 4: // Editor
-        // Show loading screen while EDL is being generated
+        // Show loading screen while EDL is being generated (fallback for legacy flows)
         if (state.isEdlLoading && !state.edl) {
           return (
             <AsyncLoadingStep

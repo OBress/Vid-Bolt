@@ -154,7 +154,7 @@ export async function rankVideosByMetadata(
     const response = await callOpenRouter(
       userId,
       [{ role: 'user', content: prompt }],
-      { model: 'google/gemini-2.0-flash-001' }
+      { model: 'google/gemini-3-flash-preview' }
     );
 
     const content = response.content;
@@ -219,7 +219,7 @@ export async function validateVideoContent(
     const response = await callOpenRouter(
       userId,
       [{ role: 'user', content: prompt }],
-      { model: 'google/gemini-2.0-flash-001' }
+      { model: 'google/gemini-3-flash-preview' }
     );
 
     const content = response.content;

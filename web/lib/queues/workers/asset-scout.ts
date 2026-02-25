@@ -46,8 +46,9 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
   job: Job<AssetScoutJobData>
 ) => {
   const { taskId, userId, videoId, aspectRatio } = job.data;
+  const isClosedLoop = job.name.startsWith('closed-loop-');
 
-  console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
+  console.log(`${LOG_PREFIX} Starting for video ${videoId}${isClosedLoop ? ' (closed-loop)' : ''}`);
 
   const costTracker = new CostTracker(4); // Step 4 in the pipeline
 
@@ -60,11 +61,13 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 1: Fetching shot plan...`);
 
-      await updateTaskStatus(taskId, {
-        status: 'running',
-        current_step: 'Loading shot plan...',
-        progress_percent: 5,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: 'Loading shot plan...',
+          progress_percent: 5,
+        });
+      }
 
       const { data: video } = await supabase
         .from('video_projects')
@@ -86,11 +89,13 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
 
       if (shots.length === 0) {
         console.warn(`${LOG_PREFIX} No shots found in metadata`);
-        await updateTaskStatus(taskId, {
-          status: 'completed',
-          current_step: 'No shots to process',
-          progress_percent: 100,
-        });
+        if (!isClosedLoop) {
+          await updateTaskStatus(taskId, {
+            status: 'completed',
+            current_step: 'No shots to process',
+            progress_percent: 100,
+          });
+        }
         return { success: true, videoId, output: { entries: [], metadata: { stock_count: 0, ai_image_count: 0, ai_video_count: 0, motiongraphic_count: 0, sfx_count: 0 } } };
       }
 
@@ -113,11 +118,13 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 3: Building asset manifest...`);
 
-      await updateTaskStatus(taskId, {
-        status: 'running',
-        current_step: `Processing ${shots.length} shots for asset retrieval...`,
-        progress_percent: 30,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: `Processing ${shots.length} shots for asset retrieval...`,
+          progress_percent: 30,
+        });
+      }
 
       const entries: AssetEntry[] = [];
       let stockCount = 0;
@@ -171,7 +178,7 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
         });
 
         // Progress update every 5 shots
-        if (i % 5 === 0) {
+        if (!isClosedLoop && i % 5 === 0) {
           await updateTaskStatus(taskId, {
             status: 'running',
             current_step: `Processing shot ${i + 1}/${shots.length}...`,
@@ -210,11 +217,13 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
         })
         .eq('id', videoId);
 
-      await updateTaskStatus(taskId, {
-        status: 'completed',
-        current_step: `Asset manifest complete: ${stockCount} stock, ${aiImageCount} images, ${aiVideoCount} videos, ${mgCount} MG, ${sfxCount} SFX`,
-        progress_percent: 100,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'completed',
+          current_step: `Asset manifest complete: ${stockCount} stock, ${aiImageCount} images, ${aiVideoCount} videos, ${mgCount} MG, ${sfxCount} SFX`,
+          progress_percent: 100,
+        });
+      }
 
       console.log(`${LOG_PREFIX} ✅ Complete: ${entries.length} asset entries`);
 
@@ -228,12 +237,14 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
     console.error(`${LOG_PREFIX} Failed for video ${videoId}:`, error);
     await costTracker.save(videoId);
 
-    await updateTaskStatus(taskId, {
-      status: 'failed',
-      current_step: 'Asset retrieval failed',
-      progress_percent: 0,
-      error_message: error instanceof Error ? error.message : 'Unknown error',
-    });
+    if (!isClosedLoop) {
+      await updateTaskStatus(taskId, {
+        status: 'failed',
+        current_step: 'Asset retrieval failed',
+        progress_percent: 0,
+        error_message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
 
     throw error;
   }

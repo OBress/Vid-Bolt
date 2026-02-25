@@ -48,37 +48,42 @@ const AUDIO_STEP_ORDER = {
 
 export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobData>) => {
   const { taskId, userId, videoId, script, voiceProvider, voiceModel, voiceName, voiceSettings } = job.data;
+  const isClosedLoop = job.name === 'closed-loop-tts';
 
-  console.log(`[Audio] Starting job ${job.id} for task ${taskId}`);
+  console.log(`[Audio] Starting job ${job.id} for task ${taskId}${isClosedLoop ? ' (closed-loop)' : ''}`);
 
   try {
     // Cost tracking for Step 4 (Audio/TTS)
     const costTracker = new CostTracker(4);
 
-    // Link task to video project
-    const { linkTaskToVideo, updateVideoProgress } = await import('@/lib/services/video-service');
-    await linkTaskToVideo(videoId, taskId, 'audio');
-    await updateVideoProgress(videoId, 'audio', 'Starting audio generation', 5);
+    // Link task to video project (skip in closed-loop — orchestrator manages this)
+    if (!isClosedLoop) {
+      const { linkTaskToVideo, updateVideoProgress } = await import('@/lib/services/video-service');
+      await linkTaskToVideo(videoId, taskId, 'audio');
+      await updateVideoProgress(videoId, 'audio', 'Starting audio generation', 5);
+    }
 
-    // Start audio generation
-    await updateTaskStatus(taskId, {
-      status: 'running',
-      current_phase: 'audio_generation',
-      current_step: 'Preparing script for audio...',
-      progress_percent: 5,
-      started_at: new Date().toISOString(),
-    });
+    // Start audio generation (skip task progress in closed-loop)
+    if (!isClosedLoop) {
+      await updateTaskStatus(taskId, {
+        status: 'running',
+        current_phase: 'audio_generation',
+        current_step: 'Preparing script for audio...',
+        progress_percent: 5,
+        started_at: new Date().toISOString(),
+      });
+    }
 
     // Step 1: Split script into chunks
-    const stepId = await addTaskStep(taskId, 'audio_generation', 'Split Script', AUDIO_STEP_ORDER.SPLIT_TEXT);
-    await updateTaskStatus(taskId, { current_step: 'Splitting script into chunks...', progress_percent: 10 });
+    const stepId = !isClosedLoop ? await addTaskStep(taskId, 'audio_generation', 'Split Script', AUDIO_STEP_ORDER.SPLIT_TEXT) : null;
+    if (!isClosedLoop) await updateTaskStatus(taskId, { current_step: 'Splitting script into chunks...', progress_percent: 10 });
 
     const { splitTextIntoChunks, getChunkStats } = await import('@/lib/utils/text-chunking');
     const chunks = splitTextIntoChunks(script, 200);
     const stats = getChunkStats(chunks);
 
     console.log(`[Audio] Split script into ${stats.totalChunks} chunks, estimated duration: ${stats.estimatedTotalDuration}s`);
-    await completeStep(taskId, stepId);
+    if (stepId) await completeStep(taskId, stepId);
 
     // Step 2: Generate TTS and upload each chunk
     const uploadedChunks: Array<{
@@ -94,12 +99,14 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
-      const chunkStepId = await addTaskStep(taskId, 'audio_generation', `Process Chunk ${i + 1}`, AUDIO_STEP_ORDER.TTS_BASE + i);
+      const chunkStepId = !isClosedLoop ? await addTaskStep(taskId, 'audio_generation', `Process Chunk ${i + 1}`, AUDIO_STEP_ORDER.TTS_BASE + i) : null;
       
-      await updateTaskStatus(taskId, {
-        current_step: `Processing chunk ${i + 1} of ${chunks.length} (generating + uploading)...`,
-        progress_percent: Math.round(15 + i * progressPerChunk),
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          current_step: `Processing chunk ${i + 1} of ${chunks.length} (generating + uploading)...`,
+          progress_percent: Math.round(15 + i * progressPerChunk),
+        });
+      }
 
       try {
         if (voiceProvider !== 'inworld') {
@@ -124,7 +131,7 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
         const key = generateTtsKey(userId, videoId, chunk.index);
         const uploadResult = await uploadAudioBuffer(ttsResult.audioBuffer, key, 'audio/mpeg');
 
-        await completeStep(taskId, chunkStepId);
+        await (chunkStepId ? completeStep(taskId, chunkStepId) : Promise.resolve());
 
         uploadedChunks.push({
           chunkIndex: chunk.index,
@@ -135,7 +142,7 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        await failStep(taskId, chunkStepId, errorMessage);
+        if (chunkStepId) await failStep(taskId, chunkStepId, errorMessage);
         console.error(`[Audio] Chunk ${i} failed:`, error);
         failedChunkErrors.push(`Chunk ${chunk.index}: ${errorMessage}`);
       }
@@ -150,8 +157,8 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
     }
 
     // Step 3: Finalize
-    const finalizeStepId = await addTaskStep(taskId, 'audio_processing', 'Finalize Audio', AUDIO_STEP_ORDER.FINALIZE);
-    await updateTaskStatus(taskId, { current_step: 'Finalizing audio...', progress_percent: 95 });
+    const finalizeStepId = !isClosedLoop ? await addTaskStep(taskId, 'audio_processing', 'Finalize Audio', AUDIO_STEP_ORDER.FINALIZE) : null;
+    if (!isClosedLoop) await updateTaskStatus(taskId, { current_step: 'Finalizing audio...', progress_percent: 95 });
 
     const totalDuration = uploadedChunks.reduce((sum, chunk) => sum + chunk.durationSeconds, 0);
     const primaryAudioUrl = uploadedChunks.length > 0 ? uploadedChunks[0].url : null;
@@ -174,7 +181,7 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
       },
     });
 
-    await completeStep(taskId, finalizeStepId);
+    if (finalizeStepId) await completeStep(taskId, finalizeStepId);
 
     // Consolidate word timestamps
     const allWordTimestamps: WordTimestamp[] = [];
@@ -192,13 +199,15 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
       timeOffset += chunk.durationSeconds;
     }
 
-    // Complete workflow
-    await updateTaskStatus(taskId, {
-      status: 'completed',
-      current_step: 'Audio generation complete!',
-      progress_percent: 100,
-      completed_at: new Date().toISOString(),
-    });
+    // Complete workflow (skip in closed-loop — orchestrator manages task lifecycle)
+    if (!isClosedLoop) {
+      await updateTaskStatus(taskId, {
+        status: 'completed',
+        current_step: 'Audio generation complete!',
+        progress_percent: 100,
+        completed_at: new Date().toISOString(),
+      });
+    }
 
     // Save cost data (TTS character count)
     costTracker.setTtsUsage(script.length, voiceModel || voiceName || 'inworld-tts-1.5-max');
@@ -220,7 +229,10 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
       }
     });
 
-    await updateVideoProgress(videoId, 'audio', 'Audio generation complete', 100);
+    if (!isClosedLoop) {
+      const { updateVideoProgress } = await import('@/lib/services/video-service');
+      await updateVideoProgress(videoId, 'audio', 'Audio generation complete', 100);
+    }
 
     console.log(`[Audio] Completed for task ${taskId}`);
 

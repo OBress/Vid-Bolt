@@ -33,3 +33,5 @@ export { shotPlannerProcessor } from './shot-planner';
 export { assetScoutProcessor } from './asset-scout';
 export { imageGenProcessor } from './image-gen';
 export { videoGenProcessor } from './video-gen';
+export { verifierProcessor } from './verifier';
+export { imageEditProcessor } from './image-edit';

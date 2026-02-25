@@ -148,6 +148,12 @@ export const imageGenQueue = createQueue('image-gen');
 /** Video generation (Phase IV: sequential LTX-2) */
 export const videoGenQueue = createQueue('video-gen');
 
+/** VLM Verifier (Gemini 3 Flash quality gate) */
+export const verifierQueue = createQueue('verifier');
+
+/** Image editing (Qwen-Image-Edit-2511 GCM consistency) */
+export const imageEditQueue = createQueue('image-edit');
+
 /**
  * All active queues for graceful shutdown.
  */
@@ -179,6 +185,8 @@ export const allQueues = [
   assetScoutQueue,
   imageGenQueue,
   videoGenQueue,
+  verifierQueue,
+  imageEditQueue,
 ];
 
 /**

@@ -21,6 +21,7 @@ export {
   gpuMusicCreateQueue,
   gpuSfxCreateQueue,
   editAssemblyQueue,
+  orchestratorQueue,
   allQueues, 
   closeAllQueues 
 } from './queues';

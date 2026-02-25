@@ -46,6 +46,9 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
   job: Job<VideoGenJobData>
 ) => {
   const { taskId, userId, videoId, aspectRatio = '16:9' } = job.data;
+  // Video-gen is always dispatched from the orchestrator with names like 'video-shot-1'.
+  // Skip task-level progress updates to avoid overwriting the orchestrator's progress.
+  const isClosedLoop = true;
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
 
@@ -60,11 +63,13 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 1: Loading shot data and keyframe images...`);
 
-      await updateTaskStatus(taskId, {
-        status: 'running',
-        current_step: 'Loading shots for video generation...',
-        progress_percent: 5,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: 'Loading shots for video generation...',
+          progress_percent: 5,
+        });
+      }
 
       const { data: video } = await supabase
         .from('video_projects')
@@ -88,11 +93,13 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
 
       if (videoShots.length === 0) {
         console.log(`${LOG_PREFIX} No video shots to generate`);
-        await updateTaskStatus(taskId, {
-          status: 'completed',
-          current_step: 'No video shots to generate',
-          progress_percent: 100,
-        });
+        if (!isClosedLoop) {
+          await updateTaskStatus(taskId, {
+            status: 'completed',
+            current_step: 'No video shots to generate',
+            progress_percent: 100,
+          });
+        }
         return { success: true, videoId, stats: { videosGenerated: 0, videosFailed: 0 } };
       }
 
@@ -124,19 +131,23 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 3: Running GPU batch video generation...`);
 
-      await updateTaskStatus(taskId, {
-        status: 'running',
-        current_step: `Generating ${gpuShots.length} videos...`,
-        progress_percent: 15,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: `Generating ${gpuShots.length} videos...`,
+          progress_percent: 15,
+        });
+      }
 
       const onProgress = async (message: string, percent: number) => {
         console.log(`${LOG_PREFIX} Progress: ${message} (${percent}%)`);
-        await updateTaskStatus(taskId, {
-          status: 'running',
-          current_step: message,
-          progress_percent: 15 + Math.round(percent * 0.7),
-        });
+        if (!isClosedLoop) {
+          await updateTaskStatus(taskId, {
+            status: 'running',
+            current_step: message,
+            progress_percent: 15 + Math.round(percent * 0.7),
+          });
+        }
       };
 
       const onItemComplete = async (event: ItemCompleteEvent) => {
@@ -187,11 +198,13 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         })
         .eq('id', videoId);
 
-      await updateTaskStatus(taskId, {
-        status: 'completed',
-        current_step: `Video generation complete: ${gpuResult.stats.videosGenerated} generated, ${gpuResult.stats.videosFailed} failed`,
-        progress_percent: 100,
-      });
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          status: 'completed',
+          current_step: `Video generation complete: ${gpuResult.stats.videosGenerated} generated, ${gpuResult.stats.videosFailed} failed`,
+          progress_percent: 100,
+        });
+      }
 
       console.log(`${LOG_PREFIX} ✅ Complete: ${gpuResult.stats.videosGenerated} videos`);
 
@@ -212,12 +225,14 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
     console.error(`${LOG_PREFIX} Failed for video ${videoId}:`, error);
     await costTracker.save(videoId);
 
-    await updateTaskStatus(taskId, {
-      status: 'failed',
-      current_step: 'Video generation failed',
-      progress_percent: 0,
-      error_message: error instanceof Error ? error.message : 'Unknown error',
-    });
+    if (!isClosedLoop) {
+      await updateTaskStatus(taskId, {
+        status: 'failed',
+        current_step: 'Video generation failed',
+        progress_percent: 0,
+        error_message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
 
     throw error;
   }

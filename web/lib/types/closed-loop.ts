@@ -350,9 +350,10 @@ export const ClosedLoopState = z.object({
   }).default({}),
   /** Shots that failed max retries and were salvaged */
   flagged_shots: z.array(z.object({
-    segment_index: z.number().int(),
-    reason: z.string(),
-    best_attempt_url: z.string().optional(),
+    shotIndex: z.number().int(),
+    issue: z.string(),
+    suggestions: z.array(z.string()).default([]),
+    allAttemptUrls: z.array(z.string()).default([]),
   })).default([]),
   /** Total retry count across all phases */
   total_retries: z.number().int().default(0),

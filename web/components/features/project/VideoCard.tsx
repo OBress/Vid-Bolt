@@ -79,6 +79,7 @@ const stageLabels: Record<VideoStage, string> = {
   outline: "Outline",
   stock: "Stock Media",
   script: "Script",
+  production: "Production",
   audio: "Audio",
   media: "Media",
   shot_planning: "Shot Planning",

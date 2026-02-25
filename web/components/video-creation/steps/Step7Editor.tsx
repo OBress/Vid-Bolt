@@ -6,8 +6,8 @@ import { Loader2, CheckCircle2 } from "lucide-react";
 import type {
   AudioChunk,
   ShotEvent,
-} from "@/components/video-creation/VideoCreationWizard";
-import type { GeneratedMedia } from "@/types/video";
+  GeneratedMedia,
+} from "@/types/video";
 import type { EditDecisionList } from "@/lib/services/edit-assembly/edit-assembly-prompts";
 import type { WizardData } from "@/features/video-editor-v2/hooks/use-wizard-data-import";
 import { useVideoEditorStore } from "@/features/video-editor-v2/stores/video-editor-store";

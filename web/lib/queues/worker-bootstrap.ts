@@ -61,6 +61,8 @@ import {
   assetScoutProcessor,
   imageGenProcessor,
   videoGenProcessor,
+  verifierProcessor,
+  imageEditProcessor,
 } from './workers';
 
 // ============================================================================
@@ -237,6 +239,18 @@ const workerConfigs: WorkerConfig[] = [
     processor: videoGenProcessor,
     concurrency: 2,
     description: 'Sequential AI video generation (Phase IV)',
+  },
+  {
+    queue: 'verifier',
+    processor: verifierProcessor,
+    concurrency: 5,
+    description: 'VLM quality verification (Gemini 3 Flash)',
+  },
+  {
+    queue: 'image-edit',
+    processor: imageEditProcessor,
+    concurrency: 1,
+    description: 'GCM consistency editing (Qwen-Image-Edit-2511)',
   },
 ];
 

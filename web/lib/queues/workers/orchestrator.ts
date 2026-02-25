@@ -18,11 +18,13 @@
  *   V.   Auto-Assembly            → Video Editor V2 state JSON
  */
 
-import { Job, Processor, QueueEvents } from 'bullmq';
+import { Job, Processor, Queue, QueueEvents } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
 import { getRedisConnection } from '@/lib/queues/redis';
 import { generateWorkerPrompts } from '@/lib/services/prompt-generator';
-import { listEntities } from '@/lib/services/gcm';
+import { listEntities, incrementAppearance } from '@/lib/services/gcm';
+import { selectBestFitSalvage, type SalvageAttempt } from '@/lib/services/best-fit-salvage';
+import type { VerifierResult } from '@/lib/queues/workers/verifier';
 import type {
   OrchestratorJobData,
   ClosedLoopState,
@@ -30,11 +32,30 @@ import type {
   GCMEntity,
 } from '@/lib/types/closed-loop';
 
+// Entity reference shape used by the verifier and image-edit workers
+interface EntityReference {
+  name: string;
+  referenceUrl: string;
+  description: string;
+}
+
+/** Convert GCM entities to the lightweight reference format used by workers. */
+function toEntityReferences(entities: GCMEntity[]): EntityReference[] {
+  return entities
+    .filter(e => e.reference_url)
+    .map(e => ({
+      name: e.name,
+      referenceUrl: e.reference_url,
+      description: e.text_description,
+    }));
+}
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
 
 const LOG_PREFIX = '[Orchestrator]';
+const MAX_VERIFY_ATTEMPTS = 3;
 
 // ============================================================================
 // QUEUE EVENTS CACHE
@@ -161,12 +182,14 @@ async function executeTtsPhase(
 
 /**
  * Phase II: Shot Planning
- * Triggers the shot planner worker (refactored from av-script Part 1).
+ * Dispatches to the dedicated shot-planner worker with TTS timestamps
+ * and the tailored system prompt from the Dynamic Prompt Generator.
  */
 async function executeShotPlanningPhase(
   videoId: string,
   jobData: OrchestratorJobData,
-  taskId: string
+  taskId: string,
+  workerPrompts: WorkerPrompts
 ): Promise<{ shotCount: number }> {
   console.log(`${LOG_PREFIX} Phase II: Shot Planning`);
 
@@ -176,8 +199,8 @@ async function executeShotPlanningPhase(
     progress_percent: 15,
   });
 
-  const { avScriptQueue } = await import('@/lib/queues/queues');
-  const queueEvents = getQueueEvents('av-script-workflow');
+  const { shotPlannerQueue } = await import('@/lib/queues/queues');
+  const queueEvents = getQueueEvents('shot-planner');
 
   // Fetch TTS data from metadata
   const supabase = getSupabaseServiceClient();
@@ -193,15 +216,15 @@ async function executeShotPlanningPhase(
     ? wordTimestamps[wordTimestamps.length - 1].end_seconds
     : 0;
 
-  const shotJob = await avScriptQueue.add('closed-loop-shot-planning', {
+  const shotJob = await shotPlannerQueue.add('closed-loop-shot-planning', {
     taskId,
     userId: jobData.userId,
     videoId,
     script: jobData.scriptContent,
     wordTimestamps,
     totalDurationSeconds: totalDuration,
-    mode: 'part1',
-    stockMediaLevel: 'none',
+    aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+    systemPrompt: workerPrompts.shot_planner,
   });
 
   const shotResult = await shotJob.waitUntilFinished(queueEvents, 300_000);
@@ -213,12 +236,14 @@ async function executeShotPlanningPhase(
 
 /**
  * Phase III: Asset Retrieval + SFX
- * Triggers the asset scout to find stock media and write AI prompts.
+ * Dispatches to the dedicated asset-scout worker with the tailored
+ * system prompt from the Dynamic Prompt Generator.
  */
 async function executeAssetRetrievalPhase(
   videoId: string,
   jobData: OrchestratorJobData,
-  taskId: string
+  taskId: string,
+  workerPrompts: WorkerPrompts
 ): Promise<{ stockMatched: number; promptsGenerated: number }> {
   console.log(`${LOG_PREFIX} Phase III: Asset Retrieval + SFX`);
 
@@ -228,47 +253,218 @@ async function executeAssetRetrievalPhase(
     progress_percent: 30,
   });
 
-  const { avScriptQueue } = await import('@/lib/queues/queues');
-  const queueEvents = getQueueEvents('av-script-workflow');
+  const { assetScoutQueue } = await import('@/lib/queues/queues');
+  const queueEvents = getQueueEvents('asset-scout');
 
-  // Fetch shots from metadata
-  const supabase = getSupabaseServiceClient();
-  const { data: video } = await supabase
-    .from('video_projects')
-    .select('metadata')
-    .eq('id', videoId)
-    .single();
-
-  const metadata = (video?.metadata || {}) as Record<string, unknown>;
-  const avScriptPart1 = metadata.av_script_part1 as { shots?: Array<Record<string, unknown>> } | undefined;
-  const shots = avScriptPart1?.shots || [];
-
-  const assetJob = await avScriptQueue.add('closed-loop-asset-retrieval', {
+  const assetJob = await assetScoutQueue.add('closed-loop-asset-retrieval', {
     taskId,
     userId: jobData.userId,
     videoId,
-    shots,
-    mode: 'part2',
-    gpuEnabled: false, // Don't trigger GPU here — Phase IV handles it
     aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+    systemPrompt: workerPrompts.asset_scout,
   });
 
-  await assetJob.waitUntilFinished(queueEvents, 300_000);
+  const assetResult = await assetJob.waitUntilFinished(queueEvents, 300_000);
 
   return {
-    stockMatched: 0, // Will be populated when Asset Scout is fully built
-    promptsGenerated: shots.length,
+    stockMatched: assetResult?.output?.metadata?.stock_count || 0,
+    promptsGenerated:
+      (assetResult?.output?.metadata?.ai_image_count || 0) +
+      (assetResult?.output?.metadata?.ai_video_count || 0) +
+      (assetResult?.output?.metadata?.motiongraphic_count || 0),
+  };
+}
+
+// ============================================================================
+// VERIFICATION LOOP
+// ============================================================================
+
+/**
+ * Execute a generation job with verification loop.
+ * Dispatches to the generator, verifies the result, and retries up to
+ * MAX_VERIFY_ATTEMPTS times. On max failures, performs Best-Fit Salvage.
+ *
+ * For images, uses failure_type branching:
+ *   - "recoverable" → dispatch to image-edit queue (cheaper, no VRAM switch)
+ *   - "fundamental" → dispatch to generation queue (full re-generation)
+ *
+ * @returns The accepted media URL and any flags
+ */
+async function executeWithVerification(
+  shotIndex: number,
+  generationConfig: {
+    queueName: string;
+    jobName: string;
+    jobData: Record<string, unknown>;
+    mediaType: 'image' | 'video';
+    shotDescription: string;
+    timeout: number;
+  },
+  verificationContext: {
+    userId: string;
+    videoId: string;
+    taskId: string;
+    entityReferences?: EntityReference[];
+    previousShotUrl?: string;
+    styleGuide?: string;
+    /** GCM entity IDs referenced by this shot (for appearance tracking) */
+    entityIds?: string[];
+  },
+  state: ClosedLoopState
+): Promise<{ mediaUrl: string; verified: boolean; flag?: ReturnType<typeof selectBestFitSalvage>['flag'] }> {
+  const { verifierQueue, imageEditQueue } = await import('@/lib/queues/queues');
+  const salvageAttempts: SalvageAttempt[] = [];
+
+  // Track the current media URL — may be updated by image-edit
+  let currentMediaUrl = '';
+
+  for (let attempt = 1; attempt <= MAX_VERIFY_ATTEMPTS; attempt++) {
+    console.log(`${LOG_PREFIX} Shot ${shotIndex} attempt ${attempt}/${MAX_VERIFY_ATTEMPTS}`);
+
+    const previousFeedback = attempt > 1
+      ? salvageAttempts[attempt - 2]?.verifierResult.suggested_corrections.join('; ')
+      : undefined;
+
+    // -----------------------------------------------------------------------
+    // Decide: generate fresh OR edit the existing image
+    // -----------------------------------------------------------------------
+    const lastResult = attempt > 1 ? salvageAttempts[attempt - 2]?.verifierResult : undefined;
+    const isRecoverableImageFail =
+      generationConfig.mediaType === 'image' &&
+      lastResult?.failure_type === 'recoverable' &&
+      currentMediaUrl;
+
+    if (isRecoverableImageFail) {
+      // --- RECOVERABLE IMAGE: use image-edit (cheaper, no VRAM switch) ---
+      console.log(`${LOG_PREFIX} Shot ${shotIndex}: recoverable failure — dispatching to image-edit`);
+
+      const editQueueEvents = getQueueEvents('image-edit');
+      const editJob = await imageEditQueue.add(
+        `image-edit-shot-${shotIndex}`,
+        {
+          taskId: verificationContext.taskId,
+          userId: verificationContext.userId,
+          videoId: verificationContext.videoId,
+          shotIndex,
+          sourceImageUrl: currentMediaUrl,
+          editInstruction: lastResult!.suggested_corrections.join('. '),
+          entityReferences: verificationContext.entityReferences,
+          aspectRatio: generationConfig.jobData.aspectRatio,
+          attempt,
+          previousFeedback,
+        }
+      );
+
+      const editResult = await editJob.waitUntilFinished(editQueueEvents, 30_000); // ~15s edit + network buffer
+      currentMediaUrl = editResult?.mediaUrl || editResult?.url || currentMediaUrl;
+    } else {
+      // --- FUNDAMENTAL or FIRST ATTEMPT: generate from scratch ---
+      const genQueue = new Queue(generationConfig.queueName, {
+        connection: getRedisConnection(),
+      });
+      const genQueueEvents = getQueueEvents(generationConfig.queueName);
+
+      const genJob = await genQueue.add(
+        generationConfig.jobName,
+        {
+          ...generationConfig.jobData,
+          attempt,
+          previousFeedback,
+        }
+      );
+
+      const genResult = await genJob.waitUntilFinished(genQueueEvents, generationConfig.timeout);
+      currentMediaUrl = genResult?.mediaUrl || genResult?.url || '';
+    }
+
+    if (!currentMediaUrl) {
+      console.warn(`${LOG_PREFIX} Shot ${shotIndex} attempt ${attempt}: no media URL returned`);
+      continue;
+    }
+
+    // -----------------------------------------------------------------------
+    // Verify the result
+    // -----------------------------------------------------------------------
+    const verifyQueueEvents = getQueueEvents('verifier');
+    const verifyJob = await verifierQueue.add(`verify-shot-${shotIndex}`, {
+      taskId: verificationContext.taskId,
+      userId: verificationContext.userId,
+      videoId: verificationContext.videoId,
+      mediaType: generationConfig.mediaType,
+      mediaUrl: currentMediaUrl,
+      shotDescription: generationConfig.shotDescription,
+      shotIndex,
+      entityReferences: verificationContext.entityReferences,
+      previousShotUrl: verificationContext.previousShotUrl,
+      styleGuide: verificationContext.styleGuide,
+      previousFeedback,
+    });
+
+    const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, 60_000);
+    const result: VerifierResult = verifyResult?.result;
+
+    if (!result) {
+      console.warn(`${LOG_PREFIX} Shot ${shotIndex} attempt ${attempt}: no verifier result`);
+      continue;
+    }
+
+    // PASS → accept, update GCM, and return
+    if (result.verdict === 'PASS') {
+      console.log(`${LOG_PREFIX} Shot ${shotIndex} PASSED on attempt ${attempt}`);
+
+      // Increment GCM appearance count for all referenced entities (§5.5)
+      if (verificationContext.entityIds?.length) {
+        for (const entityId of verificationContext.entityIds) {
+          try {
+            await incrementAppearance(entityId);
+          } catch (err) {
+            console.warn(`${LOG_PREFIX} Failed to increment appearance for entity ${entityId}:`, err);
+          }
+        }
+      }
+
+      return { mediaUrl: currentMediaUrl, verified: true };
+    }
+
+    // FAIL → record for salvage, log feedback
+    console.log(
+      `${LOG_PREFIX} Shot ${shotIndex} FAILED (${result.failure_type}): ` +
+      `${result.suggested_corrections.join('; ')}`
+    );
+
+    salvageAttempts.push({ mediaUrl: currentMediaUrl, verifierResult: result, attemptNumber: attempt });
+    state.total_retries++;
+  }
+
+  // Max retries exceeded → Best-Fit Salvage
+  console.warn(`${LOG_PREFIX} Shot ${shotIndex} failed ${MAX_VERIFY_ATTEMPTS}x — performing Best-Fit Salvage`);
+
+  if (salvageAttempts.length === 0) {
+    return { mediaUrl: '', verified: false };
+  }
+
+  const salvage = selectBestFitSalvage(shotIndex, salvageAttempts);
+  state.flagged_shots.push(salvage.flag);
+  console.log(`${LOG_PREFIX} Salvaged shot ${shotIndex}: ${salvage.reason}`);
+
+  return {
+    mediaUrl: salvage.bestMediaUrl,
+    verified: false,
+    flag: salvage.flag,
   };
 }
 
 /**
- * Phase IV: Production (GPU image/video + MG on CPU)
- * Triggers the visual director for GPU batch generation + MG.
+ * Phase IV: Production (GPU image/video + MG)
+ * Uses specialized queues (image-gen, video-gen) with per-shot verification.
+ * Passes GCM entity references and style guide to all verification calls.
  */
 async function executeProductionPhase(
   videoId: string,
   jobData: OrchestratorJobData,
-  taskId: string
+  taskId: string,
+  state: ClosedLoopState,
+  gcmEntities: GCMEntity[]
 ): Promise<{
   imagesCompleted: number;
   imagesFailed: number;
@@ -277,36 +473,280 @@ async function executeProductionPhase(
   mgCompleted: number;
   mgFailed: number;
 }> {
-  console.log(`${LOG_PREFIX} Phase IV: Production (GPU + MG)`);
+  console.log(`${LOG_PREFIX} Phase IV: Production (GPU + MG) with verification`);
 
   await updateTaskStatus(taskId, {
     status: 'running',
-    current_step: 'Phase IV: Generating images, videos, and motion graphics...',
+    current_step: 'Phase IV: Generating and verifying images...',
     progress_percent: 40,
   });
 
-  const { visualDirectorQueue } = await import('@/lib/queues/queues');
-  const queueEvents = getQueueEvents('visual-director-workflow');
+  // Fetch shot plan from DB to know what needs generating
+  const supabase = getSupabaseServiceClient();
+  const { data: project } = await supabase
+    .from('video_projects')
+    .select('metadata')
+    .eq('id', videoId)
+    .single();
 
-  const prodJob = await visualDirectorQueue.add('closed-loop-production', {
-    taskId,
-    userId: jobData.userId,
-    videoId,
-    gpuEnabled: true,
-    aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+  const metadata = (project?.metadata || {}) as Record<string, unknown>;
+  const shotPlan = (metadata.shot_plan || {}) as Record<string, unknown>;
+  const shots = (shotPlan.shots || []) as Array<{
+    segment_index: number;
+    media_type: string;
+    content_type: string;
+    description?: string;
+    duration_seconds: number;
+    entity_refs?: string[];
+  }>;
+
+  // Build entity references once for all verification calls
+  const entityRefs = toEntityReferences(gcmEntities);
+  const styleGuide = jobData.creativeManifest.style.visual_style
+    + (jobData.creativeManifest.style.lighting_mood ? `, ${jobData.creativeManifest.style.lighting_mood}` : '');
+
+  let imagesCompleted = 0;
+  let imagesFailed = 0;
+  let videosCompleted = 0;
+  let videosFailed = 0;
+  let mgCompleted = 0;
+  let mgFailed = 0;
+
+  // Separate shot types
+  const imageShots = shots.filter(s => s.media_type === 'image' || s.media_type === 'stock');
+  const videoShots = shots.filter(s => s.media_type === 'video');
+  const mgShots = shots.filter(s => s.media_type === 'motiongraphic');
+
+  // -----------------------------------------------------------------------
+  // PARALLEL EXECUTION: GPU pipeline + MG Pass 1 (CPU)
+  // -----------------------------------------------------------------------
+
+  // MG Pass 1: Run on CPU with placeholder assets (non-blocking)
+  const mgPass1Promise = (async () => {
+    if (mgShots.length === 0) return new Map<number, string>();
+
+    const { generateMotionGraphic, buildPlaceholderAssets } = await import(
+      '@/lib/services/motion-graphics/pipeline-motion-graphics'
+    );
+    const { getOpenRouterApiKey } = await import('@/lib/services/api-keys');
+    const apiKey = await getOpenRouterApiKey(jobData.userId);
+    const mgResults = new Map<number, string>();
+
+    for (const shot of mgShots) {
+      try {
+        const placeholders = buildPlaceholderAssets(shot.segment_index, 2);
+        const result = await generateMotionGraphic({
+          prompt: shot.description || `Motion graphic for shot ${shot.segment_index}`,
+          duration: shot.duration_seconds,
+          shotIndex: shot.segment_index,
+          videoId,
+          apiKey,
+          model: 'google/gemini-3-flash-preview',
+          imageAssets: placeholders,
+          narrationText: shot.description,
+        });
+
+        if (result.success && result.remotionCode) {
+          mgResults.set(shot.segment_index, result.remotionCode);
+          mgCompleted++;
+        } else {
+          mgFailed++;
+        }
+      } catch (err) {
+        console.error(`${LOG_PREFIX} MG Pass 1 failed for shot ${shot.segment_index}:`, err);
+        mgFailed++;
+      }
+    }
+
+    return mgResults;
+  })();
+
+  // GPU Pipeline: Images → Videos (sequential VRAM modes, with verification)
+  const gpuPipelinePromise = (async () => {
+    const generatedAssets = new Map<string, string>(); // placeholder → real URL
+
+    // --- Compute dynamic timeouts ---
+    // Image gen: ~10s per generation, ~15s per edit, across MAX_VERIFY_ATTEMPTS
+    const IMAGE_GEN_TIMEOUT_MS = Math.max(
+      60_000,
+      (10_000 + 15_000) * MAX_VERIFY_ATTEMPTS + 15_000  // gen + edit per attempt + buffer
+    );
+    // Video gen: 1:10 ratio (seconds of content → seconds of timeout) × retry attempts
+    const computeVideoTimeoutMs = (durationSeconds: number) =>
+      Math.max(60_000, durationSeconds * 10 * 1_000 * MAX_VERIFY_ATTEMPTS);
+
+    console.log(`${LOG_PREFIX} Timeouts: image=${IMAGE_GEN_TIMEOUT_MS}ms, video=computed per-shot (1:10 ratio × ${MAX_VERIFY_ATTEMPTS} attempts)`);
+
+    // --- IMAGES ---
+    for (const shot of imageShots) {
+      const result = await executeWithVerification(
+        shot.segment_index,
+        {
+          queueName: 'image-gen',
+          jobName: `image-shot-${shot.segment_index}`,
+          jobData: { taskId, userId: jobData.userId, videoId, shotIndex: shot.segment_index, aspectRatio: jobData.creativeManifest.style.aspect_ratio },
+          mediaType: 'image',
+          shotDescription: shot.description || `Shot ${shot.segment_index}`,
+          timeout: IMAGE_GEN_TIMEOUT_MS,
+        },
+        { userId: jobData.userId, videoId, taskId, entityReferences: entityRefs, styleGuide, entityIds: shot.entity_refs },
+        state
+      );
+
+      if (result.verified || result.mediaUrl) {
+        imagesCompleted++;
+        // Map for MG Pass 2 asset swap
+        generatedAssets.set(
+          `placeholder://shot-${shot.segment_index}/asset-0`,
+          result.mediaUrl
+        );
+      } else {
+        imagesFailed++;
+      }
+    }
+
+    const imageStatusText = imageShots.length > 0
+      ? `Images done (${imagesCompleted}/${imageShots.length}). Generating videos...`
+      : 'Generating videos...';
+    await updateTaskStatus(taskId, {
+      current_step: `Phase IV: ${imageStatusText}`,
+      progress_percent: 55,
+    });
+
+    // --- VIDEOS ---
+    // The video-gen worker processes ALL video shots as a single GPU batch
+    // (keyframe images → mode switch → video generation). Dispatch ONCE, then
+    // read per-shot URLs from metadata and verify each individually.
+    if (videoShots.length > 0) {
+      const totalVideoDuration = videoShots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0);
+      // Query queue depth to dynamically scale timeout for multi-video contention
+      const videoGenQueue = new Queue('video-gen', { connection: getRedisConnection() });
+      const { waiting: waitingJobs, active: activeJobs } = await videoGenQueue.getJobCounts('waiting', 'active');
+      const queueDepth = waitingJobs + activeJobs;
+      const queueMultiplier = queueDepth + 1;
+      const VIDEO_BATCH_TIMEOUT_MS = Math.max(120_000, totalVideoDuration * 10 * 1_000 * queueMultiplier);
+      console.log(`${LOG_PREFIX} Video batch timeout: ${Math.round(VIDEO_BATCH_TIMEOUT_MS / 1000)}s for ${totalVideoDuration.toFixed(1)}s of video (${videoShots.length} shots, ${queueDepth} jobs ahead → ${queueMultiplier}x multiplier)`);
+
+      // 1. Dispatch video-gen ONCE for the entire batch
+      const genQueueEvents = getQueueEvents('video-gen');
+      const genJob = await videoGenQueue.add('video-batch', {
+        taskId,
+        userId: jobData.userId,
+        videoId,
+        aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+      });
+
+      console.log(`${LOG_PREFIX} Dispatched single video-gen batch job ${genJob.id}`);
+      await genJob.waitUntilFinished(genQueueEvents, VIDEO_BATCH_TIMEOUT_MS);
+
+      // 2. Read per-shot URLs from metadata (video-gen saves to generated_videos)
+      const { data: updatedProject } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+
+      const updatedMeta = (updatedProject?.metadata || {}) as Record<string, unknown>;
+      const generatedVideos = (updatedMeta.generated_videos || {}) as Record<string, string>;
+      console.log(`${LOG_PREFIX} Video batch complete: ${Object.keys(generatedVideos).length} URLs in metadata`);
+
+      // 3. Verify each shot individually
+      const { verifierQueue } = await import('@/lib/queues/queues');
+
+      for (const shot of videoShots) {
+        const shotKey = `shot-${shot.segment_index}`;
+        const mediaUrl = generatedVideos[shotKey];
+
+        if (!mediaUrl) {
+          console.warn(`${LOG_PREFIX} Shot ${shot.segment_index}: no video URL in batch results — skipping`);
+          videosFailed++;
+          continue;
+        }
+
+        // Run verifier on this shot's video
+        try {
+          const verifyQueueEvents = getQueueEvents('verifier');
+          const verifyJob = await verifierQueue.add(`verify-video-${shot.segment_index}`, {
+            taskId,
+            userId: jobData.userId,
+            videoId,
+            mediaType: 'video',
+            mediaUrl,
+            shotDescription: shot.description || `Shot ${shot.segment_index}`,
+            shotIndex: shot.segment_index,
+            entityReferences: entityRefs,
+            styleGuide,
+          });
+
+          const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, 60_000);
+          const verdict = verifyResult?.result;
+
+          if (verdict?.verdict === 'PASS') {
+            console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} PASSED verification`);
+          } else if (verdict) {
+            console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} FAILED verification: ${verdict.suggested_corrections?.join('; ')}`);
+            // Still use the video — no re-generation for videos (GPU is expensive)
+            state.flagged_shots.push({
+              shotIndex: shot.segment_index,
+              issue: verdict.suggested_corrections?.join('; ') || 'Failed verification',
+              suggestions: verdict.suggested_corrections || [],
+              allAttemptUrls: [mediaUrl],
+            });
+          }
+        } catch (verifyErr) {
+          console.warn(`${LOG_PREFIX} Video shot ${shot.segment_index} verification error:`, verifyErr);
+          // Still use the video even if verification fails
+        }
+
+        // Count as completed and map for MG Pass 2 asset swap
+        videosCompleted++;
+        generatedAssets.set(
+          `placeholder://shot-${shot.segment_index}/asset-0`,
+          mediaUrl
+        );
+      }
+    }
+
+    return generatedAssets;
+  })();
+
+  // Wait for both GPU and MG Pass 1 to complete
+  const [mgPass1Results, generatedAssets] = await Promise.all([
+    mgPass1Promise,
+    gpuPipelinePromise,
+  ]);
+
+  // -----------------------------------------------------------------------
+  // MG Pass 2: Swap placeholder URLs for real R2 URLs
+  // -----------------------------------------------------------------------
+  if (mgPass1Results.size > 0 && generatedAssets.size > 0) {
+    const { generateMotionGraphicPass2 } = await import(
+      '@/lib/services/motion-graphics/pipeline-motion-graphics'
+    );
+
+    const assetMap = Object.fromEntries(generatedAssets);
+    for (const [shotIdx, pass1Code] of mgPass1Results) {
+      const pass2Result = generateMotionGraphicPass2(pass1Code, assetMap);
+      if (pass2Result.success) {
+        console.log(`${LOG_PREFIX} MG Pass 2 complete for shot ${shotIdx}`);
+      } else {
+        console.warn(`${LOG_PREFIX} MG Pass 2 failed for shot ${shotIdx}: ${pass2Result.error}`);
+      }
+    }
+  }
+
+  await updateTaskStatus(taskId, {
+    current_step: `Phase IV: Complete — ${imagesCompleted} images, ${videosCompleted} videos, ${mgCompleted} MG`,
+    progress_percent: 75,
   });
 
-  const prodResult = await prodJob.waitUntilFinished(queueEvents, 1_200_000);
-
-  const stats = prodResult?.stats || {};
-
   return {
-    imagesCompleted: stats.imagesGenerated || 0,
-    imagesFailed: stats.imagesFailed || 0,
-    videosCompleted: stats.videosGenerated || 0,
-    videosFailed: stats.videosFailed || 0,
-    mgCompleted: 0, // Will be populated when MG worker is fully separated
-    mgFailed: 0,
+    imagesCompleted,
+    imagesFailed,
+    videosCompleted,
+    videosFailed,
+    mgCompleted,
+    mgFailed,
   };
 }
 
@@ -416,7 +856,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     state.phase = 'shot_planning';
     await persistState(videoId, state);
 
-    const shotResult = await executeShotPlanningPhase(videoId, job.data, taskId);
+    const shotResult = await executeShotPlanningPhase(videoId, job.data, taskId, workerPrompts);
 
     state.phase_data.shot_planning = {
       completed: true,
@@ -432,7 +872,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     state.phase = 'asset_retrieval';
     await persistState(videoId, state);
 
-    const assetResult = await executeAssetRetrievalPhase(videoId, job.data, taskId);
+    const assetResult = await executeAssetRetrievalPhase(videoId, job.data, taskId, workerPrompts);
 
     state.phase_data.asset_retrieval = {
       completed: true,
@@ -448,7 +888,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     state.phase = 'production';
     await persistState(videoId, state);
 
-    const prodResult = await executeProductionPhase(videoId, job.data, taskId);
+    const prodResult = await executeProductionPhase(videoId, job.data, taskId, state, gcmEntities);
 
     state.phase_data.production = {
       images_completed: prodResult.imagesCompleted,
@@ -525,7 +965,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     await updateTaskStatus(taskId, {
       status: 'failed',
       current_step: `Failed in phase: ${state.phase}`,
-      progress_percent: 0,
+      // Don't reset progress — keep it at the last value so the UI shows the correct failed phase
       error_message: error instanceof Error ? error.message : 'Unknown error',
     });
 

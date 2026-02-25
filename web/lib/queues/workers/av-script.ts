@@ -711,7 +711,7 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
         const { generateMotionGraphic } = await import('@/lib/services/motion-graphics/pipeline-motion-graphics');
 
         let openrouterKey: string | undefined;
-        let openrouterModel = 'google/gemini-3-flash-preview';
+        let openrouterModel = 'google/gemini-3.1-pro-preview';
         try {
           openrouterKey = await getOpenRouterApiKey(userId);
           // Also fetch model preference if user has one
