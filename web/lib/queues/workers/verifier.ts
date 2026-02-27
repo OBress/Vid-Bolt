@@ -217,7 +217,12 @@ function buildVerificationPrompt(jobData: VerifierJobData): Array<{ type: 'text'
 
   // Generated media to verify
   content.push({ type: 'text', text: '**Generated output to verify:**' });
-  content.push({ type: 'image_url', image_url: { url: jobData.mediaUrl } });
+  // Use the correct content type: video_url for videos, image_url for images
+  if (jobData.mediaType === 'video') {
+    content.push({ type: 'video_url', video_url: { url: jobData.mediaUrl } } as any);
+  } else {
+    content.push({ type: 'image_url', image_url: { url: jobData.mediaUrl } });
+  }
 
   // Entity reference images for comparison
   if (jobData.entityReferences) {

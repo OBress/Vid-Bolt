@@ -80,7 +80,7 @@ interface ScriptOutput {
   }>;
 }
 
-interface Step3ScriptProps {
+interface ScriptStepProps {
   videoId: string;
   projectId: string;
   outlineData: OutlineOutput | null;
@@ -166,8 +166,8 @@ BeatSection.displayName = "BeatSection";
 // COMPONENT
 // ============================================================================
 
-export const Step3Script = memo(
-  forwardRef<any, Step3ScriptProps>(
+export const ScriptStep = memo(
+  forwardRef<any, ScriptStepProps>(
     (
       {
         videoId,

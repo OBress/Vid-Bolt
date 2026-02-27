@@ -323,6 +323,7 @@ export function VideoEditorTester({
           fps={30}
           videoWidth={1920}
           videoHeight={1080}
+          skipInitialLoad={true}
         />
       </div>
     </div>

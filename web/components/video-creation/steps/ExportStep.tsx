@@ -9,7 +9,7 @@ import { buildRenderState } from "@/features/video-editor-v2/utils/clip-to-rende
 import { loadProjectState } from "@/features/video-editor-v2/services/project-state-service";
 import type { TimelineClip } from "@/features/video-editor-v2/types/timeline-v2";
 
-interface Step8ExportProps {
+interface ExportStepProps {
   videoId: string;
   projectId: string;
   onClose: () => void;
@@ -19,13 +19,13 @@ interface Step8ExportProps {
 
 type ExportStatus = "idle" | "rendering" | "success" | "error";
 
-export function Step8Export({
+export function ExportStep({
   videoId,
   projectId,
   onClose,
   isLocked,
   lockedMessage,
-}: Step8ExportProps) {
+}: ExportStepProps) {
   const [exportStatus, setExportStatus] = useState<ExportStatus>("idle");
   const [exportProgress, setExportProgress] = useState(0);
   const [exportMessage, setExportMessage] = useState("");
@@ -52,7 +52,7 @@ export function Step8Export({
     async function restoreFromSupabase() {
       setIsRestoringState(true);
       try {
-        console.log('[Step8Export] Store empty, restoring from Supabase...');
+        console.log('[ExportStep] Store empty, restoring from Supabase...');
         const savedState = await loadProjectState(projectId);
 
         if (savedState?.timelineData) {
@@ -63,15 +63,15 @@ export function Step8Export({
           if (timelineData.clips) store.setClips(timelineData.clips);
           if (timelineData.transitions) store.setTransitions(timelineData.transitions);
 
-          console.log('[Step8Export] Restored state from Supabase:', {
+          console.log('[ExportStep] Restored state from Supabase:', {
             tracks: timelineData.tracks?.length || 0,
             clips: Array.isArray(timelineData.clips) ? timelineData.clips.length : Object.keys(timelineData.clips || {}).length,
           });
         } else {
-          console.warn('[Step8Export] No saved state found in Supabase');
+          console.warn('[ExportStep] No saved state found in Supabase');
         }
       } catch (err) {
-        console.error('[Step8Export] Failed to restore state:', err);
+        console.error('[ExportStep] Failed to restore state:', err);
       } finally {
         setIsRestoringState(false);
       }
@@ -129,7 +129,7 @@ export function Step8Export({
 
       const { jobId, warnings } = await renderRes.json();
       if (warnings?.length) {
-        console.warn('[Step8Export] Render warnings:', warnings);
+        console.warn('[ExportStep] Render warnings:', warnings);
       }
 
       setExportMessage("Rendering video...");
@@ -138,7 +138,7 @@ export function Step8Export({
       const videoDurationSec = state.durationInFrames / 30;
       const maxWaitMs = Math.max(videoDurationSec * 2, 120) * 1000;
       const pollStartTime = Date.now();
-      console.log(`[Step8Export] Polling timeout: ${Math.round(maxWaitMs / 1000)}s (video: ${Math.round(videoDurationSec)}s)`);
+      console.log(`[ExportStep] Polling timeout: ${Math.round(maxWaitMs / 1000)}s (video: ${Math.round(videoDurationSec)}s)`);
 
       // Poll for progress via GET
       let pending = true;

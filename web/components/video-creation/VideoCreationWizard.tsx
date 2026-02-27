@@ -5,15 +5,15 @@ import { WizardProgress } from "./WizardProgress";
 import { StepNavigationConfirmDialog } from "./StepNavigationConfirmDialog";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { createClient } from "@/lib/supabase/client";
-import { Step1Outline } from "./steps/Step1Outline";
-import { Step3Script } from "./steps/Step3Script";
-import { Step3Production } from "./steps/Step3Production";
-import { Step7Editor } from "./steps/Step7Editor";
-import { Step8Export } from "./steps/Step8Export";
+import { OutlineStep } from "./steps/OutlineStep";
+import { ScriptStep } from "./steps/ScriptStep";
+import { ProductionStep } from "./steps/ProductionStep";
+import { EditorStep } from "./steps/EditorStep";
+import { ExportStep } from "./steps/ExportStep";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
 import { useVideos } from "@/hooks/use-videos";
 import { Loader2 } from "lucide-react";
-import type { VideoStage, VideoProject } from "@/types/video";
+import type { VideoStage, VideoProject, AudioChunk, ShotEvent, GeneratedMedia } from "@/types/video";
 import type { EditDecisionList } from "@/lib/services/edit-assembly/edit-assembly-prompts";
 
 
@@ -41,6 +41,10 @@ export interface WizardState {
   agentEdl: any | null;
   edlTaskId: string | null;
   isEdlLoading: boolean;
+  // Pipeline outputs needed by the editor (Step 4)
+  audioChunks: AudioChunk[];
+  shotList: ShotEvent[];
+  generatedMedia: GeneratedMedia[];
 }
 
 // Step configuration for the wizard - 5 steps
@@ -69,6 +73,39 @@ function stageToStepNumber(stage: VideoStage): number {
     completed: 5, // Step 5
   };
   return stageMapping[stage] || 1;
+}
+
+/**
+ * Extract pipeline outputs (audioChunks, shotList, generatedMedia) from
+ * video_projects.metadata so the editor can resolve media URLs.
+ */
+function extractPipelineOutputs(metadata: Record<string, any>): {
+  audioChunks: AudioChunk[];
+  shotList: ShotEvent[];
+  generatedMedia: GeneratedMedia[];
+} {
+  const avScript = metadata?.av_script_part1 || {};
+  const shots: ShotEvent[] = (avScript.shots || []) as ShotEvent[];
+  const genImages = (metadata?.generated_images || {}) as Record<string, string>;
+  const genVideos = (metadata?.generated_videos || {}) as Record<string, string>;
+  const audioChunks = (metadata?.audio_chunks || []) as AudioChunk[];
+
+  const generatedMedia: GeneratedMedia[] = shots.map((shot: any) => {
+    const idx = shot.segment_index as number;
+    const key = `shot-${idx}`;
+    const imageUrl = genImages[key];
+    const videoUrl = genVideos[key];
+    const url = videoUrl || imageUrl;
+    return {
+      shot_index: idx,
+      media_type: (shot.media_type || 'image') as 'image' | 'video' | 'motiongraphic',
+      generation_status: url ? 'completed' : 'failed',
+      media_url: url,
+      visual_prompt: shot.visual_prompt || shot.summary || '',
+    } as GeneratedMedia;
+  });
+
+  return { audioChunks, shotList: shots, generatedMedia };
 }
 
 // Helper function to generate a fallback script when workflow fails
@@ -140,6 +177,9 @@ export function VideoCreationWizard({
     agentEdl: null,
     edlTaskId: null,
     isEdlLoading: false,
+    audioChunks: [],
+    shotList: [],
+    generatedMedia: [],
   });
 
   // Step 2 ref for manual trigger (Script step)
@@ -178,7 +218,7 @@ export function VideoCreationWizard({
 
   // Load existing video data when resuming
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
-  // Track if we resumed at step 4 (editor) so Step7Editor can skip its import animation
+  // Track if we resumed at step 4 (editor) so EditorStep can skip its import animation
   const resumedAtEditorRef = useRef(false);
 
   useEffect(() => {
@@ -234,6 +274,9 @@ export function VideoCreationWizard({
         const outlineConfig = (video.metadata as any)?.outlineConfig || null;
         const scriptOutput = (video.metadata as any)?.scriptOutput || null;
 
+        // Extract pipeline outputs (audioChunks, shots, media) from metadata
+        const pipelineOutputs = extractPipelineOutputs((video.metadata || {}) as Record<string, any>);
+
         setState({
           prompt: video.idea || "",
           expandedIdea: expandedIdea,
@@ -254,6 +297,9 @@ export function VideoCreationWizard({
           agentEdl: (video.metadata as any)?.agentEdl || null,
           edlTaskId: null,
           isEdlLoading: false,
+          audioChunks: pipelineOutputs.audioChunks,
+          shotList: pipelineOutputs.shotList,
+          generatedMedia: pipelineOutputs.generatedMedia,
         });
 
         // =====================================================================
@@ -362,7 +408,7 @@ export function VideoCreationWizard({
         case 2: // Script
           return !!state.scriptOutput || !!state.script;
         case 3: // Production
-          return true; // Step3Production handles its own gating
+          return true; // ProductionStep handles its own gating
         case 4: // Editor
           return true; // No blocking requirements
         case 5: // Export
@@ -621,7 +667,7 @@ export function VideoCreationWizard({
     switch (currentStep) {
       case 1: // Outline Generation + Research
         return (
-          <Step1Outline
+          <OutlineStep
             videoId={state.videoId!}
             projectId={projectId}
             initialTopic={state.prompt}
@@ -735,7 +781,7 @@ export function VideoCreationWizard({
         );
       case 2: // Script Writing (uses outline from Step 1)
         return (
-          <Step3Script
+          <ScriptStep
             ref={step2ScriptRef}
             videoId={state.videoId!}
             projectId={projectId}
@@ -794,7 +840,7 @@ export function VideoCreationWizard({
 
       case 3: // Production (Closed-Loop Pipeline)
         return (
-          <Step3Production
+          <ProductionStep
             videoId={state.videoId!}
             isLoading={state.isProductionLoading}
             taskId={state.productionTaskId}
@@ -805,19 +851,23 @@ export function VideoCreationWizard({
               });
             }}
             onComplete={async () => {
-              // Fetch completed EDL/agentEdl from project metadata
+              // Fetch completed EDL/agentEdl + pipeline outputs from project metadata
               let edl = null;
               let agentEdl = null;
+              let pipelineOutputs = { audioChunks: [] as AudioChunk[], shotList: [] as ShotEvent[], generatedMedia: [] as GeneratedMedia[] };
               if (state.videoId) {
                 try {
                   const res = await fetch(`/api/videos/${state.videoId}`);
                   if (res.ok) {
                     const data = await res.json();
-                    edl = (data.video?.metadata as any)?.edl || null;
-                    agentEdl = (data.video?.metadata as any)?.agentEdl || null;
+                    const meta = (data.video?.metadata || {}) as Record<string, any>;
+                    edl = meta.edl || null;
+                    agentEdl = meta.agentEdl || null;
+                    pipelineOutputs = extractPipelineOutputs(meta);
+                    console.log(`[Wizard] Post-production: ${pipelineOutputs.generatedMedia.length} media, ${pipelineOutputs.audioChunks.length} audio, ${pipelineOutputs.shotList.length} shots`);
                   }
                 } catch (err) {
-                  console.warn("[Wizard] Failed to fetch EDL after production:", err);
+                  console.warn("[Wizard] Failed to fetch data after production:", err);
                 }
 
                 // Update stage to video (editor)
@@ -837,6 +887,9 @@ export function VideoCreationWizard({
                 productionTaskId: null,
                 edl,
                 agentEdl,
+                audioChunks: pipelineOutputs.audioChunks,
+                shotList: pipelineOutputs.shotList,
+                generatedMedia: pipelineOutputs.generatedMedia,
               });
               advanceToStep(4);
             }}
@@ -908,13 +961,13 @@ export function VideoCreationWizard({
         }
 
         return (
-          <Step7Editor
+          <EditorStep
             videoId={state.videoId!}
             projectId={projectId}
             audioUrl={null}
-            audioChunks={[]}
-            shotList={[]}
-            generatedMedia={[]}
+            audioChunks={state.audioChunks}
+            shotList={state.shotList}
+            generatedMedia={state.generatedMedia}
             edl={state.edl}
             agentEdl={state.agentEdl}
             isResuming={resumedAtEditorRef.current}
@@ -960,7 +1013,7 @@ export function VideoCreationWizard({
 
       case 5: // Export
         return (
-          <Step8Export
+          <ExportStep
             videoId={state.videoId!}
             projectId={projectId}
             onClose={async () => {

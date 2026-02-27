@@ -28,7 +28,7 @@ const ReactVideoEditor = dynamic(
 );
 
 
-interface Step7EditorProps {
+interface EditorStepProps {
   videoId: string;
   projectId: string;
   audioUrl?: string | null;
@@ -176,7 +176,7 @@ function TimelineImportLoadingScreen({ progress, currentStep }: {
 // STEP 7 EDITOR
 // ============================================================
 
-export function Step7Editor({
+export function EditorStep({
   videoId,
   projectId,
   audioUrl,
@@ -190,7 +190,7 @@ export function Step7Editor({
   isLocked,
   lockedMessage,
   isResuming = false,
-}: Step7EditorProps) {
+}: EditorStepProps) {
   // When resuming, skip animation entirely (synchronous — no API call, no flash)
   const [isImporting, setIsImporting] = useState(!isResuming);
   const [importProgress, setImportProgress] = useState(0);
@@ -199,7 +199,7 @@ export function Step7Editor({
   // If resuming, load from Supabase persisted state instead of re-importing wizard data
   const hasSavedState = isResuming;
 
-  console.log(`[Step7Editor] Mount: isResuming=${isResuming}, isImporting=${!isResuming}`);
+  console.log(`[EditorStep] Mount: isResuming=${isResuming}, isImporting=${!isResuming}`);
 
   // Memoize wizard data to prevent reference changes between renders
   const wizardData: WizardData = useMemo(() => ({
@@ -248,7 +248,7 @@ export function Step7Editor({
     }
   }, [clipCount, importProgress]);
 
-  console.log("[Step7Editor] Props received:", {
+  console.log("[EditorStep] Props received:", {
     videoId,
     projectId,
     audioUrl: audioUrl ? "present" : "null",
@@ -263,7 +263,7 @@ export function Step7Editor({
 
   // Detailed media debug: show what data Step 7 is receiving from upstream steps
   if (generatedMedia && generatedMedia.length > 0 && clipCount === 0) {
-    console.log("[Step7Editor] 📊 GeneratedMedia breakdown:");
+    console.log("[EditorStep] 📊 GeneratedMedia breakdown:");
     for (const media of generatedMedia) {
       const urlType = !media.media_url ? '❌ NO_URL'
         : media.media_url.startsWith('remotion://') ? '🎬 remotion://'
@@ -304,7 +304,7 @@ export function Step7Editor({
               ← Back
             </button>
           )}
-          <span className="text-sm text-neutral-500">Step 7: Video Editor</span>
+          <span className="text-sm text-neutral-500">Video Editor</span>
         </div>
         <div className="flex items-center gap-2">
           {isLocked && lockedMessage && (

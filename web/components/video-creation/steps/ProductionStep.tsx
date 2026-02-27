@@ -23,7 +23,7 @@ import { useGCPVM } from "@/hooks/use-gcp-vm";
 // TYPES
 // ============================================================================
 
-interface Step3ProductionProps {
+interface ProductionStepProps {
   videoId: string;
   isLoading: boolean;
   taskId: string | null;
@@ -172,7 +172,7 @@ function derivePhaseStatuses(
 // COMPONENT
 // ============================================================================
 
-export function Step3Production({
+export function ProductionStep({
   videoId,
   isLoading: isLoadingProp,
   taskId: taskIdProp,
@@ -180,7 +180,7 @@ export function Step3Production({
   onComplete,
   onError,
   onBack,
-}: Step3ProductionProps) {
+}: ProductionStepProps) {
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(taskIdProp);
@@ -261,11 +261,11 @@ export function Step3Production({
     try {
       // Auto-start GPU if it's off
       if (vmStatus === "OFF") {
-        console.log("[Step3Production] GPU is off, auto-starting...");
+        console.log("[ProductionStep] GPU is off, auto-starting...");
         try {
           await startVM();
         } catch (vmErr) {
-          console.warn("[Step3Production] GPU auto-start failed, continuing anyway:", vmErr);
+          console.warn("[ProductionStep] GPU auto-start failed, continuing anyway:", vmErr);
         }
       }
 
@@ -284,7 +284,7 @@ export function Step3Production({
       if (data.taskId) {
         setTaskId(data.taskId);
         onTaskStarted(data.taskId);
-        console.log("[Step3Production] Production started, task:", data.taskId);
+        console.log("[ProductionStep] Production started, task:", data.taskId);
       } else {
         throw new Error("No task ID returned from API");
       }
@@ -312,7 +312,7 @@ export function Step3Production({
       setTaskId(null);
       setErrorMessage("Production stopped by user.");
     } catch (err) {
-      console.error("[Step3Production] Failed to stop:", err);
+      console.error("[ProductionStep] Failed to stop:", err);
     } finally {
       setIsStopping(false);
     }

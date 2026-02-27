@@ -295,7 +295,7 @@ export const EditorProvider: React.FC<EditorProviderProps> = ({
     save: saveProject,
     isLoaded: isSyncLoaded,
   } = useProjectSync(projectId, {
-    enableAutoSave: true,
+    enableAutoSave: !skipInitialLoad,
     autoSaveInterval: 10000,
     skipInitialLoad,
     onSaveStart: () => onSaving?.(true),

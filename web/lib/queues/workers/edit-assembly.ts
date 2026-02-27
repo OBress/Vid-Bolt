@@ -106,7 +106,26 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     const metadata = (project.metadata || {}) as Record<string, unknown>;
     const avScriptPart1 = (metadata.av_script_part1 || {}) as Record<string, unknown>;
     const shots = (avScriptPart1.shots || []) as unknown as AssembleEditRequest['shots'];
-    const generatedMedia = (metadata.generatedMedia || []) as unknown as GeneratedMedia[];
+    // Build GeneratedMedia[] from actual metadata keys written by image-gen/video-gen workers
+    // (The old av-script worker used metadata.generatedMedia, but the closed-loop pipeline
+    //  writes to metadata.generated_images and metadata.generated_videos instead.)
+    const generatedImages = (metadata.generated_images || {}) as Record<string, string>;
+    const generatedVideos = (metadata.generated_videos || {}) as Record<string, string>;
+    const avScriptShots = (avScriptPart1.shots || []) as Array<Record<string, unknown>>;
+    const generatedMedia: GeneratedMedia[] = avScriptShots.map((shot) => {
+      const idx = shot.segment_index as number;
+      const key = `shot-${idx}`;
+      const imageUrl = generatedImages[key];
+      const videoUrl = generatedVideos[key];
+      const url = videoUrl || imageUrl;
+      return {
+        shot_index: idx,
+        media_type: (shot.media_type as string || 'image') as 'image' | 'video' | 'motiongraphic',
+        generation_status: url ? 'completed' : 'failed',
+        media_url: url,
+        visual_prompt: (shot.visual_prompt as string) || (shot.summary as string) || '',
+      } as GeneratedMedia;
+    });
 
     // Map audio chunks with correct field names
     const rawAudioChunks = (metadata.audio_chunks || []) as unknown as Array<Record<string, unknown>>;

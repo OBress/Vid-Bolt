@@ -168,7 +168,7 @@ interface OutlineOutput {
   };
 }
 
-interface Step1OutlineProps {
+interface OutlineStepProps {
   videoId: string;
   projectId: string;
   initialTopic?: string;
@@ -193,7 +193,7 @@ interface Step1OutlineProps {
 // COMPONENT
 // ============================================================================
 
-export function Step1Outline({
+export function OutlineStep({
   videoId,
   projectId,
   initialTopic = "",
@@ -205,7 +205,7 @@ export function Step1Outline({
   onBack: _onBack,
   isLocked,
   lockedMessage,
-}: Step1OutlineProps) {
+}: OutlineStepProps) {
   const { settings: projectSettings, loading: settingsLoading } =
     useProjectSettings(projectId);
 
