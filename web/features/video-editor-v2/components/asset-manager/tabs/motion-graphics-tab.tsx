@@ -487,7 +487,7 @@ export const MotionGraphicsTab: React.FC = () => {
   const qcRetryCountRef = useRef(0);
   const isSubmittingRef = useRef(false); // Synchronous guard against double-submission
   const qcRuntimeErrorRef = useRef<string | null>(null); // Captures runtime errors from generated code
-  const MAX_QC_RETRIES = 3;
+  const MAX_QC_RETRIES = 2;
 
   // Register runtime error handler so DynamicCompositionWrapper reports crashes
   useEffect(() => {
@@ -650,64 +650,111 @@ export const MotionGraphicsTab: React.FC = () => {
       );
 
       if (result) {
-        const statusIcon = result.passed ? '✅' : '❌';
-        const statusText = result.passed
-          ? `Visual QC passed: ${result.summary}`
-          : `Visual QC failed: ${result.summary}`;
+        // Determine display based on verdict tier
+        const verdict = result.verdict || (result.passed ? 'pass' : 'fail');
+        const confidence = result.confidence ?? 80;
 
-        // Build detailed status text with element-specific issues if available
-        let detailText = '';
-        if (!result.passed && result.elementIssues?.length > 0) {
-          detailText = '\n\nElement issues found:\n' + result.elementIssues.map(ei =>
-            `• [${ei.severity.toUpperCase()}] "${ei.elementId}" (${ei.elementDescription}): ${ei.issue}`
-          ).join('\n');
-        }
-        if (!result.passed && result.generalIssues?.length > 0) {
-          detailText += '\n\nGeneral issues:\n' + result.generalIssues.map(gi => `• ${gi}`).join('\n');
-        }
+        if (verdict === 'pass') {
+          // Clean pass — show success message
+          setChatMessages(prev =>
+            prev.map(msg =>
+              msg.id === qcMsgId
+                ? { ...msg, content: `✅ Visual QC passed: ${result.summary}`, isStreaming: false }
+                : msg
+            )
+          );
+          qcRetryCountRef.current = 0;
+        } else if (verdict === 'pass_with_notes') {
+          // Silent pass — treat as success, no feedback shown to user
+          setChatMessages(prev =>
+            prev.map(msg =>
+              msg.id === qcMsgId
+                ? { ...msg, content: `✅ Visual QC passed: ${result.summary}`, isStreaming: false }
+                : msg
+            )
+          );
+          qcRetryCountRef.current = 0;
+          console.log('[MotionGraphicsTab] QC pass_with_notes (silent):', result.elementIssues?.length || 0, 'minor issues');
+        } else {
+          // FAIL verdict — check confidence and decide whether to retry
 
-        setChatMessages(prev =>
-          prev.map(msg =>
-            msg.id === qcMsgId
-              ? { ...msg, content: `${statusIcon} ${statusText}${detailText}`, isStreaming: false }
-              : msg
-          )
-        );
+          // Confidence-based early termination: if AI is unsure, accept it
+          if (confidence >= 70 && qcRetryCountRef.current > 0) {
+            console.log(`[MotionGraphicsTab] QC failed but confidence ${confidence}% >= 70 — accepting as good enough`);
+            setChatMessages(prev =>
+              prev.map(msg =>
+                msg.id === qcMsgId
+                  ? { ...msg, content: `✅ Visual QC accepted: ${result.summary}`, isStreaming: false }
+                  : msg
+              )
+            );
+            qcRetryCountRef.current = 0;
+          } else if (qcRetryCountRef.current < MAX_QC_RETRIES) {
+            // Show failure details
+            let detailText = '';
+            if (result.elementIssues?.length > 0) {
+              detailText = '\n\nElement issues found:\n' + result.elementIssues.map(ei =>
+                `• [${ei.severity.toUpperCase()}] "${ei.elementId}" (${ei.elementDescription}): ${ei.issue}`
+              ).join('\n');
+            }
+            if (result.generalIssues?.length > 0) {
+              detailText += '\n\nGeneral issues:\n' + result.generalIssues.map(gi => `• ${gi}`).join('\n');
+            }
 
-        // If QC failed and we haven't exceeded retries, auto-regenerate with feedback
-        if (!result.passed && qcRetryCountRef.current < MAX_QC_RETRIES) {
-          qcRetryCountRef.current++;
-          console.log(`[MotionGraphicsTab] 🔄 QC failed, auto-correcting (attempt ${qcRetryCountRef.current}/${MAX_QC_RETRIES})...`);
+            setChatMessages(prev =>
+              prev.map(msg =>
+                msg.id === qcMsgId
+                  ? { ...msg, content: `❌ Visual QC failed: ${result.summary}${detailText}`, isStreaming: false }
+                  : msg
+              )
+            );
 
-          // Build structured QC feedback for the revision AI
-          // Using JSON preserves element IDs, severity, and suggested fixes
-          // so the revision AI can cross-reference directly with code constants
-          let feedbackPrompt: string;
-          if (result.elementIssues?.length > 0 || result.generalIssues?.length > 0) {
-            feedbackPrompt = `## VISUAL QC RESULTS (structured)\n\`\`\`json\n${JSON.stringify({
-              passed: result.passed,
-              elementIssues: result.elementIssues,
-              generalIssues: result.generalIssues,
-              summary: result.summary,
-            }, null, 2)}\n\`\`\`\n\nFix all issues identified above. Reference the element IDs to locate the exact code to change.`;
+            qcRetryCountRef.current++;
+            console.log(`[MotionGraphicsTab] 🔄 QC failed, auto-correcting (attempt ${qcRetryCountRef.current}/${MAX_QC_RETRIES})...`);
+
+            // Check for runtime errors first
+            const hasRuntimeError = !!qcRuntimeErrorRef.current;
+            if (hasRuntimeError) {
+              const feedbackPrompt = `CRITICAL: The component threw a JavaScript runtime error: "${qcRuntimeErrorRef.current}". The previous code is fundamentally broken. Regenerate the entire animation from scratch, avoiding this error.`;
+              qcRuntimeErrorRef.current = null;
+              handleAutoCorrection(feedbackPrompt, true);
+            } else {
+              // Progressive correction: focus on the most critical issues only
+              const criticalIssues = (result.elementIssues || []).filter(ei => ei.severity === 'critical' || ei.severity === 'major');
+              const topIssues = criticalIssues.slice(0, 2); // Max 2 issues per attempt
+
+              let feedbackPrompt: string;
+              if (topIssues.length > 0) {
+                // Concise targeted fix instruction — NOT the full JSON dump
+                feedbackPrompt = topIssues.map(ei =>
+                  `Fix "${ei.elementId}": ${ei.issue}. Suggested fix: ${ei.suggestedFix}`
+                ).join('\n');
+              } else if (result.generalIssues?.length > 0) {
+                feedbackPrompt = `Fix: ${result.generalIssues.slice(0, 2).join('. ')}`;
+              } else {
+                feedbackPrompt = `Fix: ${result.summary}`;
+              }
+
+              // Attempt 1 = targeted edit, Attempt 2 = full regeneration from scratch
+              const forceFullRegen = qcRetryCountRef.current >= 2;
+              handleAutoCorrection(feedbackPrompt, forceFullRegen);
+            }
           } else {
-            // Legacy fallback if no structured issues
-            const generalFeedback = result.issues?.join('; ') || result.summary;
-            const suggestionsFallback = result.suggestions?.length > 0 ? ` Suggestions: ${result.suggestions.join('; ')}` : '';
-            feedbackPrompt = `Fix the following visual issues: ${generalFeedback}.${suggestionsFallback}`;
+            // Max retries exceeded — show failure but don't retry
+            let detailText = '';
+            if (result.elementIssues?.length > 0) {
+              detailText = '\n\nElement issues found:\n' + result.elementIssues.map(ei =>
+                `• [${ei.severity.toUpperCase()}] "${ei.elementId}" (${ei.elementDescription}): ${ei.issue}`
+              ).join('\n');
+            }
+            setChatMessages(prev =>
+              prev.map(msg =>
+                msg.id === qcMsgId
+                  ? { ...msg, content: `❌ Visual QC failed: ${result.summary}${detailText}`, isStreaming: false }
+                  : msg
+              )
+            );
           }
-
-          // If we captured a runtime error, scrap everything and regenerate from scratch
-          const hasRuntimeError = !!qcRuntimeErrorRef.current;
-          if (hasRuntimeError) {
-            feedbackPrompt += `\n\nCRITICAL: The component threw a JavaScript runtime error: "${qcRuntimeErrorRef.current}". The previous code is fundamentally broken. Regenerate the entire animation from scratch, avoiding this error.`;
-            qcRuntimeErrorRef.current = null; // Reset after use
-          }
-
-          // Full regeneration on runtime errors, targeted edit otherwise
-          handleAutoCorrection(feedbackPrompt, hasRuntimeError);
-        } else if (result.passed) {
-          qcRetryCountRef.current = 0; // Reset on success
         }
       } else {
         // QC capture failed — update message but don't block
@@ -972,12 +1019,16 @@ export const MotionGraphicsTab: React.FC = () => {
   };
 
   // Direct auto-correction handler: bypasses input field to avoid race conditions and duplicate messages
-  // When forceFullRegeneration=true, discards broken code and starts fresh (used for runtime errors)
+  // When forceFullRegeneration=true, discards broken code and starts fresh (used for runtime errors or last-resort)
   const handleAutoCorrection = async (feedbackPrompt: string, forceFullRegeneration: boolean = false) => {
     if (isGenerating) return;
 
     const modeLabel = forceFullRegeneration ? '🔄 Regenerating from scratch' : '🔄 Auto-correcting';
-    const autoPrompt = `${modeLabel}: ${feedbackPrompt}`;
+    // When doing targeted fixes, explicitly instruct the AI to use targeted edits
+    const editInstruction = forceFullRegeneration 
+      ? '' 
+      : ' Use targeted edits (type: "edit") — do NOT rewrite the entire component.';
+    const autoPrompt = `${modeLabel}: ${feedbackPrompt}${editInstruction}`;
 
     // Add auto-correction message to chat (system-generated, not user input)
     const autoCorrectionMsgId = `auto-correct-${Date.now()}`;

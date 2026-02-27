@@ -804,7 +804,7 @@ Rules:
 - A prompt can match multiple skills (e.g., charts + spring-physics + timing)
 - Only include skills that are directly applicable to what the user is asking for
 - If no specific skills apply, return an empty array (core guidance will still be used)
-- Maximum 5 skills to keep context focused
+- Maximum 8 skills to keep context focused
 
 Return ONLY a JSON object like this:
 {"skills": ["skill-name-1", "skill-name-2"]}

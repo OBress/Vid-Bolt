@@ -28,12 +28,14 @@ export interface QCElementIssue {
 }
 
 export interface QCResult {
-  passed: boolean;
-  issues: string[];              // Legacy flat list of problems (backward compat)
-  suggestions: string[];         // Legacy flat suggestions (backward compat)
+  passed: boolean;                 // Backward compat — true if verdict is 'pass' or 'pass_with_notes'
+  verdict: 'pass' | 'pass_with_notes' | 'fail'; // Tiered verdict
+  confidence: number;              // 0-100 — how confident the QC AI is in its verdict
+  issues: string[];                // Legacy flat list of problems (backward compat)
+  suggestions: string[];           // Legacy flat suggestions (backward compat)
   elementIssues: QCElementIssue[]; // Element-specific issues with code references
-  generalIssues: string[];       // Non-element-specific problems
-  summary: string;               // One-line summary
+  generalIssues: string[];         // Non-element-specific problems
+  summary: string;                 // One-line summary
 }
 
 export interface UseVisualQCReturn {

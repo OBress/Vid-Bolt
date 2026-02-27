@@ -485,28 +485,38 @@ class MotionGraphicsService {
       'timing': ['easing', 'bezier', 'curve', 'interpolate', 'linear'],
       'spring-physics': ['bounce', 'spring', 'elastic', 'wobble', 'organic', 'physics', 'overshoot'],
       'sequencing': ['sequence', 'stagger', 'delay', 'timing', 'choreograph', 'order', 'phase'],
-      'charts': ['chart', 'graph', 'bar', 'pie', 'data', 'visualization', 'statistics', 'progress', 'percentage', 'histogram', 'metric'],
+      'charts': ['chart', 'graph', 'bar chart', 'pie chart', 'data viz', 'visualization', 'statistics', 'progress', 'percentage', 'histogram', 'metric', 'donut'],
       'typography': ['title', 'headline', 'subtitle', 'caption', 'heading', 'kinetic text'],
-      'text-animations': ['typewriter', 'typing', 'word', 'letter', 'character', 'reveal', 'highlight'],
-      'messaging': ['chat', 'message', 'bubble', 'whatsapp', 'imessage', 'sms', 'conversation', 'dm'],
+      'text-animations': ['typewriter', 'typing', 'word by word', 'letter by letter', 'character', 'text reveal', 'highlight'],
+      'messaging': ['chat', 'message bubble', 'whatsapp', 'imessage', 'sms', 'conversation', 'dm', 'text message'],
       'social-media': ['instagram', 'tiktok', 'youtube', 'story', 'reel', 'vertical', 'shorts', 'social', 'post'],
       '3d': ['3d', 'three', 'cube', 'sphere', 'rotate', 'spatial', 'dimension', 'threejs'],
       'maps': ['map', 'mapbox', 'location', 'route', 'geography', 'travel', 'marker', 'pin', 'coordinate', 'd3-geo', 'globe', 'flight', 'country', 'world', 'city', 'projection', 'state', 'province', 'region', 'county', 'district', 'territory', 'prefecture'],
       'lottie': ['lottie', 'after effects', 'bodymovin', 'json animation'],
-      'images': ['image', 'photo', 'picture', 'logo', 'icon', 'graphic'],
+      'images': ['image', 'photo', 'picture', 'logo'],
       'videos': ['video', 'clip', 'footage', 'embed'],
       'audio': ['audio', 'sound', 'music', 'sfx', 'soundtrack'],
       'gifs': ['gif', 'animated image', 'apng', 'webp animation'],
       'shapes': ['shape', 'circle', 'rectangle', 'triangle', 'star', 'polygon', 'svg', 'vector'],
-      'transitions': ['transition', 'fade', 'slide', 'wipe', 'scene', 'crossfade', 'cut'],
+      'transitions': ['transition', 'fade', 'slide', 'wipe', 'crossfade', 'cut to'],
       'fonts': ['font', 'google font', 'typeface', 'typography'],
       'compositions': ['composition', 'setup', 'dimension', 'fps', 'resolution', 'aspect ratio'],
-      'assets': ['asset', 'import', 'static', 'font', 'staticfile'],
+      'assets': ['staticfile', 'asset import'],
       'audio-visualization': ['spectrum', 'waveform', 'equalizer', 'bass', 'frequency', 'beat', 'visualiz'],
-      'measuring-text': ['overflow', 'measure', 'fit text', 'text width', 'truncat'],
-      'parameters': ['parameter', 'configurable', 'prop', 'schema', 'zod', 'input'],
-      'trimming': ['trim', 'cut', 'shorten', 'clip range'],
-      'transparent-videos': ['transparent', 'alpha', 'overlay', 'green screen', 'composit'],
+      'measuring-text': ['fit text', 'text width', 'truncat'],
+      'parameters': ['parameter', 'configurable', 'schema', 'zod'],
+      'trimming': ['trim', 'shorten', 'clip range'],
+      'transparent-videos': ['transparent video', 'alpha channel', 'green screen'],
+      // New keyword mappings
+      'backgrounds': ['background', 'backdrop', 'wallpaper', 'scenery'],
+      'gradients': ['gradient', 'linear-gradient', 'radial gradient', 'color blend'],
+      'icons': ['icon', 'emoji', 'symbol', 'lucide'],
+      'particles': ['particle', 'confetti', 'sparkle', 'firework', 'snow', 'rain', 'dust', 'ember'],
+      'noise': ['noise', 'perlin', 'grain', 'static texture'],
+      'overlays': ['overlay', 'vignette', 'film grain', 'scanline'],
+      'masks-and-clipping': ['mask', 'clipping', 'crop', 'viewport'],
+      'motion-blur': ['motion blur', 'speed lines', 'blur effect'],
+      'light-leaks': ['light leak', 'lens flare', 'glow', 'bloom'],
     };
     
     for (const [skill, keywords] of Object.entries(skillKeywords)) {
@@ -515,7 +525,7 @@ class MotionGraphicsService {
       }
     }
     
-    return detectedSkills.slice(0, 8);
+    return detectedSkills.slice(0, 12);
   }
 
   /**
@@ -596,7 +606,15 @@ class MotionGraphicsService {
       // Step 2: Detect skills (keyword-based, falls back to AI with cheap model)
       sendSSE({ type: 'stage', stage: 'analyzing', message: 'Analyzing requirements...' });
       
-      let detectedSkills = await this.detectSkills(apiKey, prompt, model);
+      // On follow-up/auto-correction: reuse original skills to prevent QC feedback text
+      // from polluting skill detection (QC text contains words like "chart", "image", etc.)
+      let detectedSkills: string[];
+      if ((isFollowUp || errorCorrection) && previouslyUsedSkills.length > 0) {
+        detectedSkills = [...previouslyUsedSkills];
+        console.log('[MotionGraphicsService] Reusing previously detected skills (follow-up):', detectedSkills);
+      } else {
+        detectedSkills = await this.detectSkills(apiKey, prompt, model);
+      }
       
       // Always include spring-physics
       if (!detectedSkills.includes('spring-physics') && skillLoader.hasSkill('spring-physics')) {
@@ -605,7 +623,7 @@ class MotionGraphicsService {
       
       // Domain-specific skills contain unique APIs the AI can't guess — prioritize them
       // over generic enhancement skills (animations, timing, typography) that overlap with the base prompt
-      const PRIORITY_SKILLS = ['maps', 'charts', '3d', 'lottie', 'audio-visualization'];
+      const PRIORITY_SKILLS = ['maps', 'charts', '3d', 'lottie', 'audio-visualization', 'particles', 'noise', 'light-leaks'];
       const ALWAYS_INCLUDE = ['spring-physics'];
       
       const alwaysIncluded = detectedSkills.filter(s => ALWAYS_INCLUDE.includes(s));
@@ -613,7 +631,7 @@ class MotionGraphicsService {
       const generic = detectedSkills.filter(s => !PRIORITY_SKILLS.includes(s) && !ALWAYS_INCLUDE.includes(s));
       detectedSkills = [...alwaysIncluded, ...domainSpecific, ...generic];
       
-      const MAX_SKILLS = 5;
+      const MAX_SKILLS = 8;
       if (detectedSkills.length > MAX_SKILLS) {
         detectedSkills = detectedSkills.slice(0, MAX_SKILLS);
       }

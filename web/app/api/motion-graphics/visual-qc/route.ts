@@ -20,64 +20,60 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 // VISION QC PROMPT
 // ============================================================
 
-const VISUAL_QC_PROMPT = `You are a strict motion graphics quality inspector for Remotion animations.
+const VISUAL_QC_PROMPT = `You are a pragmatic motion graphics quality inspector for Remotion animations.
 
-Given screenshots of a generated animation at key frames AND the source code that produced them, determine if the output PASSES or FAILS against the user's original request.
+Given screenshots of a generated animation at key frames AND the source code that produced them, determine if the output is ACCEPTABLE against the user's original request.
 
 You MUST cross-reference what you SEE in the screenshots with the ACTUAL CODE to identify exactly which code elements are causing issues.
 
 Note: The source code may be truncated for length — do NOT treat truncated code as a render failure. Judge by what you see in the screenshots.
 
-## EVALUATION CHECKLIST
+## EVALUATION PHILOSOPHY
 
-### 1. ELEMENT COMPLETENESS (Critical)
-Cross-reference the user's prompt against the screenshots. Every element, visual feature, or data point requested MUST be visually present. Examples:
-- If user asked for a "world map with country outlines" → country shapes must be visible, not just dots
-- If user asked for "chart with 5 bars" → all 5 bars must appear
-- If user asked for "text that says X" → that exact text must be readable
-- Missing any requested element = FAIL
+Think like a creative director doing a quick review — NOT a pixel-perfect QA tester. The goal is to catch genuinely broken animations, not nitpick cosmetic imperfections. Motion graphics are inherently imprecise — slight position offsets, minor overlaps, and approximate geographic placement are NORMAL and ACCEPTABLE.
 
-### 2. COMPILATION / RENDER FAILURE (Critical)
-- If ALL frames are completely blank, solid color, or show only a background with no content → FAIL (likely a compilation error)
-- If frames show error messages or raw code → FAIL
-- A single frame being blank is acceptable (may be a transition), but most frames should have content
+## VERDICT TIERS (CRITICAL — READ CAREFULLY)
 
-### 3. VISUAL BUGS (Important)
-- Text overflow, cut-off text, or text extending beyond boundaries
-- Elements overlapping incorrectly (e.g., labels hidden behind shapes, text behind images)
-- Elements positioned outside the visible canvas (partially or fully)
-- Invisible elements (white on white, black on black, zero opacity)
-- Misaligned or broken layouts
+### FAIL — Only for genuinely broken output:
+- ALL frames are completely blank, solid color, or show only a background with no content
+- A requested element is COMPLETELY MISSING (user asked for a chart with 5 bars, only 3 appear)
+- Elements are FULLY off-screen or invisible (zero opacity, white-on-white, completely behind other elements)
+- Text is COMPLETELY unreadable (not just slightly overlapping — actually impossible to read)
+- No animation exists at all (every frame is identical)
+- Content is fundamentally wrong (asked for a bar chart, got a pie chart)
 
-### 4. LAYERING & Z-ORDER (Important)
-- Labels and text should appear ABOVE backgrounds and shapes, never hidden behind them
-- Interactive elements (markers, dots, icons) should be visible above map/chart backgrounds
-- If elements appear to be "underneath" other elements when they shouldn't be → FAIL
+### PASS WITH NOTES — Usable but has minor cosmetic issues:
+- Elements are slightly offset from ideal positions (e.g., city marker 20-50px from expected location)
+- Minor overlaps that don't prevent readability
+- Text partially extends beyond boundaries but is still readable
+- Colors or fonts don't perfectly match expectations but look reasonable
+- Geographic markers are in the approximate correct region (on or near the correct landmass)
+- Layering is slightly off but content is still visible and readable
+- Animation timing is slightly fast/slow but functional
+- Minor visual artifacts that don't affect comprehension
 
-### 5. ANIMATION EXISTS
-- The frames should show different visual states across time
-- If all frames look completely identical with no motion or transitions → FAIL (no animation)
+### PASS — Meets all requirements with no notable issues
 
-## ELEMENT IDENTIFICATION (CRITICAL)
+## MAP-SPECIFIC LENIENCY (IMPORTANT)
 
-When reporting issues, you MUST identify the SPECIFIC code element causing each problem:
-- Reference elements by their variable name, constant name, or JSX component name from the source code
-- For example: "TITLE_TEXT", "mapGroup", "barChart", "particles array", "<Circle /> at index 3"
-- Look at the code's constants, variable names, and JSX structure to find the exact element
-- If you can't identify the exact variable, describe the element precisely (e.g., "the blue circle in the top-right")
+For map/geography animations, be ESPECIALLY lenient:
+- City markers that are on or near the correct landmass = ACCEPTABLE (don't fail for being 30px off)
+- Map projections that show the correct region even if not perfectly centered = ACCEPTABLE
+- Slight clipping of map edges = ACCEPTABLE as long as key content is visible
+- Flight paths that follow the approximate correct direction = ACCEPTABLE
 
-## VERDICT
-- PASS only if ALL above criteria are met
-- FAIL if ANY criterion is violated
+## ELEMENT IDENTIFICATION
 
-## THOROUGHNESS (CRITICAL)
-- List EVERY issue you can find, not just the most obvious one. The developer needs to fix ALL problems in a single pass.
-- For each issue, identify the EXACT code element (by variable/constant/component name) and describe what's wrong.
-- For each suggestion, give a concrete code-level fix referencing the specific variable or JSX element.
-- If the animation is mostly blank, diagnose WHY: is it a runtime error? Wrong projection? Elements positioned off-screen? Zero opacity?
+When reporting issues, reference elements by their variable name, constant name, or JSX component name from the source code.
+
+## THOROUGHNESS
+
+List issues you find, but ONLY flag them as FAIL-worthy if they meet the FAIL criteria above. Everything else goes in pass_with_notes.
 
 You MUST respond with ONLY a valid JSON object in this exact format:
 {
+  "verdict": "pass" | "pass_with_notes" | "fail",
+  "confidence": 85,
   "passed": true,
   "elementIssues": [
     {
@@ -88,16 +84,21 @@ You MUST respond with ONLY a valid JSON object in this exact format:
       "suggestedFix": "Specific code change to fix this element"
     }
   ],
-  "generalIssues": ["Non-element-specific problems like missing animation"],
+  "generalIssues": ["Non-element-specific problems"],
   "summary": "Single concise sentence explaining the verdict"
 }
 
 Rules:
-- "passed": true if the output is acceptable, false if it needs to be regenerated
-- "elementIssues": array of objects, each identifying a specific code element and what's wrong. Be exhaustive.
-- "generalIssues": problems that don't map to a specific element (e.g., "no animation detected")
-- "summary": single concise sentence explaining the verdict
-- If passed is true, both issue arrays should be empty`;
+- "verdict": "pass" if output is good, "pass_with_notes" if usable with minor cosmetic issues, "fail" ONLY if genuinely broken
+- "confidence": 0-100 how confident you are in your verdict. If unsure whether something is a real problem, lower your confidence.
+- "passed": true if verdict is "pass" or "pass_with_notes", false only if verdict is "fail"
+- "elementIssues": array of objects identifying specific code elements. Only use severity "critical" or "major" for FAIL-worthy issues.
+- "generalIssues": problems that don't map to a specific element
+- "summary": single concise sentence
+- For "pass" verdict: both issue arrays should be empty
+- For "pass_with_notes": elementIssues may contain "minor" severity items only
+- For "fail": must contain at least one "critical" or "major" severity item`;
+
 
 // ============================================================
 // HANDLER
@@ -295,8 +296,23 @@ export async function POST(request: NextRequest) {
       : (elementIssues.length === 0 && legacyIssues.length > 0) ? legacyIssues
       : generalIssues;
 
+    // Derive verdict — use AI's verdict if provided, fall back to passed boolean
+    const rawVerdict = qcResult?.verdict;
+    const validVerdicts = ['pass', 'pass_with_notes', 'fail'];
+    const verdict = validVerdicts.includes(rawVerdict) ? rawVerdict : (qcResult?.passed === true ? 'pass' : 'fail');
+
+    // Derive passed from verdict (pass and pass_with_notes both count as passed)
+    const passed = verdict === 'pass' || verdict === 'pass_with_notes';
+
+    // Confidence score (0-100), default to 80 if not provided
+    const confidence = typeof qcResult?.confidence === 'number' 
+      ? Math.max(0, Math.min(100, qcResult.confidence)) 
+      : 80;
+
     const result = {
-      passed: qcResult?.passed === true,
+      passed,
+      verdict,
+      confidence,
       issues: legacyIssues,       // Keep for backward compat
       suggestions: legacySuggestions, // Keep for backward compat
       elementIssues,
