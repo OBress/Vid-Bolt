@@ -201,6 +201,118 @@ async function callLLMv2(
   systemPrompt: string,
   userPrompt: string
 ): Promise<EditorAgentEDL> {
+  // JSON Schema for EditorAgentEDL — constrains LLM output at the token level
+  const edlJsonSchema = {
+    name: 'edl',
+    strict: true,
+    schema: {
+      type: 'object',
+      required: ['tracks', 'clips', 'transitions', 'audioFades', 'mediaIssues'],
+      additionalProperties: false,
+      properties: {
+        tracks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['id', 'type', 'name', 'group', 'order'],
+            additionalProperties: false,
+            properties: {
+              id: { type: 'string' },
+              type: { type: 'string', enum: ['video', 'audio'] },
+              name: { type: 'string' },
+              group: { type: 'string', enum: ['video', 'audio', 'text', 'effects', 'overlays'] },
+              order: { type: 'number' },
+            },
+          },
+        },
+        clips: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['trackId', 'type', 'startTime', 'duration'],
+            additionalProperties: false,
+            properties: {
+              trackId: { type: 'string' },
+              shotIndex: { type: ['number', 'null'] },
+              type: { type: 'string', enum: ['video', 'audio', 'image', 'text', 'caption', 'shape', 'motion-graphics'] },
+              startTime: { type: 'number' },
+              duration: { type: 'number' },
+              label: { type: ['string', 'null'] },
+              keyframes: {
+                type: ['array', 'null'],
+                items: {
+                  type: 'object',
+                  required: ['property', 'points'],
+                  additionalProperties: false,
+                  properties: {
+                    property: { type: 'string' },
+                    points: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['time', 'value'],
+                        additionalProperties: false,
+                        properties: {
+                          time: { type: 'number' },
+                          value: { type: 'number' },
+                          easing: { type: ['string', 'null'] },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        transitions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['type', 'fromShotIndex', 'toShotIndex', 'duration'],
+            additionalProperties: false,
+            properties: {
+              type: { type: 'string' },
+              fromShotIndex: { type: 'number' },
+              toShotIndex: { type: 'number' },
+              duration: { type: 'number' },
+              easing: { type: ['string', 'null'] },
+            },
+          },
+        },
+        audioFades: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['target', 'type', 'startTime', 'duration'],
+            additionalProperties: false,
+            properties: {
+              target: { type: 'string', enum: ['main', 'music'] },
+              type: { type: 'string', enum: ['fadeIn', 'fadeOut'] },
+              startTime: { type: 'number' },
+              duration: { type: 'number' },
+            },
+          },
+        },
+        mediaIssues: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['shotIndex', 'severity', 'type', 'title', 'description'],
+            additionalProperties: false,
+            properties: {
+              shotIndex: { type: 'number' },
+              severity: { type: 'string', enum: ['error', 'warning', 'info'] },
+              type: { type: 'string' },
+              title: { type: 'string' },
+              description: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  };
+
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -216,7 +328,7 @@ async function callLLMv2(
       ],
       temperature: 0.3,
       max_tokens: 16000,
-      response_format: { type: 'json_object' },
+      response_format: { type: 'json_schema', json_schema: edlJsonSchema },
     }),
   });
 
@@ -236,17 +348,13 @@ async function callLLMv2(
   console.log(`[EditAssembly] Raw LLM response length: ${content.length} chars`);
   console.log(`[EditAssembly] Raw LLM response preview: ${content.substring(0, 200)}...`);
 
-  // Parse JSON — strip any markdown fences if present
-  let jsonStr = content.trim();
-  if (jsonStr.startsWith('```')) {
-    jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-  }
-
+  // Structured outputs guarantee valid JSON matching the schema —
+  // no markdown fence stripping needed
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(jsonStr);
+    parsed = JSON.parse(content);
   } catch (e) {
-    console.error(`[EditAssembly] JSON parse error. Raw content:\n${content.substring(0, 500)}`);
+    console.error(`[EditAssembly] JSON parse error (unexpected with structured outputs). Raw content:\n${content.substring(0, 500)}`);
     throw new Error(`Failed to parse LLM response as JSON: ${e instanceof Error ? e.message : 'unknown'}`);
   }
 

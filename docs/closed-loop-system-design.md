@@ -17,65 +17,161 @@ CoAgent's architecture naturally requires several distinct roles: planning, synt
 
 ### 1.2 Architecture Diagram
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    OPEN-LOOP (Human Creative Control)                    │
-│                                                                          │
-│  ┌─────────────────┐    ┌──────────────┐    ┌────────────────────────┐  │
-│  │ 1. Outline +    │───▶│ 2. Script    │───▶│ 3. Reference Asset     │  │
-│  │    Research      │    │    Writing    │    │    Approval (GCM Seed) │  │
-│  │    ✅ Review     │    │    ✅ Review  │    │    ✅ Review            │  │
-│  └─────────────────┘    └──────────────┘    └────────────┬───────────┘  │
-└──────────────────────────────────────────────────────────┼──────────────┘
-                                                           │
-             Human approves characters, settings, style    ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                CLOSED-LOOP (Hierarchical Agent System)                    │
-│                                                                          │
-│                    ┌──────────────────────┐                               │
-│                    │    ORCHESTRATOR      │                               │
-│                    │  (Global State +     │                               │
-│                    │   Quality Gate)      │                               │
-│                    └──┬────┬────┬────┬───┘                               │
-│                       │    │    │    │                                     │
-│                       ▼    │    │    │                                     │
-│               ┌────────────┐   │    │                                     │
-│               │ 1. AUDIO   │   │    │  ◀── TTS FIRST (pacing backbone)   │
-│               │    WORKER   │   │    │                                     │
-│               └─────┬──────┘   │    │                                     │
-│                     │ TTS timestamps                                      │
-│                     ▼          │    │                                      │
-│          ┌──────────────┐     │    │                                      │
-│          │ 2. SHOT      │◀────┘    │                                      │
-│          │    PLANNER   │          │                                      │
-│          └──────┬───────┘          │                                      │
-│                 │ shot plan         │                                      │
-│                 ▼                   │                                      │
-│          ┌──────────────┐          │                                      │
-│          │ 3. ASSET     │          │                                      │
-│          │    SCOUT     │          │                                      │
-│          └──────┬───────┘          │                                      │
-│                 │ assets + prompts  │                                      │
-│                 ▼                   ▼                                      │
-│          ┌──────────────────────────────┐   ┌──────────────────────┐     │
-│          │ 4. PRODUCTION WORKER         │   │ 4b. MOTION GRAPHICS  │     │
-│          │ (GPU render + verify + regen)│   │ (CPU parallel on VM) │     │
-│          └──────────────┬───────────────┘   └──────────┬───────────┘     │
-│                         │                               │                 │
-│                         ▼                               ▼                 │
-│     ┌────────────────────────────────────────────────────────┐           │
-│     │ 5. AUTO-ASSEMBLY (Pacing + Transitions + Editor V2)    │           │
-│     └────────────────────────────────────────────────────────┘           │
-└──────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         FINAL REVIEW (Human)                             │
-│  ┌─────────────────────────────┐    ┌──────────────────┐                │
-│  │ Video Editor V2             │───▶│ Render (Remotion  │               │
-│  │ ✅ Review + Manual Tweaks   │    │ Lambda) / Export   │               │
-│  └─────────────────────────────┘    └──────────────────┘                │
-└──────────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph OPEN["📋 OPEN-LOOP — Human Creative Control"]
+        direction LR
+        OL1["1. Outline +<br/>Research<br/>✅ Human Review"]
+        OL2["2. Script<br/>Writing<br/>✅ Human Review"]
+        OL3["3. Reference Assets<br/>+ GCM Seed<br/>✅ Human Review"]
+        OL1 --> OL2 --> OL3
+    end
+
+    OL3 -- "User clicks Start<br/>→ Wizard Step 3" --> ORCH
+
+    subgraph CLOSED["🔁 CLOSED-LOOP — Hierarchical Agent System"]
+        direction TB
+
+        ORCH["🎬 ORCHESTRATOR<br/>orchestrator queue<br/>━━━━━━━━━━━━━━<br/>• State management<br/>• Quality gating<br/>• Phase progression<br/>• Dynamic prompt gen"]
+
+        subgraph STEP0["Step 0: Initialization"]
+            PROMPTS["Generate Dynamic<br/>Worker Prompts<br/>(Gemini 3 Flash)"]
+            GCM["Load GCM<br/>Entities"]
+            PERSIST_PROMPTS["Save to<br/>video_projects.worker_prompts"]
+        end
+
+        subgraph PHASE1["Phase I: TTS Foundation"]
+            TTS["🎙️ TTS Agent<br/>tts queue (no GPU)<br/>━━━━━━━━━━━━━━<br/>InWorld API<br/>→ audio + word timestamps"]
+            TTS_STORE["💾 R2: audio file<br/>💾 metadata: timestamps"]
+        end
+
+        subgraph PHASE2["Phase II: Shot Planning"]
+            SHOT_PLAN["📋 Shot Planner<br/>shot-planner queue<br/>━━━━━━━━━━━━━━<br/>• Temporal mapping via TTS<br/>• Media type assignment<br/>• Content type tagging<br/>• MG asset declaration<br/>• Entity tagging"]
+            SHOT_STORE["💾 metadata.shot_plan<br/>{shots[], content_types}"]
+        end
+
+        subgraph PHASE3["Phase III: Asset Retrieval"]
+            ASSET["🔍 Asset Scout<br/>asset-scout queue<br/>━━━━━━━━━━━━━━<br/>• Serper image scraping<br/>• AI prompt generation<br/>• SFX search Freesound"]
+            ASSET_STORE["💾 metadata: prompts,<br/>scraped_stock_images,<br/>sfx_manifest"]
+        end
+
+        subgraph PHASE4["Phase IV: Production"]
+            direction TB
+
+            subgraph GPU["🖥️ GPU Pipeline (Sequential VRAM)"]
+                direction TB
+
+                subgraph IMG_PIPE["Image Pipeline"]
+                    IMG_GEN["🖼️ Image Gen<br/>image-gen queue<br/>Z-Image Turbo<br/>(VRAM: image_generation)"]
+                    IMG_VERIFY["🔍 Verifier<br/>Gemini 3 Flash<br/>━━━━━━━━━━<br/>2 retries + backoff<br/>5 dimensions scored"]
+                    IMG_RESULT{"PASS?"}
+                    IMG_FAIL_TYPE{"Failure<br/>type?"}
+                    IMG_RETRY["Re-gen<br/>(fundamental)<br/>or Re-edit<br/>(recoverable)"]
+                    IMG_SALVAGE["Best-Fit<br/>Salvage<br/>(3 fails)"]
+                    IMG_SAVE["💾 R2 + metadata:<br/>generated_images"]
+
+                    IMG_GEN --> IMG_VERIFY --> IMG_RESULT
+                    IMG_RESULT -- "YES" --> IMG_SAVE
+                    IMG_RESULT -- "NO" --> IMG_FAIL_TYPE
+                    IMG_FAIL_TYPE -- "recoverable" --> IMG_RETRY
+                    IMG_FAIL_TYPE -- "fundamental" --> IMG_RETRY
+                    IMG_FAIL_TYPE -- "3x failed" --> IMG_SALVAGE
+                    IMG_RETRY --> IMG_VERIFY
+                    IMG_SALVAGE --> IMG_SAVE
+                end
+
+                subgraph VID_PIPE["Video Pipeline"]
+                    VID_GEN["🎥 Video Gen<br/>video-gen queue<br/>LTX-2 19B (batch)<br/>(VRAM: video_generation)"]
+                    VID_VERIFY["🔍 Verifier<br/>per-shot verify"]
+                    VID_RESULT{"PASS?"}
+                    VID_FUND{"fundamental?"}
+                    VID_RETRY["1 retry<br/>(GPU re-gen)"]
+                    VID_FLAG["Flag shot<br/>+ use anyway"]
+                    VID_SAVE["💾 R2 + metadata:<br/>generated_videos"]
+
+                    VID_GEN --> VID_VERIFY --> VID_RESULT
+                    VID_RESULT -- "YES" --> VID_SAVE
+                    VID_RESULT -- "NO" --> VID_FUND
+                    VID_FUND -- "YES + not retried" --> VID_RETRY --> VID_VERIFY
+                    VID_FUND -- "NO or retried" --> VID_FLAG --> VID_SAVE
+                end
+
+                IMG_PIPE --> VID_PIPE
+            end
+
+            subgraph MG_CPU["🎨 MG Pipeline (CPU, parallel with GPU)"]
+                direction TB
+                MG_PASS1["MG Pass 1<br/>motion-graphics queue<br/>━━━━━━━━━━━━━━<br/>Gemini → Remotion code<br/>→ Chromium render<br/>→ Gemini verify<br/>→ iterate until verified<br/>(placeholder:// URLs)"]
+                MG_PERSIST1["💾 metadata:<br/>generated_motion_graphics<br/>(with placeholders)"]
+                MG_PASS1 --> MG_PERSIST1
+            end
+        end
+
+        subgraph SWAP["🔗 MG Pass 2: Asset Swap"]
+            MG_SWAP["Replace placeholder://URLs<br/>with real R2 URLs<br/>━━━━━━━━━━━━━━<br/>• Match by nearest segment_index<br/>• Include scraped stock images<br/>• Include generated videos/images<br/>• Syntax validation only"]
+            MG_PERSIST2["💾 metadata:<br/>generated_motion_graphics<br/>(with real URLs)"]
+            MG_SWAP --> MG_PERSIST2
+        end
+
+        subgraph PHASE5["Phase V: Auto-Assembly"]
+            EDIT["✂️ Edit Assembly<br/>edit-assembly queue<br/>━━━━━━━━━━━━━━<br/>• Chunked LLM generation<br/>• Content-type aware pacing<br/>• Emotional pacing zones<br/>• Ken Burns variation<br/>• SFX track placement<br/>• Overlay sync by shotIndex"]
+            MERGE["Merge EDL Chunks<br/>━━━━━━━━━━━━━━<br/>• Rebuild main-video timing<br/>• Sync overlays by shotIndex<br/>• Batch context continuity<br/>• Dedup transitions"]
+            FALLBACK["Fallback EDL<br/>━━━━━━━━━━━━━━<br/>• Content-aware transitions<br/>• Varied Ken Burns (4 patterns)<br/>• SFX track included"]
+            EDL_SAVE["💾 metadata.edl<br/>+ Video Editor V2 state"]
+
+            EDIT --> MERGE --> EDL_SAVE
+            EDIT -. "LLM JSON error" .-> FALLBACK --> EDL_SAVE
+        end
+
+        %% Main flow connections
+        ORCH --> STEP0
+        STEP0 --> PHASE1
+        PHASE1 --> PHASE2
+        PHASE2 --> PHASE3
+        PHASE3 --> PHASE4
+        GPU --> |"await Promise.all"| SWAP
+        MG_CPU --> |"await Promise.all"| SWAP
+        SWAP --> PHASE5
+
+        %% Data flow connections
+        TTS --> TTS_STORE
+        SHOT_PLAN --> SHOT_STORE
+        ASSET --> ASSET_STORE
+
+        %% Cross-phase data flow
+        TTS_STORE -. "word timestamps" .-> SHOT_PLAN
+        SHOT_STORE -. "shot plan + content types" .-> ASSET
+        ASSET_STORE -. "prompts + stock URLs" .-> IMG_GEN
+        ASSET_STORE -. "prompts" .-> VID_GEN
+        SHOT_STORE -. "MG shot specs" .-> MG_PASS1
+        IMG_SAVE -. "real URLs" .-> MG_SWAP
+        VID_SAVE -. "real URLs" .-> MG_SWAP
+        ASSET_STORE -. "stock URLs" .-> MG_SWAP
+        SHOT_STORE -. "content types<br/>+ section breaks" .-> EDIT
+    end
+
+    EDL_SAVE --> EDITOR
+
+    subgraph FINAL["👤 FINAL REVIEW — Human"]
+        EDITOR["Video Editor V2<br/>✅ Manual Tweaks"]
+        RENDER["Remotion Lambda<br/>Final Export"]
+        EDITOR --> RENDER
+    end
+
+    %% Styling
+    classDef orchestrator fill:#4338ca,stroke:#312e81,color:#fff
+    classDef gpu fill:#dc2626,stroke:#991b1b,color:#fff
+    classDef cpu fill:#059669,stroke:#065f46,color:#fff
+    classDef verify fill:#d97706,stroke:#92400e,color:#fff
+    classDef store fill:#6b7280,stroke:#374151,color:#fff
+    classDef human fill:#2563eb,stroke:#1e40af,color:#fff
+
+    class ORCH orchestrator
+    class IMG_GEN,VID_GEN gpu
+    class MG_PASS1,MG_SWAP cpu
+    class IMG_VERIFY,VID_VERIFY verify
+    class TTS_STORE,SHOT_STORE,ASSET_STORE,IMG_SAVE,VID_SAVE,MG_PERSIST1,MG_PERSIST2,EDL_SAVE,PERSIST_PROMPTS store
+    class OL1,OL2,OL3,EDITOR,RENDER human
 ```
 
 ### 1.3 Tech Stack
@@ -90,7 +186,7 @@ CoAgent's architecture naturally requires several distinct roles: planning, synt
 | Verifier Agent     | GPT-4o             | **Gemini 3 Flash**                             |
 | GCM Visual Encoder | Unspecified        | **CLIP ViT-L/14** (stock image classification) |
 | Music              | —                  | ACE-Step 1.5                                   |
-| SFX                | —                  | **Pixabay Audio API** (stock SFX search)       |
+| SFX                | —                  | **Freesound API** (stock SFX search)           |
 | Motion Graphics    | —                  | **Remotion** (on per-user VM CPU)              |
 | Video Editor       | —                  | **Video Editor V2** (programmatic state API)   |
 | Final Render       | —                  | **Remotion Lambda**                            |
@@ -137,7 +233,7 @@ CoAgent's architecture naturally requires several distinct roles: planning, synt
 **Responsibilities:**
 
 - **Image Scraping (Serper):** Uses the existing Serper image search pipeline (`lib/serper/`) to find reference/stock images. Queries with semantic keywords extracted from shot descriptions. **Images only** — no stock video or yt-dlp.
-- **SFX Search (Pixabay Audio API):** Searches Pixabay Audio API for CC0 sound effects matching shot descriptions. Ranks results by relevance, downloads best match, maps to timeline positions based on TTS timestamps.
+- **SFX Search (Freesound API):** Searches Freesound API for CC0 sound effects matching shot descriptions. Ranks results by relevance, downloads best match, maps to timeline positions based on TTS timestamps.
 - **Visual Prompting:** Writes detailed image/video generation prompts enriched with GCM entity descriptions and style guide constraints from the Creative Manifest
 - **GCM Integration:** Retrieves canonical reference images from the GCM and includes them as conditioning context for prompts
 - **Metadata Validation:** Checks scraped image resolution and aspect ratio against project requirements. Rejects mismatches automatically.
@@ -161,7 +257,7 @@ For each shot in approved plan:
 ```
 For each shot needing sound effects:
   1. Extract SFX keywords from shot description + TTS content
-  2. Query Pixabay Audio API with semantic search terms
+  2. Query Freesound API with semantic search terms
   3. Filter by license (CC0 preferred), duration, quality
   4. Rank by relevance, download best match to R2
   5. Map SFX clip to precise timeline position based on TTS timestamps
@@ -295,20 +391,20 @@ GPU VM (self-contained loop, all in-memory):
 
 ### 2.10 SFX Agent
 
-**Role:** Stock sound effect search and curation via Pixabay Audio API.
+**Role:** Stock sound effect search and curation via Freesound API.
 
 **Responsibilities:**
 
 - Identifies moments needing sound effects from the shot plan and TTS content
 - Crafts semantic search queries from shot descriptions and script context
-- Searches Pixabay Audio API for matching sound effects (filter by CC0 license, duration, quality)
+- Searches Freesound API for matching sound effects (filter by CC0 license, duration, quality)
 - Ranks results by relevance, downloads best match to R2
 - Maps SFX clips to precise timeline positions based on TTS timestamps
 
 > [!NOTE]
 > SFX uses stock audio search rather than AI generation. This provides higher audio quality (44.1kHz/48kHz vs 16kHz), commercially-safe CC0 licensing, and no GPU requirement. SFX search runs during Phase III (Asset Retrieval) alongside the Asset Scout.
 
-**BullMQ Implementation:** Worker on the `sfx` queue. No GPU needed (Pixabay API search).
+**BullMQ Implementation:** Worker on the `sfx` queue. No GPU needed (Freesound API search).
 
 ---
 
@@ -331,16 +427,38 @@ User System Prompt (stored in profile, editable)
 Orchestrator receives: User Prompt + Script + Reference Assets + Creative Manifest
   │
   ├──▶ Generates Shot Planner prompt
-  ├──▶ Generates Asset Scout prompt (Serper image + Pixabay SFX keywords)
+  ├──▶ Generates Asset Scout prompt (Serper image + Freesound SFX keywords)
   ├──▶ Generates Image Gen Agent prompt (Z-Image style keywords)
   ├──▶ Generates Image Edit Agent prompt (Qwen-Edit instructions)
   ├──▶ Generates Video Gen Agent prompt (LTX-2 motion descriptors)
   ├──▶ Generates Motion Graphics Agent prompt (Remotion style rules)
   ├──▶ Generates Music Agent prompt (ACE-Step genre/tempo)
-  └──▶ Generates SFX Agent prompt (Pixabay search keywords)
+  └──▶ Generates SFX Agent prompt (Freesound search keywords)
 ```
 
-### 3.3 Storage
+### 3.3 Agent System Prompt Reference
+
+All dynamically generated prompts are built by [`prompt-generator.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/prompt-generator.ts). Two agents (Verifier, Edit Assembly) have hardcoded prompts.
+
+| Agent               | Prompt Source                                                                                                                                                 | Key Injections from Manifest / GCM                                                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Shot Planner**    | `buildShotPlannerPrompt()`                                                                                                                                    | `visual_style`, `aspect_ratio`, `lighting_mood`, media weighting %, pacing rules (hook duration, max static images, min video/min), full GCM entity list with IDs + descriptions                                                                                    |
+| Agent               | Prompt Source                                                                                                                                                 | Key Injections from Manifest / GCM                                                                                                                                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------                 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Shot Planner**    | `buildShotPlannerPrompt()`                                                                                                                                    | `visual_style`, `aspect_ratio`, `lighting_mood`, media weighting %, pacing rules (hook duration, max static images, min video/min), full GCM entity list with IDs + descriptions                                                                                    |
+| **Asset Scout**     | `buildAssetScoutPrompt()`                                                                                                                                     | `visual_style`, `color_palette`, `lighting_mood`, GCM entities with `reference_url` and `text_description`                                                                                                                                                          |
+| **Image Gen**       | `buildImageGenPrompt()`                                                                                                                                       | `visual_style`, `aspect_ratio`, quality anchors (default: `photorealistic, cinematic, 4K, film grain`), constraints (`no text, no watermark, no logos`)                                                                                                             |
+| **Video Gen**       | `buildVideoGenPrompt()`                                                                                                                                       | `visual_style`, `aspect_ratio`, synthesis mode rules (T2V / FF2V), camera movement instructions                                                                                                                                                                     |
+| **Motion Graphics** | `buildMotionGraphicsPrompt()`                                                                                                                                 | `visual_style`, MG theme (dark/light/colorful/minimal), MG color palette, animation style (smooth/bouncy/snappy/gentle)                                                                                                                                             |
+| **Music**           | `buildMusicPrompt()`                                                                                                                                          | `visual_style` (for mood matching), `lighting_mood`, segmentation rules (90-120s for long videos), ducking                                                                                                                                                          |
+| **SFX**             | `buildSfxPrompt()`                                                                                                                                            | `visual_style` (for mood matching), CC0 license filter, timeline positioning rules                                                                                                                                                                                  |
+| **Verifier**        | Hardcoded in [`verifier.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/queues/workers/verifier.ts) (L50-120)                                    | N/A — uses 5-dimension scoring (semantic alignment, entity consistency, temporal continuity, visual quality, style consistency). Images: strict (generic scenes = fundamental FAIL). Videos: lenient (subtle artifacts = PASS). 2 retries with exponential backoff. |
+| **Edit Assembly**   | Hardcoded in [`edit-assembly-prompts.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/edit-assembly/edit-assembly-prompts.ts) (L106-185) | N/A — uses documentary style defaults (4-8s cuts), emotional pacing zones per `[content_type]` tag, Ken Burns variation (4 patterns), color grading guidance, SFX track placement, hybrid shot rules. Receives 150-char narration preview per shot.                 |
+
+> [!NOTE]
+> The Verifier and Edit Assembly agents are **not** dynamically generated — their prompts are hardcoded since they enforce structural quality rules that should remain consistent regardless of user style. All other agents receive personalized prompts blending the user's creative direction with the Creative Manifest.
+
+### 3.4 Storage
 
 | Data                         | Location                                   | Editable By                                |
 | ---------------------------- | ------------------------------------------ | ------------------------------------------ |
@@ -348,7 +466,7 @@ Orchestrator receives: User Prompt + Script + Reference Assets + Creative Manife
 | **Per-Video Worker Prompts** | `video_projects.worker_prompts` (JSONB)    | Orchestrator (auto-generated)              |
 | **Creative Manifest**        | `video_projects.creative_manifest` (JSONB) | User (via project settings) + Orchestrator |
 
-### 3.4 Why This Works
+### 3.5 Why This Works
 
 - **Personalization at scale:** Every user gets videos that match their unique style without manual prompt engineering per shot
 - **Consistency:** All workers share a unified vision derived from the same user prompt, so styles don't clash
@@ -733,7 +851,7 @@ PHASE E: Motion Graphics Pass 2 + Assembly (CPU only, no GPU)
 | `motion-graphics` | Motion Graphics Agent | 1           | Remotion compositions + screenshot previews (VM CPU) |
 | `tts`             | TTS Agent             | 1           | Text-to-speech narration                             |
 | `music`           | Music Agent           | 1           | ACE-Step background music                            |
-| `sfx`             | SFX Agent             | 1           | Pixabay Audio API SFX search                         |
+| `sfx`             | SFX Agent             | 1           | Freesound API SFX search                             |
 | `verifier`        | VLM Verifier          | 3           | Gemini 3 Flash verification calls                    |
 
 ### 10.2 Job Flow
@@ -746,7 +864,7 @@ orchestrator:start-closed-loop
   ├── shot-planner:create (uses TTS timestamps, declares MG asset needs)
   ├── orchestrator:review-shot-plan
   │   └── [REVISE loop if needed]
-  ├── asset-scout:find-assets (Serper image search + Pixabay SFX search + AI prompt writing)
+  ├── asset-scout:find-assets (Serper image search + Freesound SFX search + AI prompt writing)
   ├── orchestrator:review-assets
   │   └── [REVISE loop if needed]
   ├── music:generate (audio_creation VRAM)
@@ -775,7 +893,7 @@ orchestrator:start-closed-loop
 | Mode switch timeout        | Retry once, then fail with notification                |
 | Gemini rate limit          | Exponential backoff (1s → 2s → 4s → 8s)                |
 | Sub-agent timeout          | Orchestrator retries once, then skips with placeholder |
-| Pixabay API failure        | Retry once, then skip SFX for that shot                |
+| Freesound API failure      | Retry once, then skip SFX for that shot                |
 
 ---
 
@@ -836,7 +954,7 @@ The Creative Manifest is the Orchestrator's initialization document, set from us
 | GCM Init + Dynamic Prompt Gen                | ~15s           |                                   |
 | TTS Generation                               | ~30s           | External API                      |
 | Shot Planning (with TTS alignment)           | ~15s           |                                   |
-| Asset Retrieval + SFX Search                 | ~30s           | Serper + Pixabay API (parallel)   |
+| Asset Retrieval + SFX Search                 | ~30s           | Serper + Freesound API (parallel) |
 | Music generation (ACE-Step)                  | ~2 min         | audio_creation VRAM               |
 | Image pipeline (gen + edit + verify + regen) | ~2 min         | image_gen → image_edit VRAM       |
 | Video pipeline (sequential + verify + regen) | ~12 min        | video_generation VRAM             |
@@ -855,7 +973,7 @@ The Creative Manifest is the Orchestrator's initialization document, set from us
 | Specialized agent per model                           | Each GPU model requires distinct prompting syntax. Separate agents allow model-specific optimization without cross-contamination.                    |
 | Motion Graphics on VM CPU, parallel with GPU          | 48 vCPUs sit idle during GPU work. Two-pass placeholder→swap pattern makes composition layout verification free. No late VRAM switches.              |
 | Composite MG assets declared in Shot Planning         | Sub-images for composite motion graphics are generated during Phase C image batch, eliminating late-stage VRAM switching.                            |
-| Stock SFX search instead of AI generation             | Pixabay Audio API provides 44.1kHz+ CC0 audio, commercially safe, no GPU needed. Better quality than 16kHz AI-generated SFX.                         |
+| Stock SFX search instead of AI generation             | Freesound API provides 44.1kHz+ CC0 audio, commercially safe, no GPU needed. Better quality than 16kHz AI-generated SFX.                             |
 | Human reviews 3 steps, not 8                          | Outline, script, and reference assets are the only creative decisions. Everything else is quality-checkable by AI.                                   |
 | GCM seeded by human, not auto-generated               | User controls the "ground truth" for character/setting appearance. Prevents the system from choosing the wrong look.                                 |
 | CLIP for stock classification, not entity consistency | CLIP embeddings don't enforce subject consistency in generation. Real consistency comes from reference images + text descriptions + Gemini Verifier. |
@@ -1019,15 +1137,17 @@ The Creative Manifest is the Orchestrator's initialization document, set from us
 **Worker:** `edit-assembly.ts`
 **Prompts:** `edit-assembly-prompts.ts`
 
-| Touchpoint                     | Current State                                               | Class            | Maps To   |
-| ------------------------------ | ----------------------------------------------------------- | ---------------- | --------- |
-| **Editing style**              | Hardcoded "documentary-style + YouTube best practices"      | Both             | Profile   |
-| **Pacing rules**               | Hardcoded: 6-10s default cuts, 4-6s hook pacing             | Structured       | Profile   |
-| Transition types allowed       | Hardcoded: crossfade, fadeToBlack, fade, wipeLeft, dissolve | Structured       | Profile   |
-| Text overlay styles            | Hardcoded: chapterTitle, lowerThird, callout, subtitle      | Structured       | Profile   |
-| Effects (Ken Burns, zoom, pan) | Hardcoded allowed set                                       | Structured       | Profile   |
-| FPS                            | Hardcoded to 30                                             | Structured       | Per-Video |
-| LLM model                      | Hardcoded to `google/gemini-3-flash-preview`                | Not Customizable | —         |
+| Touchpoint                     | Current State                                                                | Class            | Maps To   |
+| ------------------------------ | ---------------------------------------------------------------------------- | ---------------- | --------- |
+| **Editing style**              | Hardcoded "documentary-style + YouTube best practices"                       | Both             | Profile   |
+| **Pacing rules**               | 4-8s default cuts, 3-5s hook pacing, emotional pacing zones per content_type | Structured       | Profile   |
+| Transition types allowed       | Hardcoded: crossfade, fadeToBlack, fade, wipeLeft, dissolve                  | Structured       | Profile   |
+| Text overlay styles            | Hardcoded: chapterTitle, lowerThird, callout, subtitle                       | Structured       | Profile   |
+| Effects (Ken Burns, zoom, pan) | 4-pattern rotation (zoom-in/out + pan-left/right, 1.08 scale)                | Structured       | Profile   |
+| Content-type pacing            | LLM receives `[list-item]`, `[emotional-beat]`, etc. tags per shot           | Structured       | Per-Video |
+| SFX track                      | `sfx` audio track always created, LLM places descriptive SFX clips           | Structured       | Per-Video |
+| FPS                            | Hardcoded to 30                                                              | Structured       | Per-Video |
+| LLM model                      | Hardcoded to `google/gemini-3-flash-preview`                                 | Not Customizable | —         |
 
 ### 14.8 Motion Graphics
 
@@ -1045,15 +1165,15 @@ The Creative Manifest is the Orchestrator's initialization document, set from us
 
 #### High-Impact (7 items — blocking customization)
 
-| #   | Gap                             | File                         | Current Value                               |
-| --- | ------------------------------- | ---------------------------- | ------------------------------------------- |
-| 1   | **`visualStyle` hardcoded**     | `av-script.ts` line 511      | `'cinematic, documentary'`                  |
-| 2   | Writer persona hardcoded        | `writing/prompts.ts`         | "seasoned YouTube documentary scriptwriter" |
-| 3   | Audience demographics hardcoded | `writing/prompts.ts`         | "educated adults 25-45"                     |
-| 4   | Spine generator identity        | `writing/prompts.ts`         | "master storyteller and YouTube architect"  |
-| 5   | Banned words list hardcoded     | `writing/prompts.ts`         | 33 words (delve, tapestry, etc.)            |
-| 6   | EDL pacing defaults             | `edit-assembly-prompts.ts`   | "6-10s cuts, 4-6s hooks"                    |
-| 7   | MG aesthetic defaults           | `motion-graphics/prompts.ts` | Dark theme, specific hex colors             |
+| #   | Gap                             | File                         | Current Value                                                                                                 |
+| --- | ------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 1   | **`visualStyle` hardcoded**     | `av-script.ts` line 511      | `'cinematic, documentary'`                                                                                    |
+| 2   | Writer persona hardcoded        | `writing/prompts.ts`         | "seasoned YouTube documentary scriptwriter"                                                                   |
+| 3   | Audience demographics hardcoded | `writing/prompts.ts`         | "educated adults 25-45"                                                                                       |
+| 4   | Spine generator identity        | `writing/prompts.ts`         | "master storyteller and YouTube architect"                                                                    |
+| 5   | Banned words list hardcoded     | `writing/prompts.ts`         | 33 words (delve, tapestry, etc.)                                                                              |
+| 6   | ~~EDL pacing defaults~~         | `edit-assembly-prompts.ts`   | ~~"6-10s cuts, 4-6s hooks"~~ → **Resolved**: 4-8s cuts, 3-5s hooks, emotional pacing zones, content-type tags |
+| 7   | MG aesthetic defaults           | `motion-graphics/prompts.ts` | Dark theme, specific hex colors                                                                               |
 
 > **`visualStyle`** is the single most impactful gap — it flows into every image and video prompt generated by the 5 specialized agents. Making this user-configurable unlocks the entire visual style system described in §3 (Dynamic Prompt Generation).
 

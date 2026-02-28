@@ -189,7 +189,7 @@ function buildSfxPrompt(
   userPrompt: string,
   manifest: CreativeManifest
 ): string {
-  return `You are an expert sound effects curator using the Pixabay Audio API.
+  return `You are an expert sound effects curator using the Freesound API.
 
 USER CREATIVE DIRECTION:
 ${userPrompt || 'No specific direction provided.'}

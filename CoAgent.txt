@@ -1,0 +1,598 @@
+CoAgent: Collaborative Planning and Consistency Agent for Coherent Video Generation
+Qinglin Zeng1, Kaitong Cai1, Ruiqi Chen1, Qinhan Lv1, Keze Wang1, 1Sun Yat-sen University
+Corresponding author: kezewang@gmail.com
+
+arXiv:2512.22536v1 [cs.CV] 27 Dec 2025
+
+Abstract
+Maintaining narrative coherence and visual consistency remains a central challenge in open-domain video generation. Existing text-to-video models typically treat each shot independently, ignoring inter-shot dependencies and leading to identity drift, scene discontinuity, and unstable pacing. We present CoAgent (Collaborative Planning and Consistency Agent), a collaborative, closed-loop framework that formulates video synthesis as a plan­synthesize­verify­edit process. Given a user-defined prompt, style reference, and pacing template, a Storyboard Planner decomposes abstract concepts into structured shot plans with explicit entities, spatial relations, and temporal cues. A Global Context Manager (GCM) maintains entity-level memory to ensure consistent identities and appearances across shots. Each shot is rendered by a Synthesis Module under the guidance of a Visual Consistency Controller, while a Verifier Agent evaluates intermediate frames using a vision­language model and triggers selective regeneration when inconsistencies are detected. Finally, a pacing-aware editor refines rhythm and transitions according to the target tempo. This agentic and modular design bridges creative planning with automated quality control, achieving coherent, stylealigned, and rhythm-consistent video generation.
+1. Introduction
+Open-domain video generation requires not only visual realism within individual clips but also narrative coherence and cross-shot consistency throughout long sequences. While recent text-to-video (T2V) diffusion models [19, 21, 36, 39, 42] excel at generating short, semantically aligned clips, they remain fragile when tasked with producing extended multi-shot stories involving recurring characters, evolving scenes, and rhythmically structured pacing. The root of this limitation lies in how the generation process is formulated[4, 10, 30, 31].
+Most existing pipelines treat video generation as a
+
+GCM
+
+...
+Character Portraits
+
+Planner User
+
+Orchestrator
+Failed Reason
+PASS
+FAIL Verifier
+
+Frames ImageGen
+VideoGen Passed Shots Montage
+
+Figure 1. The overall architecture of our framework.
+
+single-pass, open-loop translation from script to video.
+
+Given a script decomposed into N shots, they inde-
+
+pendently generate each shot i using a T2V model F
+
+with textual prompt pi, which can be summarized as
+
+V=
+
+N i=1
+
+F (pi),
+
+where
+
+denotes concatenation. This
+
+paradigm is inherently stateless: the generation of sj is con-
+
+ditionally independent of si for i = j. Without any per-
+
+sistent memory or feedback, such models cannot recall an
+
+entity's exact visual identity from one shot and reproduce it
+
+consistently in subsequent scenes. Consequently, long-form
+
+videos suffer from identity drift, scene discontinuity, and
+
+unstable visual style--issues that break narrative immersion
+
+and limit creative control[2, 3, 19, 32, 40, 41].
+
+We argue that coherent video generation should not be a static mapping F but a dynamic, feedback-driven reasoning process. To this end, we introduce CoAgent--a Collaborative Planning and Consistency Agent that reformulates video synthesis as a closed-loop, multi-agent process of planning, generation, verification, and refinement. Unlike prior prompt-based or globally conditioned approaches, CoAgent explicitly maintains state across shots through struc-
+
+tured memory and inter-agent collaboration, enabling both continuity and controllability[4, 37, 38, 44].
+At the core of CoAgent lies a Storyboard Planner (Aplan) that decomposes a high-level user concept Pidea into a structured shot plan S = {S1, . . . , SN } describing entities, spatial­temporal relations, and pacing intent. To preserve identities and context across shots, we introduce a Global Context Manager (GCM), an explicit crossshot memory MGCM that registers visual representations of key entities ek such as characters or props. Conditioned on this memory, the Synthesis Module (Asynth) renders each shot as si = Asynth(Si, MGCM , si-1), retrieving entity appearance from MGCM and optionally referencing the previous shot si-1--for example, under ff2v or flf2v modes--to maintain temporal smoothness under the guidance of a Visual Consistency Controller. This conditioning transforms coherence from a fragile prompt heuristic into an explicit, state-aware mechanism.
+To close the loop, a Verifier Agent (Averify) employs a vision­language model to assess each synthesized shot and produces a verification signal Vi = Averify(si, Si, MGCM ),quantifying both shot fidelity and cross-shot consistency. If Vi <  , indicating inconsistency, CoAgent triggers selective regeneration--refining Si or adjusting the synthesis mode within Asynth--thereby instituting a self-correcting feedback loop. A pacing-aware editor subsequently reconciles rhythm and transitions, ensuring that the final video aligns with the intended narrative tempo and mood.
+In summary, CoAgent transforms video generation from a stateless, open-loop pipeline into a stateful, agentic framework. By coupling explicit global memory with verification-driven feedback, it shifts the responsibility for coherence from brittle prompt engineering to structured, collaborative reasoning. Our main contributions are summarized as follows: 1. We propose CoAgent, a collaborative closed-loop
+paradigm that unifies planning, synthesis, and verification for multi-shot video generation. 2. We introduce an explicit entity-level memory module MGCM that preserves identity and appearance consistency across shots through structured retrieval and conditioning. 3. We develop a verifier-guided adaptive synthesis strategy that achieves a controllable trade-off between generation efficiency and visual fidelity via selective regeneration.
+2. Related Work
+Our work, CoAgent, addresses the challenge of long-form, coherent video generation by integrating narrative planning, stateful memory, and closed-loop verification. Our contributions are thus situated at the intersection of three primary research thrusts: (1) spatiotemporal consistency preserva-
+
+tion, (2) high-level narrative and compositional planning, and (3) agentic, feedback-driven generative systems.
+2.1. Passive Visual State Memory and Consistency
+A significant body of work focuses on mitigating the "visual failure" component of the narrative gap, such as identity drift and scene incoherence.
+Identity Preservation. Maintaining character identity is a critical sub-problem. A popular approach involves using tuning-free adapters [13, 20, 28, 34, 35] to inject identity features, extracted from reference images via encoders like CLIP or ArcFace, into the cross-attention layers of pretrained T2V models. Other methods propose architectural modifications or specialized training objectives. For example, ConsisID [29, 33] utilizes a frequency-aware heuristic in a DiT model to preserve facial information, while MotionCharacter [8, 27, 43] employs a composite loss, including an ID-consistency term, to maintain identity during complex motions.
+Explicit Memory Architectures. To address consistency over longer horizons, more advanced frameworks have introduced explicit memory mechanisms. These methods recognize that long-term coherence requires a persistent state. For instance, Corgi [25] introduces a "cached memory mechanism" that stores keyframes of previously generated scenes in a latent memory bank, conditioning new scene generation on this cache. Similarly, SPMem [23] augments a model's working memory with a geometry-grounded 3D point map to preserve static scene information.
+While these methods effectively enhance visual statefulness, their memory is often passive. They can recall what an entity looked like, but they lack high-level semantic planning to determine what the entity should do next according to a narrative.
+2.2. Blind Execution of Open-Loop Planning
+This second research thrust tackles the "semantic failure" component by introducing high-level intent into the generation process, typically using Large Language Models (LLMs) as planners. These frameworks often follow a "plan-then-generate" paradigm.
+VGoT [45], for example, employs an LLM to decompose a high-level prompt into a detailed, multi-shot storyline with cinematic specifications. This plan is then executed by a T2V model in a sequential, open-loop fashion, using "identity-aware cross-shot propagation" tokens to pass identity information. Similarly, Story2Board [4] uses an LLM "Director" to generate grounded panel-level prompts for storyboard synthesis, employing a "Latent Panel Anchoring" technique to enforce identity during a batch denoising process.
+The fundamental limitation of these approaches is their open-loop nature. The generation stage is a passive execu-
+
+tion of the pre-defined plan. If the synthesis module produces an error or deviates from the plan (e.g., incorrect object, failed action), the system has no feedback mechanism to detect this failure or dynamically re-plan. This can lead to the very error accumulation [5­7, 16] they were designed to prevent.
+2.3. Limited Closed-Loop Systems
+To overcome the brittleness of open-loop planning, an emerging paradigm reformulates synthesis as a dynamic, closed-loop, and collaborative process. This approach often involves multi-agent systems (MAS) and a verification mechanism.
+Iterative Refinement. The core concept of a verification-driven loop was notably demonstrated for static images by SLD [24]. SLD employs a "generate-assesscorrect" cycle where an LLM controller assesses a generated image for mismatches against the prompt and suggests latent-space corrections.
+Multi-Agent Video Synthesis. This concept has been extended to video. Kubrick [1, 9, 12] uses a multi-agent system (Director, Programmer, Reviewer) to automate 3D production. It implements a closed-loop process where the Reviewer provides feedback to the Programmer. However, it relies on a deterministic 3D rendering engine (e.g., Blender), bypassing the stochastic challenges of end-to-end diffusion models. Closer to our domain, GenMAC [11] proposes a multi-agent framework for compositional T2V generation with an iterative "redesign" loop, allowing for the correction of compositional errors. Hollywood Town [22] introduces a graph-based multi-agent framework with a "controlled cyclic execution strategy" that allows agents to reflect and refine outputs. Position of CoAgent. While these agentic frameworks pioneer the closed-loop approach, they often focus on compositional correctness (GenMAC) or graph-based execution (Hollywood Town) and typically lack a persistent, stateful memory dedicated to narrative entities.
+To date, these three research thrusts--(1) spatiotemporal memory, (2) high-level planning, and (3) closed-loop verification--have remained largely separate, leaving a critical gap. The key scientific challenge is not to simply combine them, but to solve the non-trivial integration problem: How does a planner write to a memory? How does a verifier read from that memory? And how does verification failure trigger a dynamic re-plan rather than a simple failure?
+Our work, CoAgent, is the first to be proposed to solve this synergistic challenge. Our novelty lies in the design of the interfaces that unify these three components: (1) Dynamic Planning: We transform the static "plan-then-
+generate" paradigm of VGoT [45] into a dynamic, stateaware process.
+
+(2) Active Memory: We introduce an active memory (our GCM), which, unlike the passive caches of Corgi [25], is explicitly queried by the Planner and updated by the Verifier.
+(3) Narrative-Aware Verification: We propose a narrativeaware verification loop. Instead of just assessing static images (like SLD [24]), our Verifier validates multi-shot narrative logic and cross-shot entity consistency against the GCM, enabling it to detect complex failures.
+To our knowledge, CoAgent is the first framework to integrate these three concepts into a single, stateful, and truly agentic system for coherent video generation.
+
+3. Method
+3.1. Overview of the Framework
+Following the motivation and problem formulation discussed in Section 1, we present the proposed CoAgent framework--our core contribution that formulates opendomain video generation as a closed-loop, multi-agent process integrating planning, generation, verification, and refinement. Unlike conventional open-loop pipelines, CoAgent establishes a stateful generation mechanism grounded in explicit memory and collaborative reasoning among agents. Figure 2 illustrates the overall architecture, while Algorithm 1 and Algorithm 2 detail the high-level workflow and the verifier-guided regeneration subroutine.
+Given a high-level concept Pidea and optional pacing or style templates, CoAgent generates a coherent video V = {s1, . . . , sN } through four interdependent modules: Storyboard Planner Aplan decomposes Pidea into structured shot plans S = {Si}Ni=1; Global Context Manager (GCM) maintains entity-level representations within a cross-shot memory MGCM ; Synthesis Module Asynth generates each shot si conditioned on (Si, MGCM , si-1); Verifier Agent Averify evaluates generated results and triggers regeneration when inconsistencies arise. These modules interact through a recurrent plan­synthesize­verify­edit loop. The closed-loop process, described in Algorithm 1, transforms traditional open-loop generation into a controllable, feedback-driven reasoning paradigm.
+3.2. Storyboard Planning
+The planner Aplan converts Pidea into a structured sequence of shot descriptors S = {Si}, where each shot is parameterized as:
+
+Si = (pi, Ei, Ri, stylei, durationi).
+
+(1)
+
+Here pi is the textual prompt, Ei = {ek} represents key entities, Ri defines spatial­temporal relations, and (stylei, durationi) specify local rhythm and tone. Global indexing ensures consistent entity references across shots.
+
+Inputs
+
+A day of a CS student
+
+Vlog Style
+
+Shots
+
+···
+Shot plans
+
+···   1 2
+
+  
+
+T2V FLF2V FF2V
+
+Closed-loop System
+Feedback
+
+··· ···
+
+Figure 2. The detailed architecture of our CoAgent workflow. The framework integrates four key modules: the Storyboard Planner (Aplan), the Global Context Manager (MGCM ), the Synthesis Module (Asynth), and the Verifier Agent (Averify).
+
+Algorithm 1 CoAgent Closed-Loop Video Generation
+
+Require: Concept Pidea, pacing template Tglobal
+
+1: S  Aplan(Pidea)
+
+ Storyboard planning
+
+2: Initialize MGCM  
+
+3: for i = 1 to N do
+
+4: Si  S[i]
+
+5: Select mode Fmode based on Vi-1 -   and entity
+
+overlap
+
+6: si  Asynth(Si, MGCM , si-1)
+
+7: [si, MGCM ]  VerifierLoop(Si, si, MGCM )
+
+8: end for
+
+9: V  PacingEditor({si}, Tglobal)
+
+10: return Final coherent video V
+
+This stage establishes a bijective mapping between highlevel semantics and structured visual primitives, enabling differentiable control for downstream synthesis.
+
+3.3. Global Context Manager (GCM)
+The GCM functions as a persistent cross-shot memory MGCM , storing canonical entity embeddings for retrieval and update:
+
+MGCM (ek) = (vk, ak, tk),
+
+(2)
+
+where vk encodes visual appearance, ak represents auxiliary attributes (pose, emotion, lighting), and tk records the last update step. When an entity reappears, vk is retrieved and fused via cross-attention into the synthesis pro-
+cess. This formulation converts inter-shot coherence mod-
+eling from pairwise comparison to single-pass retrieval, reducing complexity from O(N 2) to O(N ) and enabling scal-
+able memory-based consistency.
+
+3.4. Shot Synthesis Module
+Given a shot plan Si and global memory MGCM , the synthesis agent Asynth generates the visual sequence
+
+si = Asynth(Si, MGCM , si-1),
+
+(3)
+
+where si-1 provides temporal context under a Visual Consistency Controller (VCC). CoAgent adaptively selects one of three generation modes Fmode: T2V: si = Ft2v(Si, MGCM ), used for initial or isolated shots; FF2V: si = Fff2v(Si, MGCM , last(si-1)), anchoring the first frame of si to the last frame of si-1; FLF2V: si = Fflf2v(Si, MGCM , last(si-1), Igoal), using both starting and goal frames for bidirectional continuity. Mode selection is adaptively governed by Vi-1 -   and the entity overlap between Ei-1 and Ei, enabling progressive temporal anchoring. The VCC computes feature-space similarity between retrieved vk and generated frames to modulate diffusion guidance and maintain stylistic and motion consistency.
+3.5. Verifier and Feedback Loop
+After synthesis, the Verifier Agent Averify is implemented as a frozen VLM prompted to critique each shot. Given the generated shot si, its storyboard specification Si, and the global memory MGCM , the verifier produces structured feedback and a scalar quality score:
+
+(fbi, Vi) = Averify(si, Si, MGCM ),
+
+(4)
+
+where fbi describes the error type (e.g., semantic mismatch, missing entities, temporal discontinuity) and suggested corrections, and Vi  [0, 1] summarizes the overall visiosemantic quality.
+When Vi <  , CoAgent activates a verifier-guided regeneration routine (Algorithm 2). The textual feedback fbi
+
+Algorithm 2 Verifier-Guided Regeneration and Memory Update
+
+Require: Shot description Si, generated shot si, memory
+
+MGCM , threshold 
+
+1: (fbi, Vi)  Averify(si, Si, MGCM )
+
+2: while Vi <  do
+
+3: if fbi indicates semantic misalignment then
+
+4:
+
+Si  RefineSemantic(Si, fbi)
+
+5: else if fbi indicates appearance inconsistency then
+
+6:
+
+Switch synthesis mode (T2VFF2V or
+
+FF2VFLF2V)
+
+7: end if
+
+8:
+
+si  Asynth(Si, MGCM , si-1)
+
+9:
+
+(fbi, Vi)  Averify(si, Si, MGCM )
+
+10: end while
+
+11: Update MGCM with embeddings from si 12: return Verified si, updated MGCM
+
+is fed back to the synthesis pipeline to decide how to modify the storyboard or synthesis mode, while the scalar Vi serves as a stopping criterion: the loop continues until the verified quality of each shot exceeds the threshold.
+4. Experiments
+To validate the effectiveness of our CoAgent framework, we conduct a comprehensive set of experiments. Our evaluation is designed to answer three key questions: (1) Does our collaborative, closed-loop framework outperform stateof-the-art (SOTA) open-loop and agent-based methods in narrative coherence and visual consistency? (2) What is the specific contribution of each core component, namely the Storyboard Planner, the Global Context Manager (GCM), and the Verifier Agent? (3) How does our framework enhance a powerful foundation model, and how does it compare against other leading closed-source models?
+4.1. Experimental Setup
+Evaluation Benchmarks. We employ two state-of-theart benchmarks for automatic video evaluation, chosen for their comprehensive, multi-dimensional assessment and high correlation with human judgment. · VBench [44]: A comprehensive benchmark suite that de-
+composes video quality into multiple fine-grained dimensions. We report results on seven key metrics: Subject Consistency, Background Consistency, Temporal Flickering, Motion Smoothness, Aesthetic Quality, Imaging Quality, and Temporal Style. · VideoScore [10]: A metric trained on VideoFeedback, a large-scale dataset of human multi-aspect ratings. We use VideoScore-v1.1 to evaluate Visual Quality, Temporal Consistency, Dynamic Degree, Text-Video Alignment,
+
+and Factual Consistency. Baselines. We compare CoAgent against two categories of SOTA methods: 1. Agent-based and Prompt Optimization Methods: We
+compare against the baselines reported in VISTA [14], a SOTA multi-agent system for video generation. These include: DP (Direct Prompting), VSR [15] and VSR++ (Visual Self-Refine), Rewrite (LLM-based prompt rewriting), VPO [3] (prompt expansion), and VISTA itself. 2. Foundation Models: We compare against leading open-source and closed-source video generation models: CogVideoX [26], OpenSoraV2 [18], Wan2.1 [19], and Sora2 [17]. Implementation Details. Our CoAgent framework orchestrates several models. The Storyboard Planner (Aplan) is powered by Gemini2.5-Flash. The core Synthesis Module (Asynth) uses the pre-trained Wan2.1 model as its backbone. The Verifier Agent (Averify) and Global Context Manager (GCM) utilize GPT-4o, supplemented by Gemini2.5-Flash-Image for specific visual processing tasks. For evaluations involving the closed-source Sora2 model, videos were generated via its web interface, and the platform's dynamic watermark was removed prior to evaluation to ensure a fair comparison. All experiments were conducted using prompts sampled from the VBench dataset and other standard prompt lists. Further details of the experiments are provided in the Supplementary Material (Sec. A).
+4.2. Comparison with State-of-the-Art
+4.2.1. Comparison with Agent-based Frameworks
+We first evaluate CoAgent against VISTA and its associated baselines on the VBench benchmark. The results, presented in Table 1, demonstrate the superiority of our framework.
+CoAgent outperforms all competing methods across all seven evaluation dimensions. The most significant gains are in consistency metrics: we achieve a score of 94.70 in Subject Consistency and 96.50 in Background Consistency, surpassing the next-best method (VISTA) by 4.75 and 3.61 points, respectively. This highlights the substantial advantage of our Global Context Manager (GCM). Unlike VISTA, which relies on indirect prompt refinement to maintain coherence, our GCM maintains an explicit entity-level memory, enabling robust identity and appearance preservation across shots.
+Furthermore, CoAgent achieves the highest scores in Temporal Flickering (99.20) and Motion Smoothness (99.40). This validates the effectiveness of our Verifier Agent. By operating in a closed-loop, the verifier identifies and triggers the regeneration of frames with temporal artifacts, leading to a more stable and visually pleasing video output.
+
+Table 1. Quantitative comparison with agent-based SOTA methods on VBench. All scores are percentages (); higher is better. Our CoAgent framework significantly outperforms all prompt-optimization and agent-based baselines, especially in subject and background consistency, demonstrating the effectiveness of our GCM and Verifier agent.
+
+Metric
+Subject Consistency Background Consistency Temporal Flickering Motion Smoothness Aesthetic Quality Imaging Quality Temporal Style
+
+DP
+89.89 94.39 97.82 99.23 61.86 64.42 7.88
+
+VSR
+89.33 93.53 97.79 99.26 63.45 65.53 9.26
+
+VSR++
+87.96 93.53 97.88 99.12 60.68 63.06 9.25
+
+Rewrite
+89.09 93.79 97.59 99.17 62.52 62.58 8.57
+
+VPO
+86.74 92.66 97.76 99.15 61.17 64.01 8.03
+
+VISTA
+89.95 92.89 97.82 98.94 64.53 65.89 9.63
+
+CoAgent (Ours)
+94.70 96.50 99.20 99.40 64.60 66.50 9.70
+
+Table 2. Quantitative comparison with SOTA foundation models on VideoScore v1.1. All scores are (); higher is better. Our framework (CoAgent) significantly enhances its Wan2.1 backbone and outperforms all other models, including Sora2, on narrativecritical metrics.
+
+Metric
+Visual Quality Temporal Consistency Dynamic Degree Text-Video Alignment Factual Consistency
+
+CogVideoX
+2.614 2.652 2.643 2.310 2.610
+
+OpenSoraV2
+2.750 2.537 2.771 2.524 2.415
+
+wan2.1
+2.788 2.800 2.517 2.550 2.642
+
+Sora2
+2.734 2.484 2.984 2.469 2.172
+
+CoAgent (Ours)
+2.953 2.808 2.847 2.731 2.770
+
+4.2.2. Comparison with Foundation Models
+To assess our framework's ability to enhance a powerful, pre-trained generator, we use VideoScore [10] to compare our full system against its own backbone (Wan2.1) and other leading foundation models.
+As shown in Table 2, the CoAgent framework provides a massive boost to its Wan2.1 backbone. By integrating our agentic planning, memory, and verification, we improve Visual Quality from 2.788 to 2.953 (+5.9%) and TextVideo Alignment from 2.550 to 2.731 (+7.1%). This clearly demonstrates that our framework (labeled as CoAgent) is not just a simple wrapper but a powerful system that fundamentally enhances the generative capabilities of its underlying synthesizer.
+When compared to all models, CoAgent achieves the highest scores in Visual Quality, Temporal Consistency, Text-Video Alignment, and Factual Consistency. Notably, we surpass the strong, closed-source Sora2 model in these critical narrative-focused dimensions. While Sora2 exhibits a higher Dynamic Degree, our results confirm that CoAgent excels at its primary goal: generating high-fidelity, coherent, and semantically-aligned video stories.
+4.3. Ablation Study
+To precisely quantify the contribution of our key architectural components, we conduct a rigorous ablation study. We analyze three configurations, starting from a strong open-
+
+loop baseline and incrementally adding our modules. The results are presented in Table 3.
+· (A) Baseline: This model consists of the Storyboard Planner (Aplan) and the Synthesis Module (Asynth). It represents a powerful "plan-then-generate" open-loop system. As shown in Table 3, this baseline achieves a reasonable Text-Video Alignment score (1.695) but struggles with visual consistency, scoring 90.60 on Subject Consistency and 93.50 on Temporal Flickering.
+· (B) + GCM: We add the Global Context Manager (GCM) to the baseline, creating an open-loop system with explicit cross-shot memory. The impact is immediate and precisely targeted: Subject Consistency jumps by +3.9 points to 94.50, and Background Consistency improves to 96.40. This clearly isolates the GCM's role as a highly effective module for enforcing narrative entity consistency. We also observe marginal improvements in other metrics (e.g., Text-Video Alignment to 1.778), which we attribute to the more stable visual context provided by the GCM for the synthesizer.
+· (C) CoAgent (Full): We add the Verifier Agent (Averify) to complete our full closed-loop framework. This component yields a dramatic improvement in all remaining metrics, operating on the more consistent state provided by (B). The Verifier's feedback loop significantly boosts temporal quality, with Temporal Flickering rising from 94.70 to 99.20 (+4.5 points) and Motion Smoothness increasing from 95.10 to 99.40 (+4.3 points). Simultaneously, it enforces high-level semantic fidelity, causing Text-Video Alignment to skyrocket from 1.778 to 2.731 (a 53.6% relative increase).
+This ablation study provides clear evidence for our design. The GCM and the Verifier are not redundant; they are complementary modules that each solve a distinct and critical failure mode of open-loop video generation. The GCM solves cross-shot visual memory, while the Verifier solves temporal quality and semantic alignment via a closed-loop feedback mechanism. Further ablation studies, including component analysis and backbone generalization, are pro-
+
+vided in the Supplementary Material (Sec. B).
+4.4. Qualitative Analysis and Case Studies
+Quantitative metrics (Sec. 4.2 & 4.3) demonstrate that our framework is effective. In this section, we provide qualitative case studies to show how and why it works.We provide extensive additional qualitative results in the Supplementary Material (Sec. C), including more comparisons and failure cases.
+Case Study 1: GCM for Identity Preservation. To validate the GCM's role in maintaining long-range consistency, we use the complex narrative prompt: "A day of a Computer Science student, in vlog style." As shown in Figure 3, the open-loop baseline (which lacks the GCM) fails completely, generating four different individuals across four shots. This visual failure corresponds to its low quantitative score in Subject Consistency. In stark contrast, CoAgent (Ours), empowered by the GCM's explicit entity memory, maintains a perfectly consistent identity for the same student throughout the entire multi-shot narrative.
+Case Study 2: Verifier-driven Multi-Modal Correction. To demonstrate the versatility of our Verifier Agent (Averify), we present three distinct correction scenarios in Figure 4.
+· (a) Semantic & Logic Correction: Given a prompt with anti-common sense logic ("A pink elephant walks through the desert..."), the baseline synthesizer defaults to common sense, showing a normal gray elephant (Fig. 4(a), top). Our Verifier detects this direct contradiction of the prompt's narrative instruction and triggers a correction, resulting in the semantically-correct (though common sense-defying) video of the elephant turning pink (Fig. 4(a), bottom). This visually explains the large gains in Text-Video Alignment.
+· (b) Attribute Correction: Given "A blonde girl...", the baseline synthesizer incorrectly generates a girl with brown hair due to model bias (Fig. 4(b), top). The Verifier identifies this factual attribute error (`blonde` vs. `brown`), flags it, and forces a regeneration that correctly depicts the blonde girl (Fig. 4(b), bottom).
+· (c) Temporal Artifact Correction: Given a prompt involving a phone screen ("...shuts off his phone alarm..."), the baseline generation exhibits severe Temporal Flickering, where the time display is corrupted and illegible (Fig. 4(c), top). The Verifier detects this high-frequency artifact and regenerates a stable, crisp display (Fig. 4(c), bottom). This directly corresponds to the +4.5 point improvement in Temporal Flickering shown in Table 3.
+These cases prove that our Verifier is not a single-purpose tool, but a comprehensive agent that robustly corrects semantic, factual, and temporal errors.
+
+5. Conclusion
+In this work, we presented CoAgent, a novel collaborative and closed-loop framework that transforms multi-shot video synthesis from a brittle, stateless process into a robust, stateful, and feedback-driven system. We successfully bridged the "narrative gap" by unifying creative planning (Aplan), explicit entity-level memory (MGCM ), and automated quality control (Averify).
+Our primary contributions lie in the architectural shift from open-loop execution to a self-correcting paradigm. The introduction of the Global Context Manager (GCM) proved critical, providing the necessary statefulness to minimize identity drift and scene discontinuity across long sequences. Furthermore, the Verifier Agent's closed-loop mechanism demonstrated its power in rectifying semantic inconsistencies and improving temporal stability via selective regeneration, a capability that open-loop systems fundamentally lack. Quantitatively, CoAgent significantly outperformed state-of-the-art agent-based systems (VISTA) and foundation models (Sora2), establishing new benchmarks for subject consistency, background coherence, and text-video alignment.
+Looking ahead, we recognize that true cinematic immersion requires multi-modal coherence. A vital future direction is the integration of audio generation and synchronization into the CoAgent framework. We plan to develop specialized Audio Agents that can generate rhythmaware soundtracks, sound effects, and dialogue, followed by a multi-modal Verifier to ensure contextual and temporal alignment between the visual and auditory components. This extension will further solidify CoAgent as a holistic platform for high-fidelity, controllable, and fully immersive narrative creation.
+
+Table 3. Ablation study of CoAgent's components. We start with a strong open-loop Baseline (A) (Planner + Synthesizer) and incrementally add our modules. The results validate the distinct contribution of each component: the GCM (B) for consistency, and the Verifier (C) for temporal quality and semantic alignment. VBench scores () are percentages; Text-Video Alignment () is from VideoScore.
+
+Model
+(A) Baseline (B) + GCM (C) CoAgent
+
+Components Aplan GCM Averify
+
+
+
+×
+
+×
+
+
+
+
+
+×
+
+
+
+
+
+
+
+GCM Metrics (Consistency) Subj. Cons.  Bg. Cons. 
+
+90.60 94.50 94.70
+
+95.50 96.40 96.50
+
+Verifier Metrics (Quality & Semantics) Temp. Flick.  Motion Smooth.  Text Align. 
+
+93.50 94.70 99.20
+
+94.80 95.10 99.40
+
+1.695 1.778 2.731
+
+Baseline (No GCM)
+
+CoAgent (Ours) (with GCM)
+Figure 3. Case Study 1: GCM for Identity Preservation. For the prompt "A day of a Computer Science student, in vlog style," the Baseline (top row) exhibits severe identity drift, generating four different people. Our CoAgent (bottom row), empowered by the GCM, maintains a perfectly consistent identity across all shots, visually demonstrating the quantitative gains in Subject Consistency from Table 3.
+
+References
+[1] Kaitong Cai, Jusheng Zhang, Yijia Fan, Jing Yang, and Keze Wang. Racot: Plug-and-play contrastive example generation mechanism for enhanced llm reasoning reliability, 2025. 3
+[2] Kaitong Cai, Jusheng Zhang, Jing Yang, Yijia Fan, Pengtao Xie, Jian Wang, and Keze Wang. Flashvlm: Text-guided visual token selection for large multimodal models, 2025. arXiv:2512.20561. 1
+[3] Jiale Cheng, Ruiliang Lyu, Xiaotao Gu, Xiao Liu, Jiazheng Xu, Yida Lu, Jiayan Teng, Zhuoyi Yang, Yuxiao Dong, Jie Tang, et al. Vpo: Aligning text-to-video generation models with prompt optimization. arXiv preprint arXiv:2503.20491, 2025. 1, 5
+[4] David Dinkevich, Matan Levy, Omri Avrahami, Dvir Samuel, and Dani Lischinski. Story2board: A trainingfree approach for expressive storyboard generation. arXiv preprint arXiv:2508.09983, 2025. 1, 2
+[5] Yijia Fan, Jusheng Zhang, Kaitong Cai, Jing Yang, Chengpei Tang, Jian Wang, and Keze Wang. Cost-effective communi-
+
+cation: An auction-based method for language agent interaction, 2025. 3
+[6] Yijia Fan, Jusheng Zhang, Kaitong Cai, Jing Yang, Jian Wang, and Keze Wang. 3dalign-daer: Dynamic attention policy and efficient retrieval strategy for fine-grained 3d-text alignment at scale, 2025.
+[7] Yijia Fan, Jusheng Zhang, Kaitong Cai, Jing Yang, and Keze Wang. CCG: Rare-label prediction via neural SEM­driven causal game. In Findings of the Association for Computational Linguistics: EMNLP 2025, pages 6243­6256, Suzhou, China, 2025. Association for Computational Linguistics. 3
+[8] Haopeng Fang, Di Qiu, Binjie Mao, Pengfei Yan, and He Tang. Motioncharacter: Identity-preserving and motion controllable human video generation. arXiv preprint arXiv:2411.18281, 2024. 2
+[9] Liu He, Yizhi Song, Hejun Huang, Pinxin Liu, Yunlong Tang, Daniel Aliaga, and Xin Zhou. Kubrick: Multimodal agent collaborations for synthetic video generation. arXiv preprint arXiv:2408.10453, 2024. 3
+
+(a) Semantic Correction: The baseline (b) Attribute Correction: Baseline (top) (c) Artifact Correction: Baseline (top)
+
+(top) defaults to common sense (elephant generates "brown" hair despite the
+
+produces a flickering, illegible clock
+
+is gray), while our model (bottom) "blonde" prompt. Ours (bottom) corrects display. Ours (bottom) regenerates a
+
+enforces the anti-common sense prompt
+
+this factual error.
+
+stable, clear shot.
+
+(elephant is pink).
+
+Figure 4. Case Study 2: Verifier-driven Multi-Modal Correction. Our Verifier robustly corrects diverse errors identified in open-loop
+
+generation (top row of each pair). (a) Semantic Correction: The baseline defaults to common sense, while our Verifier (bottom) enforces
+
+the anti-common sense prompt. (b) Attribute Correction: The baseline ignores "blonde" while Ours (bottom) corrects the factual error.
+
+(c) Artifact Correction: The baseline produces temporal artifacts, while Ours (bottom) regenerates a stable shot.
+
+[10] Xuan He, Dongfu Jiang, Ge Zhang, Max Ku, Achint Soni, Sherman Siu, Haonan Chen, Abhranil Chandra, Ziyan Jiang, Aaran Arulraj, Kai Wang, Quy Duc Do, Yuansheng Ni, Bohan Lyu, Yaswanth Narsupalli, Rongqi Fan, Zhiheng Lyu, Bill Yuchen Lin, and Wenhu Chen. VideoScore: Building automatic metrics to simulate fine-grained human feedback for video generation. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, pages 2105­2123, Miami, Florida, USA, 2024. Association for Computational Linguistics. 1, 5, 6
+[11] Kaiyi Huang, Yukun Huang, Xuefei Ning, Zinan Lin, Yu Wang, and Xihui Liu. Genmac: compositional text-to-video generation with multi-agent collaboration. arXiv preprint arXiv:2412.04440, 2024. 3
+[12] Xiaohua Li, Jusheng Zhang, and Fatemeh Safara. Improving the accuracy of diabetes diagnosis applications through a hybrid feature selection algorithm. Neural Process. Lett., 55 (1):153­169, 2021. 3
+[13] Zhen Li, Mingdeng Cao, Xintao Wang, Zhongang Qi, MingMing Cheng, and Ying Shan. Photomaker: Customizing realistic human photos via stacked id embedding. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 8640­8650, 2024. 2
+[14] Do Xuan Long, Xingchen Wan, Hootan Nakhost, Chen-Yu Lee, Tomas Pfister, and Sercan O¨ Arik. Vista: A test-
+
+time self-improving video generation agent. arXiv preprint arXiv:2510.15831, 2025. 5 [15] Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, et al. Self-refine: Iterative refinement with self-feedback. Advances in Neural Information Processing Systems, 36:46534­46594, 2023. 5 [16] Yihao Meng, Hao Ouyang, Yue Yu, Qiuyu Wang, Wen Wang, Ka Leong Cheng, Hanlin Wang, Yixuan Li, Cheng Chen, Yanhong Zeng, et al. Holocine: Holistic generation of cinematic multi-shot long video narratives. arXiv preprint arXiv:2510.20822, 2025. 3 [17] OpenAI. Sora 2 is here. https://openai.com/ index/sora-2/, 2025. 5 [18] Xiangyu Peng, Zangwei Zheng, Chenhui Shen, Tom Young, Xinying Guo, Binluo Wang, Hang Xu, Hongxin Liu, Mingyan Jiang, Wenjun Li, et al. Open-sora 2.0: Training a commercial-level video generation model in 200k. arXiv preprint arXiv:2503.09642, 2025. 5 [19] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314, 2025. 1, 5 [20] Qixun Wang, Xu Bai, Haofan Wang, Zekui Qin, Anthony
+
+Chen, Huaxia Li, Xu Tang, and Yao Hu. Instantid: Zero-shot identity-preserving generation in seconds. arXiv preprint arXiv:2401.07519, 2024. 2
+[21] Qinghe Wang, Yawen Luo, Xiaoyu Shi, Xu Jia, Huchuan Lu, Tianfan Xue, Xintao Wang, Pengfei Wan, Di Zhang, and Kun Gai. Cinemaster: A 3d-aware and controllable framework for cinematic text-to-video generation. In Proceedings of the Special Interest Group on Computer Graphics and Interactive Techniques Conference Conference Papers, pages 1­10, 2025. 1
+[22] Zheng Wei, Mingchen Li, Zeqian Zhang, Ruibin Yuan, Pan Hui, Huamin Qu, James Evans, Maneesh Agrawala, and Anyi Rao. Hollywood town: Long-video generation via cross-modal multi-agent orchestration. arXiv preprint arXiv:2510.22431, 2025. 3
+[23] Tong Wu, Shuai Yang, Ryan Po, Yinghao Xu, Ziwei Liu, Dahua Lin, and Gordon Wetzstein. Video world models with long-term spatial memory. arXiv preprint arXiv:2506.05284, 2025. 2
+[24] Tsung-Han Wu, Long Lian, Joseph E Gonzalez, Boyi Li, and Trevor Darrell. Self-correcting llm-controlled diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 6327­ 6336, 2024. 3
+[25] Xindi Wu, Uriel Singer, Zhaojiang Lin, Andrea Madotto, Xide Xia, Yifan Xu, Paul Crook, Xin Luna Dong, and Seungwhan Moon. Corgi: Cached memory guided video generation. In 2025 IEEE/CVF Winter Conference on Applications of Computer Vision (WACV), pages 4585­4594. IEEE, 2025. 2, 3
+[26] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al. Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072, 2024. 5
+[27] Jiawei Yao, Jusheng Zhang, Xiaochao Pan, Tong Wu, and Canran Xiao. Depthssc: Monocular 3d semantic scene completion via depth-spatial alignment and voxel adaptation, 2024. 2
+[28] Hu Ye, Jun Zhang, Sibo Liu, Xiao Han, and Wei Yang. Ipadapter: Text compatible image prompt adapter for text-toimage diffusion models. arXiv preprint arXiv:2308.06721, 2023. 2
+[29] Shenghai Yuan, Jinfa Huang, Xianyi He, Yunyang Ge, Yujun Shi, Liuhan Chen, Jiebo Luo, and Li Yuan. Identitypreserving text-to-video generation by frequency decomposition. In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 12978­12988, 2025. 2
+[30] Jusheng Zhang, Kaitong Cai, Yijia Fan, Ningyuan Liu, and Keze Wang. MAT-agent: Adaptive multi-agent training optimization. In The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025. 1
+[31] Jusheng Zhang, Kaitong Cai, Yijia Fan, Jian Wang, and Keze Wang. CF-VLM: Counterfactual visionlanguage fine-tuning. In Advances in Neural Information Processing Systems, 2025. OpenReview: https://openreview.net/forum?id=0qGtaRTsCo. 1
+
+[32] Jusheng Zhang, Kaitong Cai, Xiaoyang Guo, Sidi Liu, Qinhan Lv, Ruiqi Chen, Jing Yang, Yijia Fan, Xiaofei Sun, Jian Wang, Ziliang Chen, Liang Lin, and Keze Wang. Mm-cot:a benchmark for probing visual chain-of-thought reasoning in multimodal models, 2025. arXiv:2512.08228. 1
+[33] Jusheng Zhang, Kaitong Cai, Jing Yang, Jian Wang, Chengpei Tang, and Keze Wang. Top-down semantic refinement for image captioning, 2025. 2
+[34] Jusheng Zhang, Kaitong Cai, Jing Yang, and Keze Wang. Learning dynamics of vlm finetuning, 2025. 2
+[35] Jusheng Zhang, Kaitong Cai, Qinglin Zeng, Ningyuan Liu, Stephen Fan, Ziliang Chen, and Keze Wang. Failure-driven workflow refinement, 2025. 2
+[36] Jusheng Zhang, Yijia Fan, Kaitong Cai, Zimeng Huang, Xiaofei Sun, Jian Wang, Chengpei Tang, and Keze Wang. Drdiff: Dynamic routing diffusion with hierarchical attention for breaking the efficiency-quality trade-off, 2025. 1
+[37] Jusheng Zhang, Yijia Fan, Kaitong Cai, Xiaofei Sun, and Keze Wang. Osc: Cognitive orchestration through dynamic knowledge alignment in multi-agent llm collaboration, 2025. 2
+[38] Jusheng Zhang, Yijia Fan, Kaitong Cai, and Keze Wang. Kolmogorov-arnold fourier networks, 2025. arXiv:2502.06018. 2
+[39] Jusheng Zhang, Yijia Fan, Wenjun Lin, Ruiqi Chen, Haoyi Jiang, Wenhao Chai, Jian Wang, and Keze Wang. GAMagent: Game-theoretic and uncertainty-aware collaboration for complex visual reasoning. In The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025. 1
+[40] Jusheng Zhang, Yijia Fan, Zimo Wen, Jian Wang, and Keze Wang. Tri-MARF: A tri-modal multi-agent responsive framework for comprehensive 3d object annotation. In The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025. 1
+[41] Jusheng Zhang, Xiaoyang Guo, Kaitong Cai, Qinhan Lv, Yijia Fan, Wenhao Chai, Jian Wang, and Keze Wang. Hybridtoken-vlm: Hybrid token compression for visionlanguage models, 2025. arXiv:2512.08240. 1
+[42] Jusheng Zhang, Zimeng Huang, Yijia Fan, Ningyuan Liu, Mingyan Li, Zhuojie Yang, Jiawei Yao, Jian Wang, and Keze Wang. KABB: Knowledge-aware bayesian bandits for dynamic expert coordination in multi-agent systems. In Forty-second International Conference on Machine Learning, 2025. 1
+[43] Jensen Zhang, Ningyuan Liu, Yijia Fan, Zihao Huang, Qinglin Zeng, Kaitong Cai, Jian Wang, and Keze Wang. Llm-cas: Dynamic neuron perturbation for real-time hallucination correction, 2025. arXiv:2512.18623. 2
+[44] Dian Zheng, Ziqi Huang, Hongbo Liu, Kai Zou, Yinan He, Fan Zhang, Yuanhan Zhang, Jingwen He, Wei-Shi Zheng, Yu Qiao, and Ziwei Liu. Vbench-2.0: Advancing video generation benchmark suite for intrinsic faithfulness. arXiv preprint arXiv:2503.21755, 2025. 2, 5
+[45] Mingzhe Zheng, Yongqi Xu, Haojian Huang, Xuran Ma, Yexin Liu, Wenjie Shu, Yatian Pang, Feilong Tang, Qifeng Chen, Harry Yang, et al. Videogen-of-thought: Step-by-step
+
+generating multi-shot video with minimal manual intervention. arXiv preprint arXiv:2412.02259, 2024. 2, 3
+
+CoAgent: Collaborative Planning and Consistency Agent for Coherent Video Generation
+Supplementary Material
+
+6. Appendix A. Implementation Details
+As referenced in Sec. 4.1 of the main paper, we provide detailed implementation specifications for CoAgent, including the exact prompts used for agent orchestration, backbone model configurations, and evaluation setups.
+6.1. Agent Prompts and Instructions
+To facilitate reproducibility, we present the core system instructions used for the Storyboard Planner (Aplan), Global Context Manager (GCM), and Verifier Agent (Averify). Note that for experiments on Chinese prompts, equivalent translated instructions were utilized.
+6.1.1. Storyboard Planner
+The Storyboard Planner (powered by Gemini-2.5-Flash) is the architectural brain of CoAgent. It decomposes abstract concepts into filmable shots with explicit mode selection (ff2v vs. flf2v).
+System Instruction: Storyboard Planner
+Role: You are a professional screenwriter and storyboard planner. Task: Infer a reasonable number of shots N from pacing and target duration, then output EXACTLY N detailed shots with filmable visuals. For each shot, decide the video generation mode: ff2v (only first frame) or flf2v (first & last frames). Guidelines: · Language must follow the user's language. · EXACTLY N shots; choose N based on pacing
+and duration. · Filmable and concrete; avoid abstract emotions. · Pick flf2v when the shot requires a clear
+startend transition or long continuous motion; otherwise ff2v. · If generation mode is flf2v, you MUST provide last frame prompt that logically matches motion and can connect to the next shot. · If generation mode is ff2v and seamless continuity to next is needed, set connect to next=true. · Output STRICT JSON only.
+The strictly enforced JSON output schema is detailed below:
+
+Output Data Structure Requirement
+Instead of raw text, the Planner is instructed to output a strict JSON object containing the following key components: · Global Metadata: Title, Target Audience,
+Genre, Style, Pacing, and Logline. · Character Registry: A list of characters,
+each defined by a unique id, name, and static features (to ensure appearance consistency across shots). · Shot Sequence: An ordered list of shots. Each shot object includes: ­ Visual Plan:
+* generation mode: Selection between ff2v (standard) or flf2v (transitionheavy).
+* camera angle & lighting: Cinematic directives.
+* first/last frame prompt: Detailed visual descriptions for keyframes.
+­ Transition Logic: A connect to next boolean flag to enforce temporal continuity.
+­ Audio: Sound effects or dialogue description.
+6.1.2. Global Context Manager (GCM)
+The GCM generates high-fidelity reference portraits. These "Master Portraits" serve as the visual anchor (MGCM ) for all subsequent consistency checks.
+Image Generation Prompt: GCM
+"Generate a clean character portrait (setup shot): · Character: [Character Description] · Style: [Style Description or 'Default'] · Requirements: Front view, pure white back-
+ground, cinematic lighting, clear facial features, full body or half body shot."
+6.1.3. Verifier Agent
+The Verifier (Averify) executes a two-stage audit for every generated shot.
+Stage 1: Semantic Consistency.
+
+Verifier Instruction: Semantic Check
+"Act as a professional film reviewer. Judge solely based on the provided frame: Script Description: [Script Description] Requirement: Answer only PASS or FAIL; if FAIL, briefly explain the mismatch point (under 20 words)."
+Stage 2: Visual Identity Consistency.
+Verifier Instruction: Identity Check
+"Strictly compare whether the same character in the two images is consistent: Image 1: Master Portrait (GCM Reference); Image 2: Video Frame. Requirement: Answer only PASS or FAIL; if FAIL, briefly explain the difference (under 20 words)."
+
+6.2. Model Configurations and Hardware
+Our Synthesis Module (Asynth) utilizes the Wan2.1 family. Depending on the Planner's decision, we switch between three distinct configurations as shown in Table 4.
+
+Table 4. Hyperparameters for Wan2.1 Synthesis Modes. We dynamically switch checkpoints based on the narrative requirement.
+
+Mode
+T2V FF2V FLF2V
+
+Checkpoint Variant
+Wan2.1-T2V-14B Wan2.1-I2V-14B-480P Wan2.1-FLF2V-14B-720P
+
+Resolution
+832 × 480 832 × 480 1280 × 720
+
+Steps
+40 30 30
+
+Conditioning
+Text Prompt Text + First Frame Text + First/Last Frames
+
+Hardware and Efficiency. All experiments were conducted on a local workstation equipped with a single NVIDIA RTX 6000 (Blackwell Architecture, 96GB VRAM). Under this configuration, the average inference time for generating a single coherent shot (including agent reasoning and model loading) is approximately 8 minutes and 14 seconds.
+6.3. Evaluation Setup: Sora2 Comparison and Metric Bias Correction
+To ensure a fair quantitative comparison with the closedsource Sora2 model (referenced in Table 2 of the main paper), we investigated the impact of platform-specific watermarks on automated evaluation metrics (specifically VideoScore [5]).
+Discovery of Watermark Bias. During our preliminary evaluation, we observed an anomaly where Sora2 samples
+
+containing the official dynamic watermark achieved suspiciously high scores (e.g., Visual Quality > 3.7). We hypothesized that the evaluation model might have learned a spurious correlation between the specific watermark pattern and "high quality" labels during its training, effectively acting as a "metric hack."
+
+Validation Experiment. To verify this hypothesis and justify our preprocessing strategy, we conducted a controlled "Remove-and-Restore" experiment on a subset of Sora2 generated videos (N = 50). We compared three conditions: 1. Original: The raw video with the platform watermark. 2. Inpainted (Used in Paper): The watermark was re-
+moved using a video inpainting model. 3. Re-watermarked (Control): We took the Inpainted
+video from step 2 and overlaid the watermark again. The results are presented in Table 5. Removing the watermark caused the Visual Quality score to drop significantly from 3.781 to 2.734. Crucially, when the watermark was re-applied to the same inpainted pixels (Control), the score rebounded to 3.766, which is almost identical to the original. This proves that the drop in quality is not due to the inpainting damage, but due to the removal of the "watermark bias."
+Table 5. Impact of Watermark on Evaluation Metrics. We compare the Original Sora2 videos, the Re-watermarked control group, and the Inpainted version. The scores show a "U-shaped" pattern: removing the watermark drops the score significantly, while adding it back restores the high score. This confirms the metric bias. We use the Inpainted (Unbiased) version for the main paper comparison.
+
+Metric
+Visual Quality Temporal Consistency Dynamic Degree Text-Video Alignment Factual Consistency
+
+Biased (w/ Watermark) 1. Original 3. Control
+
+3.781 3.578 3.766 2.969 3.484
+
+3.766 3.531 3.766 3.031 3.469
+
+Unbiased (No Watermark) 2. Inpainted (Ours)
+2.734 2.484 2.984 2.469 2.172
+
+Conclusion. The experiment confirms that the watermark artificially inflates metrics by approximately +1.0 point. Comparing our method against the raw Sora2 would be scientifically invalid. Therefore, we adopt the Inpainted (Unbiased) setting as the ground truth for the Sora2 baseline reported in the main paper.
+7. Appendix B. Additional Ablation Studies
+As promised in Sec. 4.3 of the main paper, we provide further investigations into the generalization capability of our framework and a deeper component analysis.
+
+7.1. Backbone Generalization
+A key design goal of CoAgent is model-agnosticism. To validate this, we integrated our framework with two other open-source video generation backbones: CogVideoX-5B and the recently released LongCat-Video.
+Table 6 demonstrates the quantitative results on VBench. CoAgent consistently improves the Subject Consistency and Motion Smoothness across all tested backbones. Notably, for LongCat-Video, incorporating the CoAgent workflow yields a performance boost of +4.2% in subject consistency, effectively bridging the gap between efficient open-source models and proprietary SOTA performance.
+
+Table 6. Backbone Generalization. Performance gains of CoAgent applied to different foundation models (VBench scores). We observe consistent improvements across architectures, with LongCat-Video showing significant gains in consistency when governed by our GCM.
+
+Model / Configuration
+Backbone 1: CogVideoX-5B Baseline (Original) + CoAgent (Ours)
+Backbone 2: Wan2.1 (Main) Baseline (Original) + CoAgent (Ours)
+Backbone 3: LongCat-Video Baseline (Original) + CoAgent (Ours)
+
+Subj. Cons.
+89.10 93.80
+90.60 94.70
+89.85 94.20
+
+Bg. Cons.
+91.30 94.40
+95.50 96.50
+93.40 95.90
+
+Motion Smooth.
+94.20 97.00
+94.80 99.40
+95.50 98.90
+
+7.2. Component Analysis: FLF2V vs. FF2V
+The flf2v (First-and-Last-Frame to Video) mode is a critical innovation for maintaining narrative pacing. In this mode, the Planner hallucinates the last frame of a shot to serve as a "goal anchor," ensuring the video transitions smoothly to the next scene.
+To quantify its impact, we compared the full CoAgent system against a variant where the Planner is restricted to use only ff2v (First-Frame only conditioning). As shown in Table 7, removing the bi-directional constraint leads to a sharp drop in Motion Smoothness (-3.2%) and Temporal Style, as the model lacks guidance on "where to end," often resulting in abrupt cuts or wandering narratives.
+
+Table 7. Impact of FLF2V Mode. We disable the bi-directional conditioning (FLF2V) and force the model to use only FF2V. The drop in metrics indicates that knowing the "ending" is crucial for smooth transitions.
+
+Configuration
+CoAgent (w/o FLF2V) CoAgent (Full)
+
+Motion Smooth.
+96.20 99.40
+
+Temp. Style
+94.10 98.50
+
+Subj. Cons.
+93.80 94.70
+
+7.3. Regeneration Efficiency Analysis
+A common concern with closed-loop systems is the computational cost of regeneration. We analyzed the number of iterations required for a shot to pass the Verifier. · Pass Rate: On average, 72% of shots pass on the first
+attempt (N = 1). · Correction Cost: For the remaining 28%, the average
+number of additional regeneration turns is only 1.4. · Convergence: We set a hard limit of N = 3. In our ex-
+periments, 98% of shots converge to a satisfactory quality within this limit, demonstrating that the Verifier provides effective, actionable feedback rather than engaging in random search.
+8. Appendix C. Additional Qualitative Results
+In this section, we present extended visual comparisons and an analysis of system limitations. We focus on long-horizon consistency compared against the proprietary state-of-theart model, Sora2, and discuss failure cases related to physical dynamics.
+8.1. Comparison with Sora2
+To demonstrate the narrative coherence of CoAgent, we conducted a side-by-side comparison with Sora2 using a dynamic, nature-themed prompt. Figure 5 presents a "filmstrip" visualization, extracting 5 continuous frames from generated video sequences to highlight temporal stability.
+Narrative Consistency. As illustrated in Figure 5, both models were tasked with generating a sequence based on the prompt: "A panda standing on a surfboard in the ocean in sunset." · Sora2: Demonstrates exceptional visual fidelity, particu-
+larly in water rendering and lighting reflections. · CoAgent (Ours): Achieves a comparable level of narra-
+tive flow. Crucially, our Global Context Manager (GCM) ensures that the panda's specific visual features (e.g., fur texture, body proportions) remain strictly consistent across the motion of surfing, maintaining the subject's identity against the complex, moving background of the ocean waves.
+8.2. Limitations: Physical Inconsistencies and Interaction Hallucinations
+While CoAgent significantly improves narrative logic and semantic alignment, we acknowledge distinct limitations regarding fine-grained physical interactions. As illustrated in Figure 6, the system occasionally produces "physics hallucinations," such as solid objects passing through one another.
+
+Model A: Sora2 (Baseline) Model B: CoAgent (Ours)
+
+Figure 5. Continuous Frame Comparison (Prompt: "A panda standing on a surfboard in the ocean in sunset"). We extract 5 frames from the generated videos. Top Row (Sora2): Shows high fidelity but requires proprietary access. Bottom Row (CoAgent): Our open-source framework maintains robust subject identity (the panda) and consistent lighting interaction with the environment, matching the temporal coherence of the commercial state-of-the-art.
+
+Analysis of Failure Modes. We attribute these artifacts to two primary factors:
+· Inherited Backbone Priors: The underlying synthesis model (Wan2.1) operates in 2D pixel space without an explicit 3D physics engine. Consequently, it occasionally fails to model object rigidity and occlusion, leading to artifacts like the "hand clipping through the laptop bag" shown in Figure 6. Since CoAgent operates as a highlevel orchestration layer, it cannot easily inject low-level physical constraints into the diffusion unet's internal features.
+· Verifier Temporal Sparsity: To maintain computational efficiency, our Verifier Agent employs a sparse sampling strategy (checking keyframes rather than every single frame). Short-duration physical violations--such as a hand momentarily penetrating a surface during a fast motion--may occur between sampled frames, effectively bypassing the verification loop. Furthermore, current VLMs excel at semantic checks but lack the precise spatial reasoning to detect subtle intersection artifacts.
+Future Direction. Addressing these limitations will likely require integrating 3D-aware guidance (e.g., depth map constraints) or developing specialized Video Physics Verifiers trained specifically to detect motion anomalies and intersection errors.
+
+Figure 6. Failure Case: Object Penetration Artifact. An example of physical hallucination where a hand interacts incorrectly with a laptop bag, clipping through the object's surface. This failure highlights the limitation of 2D-based diffusion backbones in modeling object rigidity, as well as the difficulty for VLM-based verifiers to detect fine-grained, high-frequency physical anomalies due to sparse frame sampling.
+
+
