@@ -133,6 +133,8 @@ export const GCMEntity = z.object({
     camera_angle: z.string().optional(),
     clothing: z.string().optional(),
     color_palette: z.array(z.string()).optional(),
+    /** Preserved original reference URL before rolling GCM updates */
+    original_reference_url: z.string().optional(),
   }).default({}),
   last_updated: z.number(),
   appearance_count: z.number().int().default(0),

@@ -190,13 +190,17 @@ async function executeShotPlanningPhase(
   videoId: string,
   jobData: OrchestratorJobData,
   taskId: string,
-  workerPrompts: WorkerPrompts
+  workerPrompts: WorkerPrompts,
+  /** Optional feedback from self-reflection to prepend to the system prompt */
+  reflectionFeedback?: string
 ): Promise<{ shotCount: number }> {
-  console.log(`${LOG_PREFIX} Phase II: Shot Planning`);
+  console.log(`${LOG_PREFIX} Phase II: Shot Planning${reflectionFeedback ? ' (with reflection feedback)' : ''}`);
 
   await updateTaskStatus(taskId, {
     status: 'running',
-    current_step: 'Phase II: Planning shots aligned to narration...',
+    current_step: reflectionFeedback
+      ? 'Phase II: Re-planning shots with feedback...'
+      : 'Phase II: Planning shots aligned to narration...',
     progress_percent: 15,
   });
 
@@ -217,6 +221,11 @@ async function executeShotPlanningPhase(
     ? wordTimestamps[wordTimestamps.length - 1].end_seconds
     : 0;
 
+  // If reflection feedback is provided, prepend it to the system prompt
+  const systemPrompt = reflectionFeedback
+    ? `CRITICAL FEEDBACK FROM PLAN REVIEW (address these issues):\n${reflectionFeedback}\n\n${workerPrompts.shot_planner}`
+    : workerPrompts.shot_planner;
+
   const shotJob = await shotPlannerQueue.add('closed-loop-shot-planning', {
     taskId,
     userId: jobData.userId,
@@ -225,7 +234,7 @@ async function executeShotPlanningPhase(
     wordTimestamps,
     totalDurationSeconds: totalDuration,
     aspectRatio: jobData.creativeManifest.style.aspect_ratio,
-    systemPrompt: workerPrompts.shot_planner,
+    systemPrompt,
   });
 
   const shotResult = await shotJob.waitUntilFinished(queueEvents, 300_000);
@@ -233,6 +242,134 @@ async function executeShotPlanningPhase(
   return {
     shotCount: shotResult?.output?.shots?.length || 0,
   };
+}
+
+// ============================================================================
+// SHOT PLAN SELF-REFLECTION
+// ============================================================================
+
+const REFLECTION_MODEL = 'google/gemini-3-flash-preview';
+
+interface ShotPlanReflectionResult {
+  severity: 'none' | 'minor' | 'major';
+  issues: string[];
+}
+
+/**
+ * Perform a lightweight LLM review of the generated shot plan.
+ * Only called for long videos (15+ shots) to catch plan-level issues
+ * before triggering expensive GPU generation.
+ *
+ * Cost: ~$0.001 per call (single Gemini 3 Flash completion).
+ */
+async function performShotPlanReflection(
+  videoId: string,
+  shotCount: number,
+  userId: string
+): Promise<ShotPlanReflectionResult> {
+  const LOG_PREFIX_REFLECT = '[ShotPlanReflect]';
+
+  // Load the shot plan from DB
+  const supabase = getSupabaseServiceClient();
+  const { data: project } = await supabase
+    .from('video_projects')
+    .select('metadata')
+    .eq('id', videoId)
+    .single();
+
+  const metadata = (project?.metadata || {}) as Record<string, unknown>;
+  const shotPlan = metadata.shot_plan as Record<string, unknown> | undefined;
+
+  if (!shotPlan?.shots) {
+    console.warn(`${LOG_PREFIX_REFLECT} No shot plan found in metadata — skipping`);
+    return { severity: 'none', issues: [] };
+  }
+
+  const shots = shotPlan.shots as Array<Record<string, unknown>>;
+  const totalDuration = (shotPlan.metadata as Record<string, unknown>)?.total_duration_seconds || 0;
+
+  // Serialize the shot plan for LLM review
+  const serializedPlan = shots.map((shot, i) => ({
+    index: i,
+    media_type: shot.media_type,
+    content_type: shot.content_type,
+    duration: shot.duration_seconds,
+    entity_refs: (shot.entity_refs as string[])?.length || 0,
+    description: (shot.description || shot.summary || '').toString().substring(0, 100),
+  }));
+
+  const { getOpenRouterApiKey } = await import('@/lib/services/api-keys');
+  const apiKey = await getOpenRouterApiKey(userId);
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+      'X-Title': 'Vid-Bolt Shot Plan Reflection',
+    },
+    body: JSON.stringify({
+      model: REFLECTION_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: 'You review shot plans for AI video production.',
+        },
+        {
+          role: 'user',
+          content: `Review this ${shotCount}-shot plan (total audio: ${totalDuration}s) for issues:
+
+${JSON.stringify(serializedPlan, null, 2)}
+
+Check for:
+1. Missing coverage: any large gaps between shots?
+2. Unreasonable durations: shots <2s or >15s?
+3. Media type imbalance: are all shots the same type?
+4. Entity consistency: shots referencing characters but no entity_refs?
+5. Total coverage: do durations roughly sum to ${totalDuration}s?
+
+Severity guidelines: "major" = fundamental plan errors that would produce unwatchable video. "minor" = imperfections that are acceptable. "none" = plan looks good.`,
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 1024,
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'shot_plan_reflection',
+          strict: true,
+          schema: {
+            type: 'object',
+            required: ['issues', 'severity'],
+            additionalProperties: false,
+            properties: {
+              issues: { type: 'array', items: { type: 'string' } },
+              severity: { type: 'string', enum: ['none', 'minor', 'major'] },
+            },
+          },
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Reflection API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || '{}';
+
+  try {
+    const parsed = JSON.parse(content);
+    return {
+      severity: ['none', 'minor', 'major'].includes(parsed.severity) ? parsed.severity : 'none',
+      issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+    };
+  } catch {
+    console.warn(`${LOG_PREFIX_REFLECT} JSON parse failed:`, content.substring(0, 200));
+    return { severity: 'none', issues: [] };
+  }
 }
 
 /**
@@ -420,6 +557,42 @@ async function executeWithVerification(
             await incrementAppearance(entityId);
           } catch (err) {
             console.warn(`${LOG_PREFIX} Failed to increment appearance for entity ${entityId}:`, err);
+          }
+        }
+
+        // -------------------------------------------------------------------
+        // GCM Rolling Update: update entity reference from verified output
+        // -------------------------------------------------------------------
+        // High-confidence passes (>0.8) indicate the generated media closely
+        // matches the entity description. Extract a frame and update the GCM
+        // reference so downstream shots use the latest visual representation.
+        if (
+          result.confidence > 0.8 &&
+          generationConfig.mediaType === 'video' &&
+          verificationContext.entityIds.length > 0
+        ) {
+          try {
+            const { updateEntity, getEntity } = await import('@/lib/services/gcm');
+            const { extractLastFrame } = await import('@/lib/services/frame-extraction');
+            const frameResult = await extractLastFrame(
+              currentMediaUrl,
+              verificationContext.videoId,
+              shotIndex
+            );
+
+            for (const entityId of verificationContext.entityIds) {
+              const entity = await getEntity(entityId);
+              // Only update characters and props — settings/styles don't drift the same way
+              if (entity && (entity.entity_type === 'character' || entity.entity_type === 'prop')) {
+                await updateEntity(entityId, { reference_url: frameResult.frameUrl });
+                console.log(
+                  `${LOG_PREFIX} Shot ${shotIndex}: GCM rolling update for ${entity.name} → ${frameResult.frameUrl}`
+                );
+              }
+            }
+          } catch (gcmError) {
+            // Non-blocking: GCM update failure shouldn't fail the shot
+            console.warn(`${LOG_PREFIX} Shot ${shotIndex}: GCM rolling update failed:`, gcmError);
           }
         }
       }
@@ -957,6 +1130,59 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       ? entities
       : await listEntities(videoId);
 
+    // =========================================================================
+    // STEP 0-B: Auto-generate portraits for entities without reference URLs
+    // =========================================================================
+    // Ensures every character/prop has a visual anchor for downstream workers,
+    // even if the user skipped reference image upload.
+    const entitiesWithoutRefs = gcmEntities.filter(
+      e => !e.reference_url && (e.entity_type === 'character' || e.entity_type === 'prop')
+    );
+
+    if (entitiesWithoutRefs.length > 0) {
+      console.log(`${LOG_PREFIX} Step 0-B: Generating portraits for ${entitiesWithoutRefs.length} entities without references`);
+
+      const { imageGenQueue } = await import('@/lib/queues/queues');
+      const imageGenQueueEvents = getQueueEvents('image-gen');
+      const { updateEntity } = await import('@/lib/services/gcm');
+
+      for (const entity of entitiesWithoutRefs) {
+        try {
+          const portraitPrompt = `Professional reference portrait: ${entity.text_description}. ` +
+            `${entity.entity_type === 'character' ? 'Clear face visible, neutral background, studio lighting.' : 'Product/prop shot, clean background, well-lit.'}`;
+
+          const portraitJob = await imageGenQueue.add(
+            `gcm-portrait-${entity.entity_id}`,
+            {
+              taskId,
+              userId,
+              videoId,
+              shotIndex: -1, // Sentinel: not a real shot
+              prompt: portraitPrompt,
+              aspectRatio: creativeManifest.style.aspect_ratio,
+              isPortrait: true,
+            }
+          );
+
+          const portraitResult = await portraitJob.waitUntilFinished(imageGenQueueEvents, 60_000);
+          const portraitUrl = portraitResult?.mediaUrl || portraitResult?.url;
+
+          if (portraitUrl) {
+            await updateEntity(entity.entity_id, { reference_url: portraitUrl });
+            // Also update the in-memory entity for downstream prompt generation
+            const entityIndex = gcmEntities.findIndex(e => e.entity_id === entity.entity_id);
+            if (entityIndex >= 0) {
+              gcmEntities[entityIndex] = { ...gcmEntities[entityIndex], reference_url: portraitUrl };
+            }
+            console.log(`${LOG_PREFIX} Step 0-B: Portrait for "${entity.name}" → ${portraitUrl}`);
+          }
+        } catch (portraitError) {
+          // Non-blocking: missing portrait is not fatal
+          console.warn(`${LOG_PREFIX} Step 0-B: Portrait generation failed for "${entity.name}":`, portraitError);
+        }
+      }
+    }
+
     const workerPrompts = generateWorkerPrompts(
       userSystemPrompt,
       creativeManifest,
@@ -1009,6 +1235,48 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     console.log(`${LOG_PREFIX} Phase II complete: ${shotResult.shotCount} shots planned`);
 
     // =========================================================================
+    // PHASE II-B: Shot Plan Self-Reflection (for long videos only)
+    // =========================================================================
+    // Lightweight LLM check catches bad plans before expensive GPU generation.
+    // Only triggers for videos with 15+ shots (short videos rarely have plan errors).
+    if (shotResult.shotCount >= 15) {
+      console.log(`${LOG_PREFIX} Phase II-B: Self-reflection on ${shotResult.shotCount}-shot plan...`);
+
+      try {
+        const reflectionResult = await performShotPlanReflection(
+          videoId,
+          shotResult.shotCount,
+          userId
+        );
+
+        if (reflectionResult.severity === 'major') {
+          console.warn(
+            `${LOG_PREFIX} Phase II-B: MAJOR issues found — re-planning (1 retry):`,
+            reflectionResult.issues
+          );
+
+          // Prepend feedback to re-run shot planning (max 1 re-plan)
+          const replanResult = await executeShotPlanningPhase(
+            videoId, job.data, taskId, workerPrompts, reflectionResult.issues.join('; ')
+          );
+
+          state.phase_data.shot_planning = {
+            completed: true,
+            shot_count: replanResult.shotCount,
+            iteration: 2,
+          };
+          await persistState(videoId, state);
+          console.log(`${LOG_PREFIX} Phase II-B: Re-planned → ${replanResult.shotCount} shots`);
+        } else {
+          console.log(`${LOG_PREFIX} Phase II-B: Plan OK (severity: ${reflectionResult.severity})`);
+        }
+      } catch (reflectionError) {
+        // Non-blocking: reflection failure shouldn't stop the pipeline
+        console.warn(`${LOG_PREFIX} Phase II-B: Self-reflection failed, continuing:`, reflectionError);
+      }
+    }
+
+    // =========================================================================
     // PHASE III: Asset Retrieval + SFX
     // =========================================================================
     state.phase = 'asset_retrieval';
@@ -1045,6 +1313,57 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     console.log(`${LOG_PREFIX} Phase IV complete: ${prodResult.imagesCompleted} images, ${prodResult.videosCompleted} videos`);
 
     // =========================================================================
+    // PHASE IV-B: VLM-Guided Clip Trimming
+    // =========================================================================
+    // Trim dead frames and startup artifacts from AI-generated video clips.
+    // Non-blocking — if trimming fails, assembly uses full clips.
+    if (prodResult.videosCompleted > 0 && process.env.GPU_API_URL) {
+      try {
+        console.log(`${LOG_PREFIX} Phase IV-B: Trimming ${prodResult.videosCompleted} video clips...`);
+
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: 'Phase IV-B: Analyzing video clips for optimal trim points...',
+          progress_percent: 72,
+        });
+
+        const { trimAllClips } = await import('@/lib/services/clip-trimmer');
+
+        // Load shot plan + generated media URLs from metadata
+        const { data: projData } = await supabase
+          .from('video_projects')
+          .select('metadata')
+          .eq('id', videoId)
+          .single();
+
+        const projMeta = (projData?.metadata || {}) as Record<string, unknown>;
+        const shotPlanData = (projMeta.shot_plan || {}) as Record<string, unknown>;
+        const allShots = (shotPlanData.shots || []) as Array<Record<string, unknown>>;
+        const generatedMedia = (projMeta.generated_media || {}) as Record<string, { url: string; type: string }>;
+
+        // Collect video shots with their generated URLs
+        const videoShots = allShots
+          .map((shot, i) => ({
+            shotIndex: i,
+            mediaUrl: generatedMedia[String(i)]?.url || '',
+            description: String(shot.description || shot.summary || ''),
+            durationSeconds: Number(shot.duration_seconds) || 5,
+          }))
+          .filter(s => s.mediaUrl && generatedMedia[String(s.shotIndex)]?.type === 'video');
+
+        if (videoShots.length > 0) {
+          await trimAllClips(videoId, videoShots, userId, {
+            gpuApiUrl: process.env.GPU_API_URL,
+            gpuApiSecret: process.env.GPU_API_SECRET || '',
+          });
+        }
+      } catch (trimError) {
+        // Non-blocking: trim failure shouldn't fail the pipeline
+        console.warn(`${LOG_PREFIX} Phase IV-B: Clip trimming failed, continuing:`, trimError);
+      }
+    }
+
+    // =========================================================================
     // PHASE V: Auto-Assembly
     // =========================================================================
     state.phase = 'assembly';
@@ -1056,6 +1375,34 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       completed: true,
       editor_state_saved: assemblyResult.editorStateSaved,
     };
+
+    // =========================================================================
+    // PHASE V-B: Holistic Pacing Review
+    // =========================================================================
+    // Review the full assembled timeline for pacing issues.
+    // Non-blocking — adjustments are stored as recommendations.
+    try {
+      console.log(`${LOG_PREFIX} Phase V-B: Reviewing timeline pacing...`);
+
+      await updateTaskStatus(taskId, {
+        status: 'running',
+        current_step: 'Phase V-B: Reviewing overall video pacing...',
+        progress_percent: 92,
+      });
+
+      const { reviewTimelinePacing } = await import('@/lib/services/pacing-editor');
+      const pacingResult = await reviewTimelinePacing(videoId, userId);
+
+      if (pacingResult.hasAdjustments) {
+        console.log(
+          `${LOG_PREFIX} Phase V-B: ${pacingResult.adjustments.length} pacing adjustments recommended`
+        );
+      } else {
+        console.log(`${LOG_PREFIX} Phase V-B: Pacing looks good — ${pacingResult.overallAssessment}`);
+      }
+    } catch (pacingError) {
+      console.warn(`${LOG_PREFIX} Phase V-B: Pacing review failed, continuing:`, pacingError);
+    }
 
     // =========================================================================
     // COMPLETE

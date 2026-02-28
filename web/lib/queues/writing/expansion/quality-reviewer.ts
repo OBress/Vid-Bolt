@@ -179,6 +179,54 @@ export async function reviewBeatQuality(
     const config: OpenRouterConfig = {
       model: QUALITY_REVIEW_MODEL,
       temperature: 0.3, // Low temp for consistent scoring
+      responseFormat: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'quality_review',
+          strict: true,
+          schema: {
+            type: 'object',
+            required: ['score', 'originality', 'engagement', 'flow', 'factualGrounding', 'issues', 'repetitionFlags', 'rewriteNeeded', 'rewriteGuidance'],
+            additionalProperties: false,
+            properties: {
+              score: { type: 'number' },
+              originality: { type: 'number' },
+              engagement: { type: 'number' },
+              flow: { type: 'number' },
+              factualGrounding: { type: 'number' },
+              issues: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['type', 'description', 'severity'],
+                  additionalProperties: false,
+                  properties: {
+                    type: { type: 'string', enum: ['originality', 'engagement', 'flow', 'factual', 'repetition', 'banned_phrase'] },
+                    description: { type: 'string' },
+                    severity: { type: 'string', enum: ['low', 'medium', 'high'] },
+                    location: { type: ['string', 'null'] },
+                  },
+                },
+              },
+              repetitionFlags: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['phrase', 'occurrences', 'location'],
+                  additionalProperties: false,
+                  properties: {
+                    phrase: { type: 'string' },
+                    occurrences: { type: 'number' },
+                    location: { type: 'string', enum: ['within_beat', 'cross_beat'] },
+                  },
+                },
+              },
+              rewriteNeeded: { type: 'boolean' },
+              rewriteGuidance: { type: 'string' },
+            },
+          },
+        },
+      },
     };
 
     const response = await generateJSON<QualityReviewResult>(
@@ -453,57 +501,46 @@ Be strict but fair. Score meanings:
 - 5-6: Mediocre, needs work
 - 1-4: Poor, major issues
 
-You MUST return ONLY a JSON array of numbers, nothing else.
-Example for 3 sections: [7, 8, 6]`;
+Return a scores array with exactly ${beats.length} numbers.`;
 
-  const userPrompt = `Rate these ${beats.length} sections and return ONLY a JSON array of ${beats.length} scores:\n\n${beatsText}`;
+  const userPrompt = `Rate these ${beats.length} sections:\n\n${beatsText}`;
 
   try {
     const config: OpenRouterConfig = {
       model: BATCH_RATING_MODEL,
       temperature: 0.1,
       maxTokens: 256,
+      responseFormat: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'batch_rating',
+          strict: true,
+          schema: {
+            type: 'object',
+            required: ['scores'],
+            additionalProperties: false,
+            properties: {
+              scores: {
+                type: 'array',
+                items: { type: 'number' },
+              },
+            },
+          },
+        },
+      },
     };
 
-    const response = await generateText(
+    const response = await generateJSON<{ scores: number[] }>(
       userId,
       systemPrompt,
       userPrompt,
       config
     );
 
-    console.log(`[BatchRating] Raw response: ${response.content.substring(0, 200)}`);
-
-    // Parse the scores array from the response
-    let scores: number[] = [];
-    const content = response.content.trim();
-    
-    // Try to extract JSON array from response
-    const arrayMatch = content.match(/\[[\d\s,\.]+\]/);
-    if (arrayMatch) {
-      try {
-        const parsed = JSON.parse(arrayMatch[0]);
-        if (Array.isArray(parsed)) {
-          scores = parsed.map((s: any) => {
-            const num = Math.round(Number(s));
-            return isNaN(num) ? 6 : Math.min(10, Math.max(1, num));
-          });
-        }
-      } catch (_e) {
-        console.log('[BatchRating] JSON parse failed, trying fallback');
-      }
-    }
-    
-    // Fallback: extract numbers from the response
-    if (scores.length === 0) {
-      const numbers = content.match(/\d+/g);
-      if (numbers) {
-        scores = numbers.slice(0, beats.length).map(n => {
-          const num = parseInt(n, 10);
-          return isNaN(num) || num > 10 ? 6 : Math.min(10, Math.max(1, num));
-        });
-      }
-    }
+    let scores = (response.scores || []).map((s: number) => {
+      const num = Math.round(Number(s));
+      return isNaN(num) ? 6 : Math.min(10, Math.max(1, num));
+    });
 
     // Ensure we have the right number of scores
     while (scores.length < beats.length) {

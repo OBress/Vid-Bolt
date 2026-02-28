@@ -43,6 +43,19 @@ export interface OpenRouterConfig {
   webSearch?: boolean | WebSearchPlugin;
   /** Web search context size for native search */
   webSearchContextSize?: 'low' | 'medium' | 'high';
+  /**
+   * Structured output format. When set, the model is constrained at the token
+   * level to produce JSON matching the given schema. Eliminates parsing failures.
+   * @see https://openrouter.ai/docs/features/structured-outputs
+   */
+  responseFormat?: {
+    type: 'json_schema';
+    json_schema: {
+      name: string;
+      strict: boolean;
+      schema: Record<string, unknown>;
+    };
+  };
 }
 
 export interface OpenRouterResponse {
@@ -126,6 +139,11 @@ export async function callOpenRouter(
         max_tokens: mergedConfig.maxTokens,
         top_p: mergedConfig.topP,
       };
+
+      // Add structured output format if specified
+      if (mergedConfig.responseFormat) {
+        requestBody.response_format = mergedConfig.responseFormat;
+      }
 
       // Add web search if enabled
       if (mergedConfig.webSearch) {
@@ -302,7 +320,12 @@ export async function generateText(
 
 /**
  * Generate structured JSON output from a prompt.
- * Instructs the model to return valid JSON.
+ *
+ * When a `jsonSchema` is provided in the config, uses OpenRouter's structured
+ * output mode which constrains the model at the token level — guaranteed valid
+ * JSON matching the schema with no markdown wrapping or truncation.
+ *
+ * Without a schema, falls back to prompt injection + markdown stripping.
  */
 export async function generateJSON<T = unknown>(
   userId: string,
@@ -310,6 +333,27 @@ export async function generateJSON<T = unknown>(
   userPrompt: string,
   config: OpenRouterConfig = {}
 ): Promise<T> {
+  // If structured output schema is provided, use token-constrained mode
+  if (config.responseFormat) {
+    const response = await callOpenRouter(
+      userId,
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      { ...config, temperature: config.temperature ?? 0.3 }
+    );
+
+    // Structured outputs guarantee valid JSON — direct parse
+    try {
+      return JSON.parse(response.content) as T;
+    } catch (e) {
+      console.error('[generateJSON] Unexpected parse failure with structured output:', response.content.substring(0, 300));
+      throw new Error(`Structured output parse error: ${e instanceof Error ? e.message : 'unknown'}`);
+    }
+  }
+
+  // Fallback: prompt injection + markdown stripping
   const jsonSystemPrompt = `${systemPrompt}\n\nIMPORTANT: You must respond with valid JSON only. No markdown, no code blocks, just raw JSON.`;
 
   const response = await callOpenRouter(
@@ -318,7 +362,7 @@ export async function generateJSON<T = unknown>(
       { role: "system", content: jsonSystemPrompt },
       { role: "user", content: userPrompt },
     ],
-    { ...config, temperature: 0.3 } // Lower temperature for more consistent JSON
+    { ...config, temperature: config.temperature ?? 0.3 }
   );
 
   try {

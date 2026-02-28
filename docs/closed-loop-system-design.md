@@ -37,6 +37,7 @@ graph TB
         subgraph STEP0["Step 0: Initialization"]
             PROMPTS["Generate Dynamic<br/>Worker Prompts<br/>(Gemini 3 Flash)"]
             GCM["Load GCM<br/>Entities"]
+            PORTRAITS["Auto-Generate<br/>Missing Portraits<br/>(characters/props<br/>without references)"]
             PERSIST_PROMPTS["Save to<br/>video_projects.worker_prompts"]
         end
 
@@ -48,6 +49,7 @@ graph TB
         subgraph PHASE2["Phase II: Shot Planning"]
             SHOT_PLAN["📋 Shot Planner<br/>shot-planner queue<br/>━━━━━━━━━━━━━━<br/>• Temporal mapping via TTS<br/>• Media type assignment<br/>• Content type tagging<br/>• MG asset declaration<br/>• Entity tagging"]
             SHOT_STORE["💾 metadata.shot_plan<br/>{shots[], content_types}"]
+            SHOT_REFLECT["🔍 Self-Reflection<br/>(15+ shots only)<br/>━━━━━━━━━━━━━━<br/>Gemini 3 Flash reviews<br/>plan for coverage gaps,<br/>duration issues, imbalance<br/>Major → 1 re-plan"]
         end
 
         subgraph PHASE3["Phase III: Asset Retrieval"]
@@ -81,15 +83,16 @@ graph TB
                 end
 
                 subgraph VID_PIPE["Video Pipeline"]
+                    VID_SSIM["📊 SSIM Pre-Check<br/>Static video detection<br/>(SSIM > 0.98 = auto-FAIL)"]
                     VID_GEN["🎥 Video Gen<br/>video-gen queue<br/>LTX-2 19B (batch)<br/>(VRAM: video_generation)"]
-                    VID_VERIFY["🔍 Verifier<br/>per-shot verify"]
+                    VID_VERIFY["🔍 Verifier<br/>per-shot verify<br/>+ meta-review<br/>(borderline 0.4-0.7)"]
                     VID_RESULT{"PASS?"}
                     VID_FUND{"fundamental?"}
-                    VID_RETRY["1 retry<br/>(GPU re-gen)"]
+                    VID_RETRY["1 retry<br/>(GPU re-gen<br/>+ prompt fix)"]
                     VID_FLAG["Flag shot<br/>+ use anyway"]
                     VID_SAVE["💾 R2 + metadata:<br/>generated_videos"]
 
-                    VID_GEN --> VID_VERIFY --> VID_RESULT
+                    VID_GEN --> VID_SSIM --> VID_VERIFY --> VID_RESULT
                     VID_RESULT -- "YES" --> VID_SAVE
                     VID_RESULT -- "NO" --> VID_FUND
                     VID_FUND -- "YES + not retried" --> VID_RETRY --> VID_VERIFY
@@ -113,13 +116,22 @@ graph TB
             MG_SWAP --> MG_PERSIST2
         end
 
+        SWAP --> CLIP_TRIM
+
+        subgraph CLIP_TRIMMING["✂️ Clip Trimming"]
+            CLIP_TRIM["VLM-Guided<br/>Clip Trimmer<br/>━━━━━━━━━━━━━━<br/>• Sample 8 frames<br/>• Gemini finds best segment<br/>• Remove dead frames<br/>• Store trim metadata"]
+        end
+
+        CLIP_TRIM --> PHASE5
+
         subgraph PHASE5["Phase V: Auto-Assembly"]
             EDIT["✂️ Edit Assembly<br/>edit-assembly queue<br/>━━━━━━━━━━━━━━<br/>• Chunked LLM generation<br/>• Content-type aware pacing<br/>• Emotional pacing zones<br/>• Ken Burns variation<br/>• SFX track placement<br/>• Overlay sync by shotIndex"]
             MERGE["Merge EDL Chunks<br/>━━━━━━━━━━━━━━<br/>• Rebuild main-video timing<br/>• Sync overlays by shotIndex<br/>• Batch context continuity<br/>• Dedup transitions"]
             FALLBACK["Fallback EDL<br/>━━━━━━━━━━━━━━<br/>• Content-aware transitions<br/>• Varied Ken Burns (4 patterns)<br/>• SFX track included"]
             EDL_SAVE["💾 metadata.edl<br/>+ Video Editor V2 state"]
+            PACING["📊 Pacing Review<br/>━━━━━━━━━━━━━━<br/>Gemini reviews full<br/>timeline for pacing<br/>issues, stores<br/>adjustment recs"]
 
-            EDIT --> MERGE --> EDL_SAVE
+            EDIT --> MERGE --> EDL_SAVE --> PACING
             EDIT -. "LLM JSON error" .-> FALLBACK --> EDL_SAVE
         end
 
@@ -131,7 +143,6 @@ graph TB
         PHASE3 --> PHASE4
         GPU --> |"await Promise.all"| SWAP
         MG_CPU --> |"await Promise.all"| SWAP
-        SWAP --> PHASE5
 
         %% Data flow connections
         TTS --> TTS_STORE
@@ -600,6 +611,8 @@ interface GCMEntity {
     camera_angle?: string;
     clothing?: string;
     color_palette?: string[];
+    /** Preserved original reference URL before rolling GCM updates */
+    original_reference_url?: string;
   };
   last_updated: number;
   appearance_count: number;
@@ -630,6 +643,28 @@ After a shot passes verification:
 - Log the Verifier's qualitative feedback for future prompt optimization
 - If the Verifier identifies the output as an improvement over the canonical reference, **FLAG for user** to optionally update the canonical `reference_url`
 
+### 5.6 GCM Rolling Updates (Automatic)
+
+For high-confidence verified shots (confidence > 0.8), the Orchestrator automatically updates entity reference URLs from the generated output:
+
+1. Extract a representative frame from the verified video/image
+2. Update `reference_url` for all referenced **character** and **prop** entities
+3. Preserve the original user-uploaded reference in `attributes.original_reference_url` (first update only)
+
+This prevents entity drift over long videos (20+ shots) by keeping the visual anchor current with what was actually generated, rather than relying on the initial reference which may not perfectly match the generation style.
+
+> [!NOTE]
+> Rolling updates only apply to characters and props — settings and styles don't drift the same way. The original reference is always preserved so users can revert if needed.
+
+### 5.7 Auto-Generated Master Portraits
+
+During Step 0 initialization, entities without `reference_url` (e.g., user skipped reference image upload) automatically receive a generated portrait:
+
+- **Characters**: "Professional reference portrait: [description]. Clear face visible, neutral background, studio lighting."
+- **Props**: "Product/prop shot: [description]. Clean background, well-lit."
+
+This ensures every entity has a visual anchor for downstream workers, even for quick projects where the user didn't upload references.
+
 ---
 
 ## 6. Synthesis Modes (T2V / FF2V / FLF2V)
@@ -655,12 +690,9 @@ elif low entity overlap → T2V (fresh start)
 > [!IMPORTANT]
 > **FLF2V should be used sparingly.** End-frame adherence in LTX-2 is probabilistic, not deterministic — the generated video may not smoothly reach the goal frame. Compounding two AI models (Gemini-generated goal frame + LTX-2 interpolation) increases unpredictability. **For dramatic scene transitions, prefer a simple cross-dissolve transition added in the Video Editor V2 timeline** rather than forcing LTX-2 to interpolate between unrelated scenes. FLF2V is best reserved for shots where start and end frames are visually similar (same scene, minor camera movement).
 
-### Mode Escalation on Failure
+### Mode Behavior on Failure
 
-When the Verifier detects temporal/consistency issues:
-
-- T2V → **escalate to** FF2V (add first-frame anchor)
-- FF2V → **escalate to** FLF2V only if start/end frames are visually similar (otherwise, flag for user)
+When a video shot fails verification, the system **does not escalate synthesis modes** (e.g., T2V → FF2V). Instead, it retries with the same mode but incorporates the verifier's `suggested_corrections` into the generation prompt. This avoids introducing frame conditioning that could make consistency issues worse rather than better.
 
 ---
 
@@ -715,6 +747,29 @@ When the Verifier detects temporal/consistency issues:
   "recommended_action": "re-edit"
 }
 ```
+
+### 7.5 SSIM Static Video Pre-Check
+
+Before calling Gemini for video verification, a programmatic **SSIM (Structural Similarity Index)** check compares the first and last frames of each generated video clip:
+
+- **SSIM > 0.98**: Video is essentially static (known LTX-2 failure mode) → auto-FAIL with `failure_type: fundamental` without wasting a VLM call
+- **SSIM ≤ 0.98**: Proceed to normal Gemini verification
+
+The SSIM check uses the GPU API endpoint `/api/frame-similarity` which extracts first/last frames and computes structural similarity. This catches the "still image rendered as video" failure mode more reliably than VLM assessment.
+
+### 7.6 Meta-Review (Borderline Cases)
+
+When the initial Gemini 3 Flash verdict has **borderline confidence** (0.4-0.7), a **meta-review** is triggered using **Gemini 3.1 Pro** for deeper reasoning:
+
+1. The initial verdict, dimension feedback, and suggested corrections are sent to Gemini 3.1 Pro
+2. The meta-reviewer considers whether the initial assessment was too strict or too lenient
+3. The meta-review can **overturn** the initial verdict (e.g., FAIL → PASS if the initial reviewer was overly strict about AI artifacts)
+
+| Confidence Range | Action                                     |
+| ---------------- | ------------------------------------------ |
+| < 0.4            | Clear failure — no meta-review needed      |
+| 0.4 – 0.7        | **Meta-review triggered** (Gemini 3.1 Pro) |
+| > 0.7            | Clear verdict — no meta-review needed      |
 
 ---
 
@@ -830,6 +885,14 @@ PHASE E: Motion Graphics Pass 2 + Assembly (CPU only, no GPU)
 3. Orchestrator: auto-assemble timeline via Video Editor V2 state API
 4. Export project JSON
 5. Full Remotion Lambda render triggered by user at final export
+
+PHASE F: Post-Assembly Quality (CPU only, no GPU)
+─────────────────────────────────────────────────
+1. VLM-Guided Clip Trimming: sample 8 frames per video clip,
+   Gemini identifies best contiguous segment, trim metadata stored
+2. Holistic Pacing Review: full timeline sent to Gemini 3 Flash,
+   checks for dead time, rushed shots, monotonous transitions
+3. Pacing adjustments stored as recommendations in project metadata
 ```
 
 **Minimum VRAM switches: 3** (audio_creation → image_generation → image_editing → video_generation). Fundamental image failures may require additional switches back to image_generation. Motion Graphics runs entirely on CPU — no GPU involvement.
@@ -937,31 +1000,36 @@ The Creative Manifest is the Orchestrator's initialization document, set from us
 
 ### 12.1 Gemini 3 Flash Costs (Per 15-Shot Video)
 
-| Call Type                     | Count | Est. Cost  |
-| ----------------------------- | ----- | ---------- |
-| Verifier (image, 5 frames)    | ~19   | ~$0.10     |
-| Verifier (video, 5 frames)    | ~19   | ~$0.25     |
-| MG composition verification   | ~10   | ~$0.05     |
-| Prompt refinement             | ~4    | ~$0.02     |
-| Goal frame gen (FLF2V)        | ~2    | ~$0.02     |
-| Shot plan + music/SFX prompts | ~3    | ~$0.03     |
-| **Total**                     |       | **~$0.47** |
+| Call Type                         | Count | Est. Cost  |
+| --------------------------------- | ----- | ---------- |
+| Verifier (image, 5 frames)        | ~19   | ~$0.10     |
+| Verifier (video, 5 frames)        | ~19   | ~$0.25     |
+| Verifier meta-review (borderline) | ~3    | ~$0.04     |
+| MG composition verification       | ~10   | ~$0.05     |
+| Shot plan self-reflection         | ~1    | ~$0.002    |
+| Clip trimming (VLM analysis)      | ~8    | ~$0.04     |
+| Pacing review                     | ~1    | ~$0.002    |
+| Prompt refinement                 | ~4    | ~$0.02     |
+| Goal frame gen (FLF2V)            | ~2    | ~$0.02     |
+| Shot plan + music/SFX prompts     | ~3    | ~$0.03     |
+| **Total**                         |       | **~$0.56** |
 
 ### 12.2 End-to-End Time (Step 3 Approval → Ready for Final Review)
 
 | Phase                                        | Time           | Notes                             |
 | -------------------------------------------- | -------------- | --------------------------------- |
-| GCM Init + Dynamic Prompt Gen                | ~15s           |                                   |
+| GCM Init + Portraits + Dynamic Prompt Gen    | ~30s           | +portraits if entities missing    |
 | TTS Generation                               | ~30s           | External API                      |
-| Shot Planning (with TTS alignment)           | ~15s           |                                   |
+| Shot Planning + Self-Reflection              | ~20s           | +5s for 15+ shot reflection       |
 | Asset Retrieval + SFX Search                 | ~30s           | Serper + Freesound API (parallel) |
 | Music generation (ACE-Step)                  | ~2 min         | audio_creation VRAM               |
 | Image pipeline (gen + edit + verify + regen) | ~2 min         | image_gen → image_edit VRAM       |
 | Video pipeline (sequential + verify + regen) | ~12 min        | video_generation VRAM             |
 | Motion Graphics Pass 1                       | —              | **Parallel with above on VM CPU** |
 | Motion Graphics Pass 2 (asset swap + verify) | ~30s           | CPU only, after video gen         |
-| Auto-assembly                                | ~10s           |                                   |
-| **Total**                                    | **~18–20 min** |                                   |
+| Clip trimming (VLM analysis)                 | ~30s           | CPU only, after production        |
+| Auto-assembly + Pacing review                | ~15s           | Assembly + holistic pacing check  |
+| **Total**                                    | **~19–21 min** |                                   |
 
 ---
 

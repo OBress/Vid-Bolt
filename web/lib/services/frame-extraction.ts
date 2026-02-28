@@ -124,6 +124,96 @@ export async function extractLastFrame(
   }
 }
 
+// ============================================================================
+// STATIC VIDEO DETECTION (SSIM)
+// ============================================================================
+
+export interface StaticVideoCheckResult {
+  /** SSIM score between first and last frames (0-1, higher = more similar) */
+  ssim: number;
+  /** Whether the video is considered essentially static */
+  isStatic: boolean;
+  /** URL of the extracted first frame */
+  firstFrameUrl?: string;
+  /** URL of the extracted last frame */
+  lastFrameUrl?: string;
+}
+
+/** SSIM threshold above which a video is considered essentially static */
+const STATIC_SSIM_THRESHOLD = 0.98;
+
+/**
+ * Check if a generated video is essentially static by comparing its
+ * first and last frames via SSIM.
+ *
+ * This catches a known LTX-2 failure mode where videos render as still
+ * images with no meaningful motion. A programmatic check is more reliable
+ * than VLM assessment for this specific issue.
+ *
+ * @param videoUrl - R2 URL of the generated video
+ * @param videoId - Project ID for R2 path organization
+ * @param shotIndex - Shot index for naming
+ */
+export async function checkStaticVideo(
+  videoUrl: string,
+  videoId: string,
+  shotIndex: number
+): Promise<StaticVideoCheckResult> {
+  const LOG_PREFIX = '[StaticCheck]';
+  const gpuApiUrl = process.env.GPU_API_URL;
+
+  if (!gpuApiUrl) {
+    console.warn(`${LOG_PREFIX} GPU_API_URL not configured — skipping static video check`);
+    return { ssim: 0, isStatic: false };
+  }
+
+  try {
+    const response = await fetch(`${gpuApiUrl}/api/frame-similarity`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.GPU_API_SECRET || ''}`,
+      },
+      body: JSON.stringify({
+        video_url: videoUrl,
+        output_format: 'jpeg',
+        quality: 85,
+        upload: {
+          bucket: process.env.R2_BUCKET_NAME || 'vid-bolt-media',
+          key_prefix: `projects/${videoId}/ssim/shot-${shotIndex}`,
+        },
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Frame similarity API error: ${response.status} — ${errText.substring(0, 200)}`);
+    }
+
+    const result = await response.json();
+    const ssim = typeof result.ssim === 'number' ? result.ssim : 0;
+    const isStatic = ssim > STATIC_SSIM_THRESHOLD;
+
+    if (isStatic) {
+      console.warn(`${LOG_PREFIX} Shot ${shotIndex}: STATIC VIDEO DETECTED (SSIM=${ssim.toFixed(4)})`);
+    } else {
+      console.log(`${LOG_PREFIX} Shot ${shotIndex}: Motion check passed (SSIM=${ssim.toFixed(4)})`);
+    }
+
+    return {
+      ssim,
+      isStatic,
+      firstFrameUrl: result.first_frame_url,
+      lastFrameUrl: result.last_frame_url,
+    };
+  } catch (error) {
+    // Non-blocking: if SSIM check fails, proceed to VLM verification
+    console.warn(`${LOG_PREFIX} Shot ${shotIndex}: SSIM check failed, skipping:`, error);
+    return { ssim: 0, isStatic: false };
+  }
+}
+
 /**
  * Determine the synthesis mode for a video shot based on its context.
  *

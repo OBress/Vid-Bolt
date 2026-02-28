@@ -522,6 +522,17 @@ You are writing SECTION {beatIndex} of {totalBeats}.
 Duration: {startSeconds} - {endSeconds} ({durationSeconds} seconds)
 Target word count: ~{targetWords} words
 
+## HOOK FORMULA (FIRST SECTION ONLY — beatIndex 0)
+If this is the FIRST section (beatIndex 0), your opening MUST use one of these proven hook formulas:
+1. **Provocative Question**: "What would you do if [extreme scenario]?"
+2. **Surprising Statistic**: Lead with the most shocking number from research
+3. **Expectation Reversal**: "He's [description A] — but he's actually [surprising B]"
+4. **Hypothetical Scenario**: "Imagine someone offers you [thing]. Would you take it?"
+5. **Cold Open Quote**: Start with a powerful direct quote from a subject
+
+Do NOT explain what the video is about. Drop the viewer INTO the story.
+Skip this section entirely for beatIndex > 0.
+
 This is a SUBSTANTIAL section of the script, not a tiny fragment.
 Write a complete, well-developed segment covering the entire topic below.
 Aim for flowing paragraphs with natural transitions between ideas.
@@ -598,6 +609,9 @@ When you see yourself writing ANY of these words, STOP and use the replacement i
 - Include occasional sentence fragments for emphasis
 - Use specific concrete details instead of vague generalities
 - Ground abstract concepts in tangible examples
+- TRANSITION DENSITY: Use at least one transition word per 2-3 sentences to maintain
+  forward momentum. Preferred: "but", "however", "turns out", "meanwhile",
+  "what they didn't know", "that's when", "suddenly", "the problem was"
 - When stating facts, attribute naturally ("According to court documents...", "The FBI report showed...")
 
 ### DOCUMENTARY WRITING STYLE (for documentary/biographical content):

@@ -156,13 +156,31 @@ export async function updateEntity(
   };
 
   if (input.name !== undefined) updatePayload.name = input.name;
-  if (input.reference_url !== undefined) updatePayload.reference_url = input.reference_url;
   if (input.text_description !== undefined) updatePayload.text_description = input.text_description;
+
+  // Preserve original reference URL on first rolling update
+  if (input.reference_url !== undefined) {
+    updatePayload.reference_url = input.reference_url;
+
+    // If this is the first time we're changing the reference_url,
+    // stash the original so we can always revert to it
+    const existing = await getEntity(entityId);
+    if (existing && !existing.attributes?.original_reference_url && existing.reference_url) {
+      input.attributes = {
+        ...(input.attributes || {}),
+        original_reference_url: existing.reference_url,
+      };
+    }
+  }
+
   if (input.attributes !== undefined) {
     // Merge attributes rather than replacing
-    const existing = await getEntity(entityId);
+    const existing = input.reference_url !== undefined
+      ? null // Already fetched above — attributes from above are merged
+      : await getEntity(entityId);
+    const baseAttributes = existing?.attributes || {};
     updatePayload.attributes = {
-      ...(existing?.attributes || {}),
+      ...baseAttributes,
       ...input.attributes,
     };
   }

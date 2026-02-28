@@ -18,6 +18,7 @@
 import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient } from '@/lib/queues/shared';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { checkStaticVideo } from '@/lib/services/frame-extraction';
 
 // ============================================================================
 // TYPES
@@ -77,6 +78,16 @@ export interface VerifierJobData {
 const LOG_PREFIX = '[Verifier]';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const VERIFICATION_MODEL = 'google/gemini-3-flash-preview';
+
+/** Gemini 3.1 Pro for meta-review of borderline verdicts (deeper reasoning) */
+const META_REVIEW_MODEL = 'google/gemini-3.1-pro-preview';
+
+/**
+ * Confidence range that triggers a meta-review.
+ * Below MIN = clearly bad, above MAX = clearly good — no second opinion needed.
+ */
+const META_REVIEW_CONFIDENCE_MIN = 0.4;
+const META_REVIEW_CONFIDENCE_MAX = 0.7;
 
 /**
  * Number of keyframes to sample from a video for verification.
@@ -171,6 +182,37 @@ async function callVisionModel(
       ],
       temperature: 0.2, // Low temperature for consistent scoring
       max_tokens: 2048,
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'verifier_result',
+          strict: true,
+          schema: {
+            type: 'object',
+            required: ['verdict', 'failure_type', 'dimension_feedback', 'suggested_corrections', 'recommended_action', 'confidence'],
+            additionalProperties: false,
+            properties: {
+              verdict: { type: 'string', enum: ['PASS', 'FAIL'] },
+              failure_type: { type: ['string', 'null'], enum: ['recoverable', 'fundamental', null] },
+              dimension_feedback: {
+                type: 'object',
+                required: ['semantic_alignment', 'entity_consistency', 'temporal_continuity', 'visual_quality', 'style_consistency'],
+                additionalProperties: false,
+                properties: {
+                  semantic_alignment: { type: 'string' },
+                  entity_consistency: { type: 'string' },
+                  temporal_continuity: { type: 'string' },
+                  visual_quality: { type: 'string' },
+                  style_consistency: { type: 'string' },
+                },
+              },
+              suggested_corrections: { type: 'array', items: { type: 'string' } },
+              recommended_action: { type: 'string', enum: ['re-edit', 'regenerate', 'accept'] },
+              confidence: { type: 'number' },
+            },
+          },
+        },
+      },
     }),
   });
 
@@ -264,6 +306,118 @@ function buildVerificationPrompt(jobData: VerifierJobData): Array<{ type: 'text'
   return content;
 }
 
+// ============================================================================
+// META-REVIEW (BORDERLINE CASES)
+// ============================================================================
+
+/**
+ * Build a meta-review prompt for borderline verifier verdicts.
+ * Asks a more powerful model to reconsider the initial assessment.
+ */
+function buildMetaReviewPrompt(
+  shotIndex: number,
+  initialResult: VerifierResult,
+  mediaType: string
+): string {
+  const feedbackSummary = Object.entries(initialResult.dimension_feedback)
+    .map(([dim, feedback]) => `  - ${dim}: ${feedback}`)
+    .join('\n');
+
+  return `You are reviewing a verification verdict for shot ${shotIndex + 1} (${mediaType}).
+
+The initial assessment returned:
+  Verdict: ${initialResult.verdict}
+  Confidence: ${initialResult.confidence}
+  Failure type: ${initialResult.failure_type || 'N/A'}
+  Dimension feedback:
+${feedbackSummary}
+  Suggested corrections: ${initialResult.suggested_corrections.join('; ') || 'None'}
+
+This verdict has LOW CONFIDENCE (${initialResult.confidence}), meaning the initial reviewer was uncertain.
+
+Please reflect on this assessment:
+1. Was the initial verdict too strict? AI-generated video naturally has minor imperfections.
+2. Was the initial verdict too lenient? Would this media confuse or distract a viewer?
+3. Are the suggested corrections actionable and accurate?
+
+Return your revised assessment as JSON with the same schema:
+{
+  "verdict": "PASS" | "FAIL",
+  "failure_type": "recoverable" | "fundamental" | null,
+  "dimension_feedback": { ... },
+  "suggested_corrections": [...],
+  "recommended_action": "re-edit" | "regenerate" | "accept",
+  "confidence": 0.0-1.0
+}`;
+}
+
+/**
+ * Perform a meta-review of a borderline verifier verdict using Gemini 3.1 Pro.
+ * Returns the revised result, or the original if the meta-review fails.
+ */
+async function performMetaReview(
+  apiKey: string,
+  shotIndex: number,
+  initialResult: VerifierResult,
+  mediaType: string
+): Promise<{ result: VerifierResult; overturned: boolean }> {
+  try {
+    const metaPrompt = buildMetaReviewPrompt(shotIndex, initialResult, mediaType);
+
+    // Call Gemini 3.1 Pro for deeper reasoning
+    const response = await fetch(OPENROUTER_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+        'X-Title': 'Vid-Bolt Verifier Meta-Review',
+      },
+      body: JSON.stringify({
+        model: META_REVIEW_MODEL,
+        messages: [
+          { role: 'system', content: 'You are a senior quality reviewer for an AI video production pipeline. Your role is to provide a second opinion on borderline verification verdicts.' },
+          { role: 'user', content: metaPrompt },
+        ],
+        temperature: 0.1,
+        max_tokens: 2048,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Meta-review API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+
+    if (!content) {
+      throw new Error('No content in meta-review response');
+    }
+
+    const revisedResult = parseVerifierResponse(content);
+    const overturned = revisedResult.verdict !== initialResult.verdict;
+
+    if (overturned) {
+      console.log(
+        `${LOG_PREFIX} Shot ${shotIndex}: Meta-review OVERTURNED verdict ` +
+        `${initialResult.verdict} → ${revisedResult.verdict} ` +
+        `(confidence: ${initialResult.confidence} → ${revisedResult.confidence})`
+      );
+    } else {
+      console.log(
+        `${LOG_PREFIX} Shot ${shotIndex}: Meta-review CONFIRMED verdict ` +
+        `${initialResult.verdict} (confidence: ${initialResult.confidence} → ${revisedResult.confidence})`
+      );
+    }
+
+    return { result: revisedResult, overturned };
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} Shot ${shotIndex}: Meta-review failed, using initial result:`, error);
+    return { result: initialResult, overturned: false };
+  }
+}
+
 /**
  * Parse the Gemini response into a structured VerifierResult.
  */
@@ -342,6 +496,42 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
     const apiKey = await getOpenRouterApiKey(userId);
     const userContent = buildVerificationPrompt(job.data);
 
+    // =====================================================================
+    // SSIM Pre-Check: Catch static videos before wasting a VLM call
+    // =====================================================================
+    if (mediaType === 'video') {
+      const staticCheck = await checkStaticVideo(mediaUrl, videoId, shotIndex);
+
+      if (staticCheck.isStatic) {
+        console.warn(`${LOG_PREFIX} Shot ${shotIndex}: Auto-FAIL — static video (SSIM=${staticCheck.ssim.toFixed(4)})`);
+
+        return {
+          success: true,
+          shotIndex,
+          videoId,
+          result: {
+            verdict: 'FAIL' as VerifierVerdict,
+            failure_type: 'fundamental' as FailureType,
+            dimension_feedback: {
+              semantic_alignment: 'Unable to assess — video has no meaningful motion',
+              entity_consistency: 'Unable to assess — video has no meaningful motion',
+              temporal_continuity: 'FAIL — video is essentially a still image',
+              visual_quality: `FAIL — static video detected (SSIM=${staticCheck.ssim.toFixed(4)})`,
+              style_consistency: 'Unable to assess — video has no meaningful motion',
+            },
+            suggested_corrections: [
+              'Video is essentially static with no meaningful motion.',
+              'Regenerate with a more action-oriented prompt.',
+              'Add motion keywords: "camera slowly pans", "wind blowing", "walking", "gesturing".',
+            ],
+            recommended_action: 'regenerate' as RecommendedAction,
+            confidence: 0.99,
+          } satisfies VerifierResult,
+          staticVideoDetected: true,
+        };
+      }
+    }
+
     for (let attempt = 1; attempt <= MAX_VERIFIER_RETRIES; attempt++) {
       try {
         console.log(`${LOG_PREFIX} Calling Gemini 3 Flash for shot ${shotIndex} (attempt ${attempt}/${MAX_VERIFIER_RETRIES})...`);
@@ -350,12 +540,28 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
 
         // If parse succeeded with real confidence, use it
         if (result.confidence > 0.3) {
-          console.log(`${LOG_PREFIX} Shot ${shotIndex}: ${result.verdict} (confidence: ${result.confidence}, action: ${result.recommended_action})`);
-          if (result.verdict === 'FAIL') {
-            console.log(`${LOG_PREFIX} Shot ${shotIndex} failure type: ${result.failure_type}`);
-            console.log(`${LOG_PREFIX} Corrections: ${result.suggested_corrections.join('; ')}`);
+          // -----------------------------------------------------------
+          // Meta-review for borderline cases (confidence 0.4-0.7)
+          // -----------------------------------------------------------
+          let finalResult = result;
+
+          if (
+            result.confidence >= META_REVIEW_CONFIDENCE_MIN &&
+            result.confidence <= META_REVIEW_CONFIDENCE_MAX
+          ) {
+            console.log(
+              `${LOG_PREFIX} Shot ${shotIndex}: Borderline confidence (${result.confidence}) — triggering meta-review`
+            );
+            const metaReview = await performMetaReview(apiKey, shotIndex, result, mediaType);
+            finalResult = metaReview.result;
           }
-          return { success: true, shotIndex, videoId, result };
+
+          console.log(`${LOG_PREFIX} Shot ${shotIndex}: ${finalResult.verdict} (confidence: ${finalResult.confidence}, action: ${finalResult.recommended_action})`);
+          if (finalResult.verdict === 'FAIL') {
+            console.log(`${LOG_PREFIX} Shot ${shotIndex} failure type: ${finalResult.failure_type}`);
+            console.log(`${LOG_PREFIX} Corrections: ${finalResult.suggested_corrections.join('; ')}`);
+          }
+          return { success: true, shotIndex, videoId, result: finalResult };
         }
 
         // Low confidence (likely partial parse) — retry if we have attempts left
