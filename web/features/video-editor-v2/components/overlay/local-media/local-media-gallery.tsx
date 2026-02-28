@@ -31,37 +31,55 @@ export function LocalMediaGallery({
   const { localMediaFiles, addMediaFile, removeMediaFile, isLoading } =
     useLocalMedia();
   const [activeTab, setActiveTab] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'generated' | 'upload'>('all');
   const [selectedFile, setSelectedFile] = useState<any>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Create source results for the tabs - memoized to prevent recalculation
+  // Source counts for the source filter buttons
+  const generatedCount = useMemo(() => 
+    localMediaFiles.filter(f => f.source === 'generated').length, 
+    [localMediaFiles]
+  );
+  const uploadCount = useMemo(() => 
+    localMediaFiles.filter(f => f.source !== 'generated').length, 
+    [localMediaFiles]
+  );
+
+  // Filter by source first, then by type
+  const sourceFilteredMedia = useMemo(() => {
+    if (sourceFilter === 'all') return localMediaFiles;
+    if (sourceFilter === 'generated') return localMediaFiles.filter(f => f.source === 'generated');
+    return localMediaFiles.filter(f => f.source !== 'generated');
+  }, [localMediaFiles, sourceFilter]);
+
+  // Create source results for the type tabs - based on source-filtered media
   const sourceResults = useMemo(() => [
     {
       adaptorName: "image",
       adaptorDisplayName: "Images",
-      itemCount: localMediaFiles.filter(file => file.type === "image").length,
+      itemCount: sourceFilteredMedia.filter(file => file.type === "image").length,
     },
     {
       adaptorName: "video",
       adaptorDisplayName: "Videos", 
-      itemCount: localMediaFiles.filter(file => file.type === "video").length,
+      itemCount: sourceFilteredMedia.filter(file => file.type === "video").length,
     },
     {
       adaptorName: "audio",
       adaptorDisplayName: "Audio",
-      itemCount: localMediaFiles.filter(file => file.type === "audio").length,
+      itemCount: sourceFilteredMedia.filter(file => file.type === "audio").length,
     },
-  ], [localMediaFiles]);
+  ], [sourceFilteredMedia]);
 
-  // Filter media files based on active tab - memoized to prevent recalculation
+  // Filter media files based on source + active type tab
   const filteredMedia = useMemo(() => {
-    return localMediaFiles.filter((file) => {
+    return sourceFilteredMedia.filter((file) => {
       if (activeTab === "all") return true;
       return file.type === activeTab;
     });
-  }, [localMediaFiles, activeTab]);
+  }, [sourceFilteredMedia, activeTab]);
 
   // Handle file upload - memoized to prevent recreation
   const handleFileUpload = useCallback(async (
@@ -377,19 +395,27 @@ export function LocalMediaGallery({
           </p>
         </div>
 
-        {/* Delete button */}
-        <button
-          className="absolute top-2 right-2 bg-destructive
-            text-destructive-foreground p-1.5 rounded-full opacity-0 group-hover/item:opacity-100 transition-all duration-200 
-            shadow-sm hover:shadow-md transform hover:scale-105"
-          onClick={(e) => {
-            e.stopPropagation();
-            removeMediaFile(file.id);
-          }}
-          title="Delete media"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        {/* Delete button — only for user uploads, not generated media */}
+        {file.source !== 'generated' && (
+          <button
+            className="absolute top-2 right-2 bg-destructive
+              text-destructive-foreground p-1.5 rounded-full opacity-0 group-hover/item:opacity-100 transition-all duration-200 
+              shadow-sm hover:shadow-md transform hover:scale-105"
+            onClick={(e) => {
+              e.stopPropagation();
+              removeMediaFile(file.id);
+            }}
+            title="Delete media"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {/* Generated badge */}
+        {file.source === 'generated' && (
+          <div className="absolute top-2 left-2 bg-primary/90 text-primary-foreground text-[9px] font-semibold px-1.5 py-0.5 rounded shadow-sm">
+            AI
+          </div>
+        )}
       </div>
     );
   }, [handleMediaSelect, removeMediaFile, handleDragStart, handleDragEnd]);
@@ -397,7 +423,7 @@ export function LocalMediaGallery({
   return (
     <div className="h-full flex flex-col">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-sm font-extralight">Saved Uploads</h2>
+        <h2 className="text-sm font-extralight">Media</h2>
         <div>
           <Button
             variant="default"
@@ -432,6 +458,40 @@ export function LocalMediaGallery({
       )}
 
       <div className="flex-1 flex flex-col">
+        {/* Source filter tabs */}
+        <div className="flex gap-1 mb-3">
+          <button
+            onClick={() => setSourceFilter('all')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              sourceFilter === 'all'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+            }`}
+          >
+            All ({localMediaFiles.length})
+          </button>
+          <button
+            onClick={() => setSourceFilter('generated')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              sourceFilter === 'generated'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+            }`}
+          >
+            Project ({generatedCount})
+          </button>
+          <button
+            onClick={() => setSourceFilter('upload')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              sourceFilter === 'upload'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+            }`}
+          >
+            Uploads ({uploadCount})
+          </button>
+        </div>
+
         <UnifiedTabs
           sourceResults={sourceResults}
           activeTab={activeTab}

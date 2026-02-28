@@ -21,6 +21,8 @@ export interface MediaFile {
   width: number | null;
   height: number | null;
   createdAt: string;
+  /** 'upload' for user uploads, 'generated' for pipeline-generated media */
+  source?: 'upload' | 'generated';
 }
 
 export interface UploadProgress {
@@ -142,6 +144,8 @@ export async function registerMedia(data: {
 export interface MediaPaginationOptions {
   limit?: number;
   offset?: number;
+  /** When true and projectId is set, also fetch generated media from project metadata */
+  includeGenerated?: boolean;
 }
 
 /**
@@ -165,6 +169,7 @@ export async function getMedia(
   if (projectId) params.set('projectId', projectId);
   if (options?.limit) params.set('limit', options.limit.toString());
   if (options?.offset) params.set('offset', options.offset.toString());
+  if (options?.includeGenerated) params.set('includeGenerated', 'true');
   
   const queryString = params.toString();
   const url = queryString 
@@ -178,6 +183,7 @@ export async function getMedia(
     total: number;
     limit: number;
     offset: number;
+    generatedCount?: number;
   }>(url);
 
   if (!response.success) {

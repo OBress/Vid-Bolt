@@ -177,6 +177,8 @@ function buildContext(
         hasMedia: !!media && media.generation_status === 'completed',
         mediaUrl: media?.media_url,
         hasRemotionCode: !!media?.remotion_code,
+        contentType: shot.content_type,
+        sectionBreak: shot.content_type === 'transition',
       };
     }),
     scriptSentences,
@@ -587,6 +589,29 @@ function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAg
         curr.startTime = prevEnd;
       }
     }
+
+    // === GAP-FILLING (main-video track only) ===
+    if (trackId === 'main-video' && clips.length > 0) {
+      // 1. Snap first clip to t=0 if offset (prevent black screen at start)
+      if (clips[0].startTime > 0) {
+        const gap = clips[0].startTime;
+        console.warn(`[EditAssembly] Fix: First clip on main-video started at ${gap}s — snapping to 0s (no black screen)`);
+        clips[0].duration += gap;
+        clips[0].startTime = 0;
+      }
+
+      // 2. Fill any gaps between clips by extending the preceding clip
+      for (let i = 1; i < clips.length; i++) {
+        const prev = clips[i - 1];
+        const curr = clips[i];
+        const prevEnd = prev.startTime + prev.duration;
+        const gap = curr.startTime - prevEnd;
+        if (gap > 0.05) { // >50ms gap
+          console.warn(`[EditAssembly] Fix: Filling ${gap.toFixed(2)}s gap on main-video by extending clip (shot ${prev.shotIndex}) from ${prev.duration.toFixed(2)}s to ${(prev.duration + gap).toFixed(2)}s`);
+          prev.duration += gap;
+        }
+      }
+    }
   });
 
   // Fix: transition durations must be reasonable
@@ -628,6 +653,7 @@ function generateFallbackAgentEDL(
   const tracks: AgentTrack[] = [
     { id: 'main-video', type: 'video', name: 'Main Video', group: 'video', order: 0 },
     { id: 'overlays', type: 'video', name: 'Video 2', group: 'video', order: 1 },
+    { id: 'sfx', type: 'audio', name: 'Sound Effects', group: 'audio', order: 1 },
   ];
 
   // --- CLIPS ---
@@ -649,8 +675,10 @@ function generateFallbackAgentEDL(
       });
     }
 
-    const isStandaloneMG = media?.media_type === 'motiongraphic' && !media?.remotion_code;
-    const isHybrid = hasMedia && media?.media_type !== 'motiongraphic' && !!media?.remotion_code;
+    const hasRemotionCode = !!media?.remotion_code;
+    const isStandaloneMG = media?.media_type === 'motiongraphic' && !hasRemotionCode;
+    // Any shot with remotion code gets an overlay clip on the overlays track
+    const isHybrid = hasRemotionCode;
 
     const clipType = isStandaloneMG
       ? 'motion-graphics' as const
@@ -666,15 +694,31 @@ function generateFallbackAgentEDL(
       label: shot.text?.substring(0, 40),
     };
 
-    // Add keyframe animations for image clips (Ken Burns effect)
+    // Add keyframe animations for image clips — vary Ken Burns style
+    // based on segment index to prevent monotonous identical animations
     if (clipType === 'image') {
-      clip.keyframes = [{
-        property: 'transform.scale',
-        points: [
-          { time: 0, value: 1.0, easing: 'easeInOut' },
-          { time: shot.duration_seconds, value: 1.05 },
-        ],
-      }];
+      const animPattern = shot.segment_index % 4;
+      clip.keyframes = [
+        animPattern === 0
+          ? { property: 'transform.scale' as const, points: [
+              { time: 0, value: 1.0, easing: 'easeInOut' as const },
+              { time: shot.duration_seconds, value: 1.08 },
+            ]}
+          : animPattern === 1
+          ? { property: 'transform.scale' as const, points: [
+              { time: 0, value: 1.08, easing: 'easeInOut' as const },
+              { time: shot.duration_seconds, value: 1.0 },
+            ]}
+          : animPattern === 2
+          ? { property: 'transform.x' as const, points: [
+              { time: 0, value: 0, easing: 'easeInOut' as const },
+              { time: shot.duration_seconds, value: -40 },
+            ]}
+          : { property: 'transform.x' as const, points: [
+              { time: 0, value: 0, easing: 'easeInOut' as const },
+              { time: shot.duration_seconds, value: 40 },
+            ]},
+      ];
     }
 
     clips.push(clip);
@@ -696,15 +740,21 @@ function generateFallbackAgentEDL(
 
 
   // --- TRANSITIONS ---
+  // Place transitions at content-type boundaries instead of every 4th clip
   const transitions: AgentTransition[] = [];
-  // Add crossfade between sections (every ~4 clips)
   const mainClips = clips.filter(c => c.trackId === 'main-video');
-  for (let i = 3; i < mainClips.length; i += 4) {
+  for (let i = 1; i < mainClips.length; i++) {
     const fromClip = mainClips[i - 1];
     const toClip = mainClips[i];
-    if (fromClip.shotIndex != null && toClip.shotIndex != null) {
+    if (fromClip.shotIndex == null || toClip.shotIndex == null) continue;
+
+    const fromShot = shots.find(s => s.segment_index === fromClip.shotIndex);
+    const toShot = shots.find(s => s.segment_index === toClip.shotIndex);
+
+    // Crossfade at section breaks (content_type = 'transition') or after emotional beats
+    if (toShot?.content_type === 'transition' || fromShot?.content_type === 'emotional-beat') {
       transitions.push({
-        type: 'crossfade',
+        type: fromShot?.content_type === 'emotional-beat' ? 'dissolve' : 'crossfade',
         fromShotIndex: fromClip.shotIndex,
         toShotIndex: toClip.shotIndex,
         duration: 0.5,

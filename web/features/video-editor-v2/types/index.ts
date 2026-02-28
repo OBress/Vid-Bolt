@@ -754,6 +754,8 @@ export interface LocalMediaFile {
   s3Key?: string;       // S3 object key
   width?: number;       // Video/image width
   height?: number;      // Video/image height
+  /** 'upload' for user uploads, 'generated' for pipeline-generated media */
+  source?: 'upload' | 'generated';
 }
 
 // Re-export keyframe types

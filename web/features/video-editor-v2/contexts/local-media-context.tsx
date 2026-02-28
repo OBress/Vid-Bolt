@@ -53,6 +53,7 @@ function toLocalMediaFile(media: MediaFile): LocalMediaFile {
     s3Key: media.s3Key,
     width: media.width || undefined,
     height: media.height || undefined,
+    source: media.source || 'upload',
   };
 }
 
@@ -95,7 +96,7 @@ export const LocalMediaProvider: React.FC<{
       const offset = reset ? 0 : currentOffsetRef.current;
       console.log('[LocalMedia] Loading media from S3/Supabase for project:', projectId || 'all', 'offset:', offset);
       
-      const { media, total } = await getMedia(projectId, { limit: PAGE_SIZE, offset });
+      const { media, total } = await getMedia(projectId, { limit: PAGE_SIZE, offset, includeGenerated: true });
       const files = media.map(toLocalMediaFile);
       
       console.log(`[LocalMedia] Loaded ${files.length} media files (total: ${total})`);

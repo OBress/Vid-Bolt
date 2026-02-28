@@ -151,7 +151,8 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
       };
 
       const onItemComplete = async (event: ItemCompleteEvent) => {
-        console.log(`${LOG_PREFIX} Videos: ${event.completed}/${event.total}`);
+        const label = event.mediaType === 'image' ? 'Keyframes' : 'Videos';
+        console.log(`${LOG_PREFIX} ${label}: ${event.completed}/${event.total}`);
       };
 
       const gpuResult = await processGpuBatchGeneration(

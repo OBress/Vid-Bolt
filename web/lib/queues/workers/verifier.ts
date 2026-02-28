@@ -98,9 +98,28 @@ A PASS means the output is acceptable for the final video. A FAIL means it needs
 IMPORTANT RULES:
 1. Be strict on entity consistency — wrong hair color, clothing, or character appearance is ALWAYS a FAIL.
 2. Be lenient on artistic interpretation — slightly different compositions or angles are fine if semantically correct.
-3. AI artifacts (extra fingers, melted faces, text artifacts) are ALWAYS a FAIL.
-4. Style mismatches (wrong lighting mood, wrong color palette) are FAIL if significant, PASS if subtle.
-5. Minor temporal discontinuities between shots are acceptable — major scene breaks when continuity was expected are FAIL.
+
+IMAGE-SPECIFIC RULES:
+3. For IMAGES: AI artifacts (extra fingers, melted faces, garbled text, floating objects) are FAIL.
+4. For IMAGES: Style mismatches (lighting mood, color palette, visual tone) that differ significantly from the style guide are FAIL.
+5. For IMAGES: The generated image must clearly depict the scene described. A generic or unrelated image is a fundamental FAIL.
+
+VIDEO-SPECIFIC RULES (AI-generated video inherently has minor imperfections):
+5. For VIDEOS: Only FAIL if:
+   - The scene is completely wrong or unrecognizable vs the description
+   - The video is essentially static with no meaningful motion
+   - There are extreme distortions (entire frame warping, subjects morphing into different objects)
+   - The video would confuse or distract the viewer from the narration
+6. For VIDEOS: These are ACCEPTABLE (PASS):
+   - Minor text warping or illegible text (AI cannot render text well)
+   - Subtle face/hand distortions that don't dominate the frame
+   - Slight temporal flickering or shimmer on textures
+   - Minor geometry warping on buildings, objects, or backgrounds
+   - Slight color/lighting shifts during camera movement
+   - Minor morphing between frames if the overall motion reads correctly
+
+GENERAL:
+7. Minor temporal discontinuities between shots are acceptable — major scene breaks are FAIL.
 
 For FAIL verdicts, classify as:
 - "recoverable": The issue can be fixed by editing (wrong color, lighting adjustment, style mismatch)
@@ -316,57 +335,74 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
 
   console.log(`${LOG_PREFIX} Verifying shot ${shotIndex} (${mediaType}) for video ${videoId}`);
 
-  try {
-    // Get API key
-    const apiKey = await getOpenRouterApiKey(userId);
+  const MAX_VERIFIER_RETRIES = 2;
+  let lastError: Error | null = null;
 
-    // Build the multimodal prompt
+  try {
+    const apiKey = await getOpenRouterApiKey(userId);
     const userContent = buildVerificationPrompt(job.data);
 
-    // Call Gemini 3 Flash via OpenRouter vision API
-    console.log(`${LOG_PREFIX} Calling Gemini 3 Flash for shot ${shotIndex}...`);
-    const rawResponse = await callVisionModel(apiKey, VERIFIER_SYSTEM_PROMPT, userContent);
+    for (let attempt = 1; attempt <= MAX_VERIFIER_RETRIES; attempt++) {
+      try {
+        console.log(`${LOG_PREFIX} Calling Gemini 3 Flash for shot ${shotIndex} (attempt ${attempt}/${MAX_VERIFIER_RETRIES})...`);
+        const rawResponse = await callVisionModel(apiKey, VERIFIER_SYSTEM_PROMPT, userContent);
+        const result = parseVerifierResponse(rawResponse);
 
-    // Parse the response
-    const result = parseVerifierResponse(rawResponse);
+        // If parse succeeded with real confidence, use it
+        if (result.confidence > 0.3) {
+          console.log(`${LOG_PREFIX} Shot ${shotIndex}: ${result.verdict} (confidence: ${result.confidence}, action: ${result.recommended_action})`);
+          if (result.verdict === 'FAIL') {
+            console.log(`${LOG_PREFIX} Shot ${shotIndex} failure type: ${result.failure_type}`);
+            console.log(`${LOG_PREFIX} Corrections: ${result.suggested_corrections.join('; ')}`);
+          }
+          return { success: true, shotIndex, videoId, result };
+        }
 
-    console.log(`${LOG_PREFIX} Shot ${shotIndex}: ${result.verdict} (confidence: ${result.confidence}, action: ${result.recommended_action})`);
+        // Low confidence (likely partial parse) — retry if we have attempts left
+        console.warn(`${LOG_PREFIX} Shot ${shotIndex} attempt ${attempt}: low confidence (${result.confidence}), retrying...`);
+        lastError = new Error(`Low confidence parse: ${result.confidence}`);
 
-    if (result.verdict === 'FAIL') {
-      console.log(`${LOG_PREFIX} Shot ${shotIndex} failure type: ${result.failure_type}`);
-      console.log(`${LOG_PREFIX} Corrections: ${result.suggested_corrections.join('; ')}`);
+        if (attempt < MAX_VERIFIER_RETRIES) {
+          await new Promise(r => setTimeout(r, 2000 * attempt));
+        } else {
+          // Last attempt — use whatever we got rather than failing completely
+          console.warn(`${LOG_PREFIX} Shot ${shotIndex}: using low-confidence result after ${MAX_VERIFIER_RETRIES} attempts`);
+          return { success: true, shotIndex, videoId, result, verificationSkipped: true };
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error('Unknown error');
+        console.warn(`${LOG_PREFIX} Shot ${shotIndex} attempt ${attempt} failed: ${lastError.message}`);
+        if (attempt < MAX_VERIFIER_RETRIES) {
+          await new Promise(r => setTimeout(r, 2000 * attempt));
+        }
+      }
     }
-
-    return {
-      success: true,
-      shotIndex,
-      videoId,
-      result,
-    };
-
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Verification failed for shot ${shotIndex}:`, error);
-
-    // On API failure, default to PASS to prevent pipeline blockage
-    // The pipeline should never halt due to a verification API error
-    return {
-      success: false,
-      shotIndex,
-      videoId,
-      result: {
-        verdict: 'PASS' as VerifierVerdict,
-        dimension_feedback: {
-          semantic_alignment: 'Verification API error — defaulting to PASS',
-          entity_consistency: 'Verification API error — defaulting to PASS',
-          temporal_continuity: 'Verification API error — defaulting to PASS',
-          visual_quality: 'Verification API error — defaulting to PASS',
-          style_consistency: 'Verification API error — defaulting to PASS',
-        },
-        suggested_corrections: [],
-        recommended_action: 'accept' as RecommendedAction,
-        confidence: 0.0,
-      } satisfies VerifierResult,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
+  } catch (outerError) {
+    // API key retrieval or prompt building failed — no retry helps
+    lastError = outerError instanceof Error ? outerError : new Error('Unknown error');
+    console.error(`${LOG_PREFIX} Verification setup failed for shot ${shotIndex}:`, lastError);
   }
+
+  // All retries exhausted — return PASS with verificationSkipped flag
+  console.warn(`${LOG_PREFIX} Shot ${shotIndex}: all ${MAX_VERIFIER_RETRIES} verification attempts failed — defaulting to PASS with verificationSkipped`);
+  return {
+    success: false,
+    shotIndex,
+    videoId,
+    verificationSkipped: true,
+    result: {
+      verdict: 'PASS' as VerifierVerdict,
+      dimension_feedback: {
+        semantic_alignment: 'Verification failed after retries — defaulting to PASS',
+        entity_consistency: 'Verification failed after retries — defaulting to PASS',
+        temporal_continuity: 'Verification failed after retries — defaulting to PASS',
+        visual_quality: 'Verification failed after retries — defaulting to PASS',
+        style_consistency: 'Verification failed after retries — defaulting to PASS',
+      },
+      suggested_corrections: [],
+      recommended_action: 'accept' as RecommendedAction,
+      confidence: 0.0,
+    } satisfies VerifierResult,
+    error: lastError?.message || 'Max retries exhausted',
+  };
 };

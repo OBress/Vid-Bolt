@@ -111,6 +111,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     //  writes to metadata.generated_images and metadata.generated_videos instead.)
     const generatedImages = (metadata.generated_images || {}) as Record<string, string>;
     const generatedVideos = (metadata.generated_videos || {}) as Record<string, string>;
+    const generatedMG = (metadata.generated_motion_graphics || {}) as Record<string, string>;
     const avScriptShots = (avScriptPart1.shots || []) as Array<Record<string, unknown>>;
     const generatedMedia: GeneratedMedia[] = avScriptShots.map((shot) => {
       const idx = shot.segment_index as number;
@@ -124,6 +125,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
         generation_status: url ? 'completed' : 'failed',
         media_url: url,
         visual_prompt: (shot.visual_prompt as string) || (shot.summary as string) || '',
+        remotion_code: generatedMG[key],
       } as GeneratedMedia;
     });
 
@@ -188,10 +190,34 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       const batchShotIndices = new Set(batchShots.map((s) => s.segment_index));
       const batchMedia = generatedMedia.filter((m) => batchShotIndices.has(m.shot_index));
 
-      // Filter audio chunks relevant to this batch
-      const batchAudioChunks = audioChunks.filter((c) => {
-        return batchShotIndices.has(c.index);
-      });
+      // Pass ALL audio chunks to every batch. Previously, we filtered by
+      // batchShotIndices.has(c.index), but audio chunk indices (from chapterNumber,
+      // e.g. 0-10) only matched batch 1's shot indices — batches 2-4 received
+      // ZERO audio chunks, producing 6 minutes of silent clips.
+      // The LLM uses shot timing context to decide which audio clips to place.
+      const batchAudioChunks = audioChunks;
+
+      // Include trailing clips from previous batch for cross-batch continuity.
+      // Without this, the LLM in batch 2 doesn't know how batch 1 ended
+      // (e.g., it might duplicate a crossfade at the boundary).
+      let batchScriptText = scriptText;
+      if (batchIdx > 0 && chunkAgentEDLs.length > 0) {
+        const prevEDL = chunkAgentEDLs[chunkAgentEDLs.length - 1];
+        const trailingClips = (prevEDL.clips || [])
+          .filter(c => c.trackId === 'main-video')
+          .slice(-2);
+        const trailingTransitions = (prevEDL.transitions || []).slice(-1);
+
+        if (trailingClips.length > 0) {
+          const trailingLines = trailingClips.map(c =>
+            `  Shot ${c.shotIndex}: ${c.type} at ${c.startTime.toFixed(1)}s for ${c.duration.toFixed(1)}s`
+          );
+          const trailingTransLine = trailingTransitions.length > 0
+            ? `  Last transition: ${trailingTransitions[0].type} (${trailingTransitions[0].duration}s)`
+            : '';
+          batchScriptText += `\n\n## Previous Batch Ending Context\n${trailingLines.join('\n')}${trailingTransLine ? '\n' + trailingTransLine : ''}`;
+        }
+      }
 
       try {
         const result = await assembleEdit({
@@ -200,7 +226,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
           generatedMedia: batchMedia,
           videoTitle: project.name || 'Untitled',
           audioChunks: batchAudioChunks,
-          scriptText,
+          scriptText: batchScriptText,
           fps: 30,
           apiKey,
           model,
@@ -389,30 +415,42 @@ function mergeAgentEDLChunks(chunks: EditorAgentEDL[]): EditorAgentEDL {
       return a.startTime - b.startTime;
     });
 
-    // Fix ALL overlaps by snapping to the previous clip's end.
-    // This handles the case where each AI batch produces timing relative
-    // to its own batch rather than the absolute timeline — the sorted order
-    // (by shotIndex naturally ascending) ensures correct sequencing.
-    for (let i = 1; i < clips.length; i++) {
-      const prev = clips[i - 1];
-      const curr = clips[i];
-      const prevEnd = prev.startTime + prev.duration;
-      if (curr.startTime < prevEnd) {
-        const overlapAmount = prevEnd - curr.startTime;
-        console.log(`[EditAssembly Merge] Fixing ${overlapAmount.toFixed(2)}s overlap on ${trackId}: ${curr.startTime}s → ${prevEnd}s`);
-        curr.startTime = prevEnd;
+    // Only rebuild absolute timing for main-video track.
+    // Overlay tracks (e.g., "overlays") must stay synced to their main-video
+    // counterpart by shotIndex — rebuilding them independently would destroy
+    // the synchronization that hybrid shots depend on.
+    if (trackId === 'main-video') {
+      let runningTime = 0;
+      for (let i = 0; i < clips.length; i++) {
+        if (clips[i].startTime !== runningTime) {
+          console.log(`[EditAssembly Merge] Rebasing clip (shot ${clips[i].shotIndex}) on ${trackId}: ${clips[i].startTime.toFixed(2)}s → ${runningTime.toFixed(2)}s`);
+        }
+        clips[i].startTime = runningTime;
+        runningTime += clips[i].duration;
       }
     }
+  });
 
-    // Gap-closer pass: fill gaps between 0.1s–2s by shifting clips backward
-    for (let i = 1; i < clips.length; i++) {
-      const prev = clips[i - 1];
-      const curr = clips[i];
-      const prevEnd = prev.startTime + prev.duration;
-      const gap = curr.startTime - prevEnd;
-      if (gap > 0.1 && gap < 2) {
-        console.log(`[EditAssembly Merge] Closing ${gap.toFixed(2)}s gap on ${trackId}: ${curr.startTime}s → ${prevEnd}s`);
-        curr.startTime = prevEnd;
+  // After main-video timing is rebuilt, sync overlay clips to their
+  // corresponding main-video clip by shotIndex (preserves hybrid shot sync)
+  const mainClips = clipsByTrack.get('main-video') || [];
+  const mainClipsByShotIndex = new Map<number, AgentClip>();
+  mainClips.forEach(c => {
+    if (c.shotIndex != null) mainClipsByShotIndex.set(c.shotIndex, c);
+  });
+
+  clipsByTrack.forEach((clips, trackId) => {
+    if (trackId === 'main-video') return;
+    for (const clip of clips) {
+      if (clip.shotIndex != null) {
+        const mainClip = mainClipsByShotIndex.get(clip.shotIndex);
+        if (mainClip) {
+          if (clip.startTime !== mainClip.startTime || clip.duration !== mainClip.duration) {
+            console.log(`[EditAssembly Merge] Syncing overlay clip (shot ${clip.shotIndex}) on ${trackId}: ${clip.startTime.toFixed(2)}s → ${mainClip.startTime.toFixed(2)}s, dur ${clip.duration.toFixed(2)}s → ${mainClip.duration.toFixed(2)}s`);
+          }
+          clip.startTime = mainClip.startTime;
+          clip.duration = mainClip.duration;
+        }
       }
     }
   });

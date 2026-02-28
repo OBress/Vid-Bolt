@@ -210,7 +210,7 @@ export const ReactVideoEditorProvider: React.FC<ReactVideoEditorProviderProps> =
               videoWidth={videoWidth}
               videoHeight={videoHeight}
             >
-                <LocalMediaProvider>
+                <LocalMediaProvider projectId={projectId}>
                       <EditorSidebarProvider>
                         <ToolProvider>
                           {children}

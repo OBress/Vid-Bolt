@@ -357,6 +357,8 @@ export const ClosedLoopState = z.object({
   })).default([]),
   /** Total retry count across all phases */
   total_retries: z.number().int().default(0),
+  /** Count of shots where verification was skipped due to API/parse errors */
+  verification_skipped: z.number().int().default(0),
   /** Error log */
   errors: z.array(z.object({
     phase: ClosedLoopPhase,

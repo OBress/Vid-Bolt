@@ -119,6 +119,7 @@ function createInitialState(): ClosedLoopState {
     phase_data: {},
     flagged_shots: [],
     total_retries: 0,
+    verification_skipped: 0,
     errors: [],
   };
 }
@@ -513,8 +514,16 @@ async function executeProductionPhase(
   let mgFailed = 0;
 
   // Separate shot types
-  const imageShots = shots.filter(s => s.media_type === 'image' || s.media_type === 'stock');
-  const videoShots = shots.filter(s => s.media_type === 'video');
+  // Only stock shots with confirmed scraped URLs stay as images; AI "image" shots → video pipeline
+  const scrapedStock = (metadata.scraped_stock_images || {}) as Record<string, string>;
+  const imageShots = shots.filter(s =>
+    s.media_type === 'stock' && scrapedStock[`shot-${s.segment_index}`]
+  );
+  const videoShots = shots.filter(s =>
+    s.media_type === 'video' ||
+    (s.media_type === 'image') ||
+    (s.media_type === 'stock' && !scrapedStock[`shot-${s.segment_index}`])
+  );
   const mgShots = shots.filter(s => s.media_type === 'motiongraphic');
 
   // -----------------------------------------------------------------------
@@ -681,11 +690,49 @@ async function executeProductionPhase(
           const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, 60_000);
           const verdict = verifyResult?.result;
 
+          // Track verification skips in state
+          if (verifyResult?.verificationSkipped) {
+            state.verification_skipped = (state.verification_skipped || 0) + 1;
+          }
+
           if (verdict?.verdict === 'PASS') {
             console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} PASSED verification`);
           } else if (verdict) {
             console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} FAILED verification: ${verdict.suggested_corrections?.join('; ')}`);
-            // Still use the video — no re-generation for videos (GPU is expensive)
+
+            // For fundamental failures (wrong scene entirely), try ONE re-generation
+            if (verdict.failure_type === 'fundamental' && !(shot as any)._retried) {
+              console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} FUNDAMENTAL failure — scheduling one retry`);
+              (shot as any)._retried = true;
+
+              try {
+                const retryJob = await videoGenQueue.add('video-retry', {
+                  taskId,
+                  userId: jobData.userId,
+                  videoId,
+                  singleShotIndex: shot.segment_index,
+                  previousFeedback: verdict.suggested_corrections?.join('. '),
+                  aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+                });
+
+                const totalVideoDurationForRetry = shot.duration_seconds || 5;
+                const RETRY_TIMEOUT_MS = Math.max(120_000, totalVideoDurationForRetry * 20 * 1_000);
+                const retryResult = await retryJob.waitUntilFinished(genQueueEvents, RETRY_TIMEOUT_MS);
+                const retryUrl = retryResult?.mediaUrl || retryResult?.url;
+                if (retryUrl) {
+                  generatedVideos[shotKey] = retryUrl;
+                  generatedAssets.set(`placeholder://shot-${shot.segment_index}/asset-0`, retryUrl);
+                  console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} retry succeeded`);
+                  videosCompleted++;
+                  state.total_retries = (state.total_retries || 0) + 1;
+                  continue; // Skip the flagging below
+                }
+              } catch (retryErr) {
+                console.warn(`${LOG_PREFIX} Video shot ${shot.segment_index} retry failed:`, retryErr);
+              }
+            }
+
+            // Recoverable failure or retry-exhausted: flag but still use
             state.flagged_shots.push({
               shotIndex: shot.segment_index,
               issue: verdict.suggested_corrections?.join('; ') || 'Failed verification',
@@ -717,22 +764,117 @@ async function executeProductionPhase(
   ]);
 
   // -----------------------------------------------------------------------
-  // MG Pass 2: Swap placeholder URLs for real R2 URLs
+  // MG PASS 1 PERSISTENCE: Save generated Remotion code to metadata
+  // -----------------------------------------------------------------------
+  if (mgPass1Results.size > 0) {
+    const mgCodeMap: Record<string, string> = {};
+    for (const [shotIdx, code] of mgPass1Results) {
+      mgCodeMap[`shot-${shotIdx}`] = code;
+    }
+
+    const { data: latestForMg } = await supabase
+      .from('video_projects')
+      .select('metadata')
+      .eq('id', videoId)
+      .single();
+    const metaForMg = (latestForMg?.metadata || {}) as Record<string, unknown>;
+
+    await supabase
+      .from('video_projects')
+      .update({
+        metadata: { ...metaForMg, generated_motion_graphics: mgCodeMap },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', videoId);
+
+    console.log(`${LOG_PREFIX} MG Pass 1: persisted ${mgPass1Results.size} Remotion compositions`);
+  }
+
+  // -----------------------------------------------------------------------
+  // MG PASS 2: Swap placeholder URLs → real R2 URLs (images, videos, stock)
   // -----------------------------------------------------------------------
   if (mgPass1Results.size > 0 && generatedAssets.size > 0) {
     const { generateMotionGraphicPass2 } = await import(
       '@/lib/services/motion-graphics/pipeline-motion-graphics'
     );
 
-    const assetMap = Object.fromEntries(generatedAssets);
-    for (const [shotIdx, pass1Code] of mgPass1Results) {
-      const pass2Result = generateMotionGraphicPass2(pass1Code, assetMap);
-      if (pass2Result.success) {
-        console.log(`${LOG_PREFIX} MG Pass 2 complete for shot ${shotIdx}`);
-      } else {
-        console.warn(`${LOG_PREFIX} MG Pass 2 failed for shot ${shotIdx}: ${pass2Result.error}`);
+    // Build a sorted list of all generated asset URLs by segment index
+    const assetEntries = [...generatedAssets.entries()]
+      .map(([placeholder, url]) => {
+        const match = placeholder.match(/shot-(\d+)/);
+        return { segmentIndex: match ? parseInt(match[1]) : -1, url };
+      })
+      .filter(e => e.segmentIndex >= 0)
+      .sort((a, b) => a.segmentIndex - b.segmentIndex);
+
+    // Also include scraped stock images from Phase III (asset-scout)
+    const { data: latestForStock } = await supabase
+      .from('video_projects')
+      .select('metadata')
+      .eq('id', videoId)
+      .single();
+    const metaForStock = (latestForStock?.metadata || {}) as Record<string, unknown>;
+    const scrapedStock = (metaForStock.scraped_stock_images || {}) as Record<string, string>;
+    for (const [key, url] of Object.entries(scrapedStock)) {
+      const match = key.match(/shot-(\d+)/);
+      if (match && url) {
+        assetEntries.push({ segmentIndex: parseInt(match[1]), url });
       }
     }
+    assetEntries.sort((a, b) => a.segmentIndex - b.segmentIndex);
+
+    const updatedMgCode: Record<string, string> = {};
+
+    for (const [shotIdx, pass1Code] of mgPass1Results) {
+      // Resolve this MG shot's placeholders to nearest available assets
+      const mgAssetMap: Record<string, string> = {};
+      const availableAssets = [...assetEntries]; // clone to avoid cross-shot interference
+
+      for (let i = 0; i < 2; i++) {
+        const placeholderKey = `placeholder://shot-${shotIdx}/asset-${i}`;
+        if (availableAssets.length === 0) break;
+
+        // Find the asset closest to this MG shot's segment index
+        const nearest = availableAssets.reduce((best, entry) =>
+          Math.abs(entry.segmentIndex - shotIdx) < Math.abs(best.segmentIndex - shotIdx)
+            ? entry
+            : best
+        );
+        mgAssetMap[placeholderKey] = nearest.url;
+
+        // Remove used entry to avoid assigning the same asset twice
+        const idx = availableAssets.indexOf(nearest);
+        if (idx >= 0) availableAssets.splice(idx, 1);
+      }
+
+      const pass2Result = generateMotionGraphicPass2(pass1Code, mgAssetMap);
+      if (pass2Result.success && pass2Result.remotionCode) {
+        updatedMgCode[`shot-${shotIdx}`] = pass2Result.remotionCode;
+        console.log(`${LOG_PREFIX} MG Pass 2 complete for shot ${shotIdx}`);
+      } else {
+        // Retain Pass 1 code as fallback (placeholder URLs remain unresolved)
+        updatedMgCode[`shot-${shotIdx}`] = pass1Code;
+        console.warn(`${LOG_PREFIX} MG Pass 2 failed for shot ${shotIdx}, retaining Pass 1 code`);
+      }
+    }
+
+    // Persist Pass 2 updated code to metadata
+    const { data: latestForPersist } = await supabase
+      .from('video_projects')
+      .select('metadata')
+      .eq('id', videoId)
+      .single();
+    const metaForPersist = (latestForPersist?.metadata || {}) as Record<string, unknown>;
+
+    await supabase
+      .from('video_projects')
+      .update({
+        metadata: { ...metaForPersist, generated_motion_graphics: updatedMgCode },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', videoId);
+
+    console.log(`${LOG_PREFIX} MG Pass 2: persisted ${Object.keys(updatedMgCode).length} updated compositions`);
   }
 
   await updateTaskStatus(taskId, {

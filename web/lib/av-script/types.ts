@@ -26,10 +26,10 @@ export type ContentType =
  * Duration ranges for each content type (in seconds)
  */
 export const CONTENT_DURATION_RANGES: Record<ContentType, { min: number; target: number; max: number }> = {
-  'list-item': { min: 1, target: 2, max: 3 },
-  'comparison': { min: 2, target: 3, max: 4 },
+  'list-item': { min: 3, target: 4, max: 6 },
+  'comparison': { min: 3, target: 4, max: 6 },
   'concept': { min: 5, target: 6.5, max: 8 },
-  'transition': { min: 2, target: 3, max: 4 },
+  'transition': { min: 3, target: 4, max: 5 },
   'emotional-beat': { min: 4, target: 5.5, max: 7 },
 };
 

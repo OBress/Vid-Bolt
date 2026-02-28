@@ -34,6 +34,7 @@ export async function GET(request: NextRequest) {
     // 2. Get query parameters
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get("projectId");
+    const includeGenerated = searchParams.get("includeGenerated") === "true";
     
     // Pagination params (default: 50 items, max: 100)
     const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
@@ -65,7 +66,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Transform to camelCase for frontend
-    const media = (mediaList || []).map((item) => ({
+    const media = (mediaList || []).map((item: any) => ({
       id: item.id,
       userId: item.user_id,
       projectId: item.project_id,
@@ -79,14 +80,81 @@ export async function GET(request: NextRequest) {
       width: item.width,
       height: item.height,
       createdAt: item.created_at,
+      source: 'upload' as const,
     }));
+
+    // 5. Optionally include generated project media from video_projects.metadata
+    let generatedMedia: any[] = [];
+    if (includeGenerated && projectId) {
+      const { data: project } = await serviceClient
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', projectId)
+        .single();
+
+      if (project?.metadata) {
+        const meta = project.metadata as Record<string, any>;
+        const genImages = (meta.generated_images || {}) as Record<string, string>;
+        const genVideos = (meta.generated_videos || {}) as Record<string, string>;
+
+        // Convert generated videos to media items
+        for (const [key, url] of Object.entries(genVideos)) {
+          if (!url) continue;
+          const shotMatch = key.match(/shot-(\d+)/);
+          const shotNum = shotMatch ? parseInt(shotMatch[1]) : 0;
+          generatedMedia.push({
+            id: `gen-video-${key}`,
+            userId: user.id,
+            projectId,
+            s3Key: '',
+            s3Url: url,
+            name: `Shot ${shotNum} (AI Video)`,
+            type: 'video',
+            size: 0,
+            duration: null,
+            thumbnail: null,
+            width: null,
+            height: null,
+            createdAt: meta.edl_generated_at || new Date().toISOString(),
+            source: 'generated',
+          });
+        }
+
+        // Convert generated images to media items
+        for (const [key, url] of Object.entries(genImages)) {
+          if (!url) continue;
+          const shotMatch = key.match(/shot-(\d+)/);
+          const shotNum = shotMatch ? parseInt(shotMatch[1]) : 0;
+          generatedMedia.push({
+            id: `gen-image-${key}`,
+            userId: user.id,
+            projectId,
+            s3Key: '',
+            s3Url: url,
+            name: `Shot ${shotNum} (AI Image)`,
+            type: 'image',
+            size: 0,
+            duration: null,
+            thumbnail: url,
+            width: null,
+            height: null,
+            createdAt: meta.edl_generated_at || new Date().toISOString(),
+            source: 'generated',
+          });
+        }
+      }
+    }
+
+    // Generated media comes first, then user uploads
+    const allMedia = [...generatedMedia, ...media];
 
     return NextResponse.json({
       success: true,
-      media,
-      total: count ?? media.length,
+      media: allMedia,
+      total: (count ?? media.length) + generatedMedia.length,
       limit,
       offset,
+      generatedCount: generatedMedia.length,
     });
   } catch (error) {
     console.error("[VideoEditorMedia] Error listing media:", error);

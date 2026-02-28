@@ -112,7 +112,7 @@ ${getEditorCapabilityPrompt()}
 ## YOUR STYLE: DOCUMENTARY
 
 Apply these documentary style defaults:
-- Average cut duration: 6-10 seconds
+- Average cut duration: 4-8 seconds
 - Transition density: LOW (mostly hard cuts)
 - Use crossfade transitions only for topic/section shifts
 - Use fadeToBlack for major section boundaries
@@ -121,29 +121,47 @@ Apply these documentary style defaults:
 
 ## YOUTUBE BEST PRACTICES
 
-1. **5-second visual change rule**: Ensure a visual change every ~5s (transition, zoom, or cut)
+1. **5-second visual change rule**: Ensure a visual change every ~5s (transition, zoom, overlay appearing, or cut)
 2. **Audio-visual sync**: Align transitions with phrase/sentence boundaries, not mid-word
-3. **Hook pattern**: Slightly faster pacing in the first 15 seconds (4-6s cuts vs 6-10s default)
+3. **Hook pattern**: Faster pacing in the first 15 seconds (3-5s cuts)
+4. **Emotional pacing zones**: Vary pacing based on content type tags in the shot list:
+   - [list-item] sections: Steady 4-5s cuts, minimal transitions
+   - [emotional-beat] sections: Longer holds (6-8s), slower Ken Burns, with crossfade transitions
+   - [comparison] sections: Paired 4-5s clips with crossfade between the two sides
+   - [transition] sections: Hold a neutral visual for 4-5s as a breathing beat
+   - 🔶 SECTION-BREAK shots: Use fadeToBlack or dissolve transition, add 0.3s black gap
+   - [concept] sections: Rich 5-8s holds with slow zoom
+5. **Ken Burns variation**: Alternate between zoom-in (scale 1.0→1.08), zoom-out (1.08→1.0), pan-left, and pan-right across consecutive image clips — never use the same animation on two adjacent clips
+6. **Color grading**: Apply consistent visual effects across all clips based on the video's mood:
+   - If the narration text suggests dark/serious content: add vignette (size: 60, feather: 80) to image clips
+   - If content is bright/optimistic: add brightness (+10) to image clips
+   - Atmospheric/moody content: add slight contrast (+15) to all visual clips
+   - NEVER apply sepia or grayscale unless the content is explicitly about history or vintage topics
 
 ## TRACK STRATEGY
 
 Create tracks based on content needs:
 - Always create a "main-video" track (type: video, group: video, order: 0) for base visual clips
 - Always create an "overlays" track (type: video, name: "Video 2", group: video, order: 1) for motion-graphics overlays
+- Always create an "sfx" track (type: audio, name: "Sound Effects", group: audio, order: 1) for sound effects
 - Place image and video clips on the "main-video" track
 - For STANDALONE motion-graphics shots (no base media), place on "main-video"
 - For HYBRID shots (base media + motion-graphics overlay), place the base clip on "main-video" AND a separate motion-graphics clip on "overlays" at the SAME startTime and duration
-- Audio tracks are handled separately by the import system
+- Audio narration is handled separately by the import system
+- Sound effects: when shots describe actions with obvious audio (footsteps, doors, nature sounds, impacts, whooshes), add an audio clip on "sfx" at the appropriate startTime. Set type to "audio" and label to a descriptive SFX name.
 
 ## CRITICAL RULES
 
 1. NEVER create overlapping clips on the SAME track
 2. Every transition duration must be <= min(fromClipDuration, toClipDuration) / 2
-3. For failed shots (listed in failedShots), include them as mediaIssues
+3. For failed shots (listed in failedShots): EXTEND the previous or next successful clip's duration to COVER the gap time range. Also include them as mediaIssues for tracking.
 4. ALL image clips MUST have keyframe animations (Ken Burns or zoom) — static images look dead on video
 5. Always include audio fades: fadeIn on start, fadeOut on end
 6. Do NOT create any "text" clips — all text/titles are handled by motion graphics in a separate pipeline
 7. Hybrid shots (marked ⚡ in the shot list) MUST produce TWO clips: base on "main-video" + overlay on "overlays"
+8. The FIRST clip MUST start at exactly startTime: 0. There must NEVER be a black screen at the beginning.
+9. The timeline MUST have CONTINUOUS visual coverage — NO gaps between clips on the main-video track. Every second from 0 to total duration must be covered.
+10. When a shot has no media, extend the neighboring clip's duration to fill that time range rather than leaving a gap.
 
 ## REQUIRED JSON FORMAT
 
@@ -153,7 +171,8 @@ Use exact camelCase field names. Each clip MUST have trackId, shotIndex, type, s
 {
   "tracks": [
     { "id": "main-video", "type": "video", "name": "Main Video", "group": "video", "order": 0 },
-    { "id": "overlays", "type": "video", "name": "Video 2", "group": "video", "order": 1 }
+    { "id": "overlays", "type": "video", "name": "Video 2", "group": "video", "order": 1 },
+    { "id": "sfx", "type": "audio", "name": "Sound Effects", "group": "audio", "order": 1 }
   ],
   "clips": [
     { "trackId": "main-video", "shotIndex": 0, "type": "image", "startTime": 0, "duration": 5.2, "keyframes": [...] },
@@ -186,6 +205,10 @@ export interface EditAssemblyContext {
     hasMedia: boolean;
     mediaUrl?: string;
     hasRemotionCode?: boolean;
+    /** Content type from segmenter (list-item, concept, emotional-beat, etc.) */
+    contentType?: string;
+    /** True if this shot marks a major section/topic boundary */
+    sectionBreak?: boolean;
   }>;
   scriptSentences: string[];
   failedShots: number[];
@@ -208,7 +231,9 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   for (const shot of context.shots) {
     const mediaStatus = shot.hasMedia ? `✓ ${shot.mediaType}` : '✗ no media';
     const hybridTag = (shot.hasRemotionCode && shot.hasMedia && shot.mediaType !== 'motiongraphic') ? ' ⚡ HYBRID' : '';
-    lines.push(`  [${shot.index}] ${shot.startSeconds.toFixed(1)}s-${shot.endSeconds.toFixed(1)}s (${shot.durationSeconds.toFixed(1)}s) | ${mediaStatus}${hybridTag} | "${shot.text.substring(0, 60)}..."`);
+    const sectionTag = shot.sectionBreak ? ' 🔶 SECTION-BREAK' : '';
+    const ctTag = shot.contentType ? ` [${shot.contentType}]` : '';
+    lines.push(`  [${shot.index}] ${shot.startSeconds.toFixed(1)}s-${shot.endSeconds.toFixed(1)}s (${shot.durationSeconds.toFixed(1)}s) | ${mediaStatus}${hybridTag}${ctTag}${sectionTag} | "${shot.text.substring(0, 150)}"`);
   }
   lines.push('');
 

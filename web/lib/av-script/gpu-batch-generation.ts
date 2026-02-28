@@ -597,6 +597,47 @@ function assembleMultiImageResults(
 }
 
 // ============================================================================
+// LTX-2 PROMPT ENRICHMENT
+// ============================================================================
+
+/**
+ * Enrich a visual prompt for LTX-2 video generation.
+ * Based on official LTX-2 prompting guide (https://ltx.io/model/model-blog/prompting-guide-for-ltx-2):
+ * - Single flowing paragraph (no bullets/lists)
+ * - Present tense verbs for movement and action
+ * - Explicit camera motion terms (tracks, pans, pushes in, etc.)
+ * - Describe the action as a natural beginning-to-end sequence
+ * - 4-8 descriptive sentences covering shot, scene, action, camera
+ */
+function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number): string {
+  // If the prompt already looks like a flowing cinematic description (long enough,
+  // contains camera/motion language), use it as-is with a style suffix.
+  const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot)\b/i.test(rawPrompt);
+  const isLongEnough = rawPrompt.length > 200;
+
+  if (hasMotionLanguage && isLongEnough) {
+    return rawPrompt;
+  }
+
+  // Otherwise, wrap the raw prompt in LTX-2 best-practice framing.
+  // Add camera motion and cinematic style cues that LTX-2 responds well to.
+  const motionCues = durationSeconds <= 3
+    ? 'The camera holds steady with subtle organic movement.'
+    : durationSeconds <= 5
+    ? 'The camera slowly pushes in, revealing fine details as the scene unfolds.'
+    : 'The camera tracks smoothly through the scene, following the action with cinematic movement.';
+
+  const enriched = [
+    rawPrompt.trim().replace(/\.$/, ''),
+    motionCues,
+    'Soft, natural lighting with atmospheric depth.',
+    'Cinematic quality, photorealistic rendering, smooth continuous motion throughout the entire shot.',
+  ].join('. ') + '.';
+
+  return enriched;
+}
+
+// ============================================================================
 // VIDEO BATCH PROCESSING
 // ============================================================================
 
@@ -642,7 +683,7 @@ async function processVideoBatch(
       items.push({
         item_id: itemId,
         start_frame_url: shot.start_frame_url,
-        prompt: shot.visual_prompt,
+        prompt: enrichLtx2Prompt(shot.visual_prompt, shot.duration_seconds || 5),
         duration_seconds: shot.duration_seconds || 5,
         aspect_ratio: aspectRatio,
         save_url: putUrl,

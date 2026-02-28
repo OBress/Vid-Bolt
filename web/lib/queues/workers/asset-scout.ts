@@ -17,7 +17,6 @@
 import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
 import { processWithStockMedia } from '@/lib/av-script/stock-media-director';
-import { routeToAgent, buildAgentContext } from '@/lib/av-script/agent-prompts';
 import { getEntitiesByIds } from '@/lib/services/gcm';
 import type { AssetEntry, AssetManifest, PlannedShot } from '@/lib/types/closed-loop';
 import { CostTracker } from '@/lib/queues/cost-tracker';
@@ -114,6 +113,53 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
       console.log(`${LOG_PREFIX} Loaded ${entities.length} GCM entities for enrichment`);
 
       // =====================================================================
+      // STEP 2b: Stock media scraping for stock-worthy shots
+      // =====================================================================
+      const stockWorthyShots = shots.filter((s: any) => s.stock_worthy === true);
+      const stockResults: Record<number, { url: string; description: string }> = {};
+
+      if (stockWorthyShots.length > 0) {
+        console.log(`${LOG_PREFIX} Step 2b: Scraping stock media for ${stockWorthyShots.length} stock-worthy shots...`);
+
+        if (!isClosedLoop) {
+          await updateTaskStatus(taskId, {
+            status: 'running',
+            current_step: `Scraping stock media for ${stockWorthyShots.length} shots...`,
+            progress_percent: 20,
+          });
+        }
+
+        try {
+          const enrichedShots = await processWithStockMedia(
+            userId,
+            videoId,
+            shots as any, // PlannedShot → ShotPart1 compatible shape
+            'standard_images',
+            {
+              videoTopic: (metadata.video_topic as string) || undefined,
+              spineBeats: (metadata.spine_beats as string[]) || undefined,
+            }
+          );
+
+          for (const shot of enrichedShots) {
+            if (shot.stock_media_ref?.url) {
+              stockResults[shot.segment_index] = {
+                url: shot.stock_media_ref.url,
+                description: shot.stock_media_ref.description || '',
+              };
+            }
+          }
+
+          console.log(`${LOG_PREFIX} Step 2b: Found ${Object.keys(stockResults).length} stock images`);
+          costTracker.addSerperSearch(stockWorthyShots.length);
+        } catch (err) {
+          console.warn(`${LOG_PREFIX} Step 2b: Stock scraping failed, continuing without:`, err);
+        }
+      } else {
+        console.log(`${LOG_PREFIX} Step 2b: No stock-worthy shots, skipping Serper scrape`);
+      }
+
+      // =====================================================================
       // STEP 3: Build asset entries for each shot
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 3: Building asset manifest...`);
@@ -155,8 +201,10 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
           source = 'ai_video';
           aiVideoCount++;
         } else if (shot.media_type === 'image') {
-          source = 'ai_image';
-          aiImageCount++;
+          // Upgrade standalone AI images → ai_video (static AI images are not engaging)
+          // AI images can still be used INSIDE motion graphics as composited assets
+          source = 'ai_video';
+          aiVideoCount++;
         } else {
           mgCount++;
         }
@@ -165,11 +213,14 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
         const hasSfx = shot.sound_effects && shot.sound_effects.length > 0;
         if (hasSfx) sfxCount += shot.sound_effects.length;
 
+        // Attach scraped stock media if available for this shot
+        const stockMatch = stockResults[shot.segment_index];
+
         entries.push({
           segment_index: shot.segment_index,
           visual_prompt: enrichedPrompt,
           source,
-          // Stock URLs will be populated by stock search (future refinement)
+          stock_url: stockMatch?.url,
           sfx: hasSfx ? {
             url: '', // Will be populated by SFX search
             description: shot.sound_effects[0].description,
@@ -206,12 +257,19 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 5: Persisting asset manifest...`);
 
+      // Build scraped stock URL map for Phase IV consumption
+      const stockUrlMap: Record<string, string> = {};
+      for (const [idx, result] of Object.entries(stockResults)) {
+        stockUrlMap[`shot-${idx}`] = result.url;
+      }
+
       await supabase
         .from('video_projects')
         .update({
           metadata: {
             ...metadata,
             asset_manifest: manifest,
+            scraped_stock_images: stockUrlMap,
           },
           updated_at: new Date().toISOString(),
         })
