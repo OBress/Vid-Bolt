@@ -496,6 +496,9 @@ function videoToMediaItem(
 // MEDIA TAB COMPONENT
 // ==========================================
 
+// [DEVTOOLS-MEDIA] Stable empty array to avoid infinite useSyncExternalStore re-render
+const EMPTY_DEVTOOLS_ITEMS: never[] = [];
+
 export const MediaTab: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<MediaFilter>("all");
@@ -567,15 +570,19 @@ export const MediaTab: React.FC = () => {
 
   // ====================================================================
   // [DEVTOOLS-MEDIA] START - DevTools media store integration.
+  // Only loads when ?devtools=true is in the URL.
   // Remove this block and the import above when no longer needed.
   // ====================================================================
-  const devToolsMediaItems = useDevToolsMediaStore((s) => s.items);
+  const isDevToolsMode = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('devtools') === 'true';
+  const allDevToolsItems = useDevToolsMediaStore((s) => s.items);
+  const devToolsMediaItems = isDevToolsMode ? allDevToolsItems : EMPTY_DEVTOOLS_ITEMS;
   const fetchFromR2 = useDevToolsMediaStore((s) => s.fetchFromR2);
 
-  // Fetch all R2 media on first mount
+  // Fetch R2 media only in DevTools mode
   useEffect(() => {
-    fetchFromR2();
-  }, [fetchFromR2]);
+    if (isDevToolsMode) fetchFromR2();
+  }, [fetchFromR2, isDevToolsMode]);
 
   const devToolsAsMediaItems = useMemo<MediaItem[]>(() => {
     return devToolsMediaItems.map((dt) => ({

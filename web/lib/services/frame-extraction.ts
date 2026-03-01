@@ -15,6 +15,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { fetchDynamicGpuApiUrl } from '@/lib/services/gpu-api-service';
 
 // ============================================================================
 // TYPES
@@ -56,10 +57,10 @@ export async function extractLastFrame(
 
   // Strategy: Call the GPU VM's frame extraction endpoint
   // The GPU VM has FFmpeg installed and can extract frames quickly
-  const gpuApiUrl = process.env.GPU_API_URL;
+  const gpuApiUrl = await fetchDynamicGpuApiUrl();
 
-  if (!gpuApiUrl) {
-    console.warn(`${LOG_PREFIX} GPU_API_URL not configured — returning source URL as fallback`);
+  if (!gpuApiUrl || gpuApiUrl === 'http://localhost:8000') {
+    console.warn(`${LOG_PREFIX} No GPU VM available — returning source URL as fallback`);
     return {
       frameUrl: videoUrl,
       width: 1920,
@@ -160,10 +161,10 @@ export async function checkStaticVideo(
   shotIndex: number
 ): Promise<StaticVideoCheckResult> {
   const LOG_PREFIX = '[StaticCheck]';
-  const gpuApiUrl = process.env.GPU_API_URL;
+  const gpuApiUrl = await fetchDynamicGpuApiUrl();
 
-  if (!gpuApiUrl) {
-    console.warn(`${LOG_PREFIX} GPU_API_URL not configured — skipping static video check`);
+  if (!gpuApiUrl || gpuApiUrl === 'http://localhost:8000') {
+    console.warn(`${LOG_PREFIX} No GPU VM available — skipping static video check`);
     return { ssim: 0, isStatic: false };
   }
 

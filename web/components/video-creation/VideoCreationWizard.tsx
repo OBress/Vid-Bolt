@@ -88,6 +88,7 @@ function extractPipelineOutputs(metadata: Record<string, any>): {
   const shots: ShotEvent[] = (avScript.shots || []) as ShotEvent[];
   const genImages = (metadata?.generated_images || {}) as Record<string, string>;
   const genVideos = (metadata?.generated_videos || {}) as Record<string, string>;
+  const genMG = (metadata?.generated_motion_graphics || {}) as Record<string, string>;
   const audioChunks = (metadata?.audio_chunks || []) as AudioChunk[];
 
   const generatedMedia: GeneratedMedia[] = shots.map((shot: any) => {
@@ -95,13 +96,16 @@ function extractPipelineOutputs(metadata: Record<string, any>): {
     const key = `shot-${idx}`;
     const imageUrl = genImages[key];
     const videoUrl = genVideos[key];
-    const url = videoUrl || imageUrl;
+    const mgCode = genMG[key];
+    // Use real media URL if available, or remotion:// marker for MG-only shots
+    const url = videoUrl || imageUrl || (mgCode ? `remotion://shot-${idx}` : undefined);
     return {
       shot_index: idx,
       media_type: (shot.media_type || 'image') as 'image' | 'video' | 'motiongraphic',
-      generation_status: url ? 'completed' : 'failed',
+      generation_status: (url || mgCode) ? 'completed' : 'failed',
       media_url: url,
       visual_prompt: shot.visual_prompt || shot.summary || '',
+      remotion_code: mgCode,
     } as GeneratedMedia;
   });
 

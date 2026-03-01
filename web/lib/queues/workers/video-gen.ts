@@ -34,6 +34,10 @@ export interface VideoGenJobData {
   videoId: string;
   /** Aspect ratio for generation */
   aspectRatio?: '16:9' | '9:16';
+  /** When set, only regenerate this specific shot (for single-shot retries) */
+  singleShotIndex?: number;
+  /** Verifier feedback to incorporate into the retry prompt */
+  previousFeedback?: string;
 }
 
 // ============================================================================
@@ -87,9 +91,22 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
       const generatedImages = (metadata.generated_images || {}) as Record<string, string>;
 
       // Filter to only video shots
-      const videoShots = allShots.filter(
+      let videoShots = allShots.filter(
         (s: Record<string, unknown>) => (s.media_type as string) === 'video'
       );
+
+      // If retrying a single shot, filter to just that shot
+      const { singleShotIndex, previousFeedback } = job.data;
+      const isSingleShotRetry = typeof singleShotIndex === 'number';
+      if (isSingleShotRetry) {
+        videoShots = videoShots.filter(
+          (s: Record<string, unknown>) => (s.segment_index as number) === singleShotIndex
+        );
+        if (videoShots.length === 0) {
+          throw new Error(`Shot ${singleShotIndex} not found in video shots`);
+        }
+        console.log(`${LOG_PREFIX} Single-shot retry: regenerating only shot ${singleShotIndex}`);
+      }
 
       if (videoShots.length === 0) {
         console.log(`${LOG_PREFIX} No video shots to generate`);
@@ -115,7 +132,13 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         return {
           segment_index: segmentIndex,
           media_type: 'video' as const,
-          visual_prompt: (s.visual_prompt as string) || (s.summary as string) || `Video for segment ${segmentIndex}`,
+          visual_prompt: (
+            // For retries, prepend verifier feedback to help LTX-2 avoid the same issues
+            (isSingleShotRetry && previousFeedback
+              ? `[RETRY GUIDANCE: ${previousFeedback}] `
+              : '') +
+            ((s.visual_prompt as string) || (s.summary as string) || `Video for segment ${segmentIndex}`)
+          ),
           duration_seconds: (s.duration_seconds as number) || 5,
           start_frame_url: keyframeUrl, // Will be undefined for T2V shots
           visual_elements: s.visual_elements as import('@/types/video').RoutingTag[] | undefined,
@@ -187,12 +210,19 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         }
       }
 
+      // For single-shot retries, merge into existing generated_videos to avoid
+      // overwriting the other 22 shots' URLs with nothing
+      const existingVideos = (latestMetadata.generated_videos || {}) as Record<string, string>;
+      const mergedVideos = isSingleShotRetry
+        ? { ...existingVideos, ...videoResults }
+        : videoResults;
+
       await supabase
         .from('video_projects')
         .update({
           metadata: {
             ...latestMetadata,
-            generated_videos: videoResults,
+            generated_videos: mergedVideos,
             video_gen_stats: gpuResult.stats,
           },
           updated_at: new Date().toISOString(),
@@ -209,9 +239,22 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
 
       console.log(`${LOG_PREFIX} ✅ Complete: ${gpuResult.stats.videosGenerated} videos`);
 
+      // Bug 6: For single-shot retries, 0 generated means the retry definitively failed.
+      // Throw so the orchestrator knows it can't use this result.
+      if (isSingleShotRetry && gpuResult.stats.videosGenerated === 0) {
+        throw new Error(`Single-shot retry for shot ${singleShotIndex} failed: 0 videos generated`);
+      }
+
+      // Bug 2: For single-shot retries, include the generated URL so the orchestrator
+      // can update its asset map (it checks retryResult.mediaUrl).
+      const retryMediaUrl = isSingleShotRetry
+        ? videoResults[`shot-${singleShotIndex}`]
+        : undefined;
+
       return {
         success: true,
         videoId,
+        ...(retryMediaUrl ? { mediaUrl: retryMediaUrl } : {}),
         stats: {
           videosGenerated: gpuResult.stats.videosGenerated,
           videosFailed: gpuResult.stats.videosFailed,

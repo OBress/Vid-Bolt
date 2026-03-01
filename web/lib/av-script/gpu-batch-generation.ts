@@ -684,7 +684,7 @@ async function processVideoBatch(
         item_id: itemId,
         start_frame_url: shot.start_frame_url,
         prompt: enrichLtx2Prompt(shot.visual_prompt, shot.duration_seconds || 5),
-        duration_seconds: shot.duration_seconds || 5,
+        duration_seconds: Math.min(shot.duration_seconds || 5, 10),
         aspect_ratio: aspectRatio,
         save_url: putUrl,
         ...(shot.end_frame_url ? { end_frame_url: shot.end_frame_url } : {}),

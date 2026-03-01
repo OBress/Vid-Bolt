@@ -129,6 +129,19 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       } as GeneratedMedia;
     });
 
+    // Diagnostic: confirm MG Remotion code handoff
+    const mgShotCount = Object.keys(generatedMG).length;
+    const mgWithCode = generatedMedia.filter(m => m.media_type === 'motiongraphic' && m.remotion_code).length;
+    if (mgShotCount > 0) {
+      console.log(`[EditAssembly Worker] MG code handoff: ${mgWithCode}/${mgShotCount} MG shots have remotion_code`);
+      if (mgWithCode < mgShotCount) {
+        const missing = generatedMedia
+          .filter(m => m.media_type === 'motiongraphic' && !m.remotion_code)
+          .map(m => `shot-${m.shot_index}`);
+        console.warn(`[EditAssembly Worker] ⚠️ MG shots WITHOUT remotion_code: ${missing.join(', ')}`);
+      }
+    }
+
     // Map audio chunks with correct field names
     const rawAudioChunks = (metadata.audio_chunks || []) as unknown as Array<Record<string, unknown>>;
     const audioChunks: AssembleEditRequest['audioChunks'] = rawAudioChunks.map((c) => ({
@@ -137,6 +150,10 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       text: (c.text as string) || undefined,
       audio_url: (c.url as string) || (c.audio_url as string) || undefined,
     }));
+
+    // Calculate total audio duration for timeline capping
+    const totalAudioDuration = audioChunks.reduce((sum, c) => sum + (c.duration_seconds || 0), 0);
+    console.log(`[EditAssembly Worker] Total audio duration: ${totalAudioDuration.toFixed(1)}s`);
 
     const scriptText = (project.script_content as string) || (metadata.raw_script as string) || '';
 
@@ -267,7 +284,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     });
 
     // Merge v2 agent EDLs
-    const mergedAgentEDL = mergeAgentEDLChunks(chunkAgentEDLs);
+    const mergedAgentEDL = mergeAgentEDLChunks(chunkAgentEDLs, totalAudioDuration);
     // Merge legacy EDLs for backward compat
     const mergedLegacyEDL = mergeLegacyEDLChunks(chunkLegacyEDLs);
 
@@ -350,7 +367,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
 // AGENT EDL CHUNK MERGER (V2)
 // ============================================================================
 
-function mergeAgentEDLChunks(chunks: EditorAgentEDL[]): EditorAgentEDL {
+function mergeAgentEDLChunks(chunks: EditorAgentEDL[], totalAudioDuration: number = 0): EditorAgentEDL {
   if (chunks.length === 0) {
     return {
       tracks: [
@@ -420,6 +437,17 @@ function mergeAgentEDLChunks(chunks: EditorAgentEDL[]): EditorAgentEDL {
     // counterpart by shotIndex — rebuilding them independently would destroy
     // the synchronization that hybrid shots depend on.
     if (trackId === 'main-video') {
+      // Step 1: Cap individual clip durations to prevent any single shot from
+      // consuming disproportionate timeline real estate (max 15s per clip)
+      const MAX_CLIP_DURATION = 15;
+      for (const clip of clips) {
+        if (clip.duration > MAX_CLIP_DURATION) {
+          console.log(`[EditAssembly Merge] Capping clip (shot ${clip.shotIndex}) duration: ${clip.duration.toFixed(2)}s → ${MAX_CLIP_DURATION}s`);
+          clip.duration = MAX_CLIP_DURATION;
+        }
+      }
+
+      // Step 2: Rebuild sequential timing
       let runningTime = 0;
       for (let i = 0; i < clips.length; i++) {
         if (clips[i].startTime !== runningTime) {
@@ -427,6 +455,21 @@ function mergeAgentEDLChunks(chunks: EditorAgentEDL[]): EditorAgentEDL {
         }
         clips[i].startTime = runningTime;
         runningTime += clips[i].duration;
+      }
+
+      // Step 3: If total overshoots audio duration by >5%, proportionally scale
+      // all clips to fit. This prevents the timeline from being dramatically
+      // longer than the narration (e.g., ~600s instead of ~211s).
+      if (totalAudioDuration > 0 && runningTime > totalAudioDuration * 1.05) {
+        const scale = totalAudioDuration / runningTime;
+        console.log(`[EditAssembly Merge] ⚠️ Timeline (${runningTime.toFixed(1)}s) exceeds audio (${totalAudioDuration.toFixed(1)}s) — scaling by ${scale.toFixed(3)}`);
+        let scaledRunning = 0;
+        for (const clip of clips) {
+          clip.startTime = scaledRunning;
+          clip.duration = Math.max(0.5, clip.duration * scale); // min 0.5s per clip
+          scaledRunning += clip.duration;
+        }
+        console.log(`[EditAssembly Merge] ✅ Scaled timeline: ${scaledRunning.toFixed(1)}s (target: ${totalAudioDuration.toFixed(1)}s)`);
       }
     }
   });

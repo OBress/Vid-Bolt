@@ -13,6 +13,7 @@
 
 import { Job, Processor } from 'bullmq';
 import { updateTaskStatus } from '@/lib/queues/shared';
+import { fetchDynamicGpuApiUrl } from '@/lib/services/gpu-api-service';
 
 // ============================================================================
 // TYPES
@@ -47,7 +48,6 @@ export interface ImageEditJobData {
 // ============================================================================
 
 const LOG_PREFIX = '[ImageEdit]';
-const GPU_API_URL = process.env.GPU_API_URL || '';
 const GPU_API_SECRET = process.env.GPU_API_SECRET || '';
 
 // ============================================================================
@@ -104,12 +104,13 @@ export const imageEditProcessor: Processor<ImageEditJobData> = async (
     const editPrompt = buildEditPrompt(job.data);
     console.log(`${LOG_PREFIX} Shot ${shotIndex}: Edit prompt (${editPrompt.length} chars)`);
 
-    if (!GPU_API_URL) {
-      throw new Error('GPU_API_URL not configured — cannot perform image editing');
+    const gpuApiUrl = await fetchDynamicGpuApiUrl();
+    if (!gpuApiUrl || gpuApiUrl === 'http://localhost:8000') {
+      throw new Error('No GPU VM available — cannot perform image editing');
     }
 
     // Call the GPU VM's image editing endpoint directly
-    const response = await fetch(`${GPU_API_URL}/api/edit-image`, {
+    const response = await fetch(`${gpuApiUrl}/api/edit-image`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
