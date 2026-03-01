@@ -9,9 +9,10 @@ import React, {
   ReactNode,
 } from "react";
 import { SettingsService } from "@/lib/services/settings-service";
-import { MediaProject } from "@/types/settings";
+import { MediaProject, ProjectSettings } from "@/types/settings";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { resolvePresetSettings } from "@/lib/constants/project-presets";
 
 interface MediaProjectsContextType {
   projects: MediaProject[];
@@ -74,9 +75,14 @@ export function MediaProjectsProvider({ children }: { children: ReactNode }) {
     try {
       const newProject = await SettingsService.createMediaProject(userId, name);
 
-      let settingsToApply;
+      let settingsToApply: ProjectSettings | null = null;
 
-      if (sourceProjectId && sourceProjectId !== "default") {
+      // 1. Check for preset: prefixed IDs
+      if (sourceProjectId?.startsWith("preset:")) {
+        settingsToApply = resolvePresetSettings(sourceProjectId, name);
+      }
+      // 2. Check for existing project clone
+      else if (sourceProjectId && sourceProjectId !== "default") {
         const sourceSettings = await SettingsService.getProjectSettings(
           sourceProjectId
         );
@@ -91,54 +97,17 @@ export function MediaProjectsProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // 3. Fallback to standard preset
       if (!settingsToApply) {
-        // Create default settings for the new project
-        settingsToApply = {
-          basic_info: {
-            projectName: name,
-            pictureUrl: null,
-            contentNiche: "entertainment",
-            aspectRatio: "16-9",
-            videoDurationRange: [5, 15],
-            autoIdeaVerification: false,
-            autoScriptVerification: false,
-            autoExportToMedia: false,
-          },
-          voice: {
-            provider: "elevenlabs" as const,
-            model: "eleven_multilingual_v2",
-            voiceName: "Rachel",
-            speakerBoost: true,
-            stability: 0.5,
-            similarityBoost: 0.75,
-            speakingSpeed: 1.0,
-            voiceStyle: 0,
-          },
-          visuals: {
-            imageModel: "flux",
-            videoModel: "luma",
-          },
-          editing: {},
-          export: {
-            defaultTargets: [],
-          },
-          script: {
-            pov: "1st" as const,
-            protagonistGender: "any" as const,
-            genre: "documentary" as const,
-            researchDepth: "full" as const,
-            openrouterModel: "google/gemini-3-flash-preview",
-            qualityReviewModel: "google/gemini-3-pro-preview",
-            contentNiche: "entertainment",
-            favoriteModels: [],
-          },
-        };
+        settingsToApply = resolvePresetSettings("preset:standard", name);
       }
 
-      await SettingsService.updateProjectSettings(
-        newProject.id,
-        settingsToApply
-      );
+      if (settingsToApply) {
+        await SettingsService.updateProjectSettings(
+          newProject.id,
+          settingsToApply
+        );
+      }
 
       setProjects((prev) => [newProject, ...prev]);
       toast.success(`Project "${name}" created`);

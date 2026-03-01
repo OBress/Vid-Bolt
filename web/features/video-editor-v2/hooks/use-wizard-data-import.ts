@@ -225,6 +225,119 @@ function agentKeyframesToPropertyKeyframes(
 }
 
 // ============================================================
+// POST-IMPORT: Video Duration Probing
+// ============================================================
+
+/**
+ * Probe actual video file durations and fix mediaDuration mismatches.
+ * 
+ * When the pipeline generates videos, the clip's mediaDuration is set from
+ * the scripted shot.duration_seconds — but the actual GPU-generated video
+ * may differ (due to frame rounding, retries, or fallbacks). When the
+ * clip's mediaDuration exceeds the real video, the browser <video> element
+ * freezes on its last frame for the remaining duration.
+ * 
+ * This function runs as a fire-and-forget post-import step.
+ */
+async function probeAndFixVideoClipDurations(): Promise<void> {
+  const state = useVideoEditorStore.getState();
+  const allClips = Object.values(state.clips) as TimelineClip[];
+  const videoClips = allClips.filter(
+    (c) => c.type === 'video' && c.media?.src && !c.media.src.startsWith('data:')
+  );
+
+  if (videoClips.length === 0) return;
+
+  console.log(`[WizardDataImport] 🎥 Probing ${videoClips.length} video clip durations...`);
+
+  const MISMATCH_THRESHOLD = 0.5; // Only fix if >0.5s difference
+  let fixCount = 0;
+
+  const probeOne = (clip: typeof videoClips[0]): Promise<void> => {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+
+      const cleanup = () => {
+        video.removeAttribute('src');
+        video.load(); // Release media resources
+        resolve();
+      };
+
+      const timeout = setTimeout(() => {
+        console.warn(`[WizardDataImport] ⏱️ Timeout probing clip ${clip.id}`);
+        cleanup();
+      }, 10000); // 10s timeout per clip
+
+      video.onloadedmetadata = () => {
+        clearTimeout(timeout);
+        const actualDuration = video.duration;
+
+        if (!Number.isFinite(actualDuration) || actualDuration <= 0) {
+          cleanup();
+          return;
+        }
+
+        const clipMediaDuration = clip.media?.mediaDuration ?? clip.duration;
+        const diff = clipMediaDuration - actualDuration;
+
+        if (diff > MISMATCH_THRESHOLD) {
+          console.warn(
+            `[WizardDataImport] ⚠️ Video clip ${clip.id}: ` +
+            `expected ${clipMediaDuration.toFixed(2)}s, actual ${actualDuration.toFixed(2)}s ` +
+            `(${diff.toFixed(2)}s too long — fixing)`
+          );
+
+          // Update the clip's mediaDuration to match actual content
+          useVideoEditorStore.setState((prev) => {
+            const existingClip = prev.clips[clip.id];
+            if (!existingClip?.media) return prev;
+            return {
+              ...prev,
+              clips: {
+                ...prev.clips,
+                [clip.id]: {
+                  ...existingClip,
+                  media: {
+                    ...existingClip.media,
+                    mediaDuration: actualDuration,
+                  },
+                },
+              },
+            };
+          });
+          fixCount++;
+        }
+
+        cleanup();
+      };
+
+      video.onerror = () => {
+        clearTimeout(timeout);
+        // Don't warn — some URLs may be inaccessible cross-origin
+        cleanup();
+      };
+
+      video.src = clip.media!.src!;
+    });
+  };
+
+  // Probe in parallel with concurrency limit of 4
+  const CONCURRENCY = 4;
+  for (let i = 0; i < videoClips.length; i += CONCURRENCY) {
+    const batch = videoClips.slice(i, i + CONCURRENCY);
+    await Promise.all(batch.map(probeOne));
+  }
+
+  if (fixCount > 0) {
+    console.log(`[WizardDataImport] 🔧 Fixed ${fixCount}/${videoClips.length} video clip durations`);
+  } else {
+    console.log(`[WizardDataImport] ✅ All ${videoClips.length} video clip durations match`);
+  }
+}
+
+// ============================================================
 // IMPERATIVE FUNCTION — call directly after store.initialize()
 // ============================================================
 
@@ -295,6 +408,31 @@ export function importWizardDataToStore(options: WizardData): boolean {
   // Track clip IDs by shot index for EDL phase
   const clipIdByShotIndex = new Map<number, string>();
   const audioClipIds: string[] = [];
+
+  // Lazy-create an overlays track for pre-rendered motion graphics.
+  // Only added when a clip actually gets routed to it — avoids empty unused tracks.
+  // Shared across agent EDL path and Phase 3 MG processing.
+  let overlaysTrackId: string | null = null;
+  const getOrCreateOverlaysTrack = (): string => {
+    if (overlaysTrackId) return overlaysTrackId;
+    overlaysTrackId = generateId('track');
+    tracksToAdd[overlaysTrackId] = {
+      id: overlaysTrackId,
+      type: 'video',
+      name: 'Video 2',
+      order: 1,
+      group: 'video',
+      locked: false,
+      visible: true,
+      muted: false,
+      allowOverlap: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    trackOrderToAdd.unshift(overlaysTrackId); // Overlays above main video
+    console.log(`[WizardDataImport] \ud83d\udcd0 Created overlays track on demand: ${overlaysTrackId}`);
+    return overlaysTrackId;
+  };
 
   // ─── Phase 1: Audio Track ──────────────────────────────────────
   if (hasAudio) {
@@ -377,6 +515,31 @@ export function importWizardDataToStore(options: WizardData): boolean {
       'emotional-beat': '#ef4444',
     };
 
+    // Lazy-create an overlays track for pre-rendered motion graphics.
+    // Only added when a clip actually gets routed to it — avoids empty unused tracks.
+    // Shared across agent EDL path and Phase 3 MG processing.
+    let overlaysTrackId: string | null = null;
+    const getOrCreateOverlaysTrack = (): string => {
+      if (overlaysTrackId) return overlaysTrackId;
+      overlaysTrackId = generateId('track');
+      tracksToAdd[overlaysTrackId] = {
+        id: overlaysTrackId,
+        type: 'video',
+        name: 'Video 2',
+        order: 1,
+        group: 'video',
+        locked: false,
+        visible: true,
+        muted: false,
+        allowOverlap: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      trackOrderToAdd.unshift(overlaysTrackId); // Overlays above main video
+      console.log(`[WizardDataImport] 📐 Created overlays track on demand: ${overlaysTrackId}`);
+      return overlaysTrackId;
+    };
+
     // Use agentEdl tracks if available, otherwise create default
     if (agentEdl && agentEdl.tracks.length > 0) {
       // ─── AGENT EDL: Use agent-defined tracks ──────────────────
@@ -418,23 +581,6 @@ export function importWizardDataToStore(options: WizardData): boolean {
         }
       }
 
-      // Auto-create an overlays track for pre-rendered motion graphics
-      // This separates MG clips from regular video clips for a cleaner multi-track layout
-      const overlaysTrackId = generateId('track');
-      tracksToAdd[overlaysTrackId] = {
-        id: overlaysTrackId,
-        type: 'video',
-        name: 'Video 2',
-        order: 1,
-        group: 'video',
-        locked: false,
-        visible: true,
-        muted: false,
-        allowOverlap: true,
-        createdAt: now,
-        updatedAt: now,
-      };
-      trackOrderToAdd.unshift(overlaysTrackId); // Overlays above main video
 
       // Place clips from agent EDL
       // Track running time per internal track for sequential NaN fallback
@@ -559,7 +705,7 @@ export function importWizardDataToStore(options: WizardData): boolean {
           // 2) They're pre-rendered MG clips (mgType but retyped as 'video' by media URL map)
           const isOnOverlaysTrack = trackId === 'overlays';
           const isPreRenderedMG = mgType && clipType !== 'motion-graphics';
-          const finalTrackId = (isOnOverlaysTrack || isPreRenderedMG) ? overlaysTrackId : internalTrackId;
+          const finalTrackId = (isOnOverlaysTrack || isPreRenderedMG) ? getOrCreateOverlaysTrack() : internalTrackId;
 
           clipsToAdd[clipId] = {
             id: clipId,
@@ -1072,17 +1218,17 @@ export function importWizardDataToStore(options: WizardData): boolean {
             template: mgTemplate,
           };
         } else if (!isPureMG) {
-          // Hybrid: Base media stays on its track; create a NEW MG clip on the same video track
-          // Find the first video track from tracksToAdd
-          const targetVideoTrackId = Object.values(tracksToAdd).find(t => t.type === 'video')?.id;
-          if (!targetVideoTrackId) {
-            console.warn(`[WizardDataImport] No video track found for hybrid MG clip at shot ${shotIndex}`);
+          // Hybrid: Base media stays on its track; create a NEW MG clip on the overlays track
+          // This prevents the visual duplication of two identical clips on the same track.
+          const targetOverlayTrackId = getOrCreateOverlaysTrack();
+          if (!targetOverlayTrackId) {
+            console.warn(`[WizardDataImport] No overlay track available for hybrid MG clip at shot ${shotIndex}`);
             continue;
           }
           const mgClipId = generateId('clip');
           clipsToAdd[mgClipId] = {
             id: mgClipId,
-            trackId: targetVideoTrackId,
+            trackId: targetOverlayTrackId,
             startTime: shot.start_seconds,
             duration: shot.duration_seconds,
             type: 'motion-graphics',
@@ -1179,6 +1325,13 @@ export function importWizardDataToStore(options: WizardData): boolean {
   }, 100);
 
   console.log('[WizardDataImport] Import complete ✓');
+
+  // ─── Post-commit: Probe actual video durations ─────────────────
+  // Fire-and-forget: asynchronously check each video clip's actual duration
+  // and fix mediaDuration mismatches that cause video freezing.
+  probeAndFixVideoClipDurations().catch((err) => {
+    console.warn('[WizardDataImport] Video duration probing failed:', err);
+  });
 
   // ─── Post-commit: Media issues (separate store, no cascade risk)
   const activeEdl = agentEdl || edl;

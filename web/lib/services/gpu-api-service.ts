@@ -1165,6 +1165,84 @@ export async function callGpuListLoras(): Promise<{
 }
 
 /**
+ * Upload a Z-Image LoRA file to the GPU API.
+ * Uses POST /api/v1/loras/z-image/upload (multipart form upload).
+ *
+ * @param loraBuffer - The .safetensors file contents as a Buffer
+ * @param filename - Original filename (e.g., "my_style.safetensors")
+ */
+export async function callGpuUploadLora(
+  loraBuffer: Buffer,
+  filename: string,
+): Promise<{
+  success: boolean;
+  message?: string;
+  error?: string;
+}> {
+  const baseUrl = await fetchDynamicGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  try {
+    // Build multipart form data
+    const formData = new FormData();
+    const blob = new Blob([new Uint8Array(loraBuffer)], { type: 'application/octet-stream' });
+    formData.append('file', blob, filename);
+
+    const response = await fetch(`${baseUrl}/api/v1/loras/z-image/upload`, {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const detail = errorData.detail || errorData.error || `HTTP ${response.status}`;
+      return { success: false, error: detail };
+    }
+
+    const data = await response.json();
+    return { success: true, message: data.message || 'Uploaded successfully' };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Delete a Z-Image LoRA from the GPU API.
+ * Uses DELETE /api/v1/loras/z-image/{lora_name}.
+ *
+ * @param loraName - Name of the LoRA to delete (without extension)
+ */
+export async function callGpuDeleteLora(loraName: string): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  const baseUrl = await fetchDynamicGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  try {
+    const response = await fetch(
+      `${baseUrl}/api/v1/loras/z-image/${encodeURIComponent(loraName)}`,
+      {
+        method: 'DELETE',
+        headers: { 'X-API-Key': apiKey },
+      },
+    );
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return { success: false, error: errorData.detail || `HTTP ${response.status}` };
+    }
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
  * Get background job status
  */
 export async function callGpuGetJobStatus(jobId: string): Promise<{

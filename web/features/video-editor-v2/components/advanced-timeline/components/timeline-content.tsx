@@ -1054,10 +1054,6 @@ export const TimelineContent: React.FC<TimelineContentProps> = ({
             trackHeight={trackHeight}
             fps={fps}
             collapsedGroups={collapsedGroups}
-            scrollX={scrollX}
-            scrollableWidth={scrollableWidthPixels}
-            viewportWidth={containerWidth}
-            scrollY={scrollY}
           />
 
           {/* Timeline Guidelines */}

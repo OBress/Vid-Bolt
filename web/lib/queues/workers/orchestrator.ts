@@ -24,6 +24,7 @@ import { getRedisConnection } from '@/lib/queues/redis';
 import { generateWorkerPrompts } from '@/lib/services/prompt-generator';
 import { listEntities, incrementAppearance } from '@/lib/services/gcm';
 import { selectBestFitSalvage, type SalvageAttempt } from '@/lib/services/best-fit-salvage';
+import { syncLorasToGpuApi } from '@/lib/services/lora-sync-service';
 import type { VerifierResult } from '@/lib/queues/workers/verifier';
 import type {
   OrchestratorJobData,
@@ -677,7 +678,8 @@ async function executeProductionPhase(
   // Build entity references once for all verification calls
   const entityRefs = toEntityReferences(gcmEntities);
   const styleGuide = jobData.creativeManifest.style.visual_style
-    + (jobData.creativeManifest.style.lighting_mood ? `, ${jobData.creativeManifest.style.lighting_mood}` : '');
+    + (jobData.creativeManifest.style.lighting_mood ? `, ${jobData.creativeManifest.style.lighting_mood}` : '')
+    + (jobData.creativeManifest.master_creative_prompt ? `. Creative direction: ${jobData.creativeManifest.master_creative_prompt}` : '');
 
   let imagesCompleted = 0;
   let imagesFailed = 0;
@@ -766,7 +768,14 @@ async function executeProductionPhase(
         {
           queueName: 'image-gen',
           jobName: `image-shot-${shot.segment_index}`,
-          jobData: { taskId, userId: jobData.userId, videoId, shotIndex: shot.segment_index, aspectRatio: jobData.creativeManifest.style.aspect_ratio },
+          jobData: {
+            taskId,
+            userId: jobData.userId,
+            videoId,
+            shotIndex: shot.segment_index,
+            aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+            loraName: jobData.creativeManifest.lora?.name,
+          },
           mediaType: 'image',
           shotDescription: shot.description || `Shot ${shot.segment_index}`,
           timeout: IMAGE_GEN_TIMEOUT_MS,
@@ -1183,6 +1192,43 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       }
     }
 
+    // =========================================================================
+    // STEP 0-C: Sync user LoRAs from R2 to GPU API
+    // =========================================================================
+    if (creativeManifest.lora) {
+      console.log(`${LOG_PREFIX} Step 0-C: Syncing LoRAs to GPU API...`);
+
+      try {
+        // Fetch channel settings to get LoRA configs
+        const { data: settingsRow } = await supabase
+          .from('project_settings')
+          .select('settings')
+          .eq('project_id', videoId)
+          .maybeSingle();
+
+        const settings = settingsRow?.settings as Record<string, any> | null;
+        const channelLoras = settings?.visuals?.creativeDirection?.loras || [];
+
+        if (channelLoras.length > 0) {
+          const syncResult = await syncLorasToGpuApi(channelLoras);
+          console.log(
+            `${LOG_PREFIX} Step 0-C: LoRA sync complete:`,
+            `${syncResult.alreadyPresent} present, ${syncResult.synced} synced, ${syncResult.failed} failed`
+          );
+
+          if (syncResult.failed > 0) {
+            console.warn(
+              `${LOG_PREFIX} Step 0-C: Some LoRAs failed to sync:`,
+              syncResult.errors.map(e => `${e.loraName}: ${e.error}`).join('; ')
+            );
+          }
+        }
+      } catch (loraSyncError) {
+        // Non-blocking: LoRA sync failure shouldn't stop production
+        console.warn(`${LOG_PREFIX} Step 0-C: LoRA sync failed (non-blocking):`, loraSyncError);
+      }
+    }
+
     const workerPrompts = generateWorkerPrompts(
       userSystemPrompt,
       creativeManifest,
@@ -1312,6 +1358,50 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     await persistState(videoId, state);
     console.log(`${LOG_PREFIX} Phase IV complete: ${prodResult.imagesCompleted} images, ${prodResult.videosCompleted} videos`);
 
+    // Persist pipeline diagnostics for the Pipeline Debugger
+    try {
+      const { data: diagProject } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+      const diagMeta = (diagProject?.metadata || {}) as Record<string, unknown>;
+      const diagShots = ((diagMeta.av_script_part1 as any)?.shots || []) as any[];
+      const diagVideos = (diagMeta.generated_videos || {}) as Record<string, string>;
+      const diagMG = (diagMeta.generated_motion_graphics || {}) as Record<string, string>;
+
+      await supabase
+        .from('video_projects')
+        .update({
+          metadata: {
+            ...diagMeta,
+            pipeline_diagnostics: {
+              phase_iv_completed_at: new Date().toISOString(),
+              images_completed: prodResult.imagesCompleted,
+              images_failed: prodResult.imagesFailed,
+              videos_completed: prodResult.videosCompleted,
+              videos_failed: prodResult.videosFailed,
+              mg_completed: prodResult.mgCompleted,
+              mg_failed: prodResult.mgFailed,
+              total_retries: state.total_retries || 0,
+              verification_skipped: state.verification_skipped || 0,
+              flagged_shots: state.flagged_shots,
+              per_shot_status: diagShots.map((s: any) => ({
+                shot_index: s.segment_index,
+                media_type: s.media_type,
+                requested_duration_s: s.duration_seconds,
+                has_video_url: !!diagVideos[`shot-${s.segment_index}`],
+                has_mg_code: !!diagMG[`shot-${s.segment_index}`],
+              })),
+            },
+          },
+        })
+        .eq('id', videoId);
+      console.log(`${LOG_PREFIX} Pipeline diagnostics persisted to metadata`);
+    } catch (diagErr) {
+      console.warn(`${LOG_PREFIX} Failed to persist pipeline diagnostics:`, diagErr);
+    }
+
     // =========================================================================
     // PHASE IV-B: VLM-Guided Clip Trimming
     // =========================================================================
@@ -1375,6 +1465,61 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       completed: true,
       editor_state_saved: assemblyResult.editorStateSaved,
     };
+
+    // Append edit-assembly diagnostics to pipeline_diagnostics
+    try {
+      const { data: asmProject } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+      const asmMeta = (asmProject?.metadata || {}) as Record<string, unknown>;
+      const existingDiag = (asmMeta.pipeline_diagnostics || {}) as Record<string, unknown>;
+      const agentEdl = asmMeta.agentEdl as any;
+      const audioChunks = (asmMeta.audio_chunks || []) as any[];
+
+      // Compute EDL health metrics
+      let edlClipCount = 0;
+      let edlTotalDuration = 0;
+      let edlClipsOver10s = 0;
+      if (agentEdl?.tracks) {
+        for (const track of agentEdl.tracks) {
+          if (track.clips) {
+            for (const clip of track.clips) {
+              edlClipCount++;
+              const dur = clip.duration || 0;
+              edlTotalDuration += dur;
+              if (dur > 10) edlClipsOver10s++;
+            }
+          }
+        }
+      }
+      const audioTotalDuration = audioChunks.reduce(
+        (sum: number, c: any) => sum + (c.duration_seconds || 0), 0
+      );
+
+      await supabase
+        .from('video_projects')
+        .update({
+          metadata: {
+            ...asmMeta,
+            pipeline_diagnostics: {
+              ...existingDiag,
+              phase_v_completed_at: new Date().toISOString(),
+              edl_clip_count: edlClipCount,
+              edl_total_duration_s: Math.round(edlTotalDuration * 100) / 100,
+              edl_clips_over_10s: edlClipsOver10s,
+              audio_total_duration_s: Math.round(audioTotalDuration * 100) / 100,
+              edl_vs_audio_diff_s: Math.round((edlTotalDuration - audioTotalDuration) * 100) / 100,
+              editor_state_saved: assemblyResult.editorStateSaved,
+            },
+          },
+        })
+        .eq('id', videoId);
+      console.log(`${LOG_PREFIX} Assembly diagnostics appended to pipeline_diagnostics`);
+    } catch (asmDiagErr) {
+      console.warn(`${LOG_PREFIX} Failed to persist assembly diagnostics:`, asmDiagErr);
+    }
 
     // =========================================================================
     // PHASE V-B: Holistic Pacing Review

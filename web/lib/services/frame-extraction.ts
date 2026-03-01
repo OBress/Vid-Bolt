@@ -161,6 +161,13 @@ export async function checkStaticVideo(
   shotIndex: number
 ): Promise<StaticVideoCheckResult> {
   const LOG_PREFIX = '[StaticCheck]';
+
+  // DISABLED: The /api/frame-similarity endpoint does not exist on the GPU VM.
+  // Every call was burning ~30s of timeout per shot before returning a 404.
+  // Re-enable once the endpoint is deployed on the GPU server.
+  console.log(`${LOG_PREFIX} Shot ${shotIndex}: SSIM check disabled (endpoint not deployed)`);
+  return { ssim: 0, isStatic: false };
+
   const gpuApiUrl = await fetchDynamicGpuApiUrl();
 
   if (!gpuApiUrl || gpuApiUrl === 'http://localhost:8000') {

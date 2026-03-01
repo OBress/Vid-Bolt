@@ -503,14 +503,14 @@ const createDefaultTracks = (): {
   const tracks: Record<string, TimelineTrack> = {};
   const trackOrder: string[] = [];
 
-  // Create 2 video tracks
-  for (let i = 0; i < 2; i++) {
-    const id = `track-video-${i + 1}`;
+  // Create 1 video track
+  {
+    const id = `track-video-1`;
     tracks[id] = {
       id,
-      name: `V${i + 1}`,
+      name: `V1`,
       type: "video",
-      order: i,
+      order: 0,
       group: "video",
       locked: false,
       visible: true,
@@ -521,14 +521,14 @@ const createDefaultTracks = (): {
     trackOrder.push(id);
   }
 
-  // Create 2 audio tracks
-  for (let i = 0; i < 2; i++) {
-    const id = `track-audio-${i + 1}`;
+  // Create 1 audio track
+  {
+    const id = `track-audio-1`;
     tracks[id] = {
       id,
-      name: `A${i + 1}`,
+      name: `A1`,
       type: "audio",
-      order: i + 2,
+      order: 1,
       group: "audio",
       locked: false,
       visible: true,

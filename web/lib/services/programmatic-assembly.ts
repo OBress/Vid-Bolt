@@ -81,7 +81,6 @@ export interface AssembledTimeline {
 
 const DEFAULT_TRACKS: AssembledTrack[] = [
   { id: 'main-video', name: 'Video 1', type: 'video', group: 'video', order: 0 },
-  { id: 'mg-overlay', name: 'MG Overlay', type: 'overlay', group: 'video', order: 1 },
   { id: 'narration', name: 'Narration', type: 'audio', group: 'audio', order: 0 },
   { id: 'music', name: 'Music', type: 'audio', group: 'audio', order: 1 },
   { id: 'sfx', name: 'Sound Effects', type: 'audio', group: 'audio', order: 2 },
@@ -211,22 +210,6 @@ export function assembleProgrammaticTimeline(
       isMotionGraphic,
       remotionCode,
     });
-
-    // If MG, also add to overlay track for layered rendering
-    if (isMotionGraphic && remotionCode) {
-      clips.push({
-        id: `clip-${clipIdCounter++}`,
-        trackId: 'mg-overlay',
-        type: 'motion-graphic',
-        startTime: shot.start_seconds,
-        duration: shot.duration_seconds,
-        mediaUrl: '',
-        shotIndex: shot.segment_index,
-        opacity: 1,
-        isMotionGraphic: true,
-        remotionCode,
-      });
-    }
   }
 
   // =========================================================================

@@ -51,7 +51,7 @@ Example: "silhouette of person standing alone on cliff edge at sunset, contempla
 };
 
 const VISUAL_PROMPT_SYSTEM = `You are a visual director for video content.
-Your job is to generate specific, vivid image prompts for video segments and decide whether they should be static IMAGES or short VIDEO clips.
+Your job is to generate specific, vivid image prompts for video segments and decide whether they should be AI-generated VIDEOS or MOTION GRAPHICS.
 
 CRITICAL RULES:
 1. NO text on screen - just visuals
@@ -60,9 +60,11 @@ CRITICAL RULES:
 4. Use cinematic, professional imagery
 5. Be concise but descriptive (1-2 sentences max)
 6. DECIDE MEDIA TYPE:
-   - "image" for: Static concepts, list items, specific objects, freeze frames
-   - "video" for: Transitions, emotional beats relying on movement, comparisons showing change, action
-   - Default to "image" if unsure, use "video" sparingly for maximum impact
+   - "video" for: Cinematic scenes, atmospheric visuals, single-subject moments, emotional beats, transitions
+   - "motiongraphic" for: Data-heavy content, comparisons, lists, step-by-step explanations, quote overlays,
+     before/after reveals, timelines, evidence displays, multi-element compositions, annotated visuals
+   - Use "motiongraphic" generously for content that benefits from structured visual storytelling
+   - Use "video" when the power is in WATCHING a single moment unfold
 
 For adjacent list items, ensure VISUAL VARIETY - each should be clearly different.
 

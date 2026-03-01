@@ -25,8 +25,9 @@ const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     voiceStyle: 0,
   },
   visuals: {
-    imageModel: 'flux',
-    videoModel: 'luma',
+    imageModel: 'local-z-image',
+    videoModel: 'local-ltx2',
+    imageEditModel: 'local-qwen-edit',
   },
   editing: {},
   export: {

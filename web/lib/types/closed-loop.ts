@@ -142,12 +142,54 @@ export const GCMEntity = z.object({
 export type GCMEntity = z.infer<typeof GCMEntity>;
 
 // ============================================================================
+// VIDEO CREATIVE OVERRIDES (Per-Video)
+// ============================================================================
+
+/**
+ * Per-video creative direction overrides.
+ * Applied on top of channel-level defaults when the user customizes
+ * settings for a specific video at production time.
+ * Only fields that are set will override the channel defaults.
+ */
+export const VideoCreativeOverrides = z.object({
+  /** Override the visual style for this specific video */
+  visualStyle: z.string().optional(),
+  /** Override the color palette for this video */
+  colorPalette: z.array(z.string()).optional(),
+  /** Override the lighting mood */
+  lightingMood: z.string().optional(),
+  /** LoRA name to use for this video (overrides channel default) */
+  loraName: z.string().optional(),
+  /** LoRA weight for this video (0.0–1.0) */
+  loraWeight: z.number().min(0).max(1).optional(),
+  /** Override MG theme for this video */
+  mgThemeOverride: z.object({
+    theme: z.enum(['dark', 'light', 'colorful', 'minimal']).optional(),
+    colorPalette: z.array(z.string()).optional(),
+    animationStyle: z.enum(['smooth', 'bouncy', 'snappy', 'gentle']).optional(),
+  }).optional(),
+  /** Override media weighting for this video */
+  mediaWeightingOverride: z.object({
+    stock_footage: z.number().min(0).max(1).optional(),
+    ai_video: z.number().min(0).max(1).optional(),
+    motion_graphics: z.number().min(0).max(1).optional(),
+    ai_image_static: z.number().min(0).max(1).optional(),
+  }).optional(),
+  /** Video-specific creative direction prompt — merged with channel prompt */
+  videoCreativePrompt: z.string().optional(),
+  /** Override quality anchors for this video */
+  qualityAnchors: z.array(z.string()).optional(),
+}).optional();
+export type VideoCreativeOverrides = z.infer<typeof VideoCreativeOverrides>;
+
+// ============================================================================
 // CREATIVE MANIFEST
 // ============================================================================
 
 /**
  * The Orchestrator's initialization document, derived from user input
  * during the open-loop phase. Drives all downstream prompt generation.
+ * Built by the manifest-builder from: system defaults → channel settings → per-video overrides.
  */
 export const CreativeManifest = z.object({
   project_id: z.string().uuid(),
@@ -186,7 +228,7 @@ export const CreativeManifest = z.object({
     image_constraints: z.array(z.string()).optional(),
   }).optional(),
   editing: z.object({
-    pacing_preset: z.enum(['documentary', 'fast-paced', 'cinematic', 'custom']).optional(),
+    pacing_preset: z.enum(['documentary', 'fast-paced', 'cinematic', 'educational', 'custom']).optional(),
     default_cut_duration_range: z.tuple([z.number(), z.number()]).optional(),
     hook_cut_duration_range: z.tuple([z.number(), z.number()]).optional(),
   }).optional(),
@@ -194,6 +236,28 @@ export const CreativeManifest = z.object({
     theme: z.enum(['dark', 'light', 'colorful', 'minimal']).optional(),
     color_palette: z.array(z.string()).optional(),
     animation_style: z.enum(['smooth', 'bouncy', 'snappy', 'gentle']).optional(),
+    /** Font family for MG text elements */
+    font_family: z.string().optional(),
+    /** Border/corner style for MG cards and containers */
+    border_style: z.enum(['rounded', 'sharp', 'pill']).optional(),
+  }).optional(),
+  /** LoRA configuration for image generation in this video */
+  lora: z.object({
+    name: z.string(),
+    weight: z.number().min(0).max(1).default(0.8),
+    url: z.string(),
+  }).optional(),
+  /** Combined channel-level creative direction prompt */
+  master_creative_prompt: z.string().optional(),
+  /** Video-specific creative direction prompt */
+  video_creative_prompt: z.string().optional(),
+  /** Per-worker prompt overrides from user settings */
+  worker_prompt_overrides: z.record(z.string()).optional(),
+  /** Model selection from project settings — passed through to workers */
+  models: z.object({
+    image: z.string().default('local-z-image'),
+    video: z.string().default('local-ltx2'),
+    image_edit: z.string().default('local-qwen-edit'),
   }).optional(),
   gcm_ref: z.string().optional(),
   locked_script_ref: z.string().optional(),
@@ -389,6 +453,8 @@ export const OrchestratorJobData = z.object({
   scriptContent: z.string(),
   /** GCM entities for this project */
   entities: z.array(GCMEntity).default([]),
+  /** Per-video creative overrides set by the user at production time */
+  videoCreativeOverrides: VideoCreativeOverrides,
 });
 export type OrchestratorJobData = z.infer<typeof OrchestratorJobData>;
 

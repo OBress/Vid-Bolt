@@ -72,11 +72,6 @@ export interface CanvasDragPreviewProps {
   fps?: number;
   /** Collapsed track groups (for correct Y positioning) */
   collapsedGroups?: Set<string>;
-  /** Current virtual scroll state for correct positioning */
-  scrollX?: number;
-  scrollableWidth?: number;
-  viewportWidth?: number;
-  scrollY?: number;
 }
 
 // ============================================================
@@ -180,10 +175,6 @@ export function CanvasDragPreview({
   trackHeight: propTrackHeight,
   fps = 30,
   collapsedGroups,
-  scrollX = 0,
-  scrollableWidth = 0,
-  viewportWidth,
-  scrollY = 0,
 }: CanvasDragPreviewProps) {
   const dragState = useVideoEditorStore(selectDragState);
   const trackHeight = propTrackHeight || TIMELINE_CONSTANTS.TRACK_HEIGHT;
@@ -254,11 +245,10 @@ export function CanvasDragPreview({
         const itemY = trackY + (trackHeight - itemHeight) / 2;
 
         // Convert to screen space using the container rect.
-        // previewX is in full content space — subtract scroll offset to get viewport-relative
-        const effectiveViewportWidth = viewportWidth ?? containerRect.width;
-        const scrollOffsetX = scrollX * Math.max(0, scrollableWidth - effectiveViewportWidth);
-        const screenX = containerRect.left + previewX - scrollOffsetX;
-        const screenY = containerRect.top + itemY - scrollY;
+        // containerRect.left/top already includes the CSS scroll transform,
+        // so previewX (in content space) maps directly to screen position.
+        const screenX = containerRect.left + previewX;
+        const screenY = containerRect.top + itemY;
 
         // Don't render if off-screen
         if (screenX + previewW < containerRect.left || screenX > containerRect.right) return null;

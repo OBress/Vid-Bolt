@@ -213,12 +213,13 @@ graph TB
 
 **Responsibilities:**
 
-- **Context Management:** Holds the "Creative Manifest" — user preferences, locked script, TTS data, style guide, and the **Global Context Manager (GCM)** entity memory
+- **Context Management:** Holds the "Creative Manifest" — user preferences, locked script, TTS data, style guide, and the **Global Context Manager (GCM)** entity memory. The manifest is built from 3 layers: **system defaults → channel settings → per-video overrides** via [`manifest-builder.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/manifest-builder.ts).
+- **LoRA Sync (Step 0-C):** Before any generation, syncs user LoRA models from R2 to the GPU API via [`lora-sync-service.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/lora-sync-service.ts). Ensures all uploaded `.safetensors` files are available on the GPU.
 - **Decision Logic:** Evaluates each sub-agent's output against a "Definition of Done"
 - **Feedback Synthesis:** Generates "Delta Instructions" — structured JSON identifying the exact gap between output and goal
 - **Fallback Handling:** Max-retry logic (3 attempts). On attempt #3 failure, performs "Best-Fit Salvage" (accepts best result, flags for human review)
 - **Phase Gating:** Must verify each phase output before the next begins
-- **Dynamic Prompt Generation:** At the start of each video, generates optimized system prompts for all workers tailored to that specific video and user (see §3)
+- **Dynamic Prompt Generation:** At the start of each video, generates optimized system prompts for all workers tailored to that specific video and user (see §3). Injects creative direction (channel + video-level), LoRA context, and MG Channel Theme System.
 
 **BullMQ Implementation:** Primary worker on the `orchestrator` queue. Dispatches jobs to specialized worker queues and evaluates their responses.
 
@@ -451,20 +452,20 @@ Orchestrator receives: User Prompt + Script + Reference Assets + Creative Manife
 
 All dynamically generated prompts are built by [`prompt-generator.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/prompt-generator.ts). Two agents (Verifier, Edit Assembly) have hardcoded prompts.
 
-| Agent               | Prompt Source                                                                                                                                                 | Key Injections from Manifest / GCM                                                                                                                                                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Shot Planner**    | `buildShotPlannerPrompt()`                                                                                                                                    | `visual_style`, `aspect_ratio`, `lighting_mood`, media weighting %, pacing rules (hook duration, max static images, min video/min), full GCM entity list with IDs + descriptions                                                                                    |
-| Agent               | Prompt Source                                                                                                                                                 | Key Injections from Manifest / GCM                                                                                                                                                                                                                                  |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------                 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Shot Planner**    | `buildShotPlannerPrompt()`                                                                                                                                    | `visual_style`, `aspect_ratio`, `lighting_mood`, media weighting %, pacing rules (hook duration, max static images, min video/min), full GCM entity list with IDs + descriptions                                                                                    |
-| **Asset Scout**     | `buildAssetScoutPrompt()`                                                                                                                                     | `visual_style`, `color_palette`, `lighting_mood`, GCM entities with `reference_url` and `text_description`                                                                                                                                                          |
-| **Image Gen**       | `buildImageGenPrompt()`                                                                                                                                       | `visual_style`, `aspect_ratio`, quality anchors (default: `photorealistic, cinematic, 4K, film grain`), constraints (`no text, no watermark, no logos`)                                                                                                             |
-| **Video Gen**       | `buildVideoGenPrompt()`                                                                                                                                       | `visual_style`, `aspect_ratio`, synthesis mode rules (T2V / FF2V), camera movement instructions                                                                                                                                                                     |
-| **Motion Graphics** | `buildMotionGraphicsPrompt()`                                                                                                                                 | `visual_style`, MG theme (dark/light/colorful/minimal), MG color palette, animation style (smooth/bouncy/snappy/gentle)                                                                                                                                             |
-| **Music**           | `buildMusicPrompt()`                                                                                                                                          | `visual_style` (for mood matching), `lighting_mood`, segmentation rules (90-120s for long videos), ducking                                                                                                                                                          |
-| **SFX**             | `buildSfxPrompt()`                                                                                                                                            | `visual_style` (for mood matching), CC0 license filter, timeline positioning rules                                                                                                                                                                                  |
-| **Verifier**        | Hardcoded in [`verifier.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/queues/workers/verifier.ts) (L50-120)                                    | N/A — uses 5-dimension scoring (semantic alignment, entity consistency, temporal continuity, visual quality, style consistency). Images: strict (generic scenes = fundamental FAIL). Videos: lenient (subtle artifacts = PASS). 2 retries with exponential backoff. |
-| **Edit Assembly**   | Hardcoded in [`edit-assembly-prompts.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/edit-assembly/edit-assembly-prompts.ts) (L106-185) | N/A — uses documentary style defaults (4-8s cuts), emotional pacing zones per `[content_type]` tag, Ken Burns variation (4 patterns), color grading guidance, SFX track placement, hybrid shot rules. Receives 150-char narration preview per shot.                 |
+| Agent               | Prompt Source                                                                                                                                                 | Key Injections from Manifest / GCM                                                                                                                                                                                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Shot Planner**    | `buildShotPlannerPrompt()`                                                                                                                                    | `visual_style`, `aspect_ratio`, `lighting_mood`, media weighting %, pacing rules, full GCM entity list + creative direction (channel + video), intentionality rules (narrative purpose per shot)                                                                                              |
+| Agent               | Prompt Source                                                                                                                                                 | Key Injections from Manifest / GCM                                                                                                                                                                                                                                                            |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------                 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------                           |
+| **Shot Planner**    | `buildShotPlannerPrompt()`                                                                                                                                    | `visual_style`, `aspect_ratio`, `lighting_mood`, media weighting %, pacing rules, full GCM entity list + creative direction (channel + video), intentionality rules (narrative purpose per shot)                                                                                              |
+| **Asset Scout**     | `buildAssetScoutPrompt()`                                                                                                                                     | `visual_style`, `color_palette`, `lighting_mood`, GCM entities with `reference_url` and `text_description`, `master_creative_prompt`                                                                                                                                                          |
+| **Image Gen**       | `buildImageGenPrompt()`                                                                                                                                       | `visual_style`, `aspect_ratio`, quality anchors (default: `cinematic depth of field, volumetric lighting, film grain, atmospheric detail`), constraints, LoRA name + weight, `master_creative_prompt`, `worker_prompt_overrides.image_gen`                                                    |
+| **Video Gen**       | `buildVideoGenPrompt()`                                                                                                                                       | `visual_style`, `aspect_ratio`, synthesis mode rules, camera movement instructions, thematic continuity rules (mood-matching, color temperature carry)                                                                                                                                        |
+| **Motion Graphics** | `buildMotionGraphicsPrompt()`                                                                                                                                 | `visual_style`, MG Channel Theme System (`font_family`, `border_style`, `color_palette`), animation style, narrative purpose mandate, consistency mandate (all MG of same type must share visual DNA)                                                                                         |
+| **Music**           | `buildMusicPrompt()`                                                                                                                                          | `visual_style` (for mood matching), `lighting_mood`, segmentation rules, ducking, `master_creative_prompt`                                                                                                                                                                                    |
+| **SFX**             | `buildSfxPrompt()`                                                                                                                                            | `visual_style` (for mood matching), CC0 license filter, timeline positioning rules                                                                                                                                                                                                            |
+| **Verifier**        | Hardcoded in [`verifier.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/queues/workers/verifier.ts) (L50-120)                                    | N/A — uses 6-dimension scoring (semantic alignment, entity consistency, temporal continuity, visual quality, style consistency, **thematic consistency**). Images: strict (generic scenes = fundamental FAIL). Videos: lenient (subtle artifacts = PASS). 2 retries with exponential backoff. |
+| **Edit Assembly**   | Hardcoded in [`edit-assembly-prompts.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/edit-assembly/edit-assembly-prompts.ts) (L106-185) | N/A — uses documentary style defaults (4-8s cuts), emotional pacing zones per `[content_type]` tag, Ken Burns variation (4 patterns), color grading guidance, SFX track placement, hybrid shot rules. Receives 150-char narration preview per shot.                                           |
 
 > [!NOTE]
 > The Verifier and Edit Assembly agents are **not** dynamically generated — their prompts are hardcoded since they enforce structural quality rules that should remain consistent regardless of user style. All other agents receive personalized prompts blending the user's creative direction with the Creative Manifest.
@@ -702,15 +703,16 @@ When a video shot fails verification, the system **does not escalate synthesis m
 
 ### 7.1 Model
 
-**Gemini 3 Flash** — used as a frozen VLM critic. Evaluates 5 dimensions with **qualitative feedback** and a **binary pass/fail verdict**:
+**Gemini 3 Flash** — used as a frozen VLM critic. Evaluates 6 dimensions with **qualitative feedback** and a **binary pass/fail verdict**:
 
-| Dimension           | Description                              |
-| ------------------- | ---------------------------------------- |
-| Semantic Alignment  | Shot matches storyboard description      |
-| Entity Consistency  | Characters/settings match GCM references |
-| Temporal Continuity | Smooth transition from previous shot     |
-| Visual Quality      | Free of artifacts (hands, flickering)    |
-| Style Consistency   | Matches approved style guide             |
+| Dimension            | Description                                                 |
+| -------------------- | ----------------------------------------------------------- |
+| Semantic Alignment   | Shot matches storyboard description                         |
+| Entity Consistency   | Characters/settings match GCM references                    |
+| Temporal Continuity  | Smooth transition from previous shot                        |
+| Visual Quality       | Free of artifacts (hands, flickering)                       |
+| Style Consistency    | Matches approved style guide                                |
+| Thematic Consistency | Shot belongs to the same video (matches creative direction) |
 
 ### 7.2 Verdict & Actions
 
@@ -738,7 +740,8 @@ When a video shot fails verification, the system **does not escalate synthesis m
     "entity_consistency": "Hair color mismatch — host should have brown hair per reference.",
     "temporal_continuity": "Smooth transition from previous shot.",
     "visual_quality": "No artifacts detected.",
-    "style_consistency": "Too bright for dark cinematic style guide."
+    "style_consistency": "Too bright for dark cinematic style guide.",
+    "thematic_consistency": "Shot matches the overall warm cinematic creative direction."
   },
   "suggested_corrections": [
     "Re-edit host with brown hair per GCM reference",
@@ -1247,15 +1250,15 @@ The Creative Manifest is the Orchestrator's initialization document, set from us
 
 #### Medium-Impact (7 items — parameterized but not exposed in UI)
 
-| #   | Gap                            | Status                                   |
-| --- | ------------------------------ | ---------------------------------------- |
-| 1   | Voice selection UI             | Params exist in `AudioJobData`, needs UI |
-| 2   | Speaking rate / temperature UI | Params exist, needs UI                   |
-| 3   | Aspect ratio selection         | Param exists, needs UI                   |
-| 4   | Stock media level              | Param exists, needs UI                   |
-| 5   | `userPromptOverride` per shot  | Param exists in `AgentContext`, needs UI |
-| 6   | GPU generation toggle          | Param exists, needs UI                   |
-| 7   | LoRA adapter selection         | GPU API supports it, not wired           |
+| #   | Gap                            | Status                                      |
+| --- | ------------------------------ | ------------------------------------------- |
+| 1   | Voice selection UI             | Params exist in `AudioJobData`, needs UI    |
+| 2   | Speaking rate / temperature UI | Params exist, needs UI                      |
+| 3   | Aspect ratio selection         | Param exists, needs UI                      |
+| 4   | Stock media level              | Param exists, needs UI                      |
+| 5   | `userPromptOverride` per shot  | Param exists in `AgentContext`, needs UI    |
+| 6   | GPU generation toggle          | Param exists, needs UI                      |
+| 7   | LoRA adapter selection         | ✅ Implemented (upload → R2 → GPU API sync) |
 
 ### 14.10 Mapping to Creative Manifest
 
@@ -1285,3 +1288,173 @@ Creative Manifest additions:
     "animation_style": "smooth | bouncy | snappy | gentle"
   }
 ```
+
+---
+
+## 15. Creative Direction & Customization System
+
+### 15.1 Overview
+
+The Creative Direction system provides user control over video aesthetics through a 3-layer configuration hierarchy. Channel-level defaults set the brand identity; per-video overrides allow shot-specific customization.
+
+### 15.2 Configuration Layers
+
+```
+Layer 1: System Defaults (hardcoded in manifest-builder.ts)
+  ├── Baseline pacing rules, media weighting, visual style
+  └── Ensures every video has sane defaults even without settings
+
+Layer 2: Channel Settings (Supabase project_settings.visuals.creativeDirection)
+  ├── Visual style (description, lighting mood, color palette)
+  ├── LoRA configuration (uploaded LoRAs, default selection, weight)
+  ├── MG Theme System (font, colors, border style, animation)
+  ├── Media weighting (stock/AI video/MG/AI image ratios)
+  ├── Pacing preset (documentary/fast-paced/cinematic/educational)
+  └── Master creative prompt (injected into all workers)
+
+Layer 3: Per-Video Overrides (video_projects.metadata.videoCreativeOverrides)
+  ├── Video-specific creative prompt
+  ├── Visual style / lighting / color palette overrides
+  ├── LoRA selection + weight override
+  └── MG theme overrides
+```
+
+**Merge strategy:** Atomic fields use last-writer-wins (Layer 3 > Layer 2 > Layer 1). Array fields (e.g., `color_palette`) use union. The merge is performed by [`manifest-builder.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/manifest-builder.ts).
+
+### 15.3 LoRA Pipeline
+
+```
+Upload Flow:
+  User (.safetensors) → /api/lora/upload → R2 (loras/{userId}/{name})
+                                        → project_settings.visuals.creativeDirection.loras[]
+
+Sync Flow (Orchestrator Step 0-C):
+  1. Read user's LoRA config from project_settings
+  2. GET /api/v1/loras/z-image (list GPU API LoRAs)
+  3. Compare lists → download missing from R2 → upload to GPU API
+  4. LoRA name + weight → image-gen job data → GPU API request
+```
+
+**Key files:**
+
+- Upload API: [`/api/lora/upload/route.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/app/api/lora/upload/route.ts)
+- Sync Service: [`lora-sync-service.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/lora-sync-service.ts)
+- UI: [`LoraUploadCard.tsx`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/components/features/project/settings/LoraUploadCard.tsx)
+
+### 15.4 Channel Settings UI
+
+The [`VisualsTab.tsx`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/components/features/project/settings/VisualsTab.tsx) settings panel includes:
+
+| Section                | Controls                                                    |
+| ---------------------- | ----------------------------------------------------------- |
+| Visual Style           | Style descriptor textarea, color palette, lighting mood     |
+| LoRA Management        | Upload, default selection, weight slider                    |
+| Motion Graphics Theme  | Theme mode, MG color palette, animation style, font, border |
+| Pacing & Media Balance | Preset dropdown + custom fields + 4 weighted sliders        |
+| Master Creative Prompt | Channel-wide prompt injected into all workers               |
+
+### 15.5 Per-Video Overrides UI
+
+[`VideoPreferencesPanel.tsx`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/components/features/project/settings/VideoPreferencesPanel.tsx) — shown in Step 1 of video creation. Collapsible panel with "Customized" badge. Allows overriding channel defaults for visual style, lighting, color palette, LoRA, and MG theme per-video.
+
+---
+
+## 16. MG Template Tracker
+
+### 16.1 Purpose
+
+Enforces visual consistency across motion graphics of the same composition type within a video. When the first `quote_card` is generated, its style decisions (colors, fonts, animation timing) are recorded. All subsequent `quote_card` instances must match.
+
+### 16.2 Architecture
+
+**File:** [`mg-template-tracker.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/mg-template-tracker.ts)
+
+```
+First MG of type "quote_card" generated:
+  → Style recorded: { backgroundColor, primaryColor, fontFamily, animationStyle }
+  → "TEMPLATE ESTABLISHMENT" prompt injected
+
+Subsequent "quote_card" instances:
+  → "TEMPLATE ENFORCEMENT" prompt injected with exact CSS values
+  → LLM must match layout, colors, fonts, padding, animation
+```
+
+**Storage:** Persisted to `video_projects.metadata.mgTemplateRegistry` for crash recovery. Per-video scope.
+
+---
+
+## 17. Agent Graph Orchestration
+
+### 17.1 Overview
+
+Replaces the fixed Phase I→V pipeline with dynamic, content-aware orchestration. Instead of every video running the same 5 phases, the system classifies content type and selects an optimal DAG (directed acyclic graph) of production steps.
+
+**Key files:** All in [`lib/services/orchestration/`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/orchestration/)
+
+### 17.2 Architecture
+
+```mermaid
+graph TD
+    A["Intent Classifier"] --> B["Graph Composer"]
+    B --> C["Graph Reviewer"]
+    C --> D["DAG Walker / Executor"]
+    D --> E["BullMQ Workers"]
+
+    B --> |"selects from"| F["Graph Templates"]
+    F --> F1["documentary"]
+    F --> F2["montage"]
+    F --> F3["comparison"]
+    F --> F4["tutorial"]
+    F --> F5["custom (LLM-composed)"]
+```
+
+### 17.3 Graph Templates
+
+4 preset DAG templates in [`graph-templates.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/orchestration/graph-templates.ts):
+
+| Template    | Optimized For                       | Key Differences from Documentary                |
+| ----------- | ----------------------------------- | ----------------------------------------------- |
+| Documentary | Explainers, true crime, educational | Full pipeline — all media types, MG, SFX, stock |
+| Montage     | Music-driven, compilations          | No stock, no MG, no SFX — rhythm-synced cuts    |
+| Comparison  | Product reviews, side-by-side       | MG-heavy, less AI video, more stock + images    |
+| Tutorial    | How-to, walkthroughs                | MG-dominant, minimal AI video                   |
+
+Each template defines typed `GraphNode[]` with dependencies, skip conditions, and `GraphEdge[]` with data flow descriptions.
+
+### 17.4 Intent Classifier
+
+[`intent-classifier.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/orchestration/intent-classifier.ts) — Gemini Flash analyzes script + manifest and returns:
+
+- Selected template ID + confidence score
+- Suggested node skips (e.g., skip `stock_media` if weight = 0)
+- Content analysis (pace category, estimated shot count, comparison detection)
+- Falls back to `documentary` template on failure
+
+### 17.5 DAG Executor
+
+[`dag-executor.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/orchestration/dag-executor.ts) — Generic graph walker:
+
+- **Kahn's algorithm** topological sort for execution ordering
+- Parallel dispatch of independent branches (e.g., music_gen + video_gen simultaneously)
+- Per-node state tracking: `pending → ready → running → completed/failed/skipped`
+- State persistence callback for crash recovery
+- Deadlock detection
+
+### 17.6 Graph Composer (Phase B)
+
+[`graph-composer.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/orchestration/graph-composer.ts) — LLM-composed custom DAGs:
+
+- Sends full worker catalog (input/output types) to Gemini
+- Enables workflows impossible with presets (e.g., generate style anchor images first, then use as reference for all subsequent shots)
+- Only triggered when intent classifier confidence is low
+- Falls back to preset template on failure
+
+### 17.7 Graph Reviewer (Phase C)
+
+[`graph-reviewer.ts`](file:///c:/Users/owen/Desktop/Projects/Vid-Bolt/web/lib/services/orchestration/graph-reviewer.ts) — Two-step validation (from VideoAgent A.11):
+
+1. **Structural validation:** Cycle detection, dangling references, unreachable nodes, edge consistency
+2. **LLM semantic review:** Execution order correctness, redundancy, requirement fulfillment
+3. **Meta-review:** "Was Step 2's verdict correct? Any overlooked aspects?"
+
+Graphs with critical structural issues are rejected immediately. LLM review can be skipped for preset templates (they're pre-validated).

@@ -39,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { PROJECT_PRESETS } from "@/lib/constants/project-presets";
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -60,7 +61,7 @@ export function Sidebar() {
   const { profile } = useUserProfile();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
-  const [sourceProjectId, setSourceProjectId] = useState("default");
+  const [sourceProjectId, setSourceProjectId] = useState("preset:standard");
   const [creating, setCreating] = useState(false);
 
   // Build dynamic nav items for media projects
@@ -335,15 +336,40 @@ export function Sidebar() {
                 <SelectTrigger className="bg-black border-neutral-800 text-white">
                   <SelectValue placeholder="Standard Settings" />
                 </SelectTrigger>
-                <SelectContent className="bg-neutral-900 border-neutral-800 text-white">
-                  <SelectItem value="default">
-                    Standard Settings (Default)
-                  </SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
+                <SelectContent className="bg-neutral-900 border-neutral-800 text-white max-h-[280px]">
+                  {/* Global Presets */}
+                  <div className="px-2 py-1.5">
+                    <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
+                      Presets
+                    </span>
+                  </div>
+                  {PROJECT_PRESETS.map((preset) => (
+                    <SelectItem key={preset.id} value={`preset:${preset.id}`}>
+                      <div className="flex flex-col">
+                        <span>{preset.name}</span>
+                        <span className="text-[10px] text-neutral-500">
+                          {preset.description}
+                        </span>
+                      </div>
                     </SelectItem>
                   ))}
+
+                  {/* Separator + User Projects */}
+                  {projects.length > 0 && (
+                    <>
+                      <div className="my-1 border-t border-neutral-800" />
+                      <div className="px-2 py-1.5">
+                        <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
+                          Your Projects
+                        </span>
+                      </div>
+                      {projects.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </div>

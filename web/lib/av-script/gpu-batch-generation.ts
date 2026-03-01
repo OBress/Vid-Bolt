@@ -220,7 +220,9 @@ export async function processGpuBatchGeneration(
   shots: ShotForGpuGeneration[],
   aspectRatio: AspectRatio,
   onProgress?: (message: string, percent: number) => void,
-  onItemComplete?: (event: ItemCompleteEvent) => void
+  onItemComplete?: (event: ItemCompleteEvent) => void,
+  /** Optional LoRA name to apply to all image generations */
+  loraName?: string,
 ): Promise<BatchGpuGenerationResult> {
   const logPrefix = '[GPU-Batch]';
   const results: GpuGenerationResult[] = [];
@@ -312,10 +314,10 @@ export async function processGpuBatchGeneration(
     : undefined;
 
   const standaloneResults = standaloneImageShots.length > 0 
-    ? await processImageBatch(userId, videoId, standaloneImageShots, aspectRatio, 'standalone', imageItemCallback)
+    ? await processImageBatch(userId, videoId, standaloneImageShots, aspectRatio, 'standalone', imageItemCallback, loraName)
     : [];
   const keyframeResults = videoShots.length > 0
-    ? await processImageBatch(userId, videoId, videoShots, aspectRatio, 'keyframe', imageItemCallback)
+    ? await processImageBatch(userId, videoId, videoShots, aspectRatio, 'keyframe', imageItemCallback, loraName)
     : [];
   
   // Assemble multi-image shots: group results by shot_index and build media_items
@@ -397,7 +399,9 @@ async function processImageBatch(
   shots: ShotForGpuGeneration[],
   aspectRatio: AspectRatio,
   purpose: 'standalone' | 'keyframe' = 'standalone',
-  onItemComplete?: (event: ItemCompleteEvent) => void
+  onItemComplete?: (event: ItemCompleteEvent) => void,
+  /** Optional LoRA name to apply to all images in this batch */
+  loraName?: string,
 ): Promise<GpuGenerationResult[]> {
   const logPrefix = `[GPU-Batch/Images/${purpose}]`;
   const batchId = `img-${purpose}-${videoId}-${uuidv4().slice(0, 8)}`;
@@ -461,6 +465,7 @@ async function processImageBatch(
           width,
           height,
           save_url: putUrl,
+          ...(loraName ? { lora_name: loraName } : {}),
         });
         
         itemIdToShot.set(itemId, shot);

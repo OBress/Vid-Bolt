@@ -264,12 +264,27 @@ Build your prompt following this scaffold:
 8. **Technical Notes** - Camera specs: "50mm lens, shallow depth of field, 4K"
 9. **Constraints** - ALWAYS end with: "no text, no watermark, no logos, no extra limbs"
 
+## NARRATIVE PURPOSE (CRITICAL)
+Every image must serve a SPECIFIC purpose in the video:
+- INFORM: Show the viewer something specific that advances the narrative
+- EMOTIONAL ENGAGEMENT: Create a mood or feeling that connects the viewer to the story
+- VISUAL TRANSITION: Bridge between two narrative ideas or scenes
+Include the purpose in your prompt construction. A generic scene with no clear narrative role is a FAILURE.
+
+## QUALITY ANCHORS
+Always embed these in every prompt (adapt to context):
+- Cinematic depth of field, volumetric lighting, film grain
+- Intentional composition (rule of thirds, leading lines)
+- Atmospheric details (dust motes, fog, light rays, reflections)
+- Do NOT use generic terms like "high quality" or "professional" — be specific about WHY it looks good
+
 ## CONTEXT AWARENESS
 You have access to:
-- Previous shots (for visual continuity)
+- Previous shots (for visual continuity — MATCH their lighting, color palette, and mood)
 - Upcoming shots (for transition planning)  
 - Entity references (characters, locations, objects)
 - Video's overall visual style
+- If previous shots exist, reference their visual prompt to ensure this shot feels like part of the same film
 
 ## EXAMPLE PROMPT
 "A medium-shot portrait of @(John Smith), a man in his 40s with short gray hair and weathered features, wearing a dark navy suit and white shirt, fully clothed, professional attire. Standing in a modern courtroom with soft blurred wooden panels in the background. Soft diffused daylight from tall windows, warm undertones. Calm but determined expression, slight tension in the jaw. Realistic cinematic photography, 85mm lens, shallow depth of field, film grain, 4K quality. Plain background, no text, no watermark, no logos, correct human anatomy."
@@ -280,7 +295,7 @@ Return valid JSON:
   "prompt": "80-250 word structured prompt following the scaffold above...",
   "constraint_phrases": ["no text", "no watermark", "no logos", "no extra limbs"],
   "seed_suggestion": null,
-  "quality_anchors": ["photorealistic", "cinematic", "4K", "film grain"]
+  "quality_anchors": ["cinematic depth of field", "volumetric lighting", "film grain", "atmospheric detail"]
 }`;
 
 const IMAGE_EDITING_SYSTEM_PROMPT = `You are a professional edit prompt enhancer for Qwen-Image, refining images for a documentary video.
@@ -359,6 +374,12 @@ const VIDEO_CREATION_SYSTEM_PROMPT = `You are a cinematographer directing AI-gen
 - Pacing: slow motion, lingering shot, dynamic movement
 - Atmosphere: fog, rain, dust particles, smoke, bokeh
 
+## THEMATIC CONTINUITY
+- MATCH the mood and visual intensity of the narration: calm narration = slow, atmospheric movement; tense narration = dynamic motion
+- Reference the visual style of previous shots — lighting, color temperature, and mood should carry across shots
+- Motion should serve the narrative, not just look interesting. Every camera movement must have a reason.
+- If the previous shot was warm and golden, don't suddenly switch to cold blue unless the narrative demands it.
+
 ## WHAT WORKS WELL
 - Single flowing paragraph describing entire motion sequence
 - Clear beginning → middle → end structure
@@ -390,12 +411,25 @@ const MOTION_GRAPHIC_PROMPT_SYSTEM_PROMPT = `You are a motion graphics director 
 Expand a brief shot description into a detailed composition plan.
 Describe WHAT elements should appear and HOW they should be arranged.
 
+## NARRATIVE PURPOSE (CRITICAL)
+Every motion graphic must declare WHY it exists:
+- INFORM: Present data, comparisons, or evidence that advances the narrative
+- EMPHASIZE: Highlight a key quote, statistic, or moment
+- TRANSITION: Bridge between two narrative sections
+Do NOT create motion graphics that are purely decorative with no narrative value.
+
 ## WHEN TO USE MOTION GRAPHICS
 - Comparisons (side-by-side, before/after)
 - Evidence displays (crime boards, document close-ups)
 - Data visualization (timelines, maps with paths)
 - Quote cards, title cards
 - Photo montages with ken burns effect
+
+## CONSISTENCY MANDATE
+- ALL motion graphics of the same type in this video MUST look like they belong together
+- If this is a quote_card, it must match every other quote_card in the video: same layout, fonts, colors, animations
+- Track your style decisions: background color, text size, padding, animation timing
+- Reference the video's visual style and adapt your compositions to match
 
 ## CONTEXT AWARENESS
 You have access to:

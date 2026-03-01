@@ -18,9 +18,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import Link from "next/link";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 import { useMediaProjects } from "@/hooks/use-media-projects";
 import { Plus, Loader2 } from "lucide-react";
+import { PROJECT_PRESETS } from "@/lib/constants/project-presets";
 
 export function MediaProjectsTab() {
   const { projects, loading, createProject, deleteProject } =
@@ -33,6 +42,7 @@ export function MediaProjectsTab() {
   } | null>(null);
   const [confirmName, setConfirmName] = useState("");
   const [newProjectName, setNewProjectName] = useState("");
+  const [sourceProjectId, setSourceProjectId] = useState("preset:standard");
   const [creating, setCreating] = useState(false);
 
   const handleDeleteClick = (project: { id: string; name: string }) => {
@@ -52,9 +62,10 @@ export function MediaProjectsTab() {
     if (!newProjectName.trim()) return;
     setCreating(true);
     try {
-      await createProject(newProjectName);
+      await createProject(newProjectName, sourceProjectId);
       setCreateDialogOpen(false);
       setNewProjectName("");
+      setSourceProjectId("preset:standard");
     } catch (_err) {
       // error handled in hook
     } finally {
@@ -169,15 +180,65 @@ export function MediaProjectsTab() {
               Enter a name for your new media project.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
-            <Input
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              placeholder="E.g. Daily Tech News"
-              className="bg-black border-neutral-800 text-white"
-              autoFocus
-              onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
-            />
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-neutral-500 uppercase">
+                Project Name
+              </Label>
+              <Input
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                placeholder="E.g. Daily Tech News"
+                className="bg-black border-neutral-800 text-white"
+                autoFocus
+                onKeyDown={(e) => e.key === "Enter" && handleCreateProject()}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-neutral-500 uppercase">
+                Import Settings From
+              </Label>
+              <Select
+                value={sourceProjectId}
+                onValueChange={setSourceProjectId}
+              >
+                <SelectTrigger className="bg-black border-neutral-800 text-white">
+                  <SelectValue placeholder="Standard Settings" />
+                </SelectTrigger>
+                <SelectContent className="bg-neutral-900 border-neutral-800 text-white max-h-[280px]">
+                  <div className="px-2 py-1.5">
+                    <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
+                      Presets
+                    </span>
+                  </div>
+                  {PROJECT_PRESETS.map((preset) => (
+                    <SelectItem key={preset.id} value={`preset:${preset.id}`}>
+                      <div className="flex flex-col">
+                        <span>{preset.name}</span>
+                        <span className="text-[10px] text-neutral-500">
+                          {preset.description}
+                        </span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                  {projects.length > 0 && (
+                    <>
+                      <div className="my-1 border-t border-neutral-800" />
+                      <div className="px-2 py-1.5">
+                        <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
+                          Your Projects
+                        </span>
+                      </div>
+                      {projects.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateDialogOpen(false)}>

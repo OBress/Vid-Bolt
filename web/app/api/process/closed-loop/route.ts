@@ -4,7 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { v4 as uuidv4 } from "uuid";
-import type { CreativeManifest } from "@/lib/types/closed-loop";
+import { buildCreativeManifest } from "@/lib/services/manifest-builder";
+import type { ProjectSettings } from "@/types/settings";
 
 /**
  * POST /api/process/closed-loop
@@ -13,6 +14,16 @@ import type { CreativeManifest } from "@/lib/types/closed-loop";
  * The orchestrator handles TTS, Shot Planning, Asset Retrieval, Production, and Assembly.
  * 
  * Requires: completed script in video_projects.script_content
+ * 
+ * Request body:
+ *   - videoId: string (required)
+ *   - videoCreativeOverrides?: VideoCreativeOverrides (optional per-video customization)
+ * 
+ * The CreativeManifest is built from three layers:
+ *   1. System defaults (sensible fallbacks)
+ *   2. Channel-level creative direction (from project_settings.visuals.creativeDirection)
+ *   3. Per-video overrides (from request body.videoCreativeOverrides)
+ * 
  * Returns: { success, taskId, jobId }
  */
 export async function POST(request: NextRequest) {
@@ -38,7 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { videoId } = body;
+    const { videoId, videoCreativeOverrides } = body;
 
     if (!videoId) {
       return NextResponse.json(
@@ -56,10 +67,10 @@ export async function POST(request: NextRequest) {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Fetch video project with script and metadata
+    // Fetch video project with script, metadata, and parent project ID
     const { data: video, error: videoError } = await supabase
       .from("video_projects")
-      .select("id, name, idea, script_content, metadata")
+      .select("id, name, idea, script_content, metadata, project_id")
       .eq("id", videoId)
       .eq("user_id", user.id)
       .single();
@@ -81,6 +92,37 @@ export async function POST(request: NextRequest) {
     const metadata = (video.metadata || {}) as Record<string, any>;
     const outlineConfig = metadata?.outlineConfig;
 
+    // Fetch channel-level creative direction from project settings
+    let channelDefaults: import("@/types/settings").CreativeDirectionDefaults | undefined;
+    if (video.project_id) {
+      const { data: settingsRow } = await supabase
+        .from("project_settings")
+        .select("settings")
+        .eq("project_id", video.project_id)
+        .maybeSingle();
+
+      if (settingsRow?.settings) {
+        const projectSettings = settingsRow.settings as ProjectSettings;
+        channelDefaults = projectSettings.visuals?.creativeDirection;
+      }
+    }
+
+    // Build CreativeManifest: system defaults → channel settings → per-video overrides
+    const creativeManifest = buildCreativeManifest(
+      videoId,
+      outlineConfig,
+      channelDefaults,
+      videoCreativeOverrides,
+    );
+
+    console.log(
+      `[Closed-Loop API] Built CreativeManifest for video ${videoId}:`,
+      `style="${creativeManifest.style.visual_style}"`,
+      `lora=${creativeManifest.lora?.name || 'none'}`,
+      `pacing=${creativeManifest.editing?.pacing_preset || 'default'}`,
+      `mgTheme=${creativeManifest.motion_graphics?.theme || 'default'}`,
+    );
+
     // Fetch GCM entities for this project
     const { data: entities } = await supabase
       .from("project_entities")
@@ -97,31 +139,6 @@ export async function POST(request: NextRequest) {
       last_updated: new Date(e.updated_at).getTime(),
       appearance_count: e.appearance_count || 0,
     }));
-
-    // Build a default Creative Manifest from outline config
-    const creativeManifest: CreativeManifest = {
-      project_id: videoId,
-      style: {
-        visual_style: outlineConfig?.visualStyle || "cinematic, documentary",
-        color_palette: [],
-        aspect_ratio: outlineConfig?.aspectRatio || "16:9",
-      },
-      media_weighting: {
-        stock_footage: 0.3,
-        ai_video: 0.4,
-        motion_graphics: 0.2,
-        ai_image_static: 0.1,
-      },
-      pacing_rules: {
-        hook_duration_seconds: 15,
-        hook_min_motion_graphics: 2,
-        max_consecutive_static_images: 2,
-        min_video_shots_per_minute: 3,
-      },
-      quality_thresholds: {
-        max_retries: 3,
-      },
-    };
 
     // Create task in database
     const taskId = uuidv4();
@@ -163,6 +180,7 @@ export async function POST(request: NextRequest) {
         userSystemPrompt: metadata?.userSystemPrompt,
         scriptContent: video.script_content,
         entities: gcmEntities,
+        videoCreativeOverrides,
       },
       {
         jobId: taskId,

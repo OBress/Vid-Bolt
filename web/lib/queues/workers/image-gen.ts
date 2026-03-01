@@ -30,6 +30,8 @@ export interface ImageGenJobData {
   videoId: string;
   /** Aspect ratio for generation */
   aspectRatio?: '16:9' | '9:16';
+  /** Optional LoRA name to apply for all image generations */
+  loraName?: string;
 }
 
 // ============================================================================
@@ -41,7 +43,7 @@ const LOG_PREFIX = '[ImageGen]';
 export const imageGenProcessor: Processor<ImageGenJobData> = async (
   job: Job<ImageGenJobData>
 ) => {
-  const { taskId, userId, videoId, aspectRatio = '16:9' } = job.data;
+  const { taskId, userId, videoId, aspectRatio = '16:9', loraName } = job.data;
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
 
@@ -139,7 +141,8 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
         imageShotsOnly,
         aspectRatio as AspectRatio,
         onProgress,
-        onItemComplete
+        onItemComplete,
+        loraName,
       );
 
       // Track GPU cost (~3s per image on A100)

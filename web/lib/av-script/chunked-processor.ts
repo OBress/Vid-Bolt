@@ -506,6 +506,8 @@ Generate visual summaries for the following ${context.currentSegments.length} se
 For each segment, provide:
 1. summary: A 1-sentence visual description (under 25 words) describing what should be shown
 2. media_type: "video" (default) or "motiongraphic"
+   - PREFER "motiongraphic" for: list-items, comparisons, step-by-step, data/stats, quotes, evidence
+   - PREFER "video" for: emotional beats, transitions, atmospheric moments, single-scene cinematics
 3. stock_worthy: true ONLY for famous people, iconic landmarks, or historical footage
 4. reuse_entity: The entity name if this entity appeared before and should reuse its image
 5. image_count: (optional) for motiongraphics, number of images if multiple improve clarity

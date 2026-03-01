@@ -42,6 +42,17 @@ Native since I'm using railway
 Handles long-running AI generation
 Retry logic and failure handling
 
+Creative Direction & Orchestration
+Manifest Builder (3-layer merge: system → channel → per-video)
+LoRA Sync Service (R2 → GPU API on-demand)
+MG Template Tracker (composition style consistency per-video)
+Agent Graph Orchestration:
+Graph Templates (4 preset DAGs: documentary, montage, comparison, tutorial)
+Intent Classifier (Gemini Flash content analysis → template selection)
+DAG Executor (Kahn's topological sort, parallel dispatch, crash recovery)
+Graph Composer (LLM-composed custom DAGs)
+Graph Reviewer (two-step structural + semantic validation)
+
 Storage
 Cloudflare R2 (Primary)
 User uploads (images, audio, video clips)

@@ -6,11 +6,12 @@
  * style guide from the Creative Manifest.
  *
  * Evaluates 5 dimensions:
- *   1. Semantic Alignment  — does the output match the shot description?
- *   2. Entity Consistency  — do characters/settings match GCM references?
- *   3. Temporal Continuity — smooth transition from previous shot?
- *   4. Visual Quality      — free of artifacts (hands, flickering)?
- *   5. Style Consistency   — matches the approved style guide?
+ *   1. Semantic Alignment      — does the output match the shot description?
+ *   2. Entity Consistency      — do characters/settings match GCM references?
+ *   3. Temporal Continuity     — smooth transition from previous shot?
+ *   4. Visual Quality          — free of artifacts (hands, flickering)?
+ *   5. Style Consistency       — matches the approved style guide?
+ *   6. Thematic Consistency    — belongs to the same video as declared creative direction?
  *
  * Returns a binary PASS/FAIL verdict with qualitative feedback.
  */
@@ -34,6 +35,8 @@ export interface DimensionFeedback {
   temporal_continuity: string;
   visual_quality: string;
   style_consistency: string;
+  /** Does this shot feel like it belongs to the same video? Matches creative direction? */
+  thematic_consistency: string;
 }
 
 export interface VerifierResult {
@@ -103,7 +106,7 @@ const VERIFIER_SYSTEM_PROMPT = `You are a visual quality critic for an automated
 Your role is to evaluate generated images and videos against their shot descriptions,
 entity references, and style guides with strict but fair judgment.
 
-You must evaluate 5 dimensions and provide a binary PASS/FAIL verdict.
+You must evaluate 6 dimensions and provide a binary PASS/FAIL verdict.
 A PASS means the output is acceptable for the final video. A FAIL means it needs revision.
 
 IMPORTANT RULES:
@@ -132,6 +135,12 @@ VIDEO-SPECIFIC RULES (AI-generated video inherently has minor imperfections):
 GENERAL:
 7. Minor temporal discontinuities between shots are acceptable — major scene breaks are FAIL.
 
+THEMATIC CONSISTENCY:
+8. Every shot must feel like it belongs to the SAME VIDEO. Compare against the style guide (creative direction).
+   - If the style guide says "warm cinematic" but the shot looks like cold industrial footage, that's a thematic mismatch.
+   - If the creative direction mentions a specific aesthetic and the shot completely ignores it, FAIL.
+   - Be lenient here: the shot doesn't need to perfectly match, but it shouldn't feel like it's from a different video.
+
 For FAIL verdicts, classify as:
 - "recoverable": The issue can be fixed by editing (wrong color, lighting adjustment, style mismatch)
 - "fundamental": The base image/video is wrong and must be regenerated (wrong scene, wrong entity, wrong composition)
@@ -145,7 +154,8 @@ Respond ONLY with valid JSON matching this schema:
     "entity_consistency": "Brief assessment",
     "temporal_continuity": "Brief assessment",
     "visual_quality": "Brief assessment",
-    "style_consistency": "Brief assessment"
+    "style_consistency": "Brief assessment",
+    "thematic_consistency": "Brief assessment — does this shot feel like it belongs to the same video?"
   },
   "suggested_corrections": ["correction 1", "correction 2"],
   "recommended_action": "re-edit" | "regenerate" | "accept",
@@ -196,7 +206,7 @@ async function callVisionModel(
               failure_type: { type: ['string', 'null'], enum: ['recoverable', 'fundamental', null] },
               dimension_feedback: {
                 type: 'object',
-                required: ['semantic_alignment', 'entity_consistency', 'temporal_continuity', 'visual_quality', 'style_consistency'],
+                required: ['semantic_alignment', 'entity_consistency', 'temporal_continuity', 'visual_quality', 'style_consistency', 'thematic_consistency'],
                 additionalProperties: false,
                 properties: {
                   semantic_alignment: { type: 'string' },
@@ -204,6 +214,7 @@ async function callVisionModel(
                   temporal_continuity: { type: 'string' },
                   visual_quality: { type: 'string' },
                   style_consistency: { type: 'string' },
+                  thematic_consistency: { type: 'string' },
                 },
               },
               suggested_corrections: { type: 'array', items: { type: 'string' } },
@@ -451,6 +462,7 @@ function parseVerifierResponse(rawResponse: string): VerifierResult {
         temporal_continuity: parsed.dimension_feedback?.temporal_continuity || 'Not evaluated',
         visual_quality: parsed.dimension_feedback?.visual_quality || 'Not evaluated',
         style_consistency: parsed.dimension_feedback?.style_consistency || 'Not evaluated',
+        thematic_consistency: parsed.dimension_feedback?.thematic_consistency || 'Not evaluated',
       },
       suggested_corrections: parsed.suggested_corrections || [],
       recommended_action: parsed.recommended_action || 'accept',
@@ -470,6 +482,7 @@ function parseVerifierResponse(rawResponse: string): VerifierResult {
         temporal_continuity: 'Parse error — defaulting to PASS',
         visual_quality: 'Parse error — defaulting to PASS',
         style_consistency: 'Parse error — defaulting to PASS',
+        thematic_consistency: 'Parse error — defaulting to PASS',
       },
       suggested_corrections: [],
       recommended_action: 'accept',
@@ -518,6 +531,7 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
               temporal_continuity: 'FAIL — video is essentially a still image',
               visual_quality: `FAIL — static video detected (SSIM=${staticCheck.ssim.toFixed(4)})`,
               style_consistency: 'Unable to assess — video has no meaningful motion',
+              thematic_consistency: 'Unable to assess — video has no meaningful motion',
             },
             suggested_corrections: [
               'Video is essentially static with no meaningful motion.',
@@ -604,6 +618,7 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
         temporal_continuity: 'Verification failed after retries — defaulting to PASS',
         visual_quality: 'Verification failed after retries — defaulting to PASS',
         style_consistency: 'Verification failed after retries — defaulting to PASS',
+        thematic_consistency: 'Verification failed after retries — defaulting to PASS',
       },
       suggested_corrections: [],
       recommended_action: 'accept' as RecommendedAction,

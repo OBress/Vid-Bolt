@@ -223,6 +223,8 @@ function extractStepOutputs(
         avScriptPart1Output: meta.avScriptPart1Output || null,
         shotCount: getNestedValue(meta, 'avScriptPart1Output.shots.length') || 0,
         assetReferenceImages: meta.assetReferenceImages || null,
+        // Per-shot timing from shot plan (requested durations)
+        shotTimings: extractShotTimings(meta),
       };
     case 6:
       return {
@@ -231,12 +233,21 @@ function extractStepOutputs(
           ? (meta.generatedMedia as unknown[]).length
           : 0,
         mediaBreakdown: getMediaBreakdown(meta.generatedMedia),
+        // Actual media asset maps (what the workers persist)
+        generated_videos_count: Object.keys((meta.generated_videos || {}) as object).length,
+        generated_images_count: Object.keys((meta.generated_images || {}) as object).length,
+        generated_mg_count: Object.keys((meta.generated_motion_graphics || {}) as object).length,
+        video_gen_stats: meta.video_gen_stats || null,
+        // Pipeline diagnostics (from orchestrator)
+        pipeline_diagnostics: meta.pipeline_diagnostics || null,
       };
     case 7:
       return {
         edl: meta.edl || null,
         agentEdl: meta.agentEdl || null,
         editorState: meta.editor_state ? '(present)' : null,
+        // EDL health summary (computed from agentEdl vs audio)
+        edlHealth: computeEdlHealth(meta),
       };
     case 8:
       return {
@@ -365,19 +376,54 @@ function extractStepMedia(
     }
   }
 
-  // Step 6: Generated media
-  if (step === 6 && Array.isArray(meta.generatedMedia)) {
-    for (const item of meta.generatedMedia as Array<Record<string, unknown>>) {
-      const url = (item.media_url || item.image_url || item.video_url) as string;
-      if (url) {
-        media.push({
-          id: `media-${item.shot_index}`,
-          type: (item.media_type as StepMedia['type']) || 'image',
-          url,
-          label: `Shot ${item.shot_index}`,
-          shotIndex: item.shot_index as number,
-          generationStatus: item.generation_status as string,
-        });
+  // Step 6: Generated media (from generatedMedia array AND from direct maps)
+  if (step === 6) {
+    // From legacy generatedMedia array
+    if (Array.isArray(meta.generatedMedia)) {
+      for (const item of meta.generatedMedia as Array<Record<string, unknown>>) {
+        const url = (item.media_url || item.image_url || item.video_url) as string;
+        if (url) {
+          media.push({
+            id: `media-${item.shot_index}`,
+            type: (item.media_type as StepMedia['type']) || 'image',
+            url,
+            label: `Shot ${item.shot_index}`,
+            shotIndex: item.shot_index as number,
+            generationStatus: item.generation_status as string,
+          });
+        }
+      }
+    }
+    // From generated_videos map (what video-gen actually persists)
+    if (meta.generated_videos && typeof meta.generated_videos === 'object') {
+      for (const [key, url] of Object.entries(meta.generated_videos as Record<string, string>)) {
+        const idx = key.replace('shot-', '');
+        if (url && !media.some(m => m.id === `media-${idx}`)) {
+          media.push({
+            id: `video-${idx}`,
+            type: 'video',
+            url,
+            label: `Shot ${idx} (video)`,
+            shotIndex: Number(idx),
+            generationStatus: 'completed',
+          });
+        }
+      }
+    }
+    // From generated_images map
+    if (meta.generated_images && typeof meta.generated_images === 'object') {
+      for (const [key, url] of Object.entries(meta.generated_images as Record<string, string>)) {
+        const idx = key.replace('shot-', '');
+        if (url && !media.some(m => m.id === `media-${idx}`)) {
+          media.push({
+            id: `image-${idx}`,
+            type: 'image',
+            url,
+            label: `Shot ${idx} (image)`,
+            shotIndex: Number(idx),
+            generationStatus: 'completed',
+          });
+        }
       }
     }
   }
@@ -426,4 +472,71 @@ function getMediaBreakdown(
     breakdown[type] = (breakdown[type] || 0) + 1;
   }
   return breakdown;
+}
+
+/**
+ * Extract per-shot timing data from the AV script shot plan.
+ * Shows requested duration per shot — useful for debugging frozen/stretched clips.
+ */
+function extractShotTimings(
+  meta: Record<string, unknown>
+): Array<{ shot_index: number; media_type: string; duration_s: number }> | null {
+  const avScript = (meta.av_script_part1 || meta.avScriptPart1Output) as Record<string, unknown> | undefined;
+  if (!avScript) return null;
+  const shots = (avScript.shots || []) as Array<Record<string, unknown>>;
+  if (shots.length === 0) return null;
+  return shots.map(s => ({
+    shot_index: (s.segment_index as number) || 0,
+    media_type: (s.media_type as string) || 'unknown',
+    duration_s: (s.duration_seconds as number) || 0,
+  }));
+}
+
+/**
+ * Compute EDL health metrics: total duration vs audio, clips over 10s, etc.
+ * Critical for diagnosing frozen clips and stretched timelines.
+ */
+function computeEdlHealth(
+  meta: Record<string, unknown>
+): Record<string, unknown> | null {
+  const agentEdl = meta.agentEdl as Record<string, unknown> | undefined;
+  if (!agentEdl?.tracks) return null;
+
+  const tracks = agentEdl.tracks as Array<Record<string, unknown>>;
+  let totalClips = 0;
+  let totalDuration = 0;
+  let clipsOver10s = 0;
+  const longClips: Array<{ track: string; start: number; duration: number }> = [];
+
+  for (const track of tracks) {
+    const clips = (track.clips || []) as Array<Record<string, unknown>>;
+    for (const clip of clips) {
+      totalClips++;
+      const dur = (clip.duration as number) || 0;
+      totalDuration += dur;
+      if (dur > 10) {
+        clipsOver10s++;
+        longClips.push({
+          track: (track.id as string) || 'unknown',
+          start: (clip.startTime as number) || 0,
+          duration: dur,
+        });
+      }
+    }
+  }
+
+  const audioChunks = (meta.audio_chunks || meta.audioChunks || []) as Array<Record<string, unknown>>;
+  const audioTotal = audioChunks.reduce(
+    (sum, c) => sum + ((c.duration_seconds as number) || 0), 0
+  );
+
+  return {
+    total_clips: totalClips,
+    total_duration_s: Math.round(totalDuration * 100) / 100,
+    audio_total_s: Math.round(audioTotal * 100) / 100,
+    duration_vs_audio_diff_s: Math.round((totalDuration - audioTotal) * 100) / 100,
+    clips_over_10s: clipsOver10s,
+    long_clips: longClips.length > 0 ? longClips : undefined,
+    tracks_count: tracks.length,
+  };
 }
