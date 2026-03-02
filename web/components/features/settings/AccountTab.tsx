@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { User, Globe, LogOut, Trash2, CreditCard, Timer } from "lucide-react";
+import { User, Globe, LogOut, Trash2, CreditCard, Timer, Zap, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +10,9 @@ import { useUserSettings } from "@/hooks/use-user-settings";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
 import { createClient } from "@/lib/supabase/client";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useGpuHours } from "@/hooks/use-gpu-hours";
+import { toast } from "sonner";
 
 export function AccountTab() {
   const {
@@ -27,6 +29,59 @@ export function AccountTab() {
   } = useUserProfile();
   const supabase = createClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { balance: gpuHoursBalance, loading: gpuHoursLoading, refresh: refreshGpuHours } = useGpuHours();
+  const [purchaseHours, setPurchaseHours] = useState<number>(10);
+  const [isPurchasing, setIsPurchasing] = useState(false);
+
+  // Handle checkout success/cancel from Stripe redirect
+  useEffect(() => {
+    const checkoutStatus = searchParams.get("checkout");
+    if (checkoutStatus === "success") {
+      toast.success("Payment successful! GPU hours are being added to your account.");
+      refreshGpuHours();
+      // Clean up URL params
+      const url = new URL(window.location.href);
+      url.searchParams.delete("checkout");
+      router.replace(url.pathname + url.search);
+    } else if (checkoutStatus === "cancelled") {
+      toast.info("Payment cancelled.");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("checkout");
+      router.replace(url.pathname + url.search);
+    }
+  }, [searchParams, refreshGpuHours, router]);
+
+  const handlePurchaseGpuHours = async () => {
+    if (purchaseHours < 1 || purchaseHours > 1000) {
+      toast.error("Please enter between 1 and 1000 hours.");
+      return;
+    }
+
+    setIsPurchasing(true);
+    try {
+      const response = await fetch("/api/stripe/create-checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hours: Math.round(purchaseHours) }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to create checkout session");
+      }
+
+      // Redirect to Stripe Checkout
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to start purchase");
+    } finally {
+      setIsPurchasing(false);
+    }
+  };
 
   const [name, setName] = useState("");
   const [gpuShutdownMinutes, setGpuShutdownMinutes] = useState<number>(60);
@@ -176,17 +231,34 @@ export function AccountTab() {
           </CardContent>
         </Card>
 
-        {/* Plan Information */}
+        {/* GPU Hours */}
         <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm">
           <CardHeader>
             <div className="flex items-center gap-3">
-              <CreditCard className="text-orange-500 w-5 h-5" />
+              <Zap className="text-orange-500 w-5 h-5" />
               <CardTitle className="text-sm font-bold uppercase tracking-widest text-neutral-200">
-                Subscription
+                GPU Hours
               </CardTitle>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs text-neutral-400 uppercase font-bold">
+                Current Balance
+              </label>
+              <p className="text-2xl font-bold text-white">
+                {gpuHoursLoading ? (
+                  <Loader2 className="w-5 h-5 animate-spin text-neutral-500 inline" />
+                ) : (
+                  <>
+                    {gpuHoursBalance}
+                    <span className="text-sm font-normal text-neutral-400 ml-1">
+                      hour{gpuHoursBalance !== 1 ? "s" : ""}
+                    </span>
+                  </>
+                )}
+              </p>
+            </div>
             <div className="space-y-1">
               <label className="text-xs text-neutral-400 uppercase font-bold">
                 Current Plan
@@ -195,27 +267,55 @@ export function AccountTab() {
                 {profile?.account_tier || "STARTER"} PLAN
               </p>
             </div>
-            <div className="space-y-1">
+
+            <div className="pt-3 border-t border-neutral-800 space-y-3">
               <label className="text-xs text-neutral-400 uppercase font-bold">
-                Credits
+                Purchase GPU Hours
               </label>
-              <p className="text-sm font-medium text-white">
-                {profile?.credits || 0}
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={purchaseHours}
+                  onChange={(e) => setPurchaseHours(Math.max(1, Math.min(1000, parseInt(e.target.value) || 1)))}
+                  className="bg-black/40 border-neutral-700 text-white focus:border-orange-500 w-24 text-center font-mono"
+                />
+                <span className="text-xs text-neutral-400">hours</span>
+                <span className="text-xs text-neutral-500 ml-auto font-mono">
+                  = ${purchaseHours}
+                </span>
+              </div>
+              <div className="flex gap-1.5">
+                {[1, 5, 10, 25, 50].map((preset) => (
+                  <button
+                    key={preset}
+                    onClick={() => setPurchaseHours(preset)}
+                    className={`px-2.5 py-1 rounded text-xs font-mono transition-all ${
+                      purchaseHours === preset
+                        ? "bg-orange-500/20 text-orange-400 border border-orange-500/50"
+                        : "bg-neutral-800/50 text-neutral-400 border border-neutral-700/50 hover:bg-neutral-700/50 hover:text-white"
+                    }`}
+                  >
+                    {preset}h
+                  </button>
+                ))}
+              </div>
+              <Button
+                onClick={handlePurchaseGpuHours}
+                disabled={isPurchasing || purchaseHours < 1}
+                className="w-full bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs h-9"
+              >
+                {isPurchasing ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <>Purchase {purchaseHours} Hour{purchaseHours !== 1 ? "s" : ""} — ${purchaseHours}</>
+                )}
+              </Button>
+              <p className="text-[10px] text-neutral-600 text-center">
+                $1.00 per GPU hour • Secure payment via Stripe
               </p>
             </div>
-            <div className="space-y-1">
-              <label className="text-xs text-neutral-400 uppercase font-bold">
-                Next Bill Date
-              </label>
-              <p className="text-sm font-medium text-white">N/A</p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full mt-2 border-neutral-700 bg-transparent hover:bg-neutral-800 text-neutral-300 hover:text-white"
-            >
-              Manage Subscription
-            </Button>
           </CardContent>
         </Card>
       </div>

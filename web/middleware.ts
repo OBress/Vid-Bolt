@@ -5,21 +5,23 @@ export async function middleware(request: NextRequest) {
   const { nextUrl } = request
   const isLoggedIn = request.cookies.get('is_logged_in')?.value === 'true'
 
-  // Allow access to auth callback, login page, Inngest webhook, GPU callback, and stock-media API
+  // Allow access to auth callback, login page, Inngest webhook, GPU callback, stock-media API, and Stripe webhook
   if (
     nextUrl.pathname.startsWith('/auth') ||
     nextUrl.pathname === '/login' ||
     nextUrl.pathname.startsWith('/api/inngest') ||
     nextUrl.pathname.startsWith('/api/gpu-callback') ||
     nextUrl.pathname.startsWith('/api/stock-media') ||  // Allow worker access
-    nextUrl.pathname.startsWith('/api/vector')          // Allow embedding API
+    nextUrl.pathname.startsWith('/api/vector') ||       // Allow embedding API
+    nextUrl.pathname.startsWith('/api/stripe/webhook')  // Stripe uses its own signature verification
   ) {
     // Webhook and internal API requests don't need Supabase session logic
     if (
       nextUrl.pathname.startsWith('/api/inngest') || 
       nextUrl.pathname.startsWith('/api/gpu-callback') ||
       nextUrl.pathname.startsWith('/api/stock-media') ||
-      nextUrl.pathname.startsWith('/api/vector')
+      nextUrl.pathname.startsWith('/api/vector') ||
+      nextUrl.pathname.startsWith('/api/stripe/webhook')
     ) {
       return NextResponse.next()
     }

@@ -9,6 +9,7 @@ import { useMemo } from "react";
 import { TaskStatusButton } from "@/components/features/tasks/TaskStatusButton";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { VMStatus } from "@/components/layout/VMStatus";
+import { GpuHoursIndicator } from "@/components/layout/GpuHoursIndicator";
 
 export function TopBar() {
   const pathname = usePathname();
@@ -62,6 +63,7 @@ export function TopBar() {
 
       <div className="flex items-center gap-2">
         <VMStatus />
+        <GpuHoursIndicator />
         <TaskStatusButton />
         <Button
           variant="ghost"

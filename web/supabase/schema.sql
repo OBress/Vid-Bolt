@@ -355,6 +355,112 @@ $$;
 ALTER FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") RETURNS integer
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_new_balance INTEGER;
+  v_existing_txn UUID;
+BEGIN
+  -- Validate inputs
+  IF p_hours <= 0 THEN
+    RAISE EXCEPTION 'Hours must be positive, got %', p_hours;
+  END IF;
+
+  -- Idempotency check: skip if this stripe session already credited
+  IF p_stripe_session_id IS NOT NULL THEN
+    SELECT id INTO v_existing_txn
+    FROM gpu_hours_transactions
+    WHERE stripe_session_id = p_stripe_session_id
+      AND type = 'purchase'
+    LIMIT 1;
+
+    IF v_existing_txn IS NOT NULL THEN
+      -- Already processed, return current balance
+      SELECT gpu_hours_balance INTO v_new_balance
+      FROM users WHERE id = p_user_id;
+      RETURN v_new_balance;
+    END IF;
+  END IF;
+
+  -- Atomically update balance
+  UPDATE users
+  SET gpu_hours_balance = gpu_hours_balance + p_hours
+  WHERE id = p_user_id
+  RETURNING gpu_hours_balance INTO v_new_balance;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'User not found: %', p_user_id;
+  END IF;
+
+  -- Insert ledger entry
+  INSERT INTO gpu_hours_transactions (user_id, type, hours, balance_after, stripe_session_id, description)
+  VALUES (p_user_id, 'purchase', p_hours, v_new_balance, p_stripe_session_id,
+          format('Purchased %s GPU hours via Stripe', p_hours));
+
+  RETURN v_new_balance;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") IS 'Atomically credits GPU hours to a user after a Stripe purchase. Idempotent on stripe_session_id.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."deduct_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_video_id" "uuid" DEFAULT NULL::"uuid", "p_description" "text" DEFAULT 'Video render'::"text") RETURNS integer
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_current_balance INTEGER;
+  v_new_balance INTEGER;
+BEGIN
+  -- Validate inputs
+  IF p_hours <= 0 THEN
+    RAISE EXCEPTION 'Hours must be positive, got %', p_hours;
+  END IF;
+
+  -- Lock the row and check balance
+  SELECT gpu_hours_balance INTO v_current_balance
+  FROM users
+  WHERE id = p_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'User not found: %', p_user_id;
+  END IF;
+
+  IF v_current_balance < p_hours THEN
+    RAISE EXCEPTION 'Insufficient GPU hours: have %, need %', v_current_balance, p_hours;
+  END IF;
+
+  -- Deduct
+  v_new_balance := v_current_balance - p_hours;
+
+  UPDATE users
+  SET gpu_hours_balance = v_new_balance
+  WHERE id = p_user_id;
+
+  -- Insert ledger entry (negative hours for deduction)
+  INSERT INTO gpu_hours_transactions (user_id, type, hours, balance_after, video_id, description)
+  VALUES (p_user_id, 'deduction', -p_hours, v_new_balance, p_video_id, p_description);
+
+  RETURN v_new_balance;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."deduct_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_video_id" "uuid", "p_description" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."deduct_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_video_id" "uuid", "p_description" "text") IS 'Atomically deducts GPU hours from a user for rendering. Uses SELECT FOR UPDATE to prevent race conditions. Raises exception if insufficient balance.';
+
+
+
 CREATE OR REPLACE FUNCTION "public"."get_admin_analytics"() RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -415,6 +521,26 @@ $$;
 
 
 ALTER FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_request_role"() RETURNS "text"
+    LANGUAGE "sql" STABLE
+    AS $$
+  SELECT COALESCE(
+    nullif(current_setting('request.jwt.claim.role', true), ''),
+    nullif(
+      (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'),
+      ''
+    )
+  );
+$$;
+
+
+ALTER FUNCTION "public"."get_request_role"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."get_request_role"() IS 'Returns the JWT role claim, checking both old (request.jwt.claim.role) and new (request.jwt.claims JSON) PostgREST formats.';
+
 
 
 CREATE OR REPLACE FUNCTION "public"."get_stock_media_by_entity"("p_video_id" "uuid", "p_entity_name" "text") RETURNS TABLE("id" "uuid", "r2_key" "text", "metadata" "jsonb")
@@ -729,28 +855,266 @@ $$;
 ALTER FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_updates" "jsonb") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."protect_admin_column"() RETURNS "trigger"
+CREATE OR REPLACE FUNCTION "public"."protect_monthly_statements_sensitive_columns"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
 BEGIN
-  IF NEW.is_admin IS DISTINCT FROM OLD.is_admin THEN
-    IF (current_setting('request.jwt.claim.role', true) = 'service_role') THEN
-      RETURN NEW;
-    END IF;
-
-    IF (session_user = 'postgres') THEN
-      RETURN NEW;
-    END IF;
-
-    RAISE EXCEPTION 'You are not authorized to change the is_admin status.';
+  IF public.get_request_role() = 'service_role' THEN
+    RETURN NEW;
   END IF;
+
+  IF NEW.commission_rate IS DISTINCT FROM OLD.commission_rate THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify commission_rate';
+  END IF;
+  IF NEW.paid_at IS DISTINCT FROM OLD.paid_at THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify paid_at';
+  END IF;
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    IF NOT (OLD.status = 'draft' AND NEW.status = 'pending_verification') THEN
+      RAISE EXCEPTION 'Permission denied: invalid status transition from % to %', OLD.status, NEW.status;
+    END IF;
+  END IF;
+
   RETURN NEW;
 END;
 $$;
 
 
-ALTER FUNCTION "public"."protect_admin_column"() OWNER TO "postgres";
+ALTER FUNCTION "public"."protect_monthly_statements_sensitive_columns"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."protect_monthly_statements_sensitive_columns"() IS 'Blocks non-service-role callers from modifying commission_rate and paid_at. Restricts status transitions to draft→pending_verification only.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."protect_tasks_sensitive_columns"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF public.get_request_role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.status';
+  END IF;
+  IF NEW.current_phase IS DISTINCT FROM OLD.current_phase THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.current_phase';
+  END IF;
+  IF NEW.current_step IS DISTINCT FROM OLD.current_step THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.current_step';
+  END IF;
+  IF NEW.progress_percent IS DISTINCT FROM OLD.progress_percent THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.progress_percent';
+  END IF;
+  IF NEW.error_message IS DISTINCT FROM OLD.error_message THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.error_message';
+  END IF;
+  IF NEW.retry_count IS DISTINCT FROM OLD.retry_count THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.retry_count';
+  END IF;
+  IF NEW.max_retries IS DISTINCT FROM OLD.max_retries THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.max_retries';
+  END IF;
+  IF NEW.inngest_run_id IS DISTINCT FROM OLD.inngest_run_id THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.inngest_run_id';
+  END IF;
+  IF NEW.output_data IS DISTINCT FROM OLD.output_data THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.output_data';
+  END IF;
+  IF NEW.steps IS DISTINCT FROM OLD.steps THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.steps';
+  END IF;
+  IF NEW.research IS DISTINCT FROM OLD.research THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.research';
+  END IF;
+  IF NEW.master_outline IS DISTINCT FROM OLD.master_outline THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.master_outline';
+  END IF;
+  IF NEW.detailed_outline IS DISTINCT FROM OLD.detailed_outline THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.detailed_outline';
+  END IF;
+  IF NEW.characters IS DISTINCT FROM OLD.characters THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.characters';
+  END IF;
+  IF NEW.settings IS DISTINCT FROM OLD.settings THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.settings';
+  END IF;
+  IF NEW.chapters IS DISTINCT FROM OLD.chapters THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.chapters';
+  END IF;
+  IF NEW.final_script IS DISTINCT FROM OLD.final_script THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.final_script';
+  END IF;
+  IF NEW.started_at IS DISTINCT FROM OLD.started_at THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.started_at';
+  END IF;
+  IF NEW.completed_at IS DISTINCT FROM OLD.completed_at THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.completed_at';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."protect_tasks_sensitive_columns"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."protect_tasks_sensitive_columns"() IS 'Blocks non-service-role callers from modifying pipeline-managed task columns. Users can only modify: name, input_data.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."protect_user_gcp_config_sensitive_columns"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF public.get_request_role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.gcp_refresh_token IS DISTINCT FROM OLD.gcp_refresh_token THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify gcp_refresh_token';
+  END IF;
+  IF NEW.gcp_access_token IS DISTINCT FROM OLD.gcp_access_token THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify gcp_access_token';
+  END IF;
+  IF NEW.gcp_token_expires_at IS DISTINCT FROM OLD.gcp_token_expires_at THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify gcp_token_expires_at';
+  END IF;
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify user_gcp_config.status';
+  END IF;
+  IF NEW.external_ip IS DISTINCT FROM OLD.external_ip THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify external_ip';
+  END IF;
+  IF NEW.last_seen_at IS DISTINCT FROM OLD.last_seen_at THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify last_seen_at';
+  END IF;
+  IF NEW.last_gpu_activity_at IS DISTINCT FROM OLD.last_gpu_activity_at THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify last_gpu_activity_at';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."protect_user_gcp_config_sensitive_columns"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."protect_user_gcp_config_sensitive_columns"() IS 'Blocks non-service-role callers from modifying GCP tokens and server-managed state. Users can modify: project_id, region, zone, instance_name, machine_type, gpu_auto_shutdown_minutes, metadata, updated_at.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."protect_users_sensitive_columns"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  -- Allow service_role and postgres full access
+  IF public.get_request_role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.is_admin IS DISTINCT FROM OLD.is_admin THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify is_admin';
+  END IF;
+  IF NEW.gpu_hours_balance IS DISTINCT FROM OLD.gpu_hours_balance THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify gpu_hours_balance';
+  END IF;
+  IF NEW.stripe_customer_id IS DISTINCT FROM OLD.stripe_customer_id THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify stripe_customer_id';
+  END IF;
+  IF NEW.account_tier IS DISTINCT FROM OLD.account_tier THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify account_tier';
+  END IF;
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify status';
+  END IF;
+  IF NEW.date_joined IS DISTINCT FROM OLD.date_joined THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify date_joined';
+  END IF;
+  IF NEW.email IS DISTINCT FROM OLD.email THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify email';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."protect_users_sensitive_columns"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."protect_users_sensitive_columns"() IS 'Blocks non-service-role callers from modifying sensitive user columns (is_admin, credits, account_tier, status, date_joined, email). Users can only modify: name, username, hashid, joining_reason, onboarding_completed.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."protect_video_projects_sensitive_columns"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  -- Allow service_role full access
+  IF public.get_request_role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
+  -- Block changes to pipeline-managed columns
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify video_projects.status';
+  END IF;
+
+  IF NEW.current_stage IS DISTINCT FROM OLD.current_stage THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify video_projects.current_stage';
+  END IF;
+
+  IF NEW.current_step IS DISTINCT FROM OLD.current_step THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify video_projects.current_step';
+  END IF;
+
+  IF NEW.progress_percent IS DISTINCT FROM OLD.progress_percent THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify video_projects.progress_percent';
+  END IF;
+
+  IF NEW.metadata IS DISTINCT FROM OLD.metadata THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify video_projects.metadata';
+  END IF;
+
+  IF NEW.script_content IS DISTINCT FROM OLD.script_content THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify video_projects.script_content';
+  END IF;
+
+  IF NEW.script_task_id IS DISTINCT FROM OLD.script_task_id THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify video_projects.script_task_id';
+  END IF;
+
+  IF NEW.audio_task_id IS DISTINCT FROM OLD.audio_task_id THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify video_projects.audio_task_id';
+  END IF;
+
+  IF NEW.video_task_id IS DISTINCT FROM OLD.video_task_id THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify video_projects.video_task_id';
+  END IF;
+
+  IF NEW.export_task_id IS DISTINCT FROM OLD.export_task_id THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify video_projects.export_task_id';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."protect_video_projects_sensitive_columns"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."protect_video_projects_sensitive_columns"() IS 'Blocks non-service-role callers from modifying pipeline-managed video project columns. Users can only modify: name, idea, notes.';
+
 
 
 CREATE OR REPLACE FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_month_date" "text") RETURNS "void"
@@ -956,6 +1320,23 @@ CREATE TABLE IF NOT EXISTS "public"."continuity_state" (
 
 
 ALTER TABLE "public"."continuity_state" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."gpu_hours_transactions" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "type" "text" NOT NULL,
+    "hours" integer NOT NULL,
+    "balance_after" integer NOT NULL,
+    "stripe_session_id" "text",
+    "video_id" "uuid",
+    "description" "text",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "gpu_hours_transactions_type_check" CHECK (("type" = ANY (ARRAY['purchase'::"text", 'deduction'::"text", 'refund'::"text", 'admin_adjustment'::"text"])))
+);
+
+
+ALTER TABLE "public"."gpu_hours_transactions" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."media_projects" (
@@ -1260,11 +1641,12 @@ CREATE TABLE IF NOT EXISTS "public"."users" (
     "hashid" "text",
     "date_joined" timestamp with time zone DEFAULT "now"(),
     "account_tier" "text" DEFAULT 'starter'::"text",
-    "credits" integer DEFAULT 0,
+    "gpu_hours_balance" integer DEFAULT 0 NOT NULL,
     "is_admin" boolean DEFAULT false,
     "onboarding_completed" boolean DEFAULT false,
     "joining_reason" "text"[],
-    "status" "public"."account_status" DEFAULT 'pending'::"public"."account_status"
+    "status" "public"."account_status" DEFAULT 'pending'::"public"."account_status",
+    "stripe_customer_id" "text"
 );
 
 
@@ -1386,6 +1768,11 @@ ALTER TABLE ONLY "public"."continuity_state"
 
 ALTER TABLE ONLY "public"."continuity_state"
     ADD CONSTRAINT "continuity_state_task_id_key" UNIQUE ("task_id");
+
+
+
+ALTER TABLE ONLY "public"."gpu_hours_transactions"
+    ADD CONSTRAINT "gpu_hours_transactions_pkey" PRIMARY KEY ("id");
 
 
 
@@ -1511,6 +1898,14 @@ ALTER TABLE ONLY "public"."video_project_state"
 
 ALTER TABLE ONLY "public"."video_projects"
     ADD CONSTRAINT "video_projects_pkey" PRIMARY KEY ("id");
+
+
+
+CREATE INDEX "idx_gpu_hours_transactions_stripe_session" ON "public"."gpu_hours_transactions" USING "btree" ("stripe_session_id") WHERE ("stripe_session_id" IS NOT NULL);
+
+
+
+CREATE INDEX "idx_gpu_hours_transactions_user_id" ON "public"."gpu_hours_transactions" USING "btree" ("user_id");
 
 
 
@@ -1670,7 +2065,23 @@ CREATE OR REPLACE TRIGGER "handle_updated_at" BEFORE UPDATE ON "public"."user_gc
 
 
 
-CREATE OR REPLACE TRIGGER "protect_admin_column_trigger" BEFORE UPDATE ON "public"."users" FOR EACH ROW EXECUTE FUNCTION "public"."protect_admin_column"();
+CREATE OR REPLACE TRIGGER "protect_monthly_statements_sensitive_columns_trigger" BEFORE UPDATE ON "public"."monthly_statements" FOR EACH ROW EXECUTE FUNCTION "public"."protect_monthly_statements_sensitive_columns"();
+
+
+
+CREATE OR REPLACE TRIGGER "protect_tasks_sensitive_columns_trigger" BEFORE UPDATE ON "public"."tasks" FOR EACH ROW EXECUTE FUNCTION "public"."protect_tasks_sensitive_columns"();
+
+
+
+CREATE OR REPLACE TRIGGER "protect_user_gcp_config_sensitive_columns_trigger" BEFORE UPDATE ON "public"."user_gcp_config" FOR EACH ROW EXECUTE FUNCTION "public"."protect_user_gcp_config_sensitive_columns"();
+
+
+
+CREATE OR REPLACE TRIGGER "protect_users_sensitive_columns_trigger" BEFORE UPDATE ON "public"."users" FOR EACH ROW EXECUTE FUNCTION "public"."protect_users_sensitive_columns"();
+
+
+
+CREATE OR REPLACE TRIGGER "protect_video_projects_sensitive_columns_trigger" BEFORE UPDATE ON "public"."video_projects" FOR EACH ROW EXECUTE FUNCTION "public"."protect_video_projects_sensitive_columns"();
 
 
 
@@ -1716,6 +2127,11 @@ CREATE OR REPLACE TRIGGER "video_project_state_updated_at" BEFORE UPDATE ON "pub
 
 ALTER TABLE ONLY "public"."continuity_state"
     ADD CONSTRAINT "continuity_state_task_id_fkey" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."gpu_hours_transactions"
+    ADD CONSTRAINT "gpu_hours_transactions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
 
 
 
@@ -1844,6 +2260,10 @@ CREATE POLICY "Authenticated users can view stock media" ON "public"."stock_medi
 
 
 CREATE POLICY "Service role can manage stock media" ON "public"."stock_media" TO "service_role" USING (true) WITH CHECK (true);
+
+
+
+CREATE POLICY "Service role full access on gpu_hours_transactions" ON "public"."gpu_hours_transactions" USING (("auth"."role"() = 'service_role'::"text")) WITH CHECK (("auth"."role"() = 'service_role'::"text"));
 
 
 
@@ -2001,6 +2421,10 @@ CREATE POLICY "Users can view own render jobs" ON "public"."render_jobs" FOR SEL
 
 
 
+CREATE POLICY "Users can view own transactions" ON "public"."gpu_hours_transactions" FOR SELECT USING (("auth"."uid"() = "user_id"));
+
+
+
 CREATE POLICY "Users can view state for their own projects" ON "public"."video_project_state" FOR SELECT USING ((EXISTS ( SELECT 1
    FROM "public"."video_projects"
   WHERE (("video_projects"."id" = "video_project_state"."project_id") AND ("video_projects"."user_id" = "auth"."uid"())))));
@@ -2036,6 +2460,9 @@ CREATE POLICY "Users manage own pending jobs" ON "public"."pending_gpu_jobs" USI
 
 
 ALTER TABLE "public"."continuity_state" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."gpu_hours_transactions" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."media_projects" ENABLE ROW LEVEL SECURITY;
@@ -2627,6 +3054,18 @@ GRANT ALL ON FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_k
 
 
 
+GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."deduct_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_video_id" "uuid", "p_description" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."deduct_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_video_id" "uuid", "p_description" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."deduct_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_video_id" "uuid", "p_description" "text") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "anon";
 GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "service_role";
@@ -2636,6 +3075,12 @@ GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "service_role";
 GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "anon";
 GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_request_role"() TO "anon";
+GRANT ALL ON FUNCTION "public"."get_request_role"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_request_role"() TO "service_role";
 
 
 
@@ -2711,9 +3156,33 @@ GRANT ALL ON FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", "p_up
 
 
 
-GRANT ALL ON FUNCTION "public"."protect_admin_column"() TO "anon";
-GRANT ALL ON FUNCTION "public"."protect_admin_column"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."protect_admin_column"() TO "service_role";
+GRANT ALL ON FUNCTION "public"."protect_monthly_statements_sensitive_columns"() TO "anon";
+GRANT ALL ON FUNCTION "public"."protect_monthly_statements_sensitive_columns"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."protect_monthly_statements_sensitive_columns"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."protect_tasks_sensitive_columns"() TO "anon";
+GRANT ALL ON FUNCTION "public"."protect_tasks_sensitive_columns"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."protect_tasks_sensitive_columns"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."protect_user_gcp_config_sensitive_columns"() TO "anon";
+GRANT ALL ON FUNCTION "public"."protect_user_gcp_config_sensitive_columns"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."protect_user_gcp_config_sensitive_columns"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."protect_users_sensitive_columns"() TO "anon";
+GRANT ALL ON FUNCTION "public"."protect_users_sensitive_columns"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."protect_users_sensitive_columns"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."protect_video_projects_sensitive_columns"() TO "anon";
+GRANT ALL ON FUNCTION "public"."protect_video_projects_sensitive_columns"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."protect_video_projects_sensitive_columns"() TO "service_role";
 
 
 
@@ -2795,6 +3264,12 @@ GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "
 GRANT ALL ON TABLE "public"."continuity_state" TO "anon";
 GRANT ALL ON TABLE "public"."continuity_state" TO "authenticated";
 GRANT ALL ON TABLE "public"."continuity_state" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."gpu_hours_transactions" TO "anon";
+GRANT ALL ON TABLE "public"."gpu_hours_transactions" TO "authenticated";
+GRANT ALL ON TABLE "public"."gpu_hours_transactions" TO "service_role";
 
 
 

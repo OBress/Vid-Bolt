@@ -3,6 +3,8 @@
  *
  * Initiates a video render by enqueuing a job to the BullMQ `video-render` queue.
  * The worker will call Remotion Lambda to render and output to R2.
+ * 
+ * Requires sufficient GPU hours balance — deducts estimated hours before enqueueing.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -11,6 +13,12 @@ import { videoRenderQueue } from '@/lib/queues/queues';
 import { serializeRenderProps, validateRenderProps } from '@/lib/services/render/render-serializer';
 import { lambdaConfig } from '@/lib/services/render/lambda-config';
 import { v4 as uuid } from 'uuid';
+import {
+  estimateRenderHours,
+  hasEnoughGpuHours,
+  deductGpuHours,
+  getGpuHoursBalance,
+} from '@/lib/services/gpu-hours-service';
 
 export async function POST(request: NextRequest) {
   try {
@@ -63,6 +71,42 @@ export async function POST(request: NextRequest) {
         },
         { status: 429 }
       );
+    }
+
+    // 3.5. GPU Hours gate: check and deduct before enqueueing
+    const estimatedHours = estimateRenderHours(durationInFrames, fps);
+    const sufficient = await hasEnoughGpuHours(user.id, estimatedHours);
+
+    if (!sufficient) {
+      const balance = await getGpuHoursBalance(user.id);
+      return NextResponse.json(
+        {
+          error: 'Insufficient GPU hours',
+          required: estimatedHours,
+          balance,
+          message: `This render requires ${estimatedHours} GPU hour(s), but you only have ${balance}. Purchase more in Settings → Account.`,
+        },
+        { status: 402 }
+      );
+    }
+
+    // Deduct hours atomically (will throw if race condition causes insufficient balance)
+    try {
+      await deductGpuHours(user.id, estimatedHours, videoId, `Render: ${videoId}`);
+    } catch (deductError: any) {
+      if (deductError.message?.includes('Insufficient')) {
+        const balance = await getGpuHoursBalance(user.id);
+        return NextResponse.json(
+          {
+            error: 'Insufficient GPU hours',
+            required: estimatedHours,
+            balance,
+            message: 'Balance changed during processing. Please try again.',
+          },
+          { status: 402 }
+        );
+      }
+      throw deductError;
     }
 
     // 4. Serialize and validate

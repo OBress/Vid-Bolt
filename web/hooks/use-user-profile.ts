@@ -13,7 +13,7 @@ interface UserProfile {
   hashid: string | null;
   date_joined: string;
   account_tier: string;
-  credits: number;
+  gpu_hours_balance: number;
   is_admin: boolean;
   onboarding_completed: boolean;
   status: 'pending' | 'active' | 'paused' | 'banned';
