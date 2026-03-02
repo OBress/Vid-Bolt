@@ -846,6 +846,7 @@ export function VideoCreationWizard({
         return (
           <ProductionStep
             videoId={state.videoId!}
+            projectId={projectId}
             isLoading={state.isProductionLoading}
             taskId={state.productionTaskId}
             onTaskStarted={(taskId) => {

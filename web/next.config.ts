@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
     serverActions: {
       bodySizeLimit: '500mb',
     },
+    middlewareClientMaxBodySize: '500mb',
   },
   async rewrites() {
     return [

@@ -18,13 +18,13 @@ import type { ProjectSettings } from '@/types/settings';
 
 const BASE_SETTINGS: Omit<ProjectSettings, 'basic_info'> = {
   voice: {
-    provider: 'elevenlabs' as const,
-    model: 'eleven_multilingual_v2',
-    voiceName: 'Rachel',
-    speakerBoost: true,
-    stability: 0.5,
-    similarityBoost: 0.75,
-    speakingSpeed: 1.0,
+    provider: 'inworld' as const,
+    model: 'inworld-tts-1-max',
+    voiceName: 'Hades',
+    speakerBoost: false,
+    stability: 100,
+    similarityBoost: 0,
+    speakingSpeed: 100,
     voiceStyle: 0,
   },
   visuals: {
@@ -68,6 +68,7 @@ export interface ProjectPreset {
 // ============================================================================
 
 export const PROJECT_PRESETS: ProjectPreset[] = [
+  // ── Standard ──────────────────────────────────────────────────────────
   {
     id: 'standard',
     name: 'Standard',
@@ -84,8 +85,37 @@ export const PROJECT_PRESETS: ProjectPreset[] = [
         autoExportToMedia: false,
       },
       ...BASE_SETTINGS,
+      visuals: {
+        ...BASE_SETTINGS.visuals,
+        creativeDirection: {
+          visualStyle: 'cinematic, documentary, clean composition',
+          colorPalette: [],
+          lightingMood: 'natural',
+          qualityAnchors: [],
+          imageConstraints: [],
+          loras: [],
+          mgTheme: {
+            theme: 'dark',
+            colorPalette: ['#f97316', '#ffffff', '#333333'],
+            animationStyle: 'smooth',
+            fontFamily: 'Inter',
+            borderStyle: 'rounded',
+          },
+          pacingPreset: 'documentary',
+          mediaWeighting: {
+            stockFootage: 0.3,
+            aiVideo: 0.4,
+            motionGraphics: 0.2,
+            aiImageStatic: 0.1,
+          },
+          masterCreativePrompt:
+            'Produce polished, cinematic content with smooth pacing and professional composition. Use natural lighting with subtle color grading. Ensure every visual serves the narrative — no filler shots. Maintain visual consistency across cuts with matched color temperatures and coherent framing.',
+        },
+      },
     },
   },
+
+  // ── Cinematic Documentary ─────────────────────────────────────────────
   {
     id: 'cinematic-documentary',
     name: 'Cinematic Documentary',
@@ -130,7 +160,8 @@ export const PROJECT_PRESETS: ProjectPreset[] = [
             motionGraphics: 0.2,
             aiImageStatic: 0.1,
           },
-          masterCreativePrompt: '',
+          masterCreativePrompt:
+            'Create a dark, atmospheric documentary aesthetic. Use warm golden highlights against deep shadows with shallow depth of field. Apply subtle film grain and volumetric lighting. Every shot should feel like a carefully composed frame from a prestige documentary — cinematic color grading, deliberate camera angles, and purposeful negative space. Transitions should be slow dissolves or motivated cuts.',
         },
       },
       script: {
@@ -139,6 +170,8 @@ export const PROJECT_PRESETS: ProjectPreset[] = [
       },
     },
   },
+
+  // ── Fast-Paced Explainer ──────────────────────────────────────────────
   {
     id: 'fast-paced-explainer',
     name: 'Fast-Paced Explainer',
@@ -178,7 +211,8 @@ export const PROJECT_PRESETS: ProjectPreset[] = [
             motionGraphics: 0.5,
             aiImageStatic: 0.15,
           },
-          masterCreativePrompt: '',
+          masterCreativePrompt:
+            'Produce high-energy, visually dense explainer content. Use rapid cuts (3-5 seconds), bold motion graphics, and vibrant accent colors. Every frame should convey information — use annotated diagrams, animated data callouts, and split-screen comparisons. Keep backgrounds clean and dark to maximize contrast with bright UI elements and text overlays. The pacing should feel like a Vox or Kurzgesagt video.',
         },
       },
       script: {
@@ -188,6 +222,8 @@ export const PROJECT_PRESETS: ProjectPreset[] = [
       },
     },
   },
+
+  // ── Educational Tutorial ──────────────────────────────────────────────
   {
     id: 'educational-tutorial',
     name: 'Educational Tutorial',
@@ -227,7 +263,8 @@ export const PROJECT_PRESETS: ProjectPreset[] = [
             motionGraphics: 0.6,
             aiImageStatic: 0.2,
           },
-          masterCreativePrompt: '',
+          masterCreativePrompt:
+            'Create calm, clear educational content optimized for learning. Use a clean light theme with ample whitespace. Motion graphics should be the primary visual medium — step-by-step diagrams, labeled illustrations, and smooth animated transitions between concepts. Pacing should be deliberate (5-8s per shot) to give viewers time to absorb information. Use highlighting and zooming to direct attention. Avoid visual clutter.',
         },
       },
       script: {
@@ -237,6 +274,8 @@ export const PROJECT_PRESETS: ProjectPreset[] = [
       },
     },
   },
+
+  // ── Social Media Short ────────────────────────────────────────────────
   {
     id: 'social-media-short',
     name: 'Social Media Short',
@@ -276,7 +315,8 @@ export const PROJECT_PRESETS: ProjectPreset[] = [
             motionGraphics: 0.25,
             aiImageStatic: 0.15,
           },
-          masterCreativePrompt: '',
+          masterCreativePrompt:
+            'Produce scroll-stopping vertical content designed for TikTok/Shorts/Reels. Use bold, high-contrast visuals with dramatic lighting. Open with an immediate visual hook in the first 0.5 seconds. Rapid cuts (2-3s max), snappy text animations, and full-bleed visuals that fill the 9:16 frame. Use vibrant neon accent colors against dark backgrounds. Every second must earn attention — no slow buildups.',
         },
       },
       script: {

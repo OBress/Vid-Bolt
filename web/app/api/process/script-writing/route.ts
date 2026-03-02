@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { videoId } = body;
+    const { videoId, scriptAdvanced } = body;
 
     if (!videoId) {
       return NextResponse.json(
@@ -112,6 +112,12 @@ export async function POST(request: NextRequest) {
           topic: outlineConfig?.topic || video.idea,
           genre: outlineConfig?.genre || 'documentary',
           angle: outlineConfig?.angle,
+          styleConfig: scriptAdvanced ? {
+            customBannedPhrases: scriptAdvanced.bannedPhrases,
+            customWordReplacements: scriptAdvanced.wordReplacements,
+            systemPromptOverrides: scriptAdvanced.systemPrompts,
+            engagementTiming: scriptAdvanced.engagementTiming,
+          } : undefined,
         },
       },
       {

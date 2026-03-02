@@ -1,13 +1,21 @@
 'use client';
 
 import React, { useState, useRef, useCallback } from 'react';
-import { Upload, X, FileCheck, Loader2, AlertCircle } from 'lucide-react';
+import { Upload, X, FileCheck, Loader2, AlertCircle, Pencil, Trash2, Tag } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import type { LoraConfig } from '@/types/settings';
+import { uploadLoraAction } from '@/app/actions/lora-actions';
 
 interface LoraUploadCardProps {
   loras: LoraConfig[];
@@ -18,8 +26,8 @@ interface LoraUploadCardProps {
 }
 
 /**
- * LoRA upload, management, and default selection card.
- * Handles upload to R2 via API, and stores LoRA metadata.
+ * LoRA upload, management, and active selection card.
+ * LoRAs apply only to Z-Image Turbo (image generation).
  */
 export function LoraUploadCard({
   loras,
@@ -31,19 +39,23 @@ export function LoraUploadCard({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [editingWeight, setEditingWeight] = useState<string | null>(null);
+  const [showUploader, setShowUploader] = useState(false);
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
+  const activeLora = loras.find((l) => l.name === defaultLoraName);
+
+  // ── Upload ────────────────────────────────────────────────────────────
   const handleUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      // Validate file
       if (!file.name.endsWith('.safetensors')) {
         setUploadError('Only .safetensors files are supported');
         return;
       }
-
       if (file.size > 500 * 1024 * 1024) {
         setUploadError('File too large. Max 500MB.');
         return;
@@ -57,100 +69,317 @@ export function LoraUploadCard({
         formData.append('file', file);
         formData.append('projectId', projectId);
 
-        const response = await fetch('/api/lora/upload', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || 'Upload failed');
-        }
-
-        const result = await response.json();
+        const result = await uploadLoraAction(formData);
+        if (result.error) throw new Error(result.error);
 
         const newLora: LoraConfig = {
           name: file.name.replace(/\.safetensors$/i, ''),
-          storageKey: result.storageKey,
-          url: result.url,
+          storageKey: result.storageKey!,
+          url: result.url!,
           defaultWeight: 0.8,
           uploadedAt: new Date().toISOString(),
         };
 
         const updated = [...loras, newLora];
         onLorasChange(updated);
-
-        // If this is the first LoRA, set it as default
-        if (updated.length === 1) {
-          onDefaultChange(newLora.name);
-        }
+        if (!defaultLoraName) onDefaultChange(newLora.name);
+        setShowUploader(false);
       } catch (err) {
         setUploadError(err instanceof Error ? err.message : 'Upload failed');
       } finally {
         setUploading(false);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
+        if (fileInputRef.current) fileInputRef.current.value = '';
       }
     },
-    [loras, onLorasChange, onDefaultChange, projectId],
+    [loras, onLorasChange, onDefaultChange, defaultLoraName, projectId],
   );
 
+  // ── Mutations ─────────────────────────────────────────────────────────
   const removeLora = useCallback(
-    (index: number) => {
-      const lora = loras[index];
-      const updated = loras.filter((_, i) => i !== index);
+    (name: string) => {
+      const updated = loras.filter((l) => l.name !== name);
       onLorasChange(updated);
-
-      if (defaultLoraName === lora.name) {
+      if (defaultLoraName === name) {
         onDefaultChange(updated.length > 0 ? updated[0].name : undefined);
       }
+      setConfirmDelete(null);
     },
     [loras, onLorasChange, defaultLoraName, onDefaultChange],
   );
 
   const updateWeight = useCallback(
     (name: string, weight: number) => {
-      const updated = loras.map((l) =>
-        l.name === name ? { ...l, defaultWeight: weight } : l,
-      );
-      onLorasChange(updated);
+      onLorasChange(loras.map((l) => (l.name === name ? { ...l, defaultWeight: weight } : l)));
     },
     [loras, onLorasChange],
   );
 
+  const updateTriggerWords = useCallback(
+    (name: string, triggerWords: string) => {
+      onLorasChange(
+        loras.map((l) =>
+          l.name === name ? { ...l, triggerWords: triggerWords || undefined } : l,
+        ),
+      );
+    },
+    [loras, onLorasChange],
+  );
+
+  const renameLora = useCallback(
+    (oldName: string, newName: string) => {
+      if (!newName.trim() || newName === oldName) {
+        setEditingName(null);
+        return;
+      }
+      onLorasChange(loras.map((l) => (l.name === oldName ? { ...l, name: newName.trim() } : l)));
+      if (defaultLoraName === oldName) onDefaultChange(newName.trim());
+      setEditingName(null);
+    },
+    [loras, onLorasChange, defaultLoraName, onDefaultChange],
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      {/* Upload area */}
-      <div
-        className={`
-          relative border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer
-          ${uploading ? 'border-orange-500/50 bg-orange-500/5' : 'border-neutral-700 hover:border-neutral-500 bg-black/20'}
-        `}
-        onClick={() => !uploading && fileInputRef.current?.click()}
-      >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".safetensors"
-          onChange={handleUpload}
-          className="hidden"
-        />
-        {uploading ? (
-          <div className="flex flex-col items-center gap-2">
-            <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
-            <p className="text-sm text-neutral-400">Uploading LoRA...</p>
+      {/* ── Active LoRA controls ─────────────────────────────────────── */}
+      {loras.length > 0 && (
+        <div className="space-y-3">
+          {/* Dropdown */}
+          <div className="space-y-2">
+            <Label className="text-[10px] text-neutral-500 uppercase font-black tracking-widest">
+              Active LoRA for Z-Image Turbo
+            </Label>
+            <Select
+              value={defaultLoraName || 'none'}
+              onValueChange={(val) => onDefaultChange(val === 'none' ? undefined : val)}
+            >
+              <SelectTrigger className="bg-black/40 border-neutral-800 h-11 focus:border-orange-500/50">
+                <SelectValue placeholder="Select a LoRA" />
+              </SelectTrigger>
+              <SelectContent className="bg-neutral-900 border-neutral-800">
+                <SelectItem value="none">
+                  <span className="text-neutral-500">None (No LoRA)</span>
+                </SelectItem>
+                {loras.map((lora) => (
+                  <SelectItem key={lora.name} value={lora.name}>
+                    <div className="flex items-center gap-2">
+                      <FileCheck className="w-3.5 h-3.5 text-orange-500" />
+                      <span>{lora.name}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        ) : (
-          <div className="flex flex-col items-center gap-2">
-            <Upload className="w-8 h-8 text-neutral-500" />
-            <p className="text-sm text-neutral-400">
-              Drop a <span className="text-orange-400 font-medium">.safetensors</span> file here or click to upload
-            </p>
-            <p className="text-[10px] text-neutral-600">Max 500MB</p>
+
+          {/* Strength slider */}
+          {activeLora && (
+            <div className="p-3 rounded-xl bg-black/20 border border-orange-500/20 space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-[10px] text-neutral-500 uppercase font-bold">
+                  LoRA Strength
+                </Label>
+                <span className="text-xs text-orange-400 font-mono font-bold px-2 py-0.5 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                  {activeLora.defaultWeight.toFixed(2)}
+                </span>
+              </div>
+              <Slider
+                value={[activeLora.defaultWeight]}
+                min={0}
+                max={1}
+                step={0.05}
+                onValueChange={([val]) => updateWeight(activeLora.name, val)}
+                className="[&_[role=slider]]:bg-orange-500"
+              />
+              <p className="text-[9px] text-neutral-600 italic">
+                0.0 = no effect · 0.8 = recommended · 1.0 = full strength
+              </p>
+            </div>
+          )}
+
+          {/* Trigger words */}
+          {activeLora && (
+            <div className="p-3 rounded-xl bg-black/20 border border-neutral-800 space-y-2">
+              <div className="flex items-center gap-2">
+                <Tag className="w-3 h-3 text-neutral-500" />
+                <Label className="text-[10px] text-neutral-500 uppercase font-bold">
+                  Trigger Words
+                </Label>
+              </div>
+              <Input
+                value={activeLora.triggerWords || ''}
+                onChange={(e) => updateTriggerWords(activeLora.name, e.target.value)}
+                placeholder="e.g. arcane style, arcanestyle"
+                className="bg-black/40 border-neutral-800 h-9 text-sm focus:border-orange-500/50"
+              />
+              <p className="text-[9px] text-neutral-600 italic">
+                Some LoRAs require specific trigger words to activate. These will be prepended to every image prompt.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Uploaded LoRAs library ───────────────────────────────────── */}
+      {loras.length > 0 && (
+        <div className="space-y-2">
+          <Label className="text-[10px] text-neutral-500 uppercase font-black tracking-widest">
+            Uploaded LoRAs ({loras.length})
+          </Label>
+          <div className="space-y-1.5">
+            {loras.map((lora) => (
+              <div
+                key={lora.name}
+                className={`
+                  flex items-center justify-between p-2.5 rounded-lg transition-colors
+                  ${defaultLoraName === lora.name
+                    ? 'bg-orange-500/10 border border-orange-500/30'
+                    : 'bg-black/20 border border-neutral-800/50 hover:border-neutral-700'}
+                `}
+              >
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <FileCheck className={`w-4 h-4 flex-shrink-0 ${
+                    defaultLoraName === lora.name ? 'text-orange-500' : 'text-neutral-600'
+                  }`} />
+                  <div className="min-w-0 flex-1">
+                    {editingName === lora.name ? (
+                      <input
+                        type="text"
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={() => renameLora(lora.name, renameValue)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') renameLora(lora.name, renameValue);
+                          if (e.key === 'Escape') setEditingName(null);
+                        }}
+                        autoFocus
+                        className="bg-black/60 border border-orange-500/50 rounded px-2 py-0.5 text-xs font-medium text-neutral-200 w-full outline-none focus:border-orange-500"
+                      />
+                    ) : (
+                      <div className="flex items-center gap-1.5 group/name">
+                        <span className="text-xs font-medium text-neutral-300 truncate">
+                          {lora.name}
+                        </span>
+                        {lora.triggerWords && (
+                          <span className="text-[9px] text-neutral-600 truncate max-w-[100px]" title={lora.triggerWords}>
+                            ({lora.triggerWords})
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingName(lora.name);
+                            setRenameValue(lora.name);
+                          }}
+                          className="opacity-0 group-hover/name:opacity-100 transition-opacity text-neutral-600 hover:text-orange-400"
+                          title="Rename"
+                        >
+                          <Pencil className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Delete */}
+                {confirmDelete === lora.name ? (
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[10px] text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                      onClick={() => removeLora(lora.name)}
+                    >
+                      Confirm
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[10px] text-neutral-500 hover:text-white"
+                      onClick={() => setConfirmDelete(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 text-neutral-600 hover:text-red-400 hover:bg-red-500/10 flex-shrink-0"
+                    onClick={() => setConfirmDelete(lora.name)}
+                    title="Delete LoRA"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </Button>
+                )}
+              </div>
+            ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* ── Upload area ──────────────────────────────────────────────── */}
+      {loras.length > 0 && !showUploader && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full h-9 border-dashed border-neutral-700 text-neutral-500 hover:text-orange-400 hover:border-orange-500/30 text-xs"
+          onClick={() => setShowUploader(true)}
+        >
+          <Upload className="w-3.5 h-3.5 mr-2" />
+          Upload Another LoRA
+        </Button>
+      )}
+
+      {(loras.length === 0 || showUploader) && (
+        <>
+          <div
+            className={`
+              relative border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer
+              ${uploading ? 'border-orange-500/50 bg-orange-500/5' : 'border-neutral-700 hover:border-neutral-500 bg-black/20'}
+            `}
+            onClick={() => !uploading && fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".safetensors"
+              onChange={handleUpload}
+              className="hidden"
+            />
+            {uploading ? (
+              <div className="flex flex-col items-center gap-2">
+                <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
+                <p className="text-sm text-neutral-400">Uploading LoRA...</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-2">
+                <Upload className="w-8 h-8 text-neutral-500" />
+                <p className="text-sm text-neutral-400">
+                  Drop a <span className="text-orange-400 font-medium">.safetensors</span> file here or click to upload
+                </p>
+                <p className="text-[10px] text-neutral-600">Max 500MB · For Z-Image Turbo only</p>
+              </div>
+            )}
+          </div>
+
+          {showUploader && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full text-[10px] text-neutral-500 hover:text-white"
+              onClick={() => setShowUploader(false)}
+            >
+              Cancel
+            </Button>
+          )}
+        </>
+      )}
 
       {/* Error */}
       {uploadError && (
@@ -160,101 +389,9 @@ export function LoraUploadCard({
         </div>
       )}
 
-      {/* LoRA list */}
-      {loras.length > 0 && (
-        <div className="space-y-3">
-          {loras.map((lora, index) => (
-            <Card
-              key={lora.name}
-              className={`
-                bg-neutral-900/60 border transition-colors
-                ${defaultLoraName === lora.name ? 'border-orange-500/50' : 'border-neutral-800'}
-              `}
-            >
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <FileCheck className="w-5 h-5 text-orange-500 flex-shrink-0" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-neutral-200 truncate">
-                        {lora.name}
-                      </p>
-                      <p className="text-[10px] text-neutral-500">
-                        Uploaded {new Date(lora.uploadedAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <Button
-                      type="button"
-                      variant={defaultLoraName === lora.name ? 'default' : 'outline'}
-                      size="sm"
-                      className={`text-xs h-7 ${
-                        defaultLoraName === lora.name
-                          ? 'bg-orange-600 hover:bg-orange-700 text-white'
-                          : 'border-neutral-700 text-neutral-400'
-                      }`}
-                      onClick={() =>
-                        onDefaultChange(
-                          defaultLoraName === lora.name ? undefined : lora.name,
-                        )
-                      }
-                    >
-                      {defaultLoraName === lora.name ? 'Default' : 'Set Default'}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0 text-neutral-500 hover:text-red-400"
-                      onClick={() => removeLora(index)}
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Weight slider */}
-                {(editingWeight === lora.name || defaultLoraName === lora.name) && (
-                  <div className="mt-3 pt-3 border-t border-neutral-800">
-                    <div className="flex items-center justify-between mb-2">
-                      <Label className="text-[10px] text-neutral-500 uppercase">
-                        Default Weight
-                      </Label>
-                      <span className="text-xs text-orange-400 font-mono">
-                        {lora.defaultWeight.toFixed(2)}
-                      </span>
-                    </div>
-                    <Slider
-                      value={[lora.defaultWeight]}
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      onValueChange={([val]) => updateWeight(lora.name, val)}
-                      className="w-full"
-                    />
-                  </div>
-                )}
-
-                {/* Toggle weight editor for non-defaults */}
-                {defaultLoraName !== lora.name && editingWeight !== lora.name && (
-                  <button
-                    type="button"
-                    className="mt-2 text-[10px] text-neutral-600 hover:text-neutral-400 transition-colors"
-                    onClick={() => setEditingWeight(lora.name)}
-                  >
-                    Adjust weight →
-                  </button>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
       {loras.length === 0 && (
         <p className="text-[10px] text-neutral-500 italic text-center">
-          No LoRAs uploaded. Upload a .safetensors file to apply a custom style to generated images.
+          No LoRAs uploaded. Upload a .safetensors file to apply a custom style to Z-Image Turbo generated images.
         </p>
       )}
     </div>

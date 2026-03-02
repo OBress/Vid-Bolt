@@ -149,14 +149,22 @@ async function executeTtsPhase(
   const { audioQueue } = await import('@/lib/queues/queues');
   const queueEvents = getQueueEvents('audio-workflow');
 
+  // Use voice settings from project config instead of hardcoded defaults
+  const voice = jobData.projectConfig?.voice;
+
   const audioJob = await audioQueue.add('closed-loop-tts', {
     taskId,
     userId: jobData.userId,
     videoId,
     script: jobData.scriptContent,
-    voiceProvider: 'inworld',
-    voiceModel: 'inworld-tts-1.5-max',
-    voiceName: 'Hades',
+    voiceProvider: voice?.provider || 'inworld',
+    voiceModel: voice?.model || 'inworld-tts-1.5-max',
+    voiceName: voice?.voiceName || 'Hades',
+    voiceSettings: voice ? {
+      speakingRate: (voice.speakingSpeed ?? 100) / 100,
+      stability: voice.stability,
+      similarityBoost: voice.similarityBoost,
+    } : undefined,
   });
 
   const audioResult = await audioJob.waitUntilFinished(queueEvents, 300_000);
@@ -825,6 +833,7 @@ async function executeProductionPhase(
         userId: jobData.userId,
         videoId,
         aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+        loraName: jobData.creativeManifest.lora?.name,
       });
 
       console.log(`${LOG_PREFIX} Dispatched single video-gen batch job ${genJob.id}`);
@@ -895,6 +904,7 @@ async function executeProductionPhase(
                   singleShotIndex: shot.segment_index,
                   previousFeedback: verdict.suggested_corrections?.join('. '),
                   aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+                  loraName: jobData.creativeManifest.lora?.name,
                 });
 
                 const totalVideoDurationForRetry = shot.duration_seconds || 5;
@@ -1199,28 +1209,33 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       console.log(`${LOG_PREFIX} Step 0-C: Syncing LoRAs to GPU API...`);
 
       try {
-        // Fetch channel settings to get LoRA configs
-        const { data: settingsRow } = await supabase
-          .from('project_settings')
-          .select('settings')
-          .eq('project_id', videoId)
-          .maybeSingle();
+        // Use the parent media project ID (not videoId) for project_settings lookup
+        const parentProjectId = job.data.projectId;
+        if (!parentProjectId) {
+          console.warn(`${LOG_PREFIX} Step 0-C: No parent project ID — skipping LoRA sync`);
+        } else {
+          const { data: settingsRow } = await supabase
+            .from('project_settings')
+            .select('settings')
+            .eq('project_id', parentProjectId)
+            .maybeSingle();
 
-        const settings = settingsRow?.settings as Record<string, any> | null;
-        const channelLoras = settings?.visuals?.creativeDirection?.loras || [];
+          const settings = settingsRow?.settings as Record<string, any> | null;
+          const channelLoras = settings?.visuals?.creativeDirection?.loras || [];
 
         if (channelLoras.length > 0) {
-          const syncResult = await syncLorasToGpuApi(channelLoras);
-          console.log(
-            `${LOG_PREFIX} Step 0-C: LoRA sync complete:`,
-            `${syncResult.alreadyPresent} present, ${syncResult.synced} synced, ${syncResult.failed} failed`
-          );
-
-          if (syncResult.failed > 0) {
-            console.warn(
-              `${LOG_PREFIX} Step 0-C: Some LoRAs failed to sync:`,
-              syncResult.errors.map(e => `${e.loraName}: ${e.error}`).join('; ')
+            const syncResult = await syncLorasToGpuApi(channelLoras);
+            console.log(
+              `${LOG_PREFIX} Step 0-C: LoRA sync complete:`,
+              `${syncResult.alreadyPresent} present, ${syncResult.synced} synced, ${syncResult.failed} failed`
             );
+
+            if (syncResult.failed > 0) {
+              console.warn(
+                `${LOG_PREFIX} Step 0-C: Some LoRAs failed to sync:`,
+                syncResult.errors.map(e => `${e.loraName}: ${e.error}`).join('; ')
+              );
+            }
           }
         }
       } catch (loraSyncError) {

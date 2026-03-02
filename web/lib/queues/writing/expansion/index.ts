@@ -12,6 +12,7 @@ import type {
   AssetRegistry,
   ResearchDossier,
   ScriptGenre,
+  ScriptStyleConfig,
 } from '../types';
 import { getBannedPhrases } from '../config';
 import { expandSingleBeat, type BeatExpansionContext } from './beat-writer';
@@ -46,6 +47,8 @@ export interface ExpansionOptions {
   angle?: string;
   /** Optional callback for reporting progress after each beat */
   onProgress?: ExpansionProgressCallback;
+  /** User's style customization (banned phrases, word replacements, etc.) */
+  styleConfig?: ScriptStyleConfig;
 }
 
 export interface ExpansionResult {
@@ -104,6 +107,8 @@ export async function expandSpineToScript(
         // OPTIMIZATION: Disable quality review to reduce LLM calls from 2-4 to 1 per beat
         // The improved prompts with 4-layer governance handle quality inline
         enableQualityReview: false,
+        // System prompt override from user settings (only tone/persona context)
+        expansionSystemPrompt: options.styleConfig?.systemPromptOverrides?.expansion,
       };
 
       // Expand the beat
@@ -148,6 +153,16 @@ export async function expandSpineToScript(
   });
   
   console.log(`[Expansion] Batch rating complete: avg score ${ratingResult.averageScore.toFixed(1)}/10`);
+
+  // Enforce user style constraints (post-generation deterministic scan)
+  if (options.styleConfig?.customBannedPhrases?.length || options.styleConfig?.customWordReplacements) {
+    console.log(`[Expansion] Running style constraint enforcement...`);
+    if (onProgress) {
+      await onProgress(spine.beats.length, spine.beats.length, 'Enforcing style constraints...');
+    }
+    const { enforceStyleConstraints } = await import('./quality-reviewer');
+    await enforceStyleConstraints(userId, expandedBeats, options.styleConfig!, continuityTracker.currentState);
+  }
 
   // Rewrite sections that scored below threshold (uses gemini-3-pro)
   console.log(`[Expansion] Checking for sections needing rewrite...`);

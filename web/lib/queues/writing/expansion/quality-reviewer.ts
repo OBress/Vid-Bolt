@@ -9,6 +9,8 @@ import { generateJSON, generateText, type OpenRouterConfig } from '@/lib/ai/open
 import type { 
   ContinuityState,
   ScriptGenre,
+  ExpandedBeat,
+  ScriptStyleConfig,
 } from '../types';
 import { BANNED_PHRASES } from '../config';
 
@@ -312,12 +314,19 @@ export async function rewriteBeat(
 /**
  * Quick check for banned phrases (can be done without API call)
  */
-export function checkBannedPhrases(text: string, genre: ScriptGenre): QualityIssue[] {
+export function checkBannedPhrases(
+  text: string,
+  genre: ScriptGenre,
+  customPhrases?: string[]
+): QualityIssue[] {
   const issues: QualityIssue[] = [];
-  const bannedList = BANNED_PHRASES[genre] || [];
+  const genreList = BANNED_PHRASES[genre] || [];
+  const allBanned = customPhrases
+    ? [...new Set([...genreList, ...customPhrases])]
+    : genreList;
   const textLower = text.toLowerCase();
 
-  for (const phrase of bannedList) {
+  for (const phrase of allBanned) {
     if (textLower.includes(phrase.toLowerCase())) {
       issues.push({
         type: 'banned_phrase',
@@ -379,6 +388,28 @@ export function checkInternalRepetition(text: string): RepetitionFlag[] {
   }
 
   return flags;
+}
+
+/**
+ * Deterministic scan for user-defined word replacement violations.
+ * Returns all words found that have user-specified alternatives.
+ */
+export function checkWordReplacements(
+  text: string,
+  customReplacements: Record<string, string[]>
+): Array<{ word: string; alternatives: string[]; count: number }> {
+  const violations: Array<{ word: string; alternatives: string[]; count: number }> = [];
+  const textLower = text.toLowerCase();
+
+  for (const [word, alternatives] of Object.entries(customReplacements)) {
+    const regex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+    const matches = textLower.match(regex);
+    if (matches && matches.length > 0) {
+      violations.push({ word, alternatives, count: matches.length });
+    }
+  }
+
+  return violations;
 }
 
 // ============================================================================
@@ -624,8 +655,16 @@ async function rewriteSingleSection(
   userId: string,
   narration: string,
   score: number,
-  continuityState: ContinuityState
+  continuityState: ContinuityState,
+  additionalGuidance?: string,
+  prevBeatContext?: string,
+  nextBeatContext?: string,
 ): Promise<string> {
+  const adjacentContext = [
+    prevBeatContext ? `=== PREVIOUS PARAGRAPH (match ending tone) ===\n${prevBeatContext}` : '',
+    nextBeatContext ? `=== NEXT PARAGRAPH (ensure smooth transition into) ===\n${nextBeatContext}` : '',
+  ].filter(Boolean).join('\n\n');
+
   const systemPrompt = `You are an expert script editor. Improve this documentary script section.
 
 ISSUES TO FIX (scored ${score}/10):
@@ -634,6 +673,7 @@ ISSUES TO FIX (scored ${score}/10):
 - Vary sentence structure and length
 - Make it conversational but authoritative
 - Ensure smooth flow between ideas
+${additionalGuidance ? `\nADDITIONAL REQUIREMENTS:\n${additionalGuidance}` : ''}
 
 RULES:
 1. Keep the same facts, key points, and overall message
@@ -645,6 +685,8 @@ Return ONLY the improved narration, no explanations.`;
 
   const userPrompt = `ORIGINAL SECTION (${score}/10):
 ${narration}
+
+${adjacentContext}
 
 PHRASES ALREADY USED (avoid):
 ${continuityState.usedPhrases?.slice(0, 10).join(', ') || 'None'}
@@ -665,4 +707,82 @@ Write the improved version:`;
   );
 
   return response.content.trim();
+}
+
+// ============================================================================
+// STYLE CONSTRAINT ENFORCEMENT (Post-Generation Validation)
+// ============================================================================
+
+/**
+ * Enforce user style constraints after generation.
+ * Runs deterministic scans for banned phrases and word replacements,
+ * then triggers targeted rewrites ONLY for violating beats.
+ * Zero cost in happy path (no violations → no LLM calls).
+ */
+export async function enforceStyleConstraints(
+  userId: string,
+  beats: ExpandedBeat[],
+  styleConfig: ScriptStyleConfig,
+  continuityState: ContinuityState
+): Promise<void> {
+  let totalRewrites = 0;
+
+  for (let i = 0; i < beats.length; i++) {
+    const beat = beats[i];
+
+    // 1. Check user-custom banned phrases (deterministic string scan)
+    const bannedIssues = styleConfig.customBannedPhrases?.length
+      ? checkBannedPhrases(beat.narration, 'documentary', styleConfig.customBannedPhrases)
+          // Only flag issues from user's custom list (not genre defaults)
+          .filter(issue => 
+            styleConfig.customBannedPhrases!.some(p => 
+              issue.description.toLowerCase().includes(p.toLowerCase())
+            )
+          )
+      : [];
+
+    // 2. Check user-custom word replacements (deterministic regex scan)
+    const wordIssues = styleConfig.customWordReplacements
+      ? checkWordReplacements(beat.narration, styleConfig.customWordReplacements)
+      : [];
+
+    if (bannedIssues.length === 0 && wordIssues.length === 0) continue;
+
+    // Build targeted rewrite guidance with specific fix instructions
+    const guidance = [
+      ...bannedIssues.map(i => `REMOVE this phrase: ${i.description}`),
+      ...wordIssues.map(w => `REPLACE "${w.word}" (found ${w.count}x) with one of: ${w.alternatives.join(', ')}`),
+    ].join('\n');
+
+    // Get adjacent beat context for seamless rewrites
+    const prevContext = i > 0 ? beats[i - 1].narration.slice(-300) : '';
+    const nextContext = i < beats.length - 1 ? beats[i + 1].narration.slice(0, 300) : '';
+
+    console.log(`[StyleEnforcer] Beat ${beat.beatIndex}: ${bannedIssues.length} banned phrases, ${wordIssues.length} word violations → rewriting`);
+
+    try {
+      const rewritten = await rewriteSingleSection(
+        userId,
+        beat.narration,
+        beat.qualityScore ?? 7,
+        continuityState,
+        guidance,
+        prevContext,
+        nextContext,
+      );
+
+      beat.narration = rewritten;
+      beat.wordCount = rewritten.split(/\s+/).length;
+      totalRewrites++;
+    } catch (error) {
+      console.error(`[StyleEnforcer] Failed to rewrite beat ${beat.beatIndex}:`, error);
+      // Non-blocking: keep original narration if rewrite fails
+    }
+  }
+
+  if (totalRewrites > 0) {
+    console.log(`[StyleEnforcer] Rewrote ${totalRewrites} beats to enforce style constraints`);
+  } else {
+    console.log(`[StyleEnforcer] No style violations found — all beats passed`);
+  }
 }

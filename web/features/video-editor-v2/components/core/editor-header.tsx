@@ -3,8 +3,7 @@ import { CustomTheme } from "../../hooks/use-extended-theme-switcher";
 import { useExtendedThemeSwitcher } from "../../hooks/use-extended-theme-switcher";
 import { useThemeConfig } from "../../contexts/theme-context";
 
-import RenderControls from "../rendering/render-controls";
-import { SaveControls } from "./save-controls";
+
 import { useEditorContext } from "../../contexts/editor-context";
 import { useEffect, useState, useCallback } from "react";
 import { Maximize, Minimize } from "lucide-react";
@@ -69,12 +68,8 @@ export function EditorHeader({
   hideThemeToggle,
   defaultTheme,
 }: EditorHeaderProps = {}) {
-  /**
-   * Destructure required values from the editor context:
-   * - renderMedia: Function to handle media rendering/export
-   * - renderState: Current render state (separate from editor state)
-   */
-  const { renderMedia, saveProject } = useEditorContext();
+  // Editor context (kept for potential future use)
+  useEditorContext();
 
   // Get theme configuration from context if available
   const themeConfig = useThemeConfig();
@@ -156,13 +151,7 @@ export function EditorHeader({
       {/* Spacer to push controls to the right */}
       <div className="grow" />
 
-      {/* Save controls */}
-      <SaveControls onSave={saveProject || (() => Promise.resolve())} />
 
-      {/* Render controls */}
-      <RenderControls
-        handleRender={renderMedia}
-      />
 
       {/* Fullscreen toggle */}
       <button

@@ -1,11 +1,14 @@
 import { useProjectSettings } from "@/hooks/use-project-settings";
+import { useApiKeys } from "@/hooks/use-api-keys";
 import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
 import React from "react";
 import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -22,9 +25,21 @@ import {
   Gauge,
   Layers,
   Wand2,
+  Pencil,
 } from "lucide-react";
 import { ColorPaletteEditor } from "./ColorPaletteEditor";
 import { LoraUploadCard } from "./LoraUploadCard";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  getModelsByCategory,
+  getModelById,
+  type ModelDefinition,
+} from "@/lib/constants/model-registry";
 import type {
   CreativeDirectionDefaults,
   MgThemeDefaults,
@@ -36,16 +51,18 @@ import type {
 // ============================================================================
 
 const DEFAULT_CREATIVE_DIRECTION: CreativeDirectionDefaults = {
-  visualStyle: "cinematic, documentary",
+  visualStyle: "cinematic, documentary, clean composition",
   colorPalette: [],
-  lightingMood: "",
+  lightingMood: "natural",
   qualityAnchors: [],
   imageConstraints: [],
   loras: [],
   mgTheme: {
     theme: "dark",
-    colorPalette: [],
+    colorPalette: ["#f97316", "#ffffff", "#333333"],
     animationStyle: "smooth",
+    fontFamily: "Inter",
+    borderStyle: "rounded",
   },
   mediaWeighting: {
     stockFootage: 0.3,
@@ -54,8 +71,114 @@ const DEFAULT_CREATIVE_DIRECTION: CreativeDirectionDefaults = {
     aiImageStatic: 0.1,
   },
   pacingPreset: "documentary",
-  masterCreativePrompt: "",
+  masterCreativePrompt:
+    "Produce polished, cinematic content with smooth pacing and professional composition. Use natural lighting with subtle color grading. Ensure every visual serves the narrative — no filler shots. Maintain visual consistency across cuts with matched color temperatures and coherent framing.",
 };
+
+// ============================================================================
+// MODEL SELECT DROPDOWN
+// ============================================================================
+
+interface ModelSelectDropdownProps {
+  icon: React.ReactNode;
+  label: string;
+  category: "image" | "image_edit" | "video";
+  value: string;
+  onChange: (value: string) => void;
+  hasReplicateKey: boolean;
+}
+
+function ModelSelectDropdown({
+  icon,
+  label,
+  category,
+  value,
+  onChange,
+  hasReplicateKey,
+}: ModelSelectDropdownProps) {
+  const models = getModelsByCategory(category);
+  const localModels = models.filter((m) => m.provider === "local");
+  const replicateModels = models.filter((m) => m.provider === "replicate");
+  const selectedModel = getModelById(value);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        {icon}
+        <Label className="text-xs text-neutral-400 uppercase font-bold">
+          {label}
+        </Label>
+      </div>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="bg-black/40 border-neutral-800 h-11">
+          <SelectValue placeholder={`Select ${label.toLowerCase()}`} />
+        </SelectTrigger>
+        <SelectContent className="bg-neutral-900 border-neutral-800">
+          {/* Local GPU Models */}
+          <SelectGroup>
+            <SelectLabel className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold px-2">
+              Local GPU
+            </SelectLabel>
+            {localModels.map((model) => (
+              <SelectItem key={model.id} value={model.id}>
+                {model.label} (Local GPU)
+              </SelectItem>
+            ))}
+          </SelectGroup>
+
+          {/* Replicate Premium Models */}
+          <SelectGroup>
+            <SelectLabel className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold px-2 mt-1">
+              Replicate Premium
+            </SelectLabel>
+            {replicateModels.map((model) => {
+              const item = (
+                <SelectItem
+                  key={model.id}
+                  value={model.id}
+                  disabled={!hasReplicateKey}
+                  className={!hasReplicateKey ? "opacity-50" : ""}
+                >
+                  <span className="flex items-center gap-2">
+                    {model.label}
+                    {model.pricing && (
+                      <span className="text-[10px] text-orange-400/80 font-mono">
+                        {model.pricing}
+                      </span>
+                    )}
+                  </span>
+                </SelectItem>
+              );
+
+              if (!hasReplicateKey) {
+                return (
+                  <TooltipProvider key={model.id}>
+                    <Tooltip delayDuration={200}>
+                      <TooltipTrigger asChild>
+                        <span>{item}</span>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="right"
+                        className="bg-neutral-800 border-neutral-700 text-neutral-200 text-xs max-w-[220px]"
+                      >
+                        Configure your Replicate API key in Settings → API Keys to unlock this model.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                );
+              }
+
+              return item;
+            })}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+      <p className="text-[10px] text-neutral-500 italic">
+        {selectedModel?.description || "Select a model."}
+      </p>
+    </div>
+  );
+}
 
 // ============================================================================
 // COMPONENT
@@ -64,6 +187,8 @@ const DEFAULT_CREATIVE_DIRECTION: CreativeDirectionDefaults = {
 export function VisualsTab({ projectId }: { projectId?: string }) {
   const { settings, loading, saveStatus, updateSettings } =
     useProjectSettings(projectId);
+  const { availability: apiKeyAvailability, loading: apiKeysLoading } = useApiKeys();
+  const hasReplicateKey = apiKeyAvailability.replicate_key;
 
   if (loading) {
     return (
@@ -74,8 +199,14 @@ export function VisualsTab({ projectId }: { projectId?: string }) {
   }
 
   const { visuals, basic_info } = settings;
-  const cd: CreativeDirectionDefaults =
-    visuals.creativeDirection || DEFAULT_CREATIVE_DIRECTION;
+  const cd: CreativeDirectionDefaults = {
+    ...DEFAULT_CREATIVE_DIRECTION,
+    ...(visuals.creativeDirection || {}),
+    // If masterCreativePrompt was saved as empty, use the default
+    masterCreativePrompt:
+      visuals.creativeDirection?.masterCreativePrompt ||
+      DEFAULT_CREATIVE_DIRECTION.masterCreativePrompt,
+  };
 
   // Helper to update creative direction
   const updateCD = (partial: Partial<CreativeDirectionDefaults>) => {
@@ -153,101 +284,41 @@ export function VisualsTab({ projectId }: { projectId?: string }) {
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <ImageIcon className="w-4 h-4 text-neutral-500" />
-                <Label className="text-xs text-neutral-400 uppercase font-bold">
-                  Image Model
-                </Label>
-              </div>
-              <Select
-                value={visuals.imageModel}
-                onValueChange={(val) =>
-                  updateSettings({ visuals: { ...visuals, imageModel: val } })
-                }
-              >
-                <SelectTrigger className="bg-black/40 border-neutral-800 h-11">
-                  <SelectValue placeholder="Select image model" />
-                </SelectTrigger>
-                <SelectContent className="bg-neutral-900 border-neutral-800">
-                  <SelectItem value="local-z-image">
-                    Z-Image Turbo (Local GPU)
-                  </SelectItem>
-                  <SelectItem value="flux" disabled>
-                    Flux.1 [dev] — Premium (Coming Soon)
-                  </SelectItem>
-                  <SelectItem value="sdxl" disabled>Stable Diffusion XL — Premium (Coming Soon)</SelectItem>
-                  <SelectItem value="midjourney" disabled>
-                    Midjourney v6.1 — Premium (Coming Soon)
-                  </SelectItem>
-                  <SelectItem value="dalle3" disabled>DALL-E 3 — Premium (Coming Soon)</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-[10px] text-neutral-500 italic">
-                Generates keyframe images using your local GPU API.
-              </p>
-            </div>
+            {/* ── Image Generation ─────────────────────────── */}
+            <ModelSelectDropdown
+              icon={<ImageIcon className="w-4 h-4 text-neutral-500" />}
+              label="Image Generation Model"
+              category="image"
+              value={visuals.imageModel}
+              onChange={(val) =>
+                updateSettings({ visuals: { ...visuals, imageModel: val } })
+              }
+              hasReplicateKey={hasReplicateKey}
+            />
 
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <Video className="w-4 h-4 text-neutral-500" />
-                <Label className="text-xs text-neutral-400 uppercase font-bold">
-                  Video Model
-                </Label>
-              </div>
-              <Select
-                value={visuals.videoModel}
-                onValueChange={(val) =>
-                  updateSettings({ visuals: { ...visuals, videoModel: val } })
-                }
-              >
-                <SelectTrigger className="bg-black/40 border-neutral-800 h-11">
-                  <SelectValue placeholder="Select video model" />
-                </SelectTrigger>
-                <SelectContent className="bg-neutral-900 border-neutral-800">
-                  <SelectItem value="local-ltx2">
-                    LTX-2 19B (Local GPU)
-                  </SelectItem>
-                  <SelectItem value="luma" disabled>Luma Dream Machine — Premium (Coming Soon)</SelectItem>
-                  <SelectItem value="runway" disabled>Runway Gen-3 Alpha — Premium (Coming Soon)</SelectItem>
-                  <SelectItem value="kling" disabled>Kling AI (Pro) — Premium (Coming Soon)</SelectItem>
-                  <SelectItem value="pika" disabled>Pika 1.5 — Premium (Coming Soon)</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-[10px] text-neutral-500 italic">
-                Generates video clips using your local GPU API.
-              </p>
-            </div>
+            {/* ── Image Editing ──────────────────────────── */}
+            <ModelSelectDropdown
+              icon={<Pencil className="w-4 h-4 text-neutral-500" />}
+              label="Image Editing Model"
+              category="image_edit"
+              value={visuals.imageEditModel}
+              onChange={(val) =>
+                updateSettings({ visuals: { ...visuals, imageEditModel: val } })
+              }
+              hasReplicateKey={hasReplicateKey}
+            />
 
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <ImageIcon className="w-4 h-4 text-neutral-500" />
-                <Label className="text-xs text-neutral-400 uppercase font-bold">
-                  Image Editing Model
-                </Label>
-              </div>
-              <Select
-                value={visuals.imageEditModel}
-                onValueChange={(val) =>
-                  updateSettings({ visuals: { ...visuals, imageEditModel: val } })
-                }
-              >
-                <SelectTrigger className="bg-black/40 border-neutral-800 h-11">
-                  <SelectValue placeholder="Select image editing model" />
-                </SelectTrigger>
-                <SelectContent className="bg-neutral-900 border-neutral-800">
-                  <SelectItem value="local-qwen-edit">
-                    Qwen Image Edit (Local GPU)
-                  </SelectItem>
-                  <SelectItem value="replicate-qwen-edit" disabled>
-                    Qwen Image Edit — Premium (Coming Soon)
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-[10px] text-neutral-500 italic">
-                Edits generated images for GCM consistency using your local GPU API.
-              </p>
-            </div>
+            {/* ── Video Generation ───────────────────────── */}
+            <ModelSelectDropdown
+              icon={<Video className="w-4 h-4 text-neutral-500" />}
+              label="Video Generation Model"
+              category="video"
+              value={visuals.videoModel}
+              onChange={(val) =>
+                updateSettings({ visuals: { ...visuals, videoModel: val } })
+              }
+              hasReplicateKey={hasReplicateKey}
+            />
           </CardContent>
         </Card>
 

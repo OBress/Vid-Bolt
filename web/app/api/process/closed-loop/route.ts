@@ -92,9 +92,12 @@ export async function POST(request: NextRequest) {
     const metadata = (video.metadata || {}) as Record<string, any>;
     const outlineConfig = metadata?.outlineConfig;
 
-    // Fetch channel-level creative direction from project settings
+    // Fetch project-level settings (voice, visuals, script, etc.)
     let channelDefaults: import("@/types/settings").CreativeDirectionDefaults | undefined;
+    let projectSettings: ProjectSettings | undefined;
+    let parentProjectId: string | undefined;
     if (video.project_id) {
+      parentProjectId = video.project_id;
       const { data: settingsRow } = await supabase
         .from("project_settings")
         .select("settings")
@@ -102,17 +105,37 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       if (settingsRow?.settings) {
-        const projectSettings = settingsRow.settings as ProjectSettings;
+        projectSettings = settingsRow.settings as ProjectSettings;
         channelDefaults = projectSettings.visuals?.creativeDirection;
       }
     }
 
     // Build CreativeManifest: system defaults → channel settings → per-video overrides
+    // Now also passes model selection, aspect ratio fallback, and script context
     const creativeManifest = buildCreativeManifest(
       videoId,
       outlineConfig,
       channelDefaults,
       videoCreativeOverrides,
+      projectSettings?.visuals
+        ? {
+            imageModel: projectSettings.visuals.imageModel,
+            videoModel: projectSettings.visuals.videoModel,
+            imageEditModel: projectSettings.visuals.imageEditModel,
+          }
+        : undefined,
+      projectSettings?.basic_info?.aspectRatio,
+      projectSettings?.script
+        ? {
+            pov: projectSettings.script.pov,
+            genre: projectSettings.script.genre,
+            toneStyle: projectSettings.script.toneStyle,
+            targetAudience: projectSettings.script.targetAudience,
+            contentNiche:
+              projectSettings.script.contentNiche ||
+              projectSettings.basic_info?.contentNiche,
+          }
+        : undefined,
     );
 
     console.log(
@@ -176,11 +199,26 @@ export async function POST(request: NextRequest) {
         taskId,
         userId: user.id,
         videoId,
+        projectId: parentProjectId,
         creativeManifest,
         userSystemPrompt: metadata?.userSystemPrompt,
         scriptContent: video.script_content,
         entities: gcmEntities,
         videoCreativeOverrides,
+        projectConfig: projectSettings
+          ? {
+              voice: projectSettings.voice,
+              scriptMeta: {
+                pov: projectSettings.script?.pov,
+                genre: projectSettings.script?.genre,
+                toneStyle: projectSettings.script?.toneStyle,
+                targetAudience: projectSettings.script?.targetAudience,
+                contentNiche:
+                  projectSettings.script?.contentNiche ||
+                  projectSettings.basic_info?.contentNiche,
+              },
+            }
+          : undefined,
       },
       {
         jobId: taskId,

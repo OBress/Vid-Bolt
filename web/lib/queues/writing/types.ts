@@ -145,6 +145,33 @@ export interface UniversalScriptInput {
   openrouterModel?: string;
   /** Content category/niche */
   contentNiche?: string;
+
+  /** User's script style customization (from ScriptAdvancedSettings) */
+  styleConfig?: ScriptStyleConfig;
+}
+
+/**
+ * Script style configuration carried through the writing pipeline.
+ * Sourced from project settings → ScriptAdvancedSettings.
+ */
+export interface ScriptStyleConfig {
+  /** Custom banned phrases — merged with genre defaults in validation layer */
+  customBannedPhrases?: string[];
+  /** Custom word → alternatives mappings — checked post-generation */
+  customWordReplacements?: Record<string, string[]>;
+  /** Per-phase system prompt overrides (prepended to default prompts) */
+  systemPromptOverrides?: {
+    research?: string;
+    spine?: string;
+    expansion?: string;
+    quality?: string;
+  };
+  /** Custom engagement timing for spine generation */
+  engagementTiming?: {
+    patternInterruptIntervalSeconds?: number;
+    hookDeadlineSeconds?: number;
+    commitmentDeadlineSeconds?: number;
+  };
 }
 
 // ============================================================================

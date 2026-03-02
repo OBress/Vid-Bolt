@@ -44,7 +44,29 @@ function buildCreativeDirectionBlock(manifest: CreativeManifest): string {
  */
 function buildLoraBlock(manifest: CreativeManifest): string {
   if (!manifest.lora) return '';
-  return `\nLORA ACTIVE: Apply "${manifest.lora.name}" at strength ${manifest.lora.weight}. This LoRA defines the visual style for all generated images.`;
+  let block = `\nLORA ACTIVE: Apply "${manifest.lora.name}" at strength ${manifest.lora.weight}. This LoRA defines the visual style for all generated images.`;
+  if (manifest.lora.trigger_words) {
+    block += `\nLORA TRIGGER WORDS: You MUST include the following trigger words in every image prompt: "${manifest.lora.trigger_words}". Prepend them to the beginning of each image generation prompt.`;
+  }
+  return block;
+}
+
+/**
+ * Build the script context block for content-aware prompt generation.
+ * Injects genre, tone, audience, POV, and content niche when available.
+ */
+function buildScriptContextBlock(manifest: CreativeManifest): string {
+  const ctx = manifest.script_context;
+  if (!ctx) return '';
+
+  const parts: string[] = [];
+  if (ctx.genre) parts.push(`CONTENT GENRE: ${ctx.genre}`);
+  if (ctx.tone_style) parts.push(`TONE/STYLE: ${ctx.tone_style}`);
+  if (ctx.target_audience) parts.push(`TARGET AUDIENCE: ${ctx.target_audience}`);
+  if (ctx.pov) parts.push(`NARRATION POV: ${ctx.pov} person`);
+  if (ctx.content_niche) parts.push(`CONTENT NICHE: ${ctx.content_niche}`);
+
+  return parts.length > 0 ? '\n' + parts.join('\n') : '';
 }
 
 /**
@@ -77,6 +99,7 @@ function buildShotPlannerPrompt(
 USER CREATIVE DIRECTION:
 ${userPrompt || 'No specific direction provided.'}
 ${buildCreativeDirectionBlock(manifest)}
+${buildScriptContextBlock(manifest)}
 
 VISUAL STYLE: ${manifest.style.visual_style}
 ASPECT RATIO: ${manifest.style.aspect_ratio}
@@ -124,6 +147,7 @@ function buildAssetScoutPrompt(
 USER CREATIVE DIRECTION:
 ${userPrompt || 'No specific direction provided.'}
 ${buildCreativeDirectionBlock(manifest)}
+${buildScriptContextBlock(manifest)}
 
 VISUAL STYLE: ${manifest.style.visual_style}
 COLOR PALETTE: ${manifest.style.color_palette.join(', ') || 'Not specified'}
@@ -259,6 +283,7 @@ function buildMusicPrompt(
 USER CREATIVE DIRECTION:
 ${userPrompt || 'No specific direction provided.'}
 ${buildCreativeDirectionBlock(manifest)}
+${buildScriptContextBlock(manifest)}
 
 VISUAL STYLE (match music mood): ${manifest.style.visual_style}
 ${manifest.style.lighting_mood ? `MOOD: ${manifest.style.lighting_mood}` : ''}
@@ -282,6 +307,7 @@ function buildSfxPrompt(
 USER CREATIVE DIRECTION:
 ${userPrompt || 'No specific direction provided.'}
 ${buildCreativeDirectionBlock(manifest)}
+${buildScriptContextBlock(manifest)}
 
 VISUAL STYLE (match SFX mood): ${manifest.style.visual_style}
 

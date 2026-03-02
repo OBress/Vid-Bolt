@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { useTaskProgress } from "@/hooks/use-task-progress";
 import { useGCPVM } from "@/hooks/use-gcp-vm";
+import { useProjectSettings } from "@/hooks/use-project-settings";
+import { hasAnyLocalModel } from "@/lib/constants/model-registry";
 
 // ============================================================================
 // TYPES
@@ -25,6 +27,7 @@ import { useGCPVM } from "@/hooks/use-gcp-vm";
 
 interface ProductionStepProps {
   videoId: string;
+  projectId: string;
   isLoading: boolean;
   taskId: string | null;
   onTaskStarted: (taskId: string) => void;
@@ -174,6 +177,7 @@ function derivePhaseStatuses(
 
 export function ProductionStep({
   videoId,
+  projectId,
   isLoading: isLoadingProp,
   taskId: taskIdProp,
   onTaskStarted,
@@ -190,6 +194,14 @@ export function ProductionStep({
 
   // GPU VM status
   const { displayStatus: vmStatus, startVM, isLoading: isVmLoading } = useGCPVM();
+
+  // Project settings — check if any local models need the GPU
+  const { settings } = useProjectSettings(projectId);
+  const needsLocalGpu = hasAnyLocalModel(
+    settings.visuals.imageModel,
+    settings.visuals.imageEditModel,
+    settings.visuals.videoModel,
+  );
 
   // Sync external taskId
   useEffect(() => {
@@ -259,8 +271,8 @@ export function ProductionStep({
     setHasCompleted(false);
 
     try {
-      // Auto-start GPU if it's off
-      if (vmStatus === "OFF") {
+      // Auto-start GPU if it's off and we have local models that need it
+      if (needsLocalGpu && vmStatus === "OFF") {
         console.log("[ProductionStep] GPU is off, auto-starting...");
         try {
           await startVM();
@@ -295,7 +307,7 @@ export function ProductionStep({
     } finally {
       setIsStarting(false);
     }
-  }, [videoId, onTaskStarted, onError, vmStatus, startVM]);
+  }, [videoId, onTaskStarted, onError, vmStatus, startVM, needsLocalGpu]);
 
   const handleStop = useCallback(async () => {
     if (!taskId) return;
@@ -415,8 +427,8 @@ export function ProductionStep({
         </div>
       )}
 
-      {/* GPU Warning Banner */}
-      {!isRunning && !hasCompleted && (vmStatus === "OFF" || vmStatus === "SETUP") && (
+      {/* GPU Warning Banner — only shown when local models need the GPU */}
+      {needsLocalGpu && !isRunning && !hasCompleted && (vmStatus === "OFF" || vmStatus === "SETUP") && (
         <div className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-amber-500/20 bg-amber-500/5">
           <Zap className="w-4 h-4 text-amber-400 flex-shrink-0" />
           <div className="flex-1">

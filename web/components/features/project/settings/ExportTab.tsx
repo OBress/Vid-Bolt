@@ -40,7 +40,7 @@ export function ExportTab({ projectId }: { projectId?: string }) {
       label: "YouTube",
       icon: Youtube,
       color: "text-red-500",
-      connected: true,
+      connected: false,
     },
     {
       id: "tiktok",
@@ -54,7 +54,7 @@ export function ExportTab({ projectId }: { projectId?: string }) {
       label: "Instagram",
       icon: Instagram,
       color: "text-pink-500",
-      connected: true,
+      connected: false,
     },
     {
       id: "x",

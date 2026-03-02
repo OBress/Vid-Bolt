@@ -35,6 +35,7 @@ import type {
   ExpandedBeat,
   QualityValidation,
   ScriptGenre,
+  ScriptStyleConfig,
   UniversalScriptOutput,
 } from '@/lib/queues/writing/types';
 
@@ -58,6 +59,8 @@ export interface ScriptWritingJobData {
     topic: string;
     genre: ScriptGenre;
     angle?: string;
+    /** User's style customization (from project settings advanced) */
+    styleConfig?: ScriptStyleConfig;
   };
 }
 
@@ -167,6 +170,7 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
           dossier: outlineData.researchDossier || null,
           assetRegistry: outlineData.assetRegistry,
           angle: config.angle,
+          styleConfig: config.styleConfig,
           onProgress: expansionProgress,
         });
 

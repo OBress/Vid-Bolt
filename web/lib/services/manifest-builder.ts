@@ -120,6 +120,7 @@ function resolveLoraConfig(
         name: lora.name,
         weight: videoOverrides.loraWeight ?? lora.defaultWeight,
         url: lora.url,
+        trigger_words: lora.triggerWords,
       };
     }
   }
@@ -134,6 +135,7 @@ function resolveLoraConfig(
         name: lora.name,
         weight: lora.defaultWeight,
         url: lora.url,
+        trigger_words: lora.triggerWords,
       };
     }
   }
@@ -158,6 +160,8 @@ function unionArrays(base: string[] | undefined, override: string[] | undefined)
  * @param channelDefaults - Channel-level creative direction (from project_settings)
  * @param videoOverrides - Per-video overrides set at production time
  * @param visualsSettings - Visuals settings (model selections, etc.)
+ * @param basicInfoAspectRatio - Fallback aspect ratio from basic_info settings (e.g. '16-9')
+ * @param scriptMeta - Script metadata (genre, tone, audience, etc.) for prompt injection
  * @returns A fully-resolved CreativeManifest
  */
 export function buildCreativeManifest(
@@ -166,6 +170,8 @@ export function buildCreativeManifest(
   channelDefaults?: CreativeDirectionDefaults,
   videoOverrides?: VideoCreativeOverrides,
   visualsSettings?: { imageModel?: string; videoModel?: string; imageEditModel?: string },
+  basicInfoAspectRatio?: string,
+  scriptMeta?: { pov?: string; genre?: string; toneStyle?: string; targetAudience?: string; contentNiche?: string },
 ): CreativeManifest {
   // --- Style ---
   const visualStyle =
@@ -184,7 +190,12 @@ export function buildCreativeManifest(
     || channelDefaults?.lightingMood
     || undefined;
 
-  const aspectRatio = (outlineConfig?.aspectRatio || SYSTEM_DEFAULTS.style.aspect_ratio) as '16:9' | '9:16';
+  // Normalize aspect ratio: outline config > basic_info setting > system default
+  // basic_info stores with dashes ('16-9'), manifest needs colons ('16:9')
+  const rawAr = outlineConfig?.aspectRatio || basicInfoAspectRatio || SYSTEM_DEFAULTS.style.aspect_ratio;
+  const aspectRatio = (
+    rawAr === '16-9' ? '16:9' : rawAr === '9-16' ? '9:16' : rawAr
+  ) as '16:9' | '9:16';
 
   // --- Media Weighting ---
   const mediaWeighting = {
@@ -290,5 +301,20 @@ export function buildCreativeManifest(
     video_creative_prompt: videoCreativePrompt,
     worker_prompt_overrides: workerPromptOverrides,
     models,
+    script_context: scriptMeta ? {
+      pov: scriptMeta.pov,
+      genre: scriptMeta.genre,
+      tone_style: scriptMeta.toneStyle,
+      target_audience: scriptMeta.targetAudience,
+      content_niche: scriptMeta.contentNiche,
+    } : undefined,
+    writing: scriptMeta ? {
+      audience: {
+        demographics: scriptMeta.targetAudience,
+      },
+      formality_level: scriptMeta.toneStyle?.toLowerCase().includes('formal')
+        ? 'formal' as const
+        : 'conversational' as const,
+    } : undefined,
   };
 }

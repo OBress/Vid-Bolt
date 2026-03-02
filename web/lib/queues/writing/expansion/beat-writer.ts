@@ -54,6 +54,8 @@ export interface BeatExpansionContext {
   allPreviousBeats: ExpandedBeat[];
   /** Enable quality review loop (default: true) */
   enableQualityReview?: boolean;
+  /** User system prompt override (prepended — sets tone/persona) */
+  expansionSystemPrompt?: string;
 }
 
 // ============================================================================
@@ -86,15 +88,21 @@ export async function expandSingleBeat(
   const prompt = buildEnhancedBeatPrompt(context, targetWords, writingContext);
 
   // Generate the narration
-  const response = await generateText(
-    context.userId,
+  // Prepend user's system prompt override if configured (sets tone/persona context)
+  const systemPrompt = (context.expansionSystemPrompt
+    ? context.expansionSystemPrompt + '\n\n'
+    : '') +
     UNIVERSAL_PROMPTS.beatExpansion
       .replace('{beatIndex}', String(beatIndex + 1))
       .replace('{totalBeats}', String(totalBeats))
       .replace('{startSeconds}', String(beat.timing.startSeconds))
       .replace('{endSeconds}', String(beat.timing.endSeconds))
       .replace('{durationSeconds}', String(beatDurationSeconds))
-      .replace('{targetWords}', String(targetWords)),
+      .replace('{targetWords}', String(targetWords));
+
+  const response = await generateText(
+    context.userId,
+    systemPrompt,
     prompt
   );
 

@@ -47,6 +47,8 @@ export async function POST(request: NextRequest) {
       contentNiche,
       toneStyle,
       targetAudience,
+      // Advanced script settings (from ScriptAdvancedSettings)
+      scriptAdvanced,
     } = body;
 
     if (!topic || !genre || !durationRange) {
@@ -135,6 +137,13 @@ export async function POST(request: NextRequest) {
           contentNiche,
           toneStyle,
           targetAudience,
+          // Advanced style customization (from ScriptAdvancedSettings)
+          styleConfig: scriptAdvanced ? {
+            customBannedPhrases: scriptAdvanced.bannedPhrases,
+            customWordReplacements: scriptAdvanced.wordReplacements,
+            systemPromptOverrides: scriptAdvanced.systemPrompts,
+            engagementTiming: scriptAdvanced.engagementTiming,
+          } : undefined,
         },
       },
       {

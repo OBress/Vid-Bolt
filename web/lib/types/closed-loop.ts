@@ -246,6 +246,8 @@ export const CreativeManifest = z.object({
     name: z.string(),
     weight: z.number().min(0).max(1).default(0.8),
     url: z.string(),
+    /** Activation trigger words — prepended to image prompts */
+    trigger_words: z.string().optional(),
   }).optional(),
   /** Combined channel-level creative direction prompt */
   master_creative_prompt: z.string().optional(),
@@ -262,6 +264,14 @@ export const CreativeManifest = z.object({
   gcm_ref: z.string().optional(),
   locked_script_ref: z.string().optional(),
   tts_ref: z.string().optional(),
+  /** Script metadata for downstream prompt tuning (genre, tone, audience, etc.) */
+  script_context: z.object({
+    pov: z.string().optional(),
+    genre: z.string().optional(),
+    tone_style: z.string().optional(),
+    target_audience: z.string().optional(),
+    content_niche: z.string().optional(),
+  }).optional(),
 });
 export type CreativeManifest = z.infer<typeof CreativeManifest>;
 
@@ -445,6 +455,8 @@ export const OrchestratorJobData = z.object({
   taskId: z.string(),
   userId: z.string(),
   videoId: z.string(),
+  /** Parent media project ID (for project_settings lookup, e.g. LoRA sync) */
+  projectId: z.string().optional(),
   /** The Creative Manifest for this video */
   creativeManifest: CreativeManifest,
   /** User's system prompt (from profile) */
@@ -455,6 +467,26 @@ export const OrchestratorJobData = z.object({
   entities: z.array(GCMEntity).default([]),
   /** Per-video creative overrides set by the user at production time */
   videoCreativeOverrides: VideoCreativeOverrides,
+  /** Resolved project-level settings passed once from the route */
+  projectConfig: z.object({
+    voice: z.object({
+      provider: z.enum(['elevenlabs', 'genai', 'inworld']).default('inworld'),
+      model: z.string().default('inworld-tts-1.5-max'),
+      voiceName: z.string().default('Hades'),
+      speakingSpeed: z.number().default(100),
+      stability: z.number().default(100),
+      similarityBoost: z.number().default(0),
+      speakerBoost: z.boolean().default(false),
+      voiceStyle: z.number().default(0),
+    }).optional(),
+    scriptMeta: z.object({
+      pov: z.string().optional(),
+      genre: z.string().optional(),
+      toneStyle: z.string().optional(),
+      targetAudience: z.string().optional(),
+      contentNiche: z.string().optional(),
+    }).optional(),
+  }).optional(),
 });
 export type OrchestratorJobData = z.infer<typeof OrchestratorJobData>;
 

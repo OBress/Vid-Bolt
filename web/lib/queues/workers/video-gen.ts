@@ -38,6 +38,8 @@ export interface VideoGenJobData {
   singleShotIndex?: number;
   /** Verifier feedback to incorporate into the retry prompt */
   previousFeedback?: string;
+  /** Optional LoRA name to apply for video keyframe generation */
+  loraName?: string;
 }
 
 // ============================================================================
@@ -49,7 +51,7 @@ const LOG_PREFIX = '[VideoGen]';
 export const videoGenProcessor: Processor<VideoGenJobData> = async (
   job: Job<VideoGenJobData>
 ) => {
-  const { taskId, userId, videoId, aspectRatio = '16:9' } = job.data;
+  const { taskId, userId, videoId, aspectRatio = '16:9', loraName } = job.data;
   // Video-gen is always dispatched from the orchestrator with names like 'video-shot-1'.
   // Skip task-level progress updates to avoid overwriting the orchestrator's progress.
   const isClosedLoop = true;
@@ -184,7 +186,8 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         gpuShots,
         aspectRatio as AspectRatio,
         onProgress,
-        onItemComplete
+        onItemComplete,
+        loraName,
       );
 
       // Track GPU cost (~8s per video on A100)

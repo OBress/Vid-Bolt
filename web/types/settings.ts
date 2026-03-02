@@ -95,6 +95,8 @@ export interface LoraConfig {
   url: string;
   /** Default weight when applying this LoRA (0.0–1.0) */
   defaultWeight: number;
+  /** Activation trigger words — prepended to image prompts when this LoRA is active */
+  triggerWords?: string;
   /** Preview image URL */
   previewUrl?: string;
   /** ISO timestamp when uploaded */

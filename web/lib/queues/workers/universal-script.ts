@@ -251,6 +251,7 @@ export const universalScriptProcessor: Processor<UniversalScriptJobData> = async
           dossier: researchDossier,
           assetRegistry: assetRegistry!,
           angle: input.angle,
+          styleConfig: input.styleConfig,
         });
 
         await completeStep(taskId, stepId);
