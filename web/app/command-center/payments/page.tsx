@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { startOfMonth, format } from "date-fns";
 import { getMonthlyStatements } from "./actions";
 import { FinancialForm } from "./components/FinancialForm";
@@ -5,6 +6,12 @@ import { FinancialOverview } from "./components/FinancialOverview";
 import { MonthSelector } from "./components/MonthSelector";
 import { Suspense } from "react";
 import { Loader2, Receipt } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: "Payments & Financials",
+  description:
+    "Track revenue, manage costs, and handle platform commissions.",
+};
 
 export default async function PaymentsPage({
   searchParams,

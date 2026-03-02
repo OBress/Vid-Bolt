@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { HttpRenderer } from "@/features/video-editor-v2/utils/http-renderer";
+import "@/features/video-editor-v2/styles/video-editor.css";
 
 const ReactVideoEditor = dynamic(
   () =>

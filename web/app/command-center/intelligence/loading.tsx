@@ -1,3 +1,5 @@
+import { CommandCenterSkeleton } from "@/components/skeletons/CommandCenterSkeleton";
+
 export default function Loading() {
-  return null
+  return <CommandCenterSkeleton />;
 }
