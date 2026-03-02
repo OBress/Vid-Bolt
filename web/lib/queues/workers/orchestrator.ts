@@ -964,20 +964,11 @@ async function executeProductionPhase(
       mgCodeMap[`shot-${shotIdx}`] = code;
     }
 
-    const { data: latestForMg } = await supabase
-      .from('video_projects')
-      .select('metadata')
-      .eq('id', videoId)
-      .single();
-    const metaForMg = (latestForMg?.metadata || {}) as Record<string, unknown>;
-
-    await supabase
-      .from('video_projects')
-      .update({
-        metadata: { ...metaForMg, generated_motion_graphics: mgCodeMap },
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', videoId);
+    // Atomic merge — prevents race with concurrent GPU pipeline metadata writes
+    await supabase.rpc('merge_video_metadata', {
+      p_video_id: videoId,
+      p_updates: { generated_motion_graphics: mgCodeMap },
+    });
 
     console.log(`${LOG_PREFIX} MG Pass 1: persisted ${mgPass1Results.size} Remotion compositions`);
   }
@@ -1051,20 +1042,11 @@ async function executeProductionPhase(
     }
 
     // Persist Pass 2 updated code to metadata
-    const { data: latestForPersist } = await supabase
-      .from('video_projects')
-      .select('metadata')
-      .eq('id', videoId)
-      .single();
-    const metaForPersist = (latestForPersist?.metadata || {}) as Record<string, unknown>;
-
-    await supabase
-      .from('video_projects')
-      .update({
-        metadata: { ...metaForPersist, generated_motion_graphics: updatedMgCode },
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', videoId);
+    // Atomic merge — prevents race with concurrent metadata writes
+    await supabase.rpc('merge_video_metadata', {
+      p_video_id: videoId,
+      p_updates: { generated_motion_graphics: updatedMgCode },
+    });
 
     console.log(`${LOG_PREFIX} MG Pass 2: persisted ${Object.keys(updatedMgCode).length} updated compositions`);
   }
@@ -1385,33 +1367,31 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       const diagVideos = (diagMeta.generated_videos || {}) as Record<string, string>;
       const diagMG = (diagMeta.generated_motion_graphics || {}) as Record<string, string>;
 
-      await supabase
-        .from('video_projects')
-        .update({
-          metadata: {
-            ...diagMeta,
-            pipeline_diagnostics: {
-              phase_iv_completed_at: new Date().toISOString(),
-              images_completed: prodResult.imagesCompleted,
-              images_failed: prodResult.imagesFailed,
-              videos_completed: prodResult.videosCompleted,
-              videos_failed: prodResult.videosFailed,
-              mg_completed: prodResult.mgCompleted,
-              mg_failed: prodResult.mgFailed,
-              total_retries: state.total_retries || 0,
-              verification_skipped: state.verification_skipped || 0,
-              flagged_shots: state.flagged_shots,
-              per_shot_status: diagShots.map((s: any) => ({
-                shot_index: s.segment_index,
-                media_type: s.media_type,
-                requested_duration_s: s.duration_seconds,
-                has_video_url: !!diagVideos[`shot-${s.segment_index}`],
-                has_mg_code: !!diagMG[`shot-${s.segment_index}`],
-              })),
-            },
+      // Atomic merge — prevents race with other metadata writes
+      await supabase.rpc('merge_video_metadata', {
+        p_video_id: videoId,
+        p_updates: {
+          pipeline_diagnostics: {
+            phase_iv_completed_at: new Date().toISOString(),
+            images_completed: prodResult.imagesCompleted,
+            images_failed: prodResult.imagesFailed,
+            videos_completed: prodResult.videosCompleted,
+            videos_failed: prodResult.videosFailed,
+            mg_completed: prodResult.mgCompleted,
+            mg_failed: prodResult.mgFailed,
+            total_retries: state.total_retries || 0,
+            verification_skipped: state.verification_skipped || 0,
+            flagged_shots: state.flagged_shots,
+            per_shot_status: diagShots.map((s: any) => ({
+              shot_index: s.segment_index,
+              media_type: s.media_type,
+              requested_duration_s: s.duration_seconds,
+              has_video_url: !!diagVideos[`shot-${s.segment_index}`],
+              has_mg_code: !!diagMG[`shot-${s.segment_index}`],
+            })),
           },
-        })
-        .eq('id', videoId);
+        },
+      });
       console.log(`${LOG_PREFIX} Pipeline diagnostics persisted to metadata`);
     } catch (diagErr) {
       console.warn(`${LOG_PREFIX} Failed to persist pipeline diagnostics:`, diagErr);
@@ -1513,24 +1493,22 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
         (sum: number, c: any) => sum + (c.duration_seconds || 0), 0
       );
 
-      await supabase
-        .from('video_projects')
-        .update({
-          metadata: {
-            ...asmMeta,
-            pipeline_diagnostics: {
-              ...existingDiag,
-              phase_v_completed_at: new Date().toISOString(),
-              edl_clip_count: edlClipCount,
-              edl_total_duration_s: Math.round(edlTotalDuration * 100) / 100,
-              edl_clips_over_10s: edlClipsOver10s,
-              audio_total_duration_s: Math.round(audioTotalDuration * 100) / 100,
-              edl_vs_audio_diff_s: Math.round((edlTotalDuration - audioTotalDuration) * 100) / 100,
-              editor_state_saved: assemblyResult.editorStateSaved,
-            },
+      // Atomic merge — prevents race with other metadata writes
+      await supabase.rpc('merge_video_metadata', {
+        p_video_id: videoId,
+        p_updates: {
+          pipeline_diagnostics: {
+            ...existingDiag,
+            phase_v_completed_at: new Date().toISOString(),
+            edl_clip_count: edlClipCount,
+            edl_total_duration_s: Math.round(edlTotalDuration * 100) / 100,
+            edl_clips_over_10s: edlClipsOver10s,
+            audio_total_duration_s: Math.round(audioTotalDuration * 100) / 100,
+            edl_vs_audio_diff_s: Math.round((edlTotalDuration - audioTotalDuration) * 100) / 100,
+            editor_state_saved: assemblyResult.editorStateSaved,
           },
-        })
-        .eq('id', videoId);
+        },
+      });
       console.log(`${LOG_PREFIX} Assembly diagnostics appended to pipeline_diagnostics`);
     } catch (asmDiagErr) {
       console.warn(`${LOG_PREFIX} Failed to persist assembly diagnostics:`, asmDiagErr);

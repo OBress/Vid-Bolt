@@ -43,14 +43,14 @@ const getWebhookSecret = () => process.env.GPU_WEBHOOK_SECRET;
 
 // Timeout configurations based on benchmarks
 // Images: ~7-15s each with batch overhead, Videos: ~8x duration
-const TIMEOUT_CONFIG = {
+export const TIMEOUT_CONFIG = {
   image_generation: { baseMs: 60_000, perItemMs: 20_000 },
   image_editing: { baseMs: 60_000, perItemMs: 20_000 },
   video_generation: { baseMs: 120_000, perSecondMs: 15_000 },
 };
 
 // Mode switch timeout (LTX-2 loading can take ~90s+)
-const MODE_SWITCH_TIMEOUT_MS = 180_000;
+export const MODE_SWITCH_TIMEOUT_MS = 180_000;
 const MODE_POLL_INTERVAL_MS = 2_000;
 // Stabilization delay after mode switch completes (GPU needs a moment)
 const POST_SWITCH_DELAY_MS = 5_000;
@@ -112,7 +112,7 @@ export interface ItemCompleteEvent {
 /**
  * Calculate timeout for a batch based on item count and type
  */
-function calculateTimeout(
+export function calculateTimeout(
   type: 'image_generation' | 'image_editing' | 'video_generation',
   itemCount: number,
   avgDurationSec?: number

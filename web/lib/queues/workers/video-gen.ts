@@ -18,11 +18,14 @@ import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
 import {
   processGpuBatchGeneration,
+  calculateTimeout,
+  MODE_SWITCH_TIMEOUT_MS,
   type ShotForGpuGeneration,
   type ItemCompleteEvent,
 } from '@/lib/av-script/gpu-batch-generation';
 import type { AspectRatio } from '@/lib/services/gpu-api-service';
 import { CostTracker } from '@/lib/queues/cost-tracker';
+import { withGpuLock } from '@/lib/queues/gpu-lock';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -180,15 +183,22 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         console.log(`${LOG_PREFIX} ${label}: ${event.completed}/${event.total}`);
       };
 
-      const gpuResult = await processGpuBatchGeneration(
-        userId,
-        videoId,
-        gpuShots,
-        aspectRatio as AspectRatio,
-        onProgress,
-        onItemComplete,
-        loraName,
-      );
+      // Acquire per-user GPU lock to prevent VRAM mode thrashing
+      // when multiple pipelines for the same user run concurrently
+      const avgDuration = gpuShots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0) / gpuShots.length;
+      const lockTtlMs = calculateTimeout('video_generation', gpuShots.length, avgDuration) + MODE_SWITCH_TIMEOUT_MS + 60_000;
+
+      const gpuResult = await withGpuLock(userId, async () => {
+        return processGpuBatchGeneration(
+          userId,
+          videoId,
+          gpuShots,
+          aspectRatio as AspectRatio,
+          onProgress,
+          onItemComplete,
+          loraName,
+        );
+      }, lockTtlMs);
 
       // Track GPU cost (~8s per video on A100)
       costTracker.addGpuTime(gpuResult.stats.videosGenerated * 8);
@@ -198,14 +208,6 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 4: Persisting video results...`);
 
-      const { data: updatedVideo } = await supabase
-        .from('video_projects')
-        .select('metadata')
-        .eq('id', videoId)
-        .single();
-
-      const latestMetadata = (updatedVideo?.metadata || metadata) as Record<string, unknown>;
-
       const videoResults: Record<string, string> = {};
       for (const r of gpuResult.results) {
         if (r.generation_status === 'completed') {
@@ -213,24 +215,29 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         }
       }
 
-      // For single-shot retries, merge into existing generated_videos to avoid
-      // overwriting the other 22 shots' URLs with nothing
-      const existingVideos = (latestMetadata.generated_videos || {}) as Record<string, string>;
-      const mergedVideos = isSingleShotRetry
-        ? { ...existingVideos, ...videoResults }
-        : videoResults;
+      // For single-shot retries, we need to merge into existing videos.
+      // The merge_video_metadata RPC does a shallow JSONB merge (||),
+      // so we need to fetch existing videos for the merge if retrying.
+      let mergedVideos = videoResults;
+      if (isSingleShotRetry) {
+        const { data: existingData } = await supabase
+          .from('video_projects')
+          .select('metadata')
+          .eq('id', videoId)
+          .single();
+        const existingMeta = (existingData?.metadata || {}) as Record<string, unknown>;
+        const existingVideos = (existingMeta.generated_videos || {}) as Record<string, string>;
+        mergedVideos = { ...existingVideos, ...videoResults };
+      }
 
-      await supabase
-        .from('video_projects')
-        .update({
-          metadata: {
-            ...latestMetadata,
-            generated_videos: mergedVideos,
-            video_gen_stats: gpuResult.stats,
-          },
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', videoId);
+      // Atomic merge — prevents race with concurrent metadata writes
+      await supabase.rpc('merge_video_metadata', {
+        p_video_id: videoId,
+        p_updates: {
+          generated_videos: mergedVideos,
+          video_gen_stats: gpuResult.stats,
+        },
+      });
 
       if (!isClosedLoop) {
         await updateTaskStatus(taskId, {

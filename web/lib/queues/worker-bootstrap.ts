@@ -33,6 +33,7 @@ console.log('  PEXELS_API_KEY:', process.env.PEXELS_API_KEY ? '✓ present' : '�
 import { Worker, Processor } from 'bullmq';
 import { getRedisConnection, closeRedisConnection, isRedisReady } from './redis';
 import { closeAllQueues, gpuShutdownCheckQueue } from './queues';
+import { lambdaConfig } from '@/lib/services/render/lambda-config';
 import { 
   writingProcessor, 
   universalScriptProcessor,
@@ -201,7 +202,10 @@ const workerConfigs: WorkerConfig[] = [
   {
     queue: 'video-render',
     processor: videoRenderProcessor,
-    concurrency: parseInt(process.env.RENDER_CONCURRENCY_LIMIT || '4', 10),
+    concurrency: Math.min(
+      parseInt(process.env.RENDER_CONCURRENCY_LIMIT || '4', 10),
+      lambdaConfig.maxSafeConcurrentRenders
+    ),
     description: 'Video rendering via Remotion Lambda → R2',
   },
   {

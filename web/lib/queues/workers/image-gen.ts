@@ -14,11 +14,14 @@ import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
 import {
   processGpuBatchGeneration,
+  calculateTimeout,
+  MODE_SWITCH_TIMEOUT_MS,
   type ShotForGpuGeneration,
   type ItemCompleteEvent,
 } from '@/lib/av-script/gpu-batch-generation';
 import type { AspectRatio } from '@/lib/services/gpu-api-service';
 import { CostTracker } from '@/lib/queues/cost-tracker';
+import { withGpuLock } from '@/lib/queues/gpu-lock';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -135,15 +138,21 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
         media_type: 'motiongraphic' as const, // Force image mode for all
       }));
 
-      const gpuResult = await processGpuBatchGeneration(
-        userId,
-        videoId,
-        imageShotsOnly,
-        aspectRatio as AspectRatio,
-        onProgress,
-        onItemComplete,
-        loraName,
-      );
+      // Acquire per-user GPU lock to prevent VRAM mode thrashing
+      // when multiple pipelines for the same user run concurrently
+      const lockTtlMs = calculateTimeout('image_generation', imageShotsOnly.length) + MODE_SWITCH_TIMEOUT_MS + 60_000;
+
+      const gpuResult = await withGpuLock(userId, async () => {
+        return processGpuBatchGeneration(
+          userId,
+          videoId,
+          imageShotsOnly,
+          aspectRatio as AspectRatio,
+          onProgress,
+          onItemComplete,
+          loraName,
+        );
+      }, lockTtlMs);
 
       // Track GPU cost (~3s per image on A100)
       costTracker.addGpuTime(gpuResult.stats.imagesGenerated * 3);
@@ -153,15 +162,6 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 3: Persisting image results...`);
 
-      // Re-fetch metadata
-      const { data: updatedVideo } = await supabase
-        .from('video_projects')
-        .select('metadata')
-        .eq('id', videoId)
-        .single();
-
-      const latestMetadata = (updatedVideo?.metadata || metadata) as Record<string, unknown>;
-
       // Store image results for downstream workers (video-gen needs keyframes)
       const imageResults: Record<string, string> = {};
       for (const r of gpuResult.results) {
@@ -170,17 +170,14 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
         }
       }
 
-      await supabase
-        .from('video_projects')
-        .update({
-          metadata: {
-            ...latestMetadata,
-            generated_images: imageResults,
-            image_gen_stats: gpuResult.stats,
-          },
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', videoId);
+      // Atomic merge — prevents race with concurrent metadata writes
+      await supabase.rpc('merge_video_metadata', {
+        p_video_id: videoId,
+        p_updates: {
+          generated_images: imageResults,
+          image_gen_stats: gpuResult.stats,
+        },
+      });
 
       await updateTaskStatus(taskId, {
         status: 'completed',

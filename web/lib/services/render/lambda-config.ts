@@ -114,6 +114,20 @@ export const lambdaConfig = {
   get webhookBaseUrl(): string | undefined {
     return process.env.REMOTION_WEBHOOK_BASE_URL;
   },
+
+  /** Total AWS Lambda concurrent execution limit for the account. Default: 1000 */
+  get lambdaAccountConcurrency(): number {
+    return optionalEnvInt("LAMBDA_ACCOUNT_CONCURRENCY", 1000);
+  },
+
+  /**
+   * Maximum safe concurrent renders based on account Lambda concurrency limit.
+   * Formula: floor(accountLimit / lambdasPerRender)
+   * Ensures we never exceed AWS Lambda throttling thresholds.
+   */
+  get maxSafeConcurrentRenders(): number {
+    return Math.max(1, Math.floor(this.lambdaAccountConcurrency / this.lambdasPerRender));
+  },
 } as const;
 
 // ============================================================
