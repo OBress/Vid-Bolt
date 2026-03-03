@@ -289,7 +289,9 @@ async function probeAndFixVideoClipDurations(): Promise<void> {
             `(${diff.toFixed(2)}s too long — fixing)`
           );
 
-          // Update the clip's mediaDuration to match actual content
+          // Update BOTH mediaDuration AND timeline duration to match actual content.
+          // Previously only mediaDuration was updated, leaving the clip rendering
+          // past the end of the video source → freeze on last frame.
           useVideoEditorStore.setState((prev) => {
             const existingClip = prev.clips[clip.id];
             if (!existingClip?.media) return prev;
@@ -299,6 +301,8 @@ async function probeAndFixVideoClipDurations(): Promise<void> {
                 ...prev.clips,
                 [clip.id]: {
                   ...existingClip,
+                  // Cap timeline duration so clip doesn't render past actual video end
+                  duration: Math.min(existingClip.duration, actualDuration),
                   media: {
                     ...existingClip.media,
                     mediaDuration: actualDuration,
@@ -307,6 +311,18 @@ async function probeAndFixVideoClipDurations(): Promise<void> {
               },
             };
           });
+
+          // Report the mismatch as a warning so the user can review
+          useMediaIssuesStore.getState().addIssue({
+            shotIndex: clip.data?.shotIndex ?? -1,
+            clipId: clip.id,
+            severity: 'warning',
+            type: 'duration_mismatch',
+            title: `Video trimmed: Shot ${clip.data?.shotIndex ?? '?'}`,
+            description: `Video source is ${actualDuration.toFixed(1)}s but clip was ${clipMediaDuration.toFixed(1)}s. Auto-trimmed to prevent freeze frame.`,
+            availableActions: ['dismiss'],
+          });
+
           fixCount++;
         }
 
@@ -332,8 +348,66 @@ async function probeAndFixVideoClipDurations(): Promise<void> {
 
   if (fixCount > 0) {
     console.log(`[WizardDataImport] 🔧 Fixed ${fixCount}/${videoClips.length} video clip durations`);
+
+    // Auto-open the media issues panel so the user sees the warnings
+    const { getActiveCount, setPanelOpen } = useMediaIssuesStore.getState();
+    if (getActiveCount() > 0) {
+      setPanelOpen(true);
+    }
   } else {
     console.log(`[WizardDataImport] ✅ All ${videoClips.length} video clip durations match`);
+  }
+}
+
+// ============================================================
+// POST-IMPORT: Quality Validation
+// ============================================================
+
+/**
+ * Final safety-net quality check that runs after probing.
+ * Scans all video clips for any remaining duration mismatches
+ * that the probe didn't catch (e.g., cross-origin videos that
+ * couldn't be probed, or timing edge cases).
+ *
+ * Reports issues but does NOT auto-fix — at this point the user
+ * should review manually to maintain quality.
+ */
+function postImportQualityValidation(): void {
+  const state = useVideoEditorStore.getState();
+  const allClips = Object.values(state.clips) as TimelineClip[];
+  const issueStore = useMediaIssuesStore.getState();
+
+  let issuesFound = 0;
+
+  for (const clip of allClips) {
+    if (clip.type !== 'video' || !clip.media) continue;
+
+    const mediaDur = clip.media.mediaDuration ?? 0;
+    const clipDur = clip.duration ?? 0;
+
+    // If mediaDuration is known and clip duration exceeds it, that's a freeze-frame risk
+    if (mediaDur > 0 && clipDur > mediaDur + 0.5) {
+      issueStore.addIssue({
+        shotIndex: clip.data?.shotIndex ?? -1,
+        clipId: clip.id,
+        severity: 'warning',
+        type: 'duration_mismatch',
+        title: `Potential freeze: Shot ${clip.data?.shotIndex ?? '?'}`,
+        description: `Clip is ${clipDur.toFixed(1)}s but video source is ${mediaDur.toFixed(1)}s. The last ${(clipDur - mediaDur).toFixed(1)}s may freeze. Consider trimming this clip.`,
+        availableActions: ['dismiss'],
+      });
+      issuesFound++;
+    }
+  }
+
+  if (issuesFound > 0) {
+    console.warn(`[WizardDataImport] ⚠️ Quality validation found ${issuesFound} potential freeze-frame risks`);
+    // Auto-open panel if issues were found
+    if (issueStore.getActiveCount() > 0) {
+      issueStore.setPanelOpen(true);
+    }
+  } else {
+    console.log('[WizardDataImport] ✅ Quality validation passed — no freeze-frame risks detected');
   }
 }
 
@@ -1329,28 +1403,42 @@ export function importWizardDataToStore(options: WizardData): boolean {
   // ─── Post-commit: Probe actual video durations ─────────────────
   // Fire-and-forget: asynchronously check each video clip's actual duration
   // and fix mediaDuration mismatches that cause video freezing.
-  probeAndFixVideoClipDurations().catch((err) => {
-    console.warn('[WizardDataImport] Video duration probing failed:', err);
-  });
+  // After probing, run a final quality validation pass as a safety net.
+  probeAndFixVideoClipDurations()
+    .then(() => {
+      postImportQualityValidation();
+    })
+    .catch((err) => {
+      console.warn('[WizardDataImport] Video duration probing failed:', err);
+      // Still run quality validation even if probe fails —
+      // it uses stored mediaDuration, not network probing
+      postImportQualityValidation();
+    });
 
   // ─── Post-commit: Media issues (separate store, no cascade risk)
   const activeEdl = agentEdl || edl;
   if (activeEdl) {
     const issues = 'mediaIssues' in activeEdl ? activeEdl.mediaIssues : [];
     if (issues && issues.length > 0) {
-      const { addIssues } = useMediaIssuesStore.getState();
+      const { addIssues, setPanelOpen } = useMediaIssuesStore.getState();
       addIssues(
         issues.map((issue) => ({
           shotIndex: issue.shotIndex,
           clipId: clipIdByShotIndex.get(issue.shotIndex),
           severity: issue.severity as 'error' | 'warning' | 'info',
-          type: issue.type as 'generation_failed' | 'placeholder' | 'missing_media' | 'quality_warning' | 'format_unsupported',
+          type: issue.type as 'generation_failed' | 'placeholder' | 'missing_media' | 'quality_warning' | 'format_unsupported' | 'duration_mismatch' | 'substituted_media',
           title: issue.title,
           description: issue.description,
           availableActions: ['dismiss', 'remove'],
         }))
       );
       console.log(`[WizardDataImport] Added ${issues.length} media issues`);
+
+      // Auto-open the panel when there are error-severity issues needing attention
+      const hasErrors = issues.some((i) => i.severity === 'error');
+      if (hasErrors) {
+        setPanelOpen(true);
+      }
     }
   }
 

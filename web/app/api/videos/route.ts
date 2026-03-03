@@ -88,6 +88,17 @@ export async function POST(request: NextRequest) {
     // This never blocks the response — failures are silently logged
     (async () => {
       try {
+        // Check if thumbnail generation is enabled for this user
+        const { data: userSettingsRow } = await supabase
+          .from("user_settings")
+          .select("settings")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        const enableThumbnails =
+          userSettingsRow?.settings?.enableThumbnailGeneration ?? true;
+        if (!enableThumbnails) return;
+
         const { generateThumbnailSvg } = await import("@/lib/ai/svg-thumbnail");
         const svg = await generateThumbnailSvg(user.id, name);
         if (svg) {

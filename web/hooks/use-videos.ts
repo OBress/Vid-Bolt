@@ -21,6 +21,8 @@ interface UseVideosReturn {
   updateVideo: (videoId: string, updates: Partial<VideoProject>) => Promise<boolean>;
   deleteVideo: (videoId: string, hard?: boolean) => Promise<boolean>;
   getIncompleteVideos: () => Promise<VideoProject[]>;
+  /** Poll a single video for its thumbnail_svg in metadata. Stops automatically. */
+  pollThumbnail: (videoId: string) => void;
 }
 
 export function useVideos(options: UseVideosOptions = {}): UseVideosReturn {
@@ -242,6 +244,40 @@ export function useVideos(options: UseVideosOptions = {}): UseVideosReturn {
     }
   }, []);
 
+  /**
+   * Poll a single video for its thumbnail_svg in metadata.
+   * Checks every 2s for up to 30s. When found, surgically updates
+   * only that video in local state — no full-page refresh.
+   */
+  const pollThumbnail = useCallback((videoId: string) => {
+    let attempts = 0;
+    const maxAttempts = 15; // 15 × 2s = 30s max
+
+    const interval = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await fetch(`/api/videos/${videoId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const svg = data?.video?.metadata?.thumbnail_svg;
+        if (svg) {
+          // Surgically update only this video in local state
+          setVideos((prev) =>
+            prev.map((v) =>
+              v.id === videoId
+                ? { ...v, metadata: { ...(v.metadata || {}), thumbnail_svg: svg } }
+                : v
+            )
+          );
+          clearInterval(interval);
+        }
+      } catch {
+        // Silently ignore poll errors
+      }
+      if (attempts >= maxAttempts) clearInterval(interval);
+    }, 2000);
+  }, []);
+
   // Auto-fetch on mount if enabled (and when userId becomes available)
   useEffect(() => {
     if (autoFetch && userId) {
@@ -258,5 +294,6 @@ export function useVideos(options: UseVideosOptions = {}): UseVideosReturn {
     updateVideo,
     deleteVideo,
     getIncompleteVideos,
+    pollThumbnail,
   };
 }

@@ -677,6 +677,7 @@ export function VideoCreationWizard({
             initialTopic={state.prompt}
             initialOutput={state.outlineOutput}
             initialConfig={state.outlineConfig}
+            activeTaskId={state.outlineTaskId}
             onSave={async (outlineOutput, config) => {
               updateState({
                 outlineOutput,

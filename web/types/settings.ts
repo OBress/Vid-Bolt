@@ -213,6 +213,8 @@ export interface UserSettings {
   onboarding_completed?: boolean;
   defaultProjectSettings?: Partial<ProjectSettings>;
   favorite_voices?: string[];
+  /** Whether to auto-generate SVG thumbnails for new videos */
+  enableThumbnailGeneration?: boolean;
 }
 
 export interface ApiKeys {

@@ -176,7 +176,7 @@ export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
             />
           ) : thumbnailSvg ? (
             <div
-              className="w-full h-full flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-cover"
+              className="w-full h-full [&>svg]:w-full [&>svg]:h-full"
               dangerouslySetInnerHTML={{ __html: thumbnailSvg }}
             />
           ) : (

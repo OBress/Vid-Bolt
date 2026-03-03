@@ -23,7 +23,9 @@ export type MediaIssueType =
   | 'placeholder'
   | 'missing_media'
   | 'quality_warning'
-  | 'format_unsupported';
+  | 'format_unsupported'
+  | 'duration_mismatch'
+  | 'substituted_media';
 
 export type MediaIssueAction =
   | 'retry'

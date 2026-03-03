@@ -64,6 +64,7 @@ export default function ProjectPage({
     isLoading: videosLoading,
     fetchVideos,
     createVideo,
+    pollThumbnail,
   } = useVideos({ projectId });
 
   // Get actual project name from context
@@ -126,6 +127,9 @@ export default function ProjectPage({
       });
 
       if (!video) throw new Error("Failed to create video record");
+
+      // Start polling for the SVG thumbnail in the background
+      pollThumbnail(video.id);
 
       setIsNameDialogOpen(false);
       const origin = getElementOrigin(newVideoButtonRef.current);
@@ -205,8 +209,10 @@ export default function ProjectPage({
         targetVideoIndex: null,
         videoId: null,
       });
+
+      fetchVideos();
     }, 350);
-  }, [wizardState.targetVideoIndex]);
+  }, [wizardState.targetVideoIndex, fetchVideos]);
 
   const handleWizardComplete = useCallback(
     (videoId: string) => {

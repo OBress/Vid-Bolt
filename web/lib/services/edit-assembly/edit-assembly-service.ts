@@ -147,7 +147,12 @@ function buildContext(
 
   shots.forEach(shot => {
     const media = mediaByShot.get(shot.segment_index);
-    if (!media && !failedShots.includes(shot.segment_index)) {
+    // MG shots with remotion_code are valid media — they render via Remotion,
+    // not a video URL. Don't treat them as failed/missing.
+    const hasValidMedia = !!media && (
+      media.generation_status === 'completed' || !!media.remotion_code
+    );
+    if (!hasValidMedia && !failedShots.includes(shot.segment_index)) {
       failedShots.push(shot.segment_index);
     }
   });
@@ -174,7 +179,7 @@ function buildContext(
         durationSeconds: shot.duration_seconds,
         text: shot.text,
         mediaType: (media?.media_type || 'none') as 'image' | 'video' | 'motiongraphic' | 'none',
-        hasMedia: !!media && media.generation_status === 'completed',
+        hasMedia: !!media && (media.generation_status === 'completed' || !!media.remotion_code),
         mediaUrl: media?.media_url,
         hasRemotionCode: !!media?.remotion_code,
         contentType: shot.content_type,
@@ -708,7 +713,9 @@ function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAg
         clips[0].startTime = 0;
       }
 
-      // 2. Fill any gaps between clips by extending the preceding clip
+      // 2. Fill any gaps between clips by extending the preceding clip.
+      //    For large gaps (≥ 2s), emit a mediaIssue so the user is warned
+      //    about sections where the video may freeze or show stretched content.
       for (let i = 1; i < clips.length; i++) {
         const prev = clips[i - 1];
         const curr = clips[i];
@@ -717,6 +724,18 @@ function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAg
         if (gap > 0.05) { // >50ms gap
           console.warn(`[EditAssembly] Fix: Filling ${gap.toFixed(2)}s gap on main-video by extending clip (shot ${prev.shotIndex}) from ${prev.duration.toFixed(2)}s to ${(prev.duration + gap).toFixed(2)}s`);
           prev.duration += gap;
+
+          // Large extensions likely exceed the source video duration — warn the user
+          if (gap >= 2.0) {
+            fixed.mediaIssues = fixed.mediaIssues || [];
+            fixed.mediaIssues.push({
+              shotIndex: prev.shotIndex ?? -1,
+              severity: 'warning',
+              type: 'substituted_media',
+              title: `Shot ${prev.shotIndex ?? '?'} extended by ${gap.toFixed(1)}s`,
+              description: `This clip was extended to fill a ${gap.toFixed(1)}s gap from missing media. Review this section for visual quality.`,
+            });
+          }
         }
       }
     }
@@ -771,7 +790,7 @@ function generateFallbackAgentEDL(
 
   for (const shot of shots) {
     const media = mediaByShot.get(shot.segment_index);
-    const hasMedia = !!media && media.generation_status === 'completed';
+    const hasMedia = !!media && (media.generation_status === 'completed' || !!media.remotion_code);
 
     if (!hasMedia) {
       mediaIssues.push({

@@ -187,6 +187,7 @@ interface OutlineStepProps {
   onBack: () => void;
   isLocked?: boolean;
   lockedMessage?: string;
+  activeTaskId?: string | null;
 }
 
 // ============================================================================
@@ -205,17 +206,18 @@ export function OutlineStep({
   onBack: _onBack,
   isLocked,
   lockedMessage,
+  activeTaskId: activeTaskIdProp,
 }: OutlineStepProps) {
   const { settings: projectSettings, loading: settingsLoading } =
     useProjectSettings(projectId);
 
   const [view, setView] = useState<ViewState>(
-    initialOutput ? "output" : "config",
+    initialOutput ? "output" : activeTaskIdProp ? "progress" : "config",
   );
 
-  const [taskId, setTaskId] = useState<string | null>(null);
+  const [taskId, setTaskId] = useState<string | null>(activeTaskIdProp || null);
   const [taskStatus, setTaskStatus] = useState<string>(
-    initialOutput ? "completed" : "idle",
+    initialOutput ? "completed" : activeTaskIdProp ? "pending" : "idle",
   );
   const [progress, setProgress] = useState(0);
   const [currentPhase, setCurrentPhase] = useState<string | null>(null);
@@ -291,6 +293,18 @@ export function OutlineStep({
         setStockMediaLevel(initialConfig.stockMediaLevel);
     }
   }, [initialConfig]);
+
+  // Sync external activeTaskId prop with internal state (for restored in-progress tasks)
+  useEffect(() => {
+    if (activeTaskIdProp && !taskId) {
+      console.log("[Step1] Syncing external activeTaskId:", activeTaskIdProp);
+      setTaskId(activeTaskIdProp);
+      setView("progress");
+      setTaskStatus("pending");
+      setProgressStartTime(Date.now());
+      setSimulatedProgress(0);
+    }
+  }, [activeTaskIdProp, taskId]);
 
   useEffect(() => {
     if (!settingsLoading && projectSettings && !initialConfig) {

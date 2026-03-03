@@ -41,7 +41,6 @@ web/lib/        # Services
 web/hooks/      # Custom hooks
 web/stores/     # Zustand
 web/types/      # TS types
-web/inngest/    # Jobs
 web/remotion/   # Video
 web/supabase/   # Schema
 ```

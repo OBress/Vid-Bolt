@@ -28,12 +28,15 @@ import {
 import { Label } from "@/components/ui/label";
 
 import { useMediaProjects } from "@/hooks/use-media-projects";
+import { useUserSettings } from "@/hooks/use-user-settings";
 import { Plus, Loader2 } from "lucide-react";
 import { PROJECT_PRESETS } from "@/lib/constants/project-presets";
 
 export function MediaProjectsTab() {
   const { projects, loading, createProject, deleteProject } =
     useMediaProjects();
+  const { settings: userSettings, updateSettings: updateUserSettings } =
+    useUserSettings();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<{
@@ -86,8 +89,38 @@ export function MediaProjectsTab() {
     );
   }
 
+  const thumbnailEnabled = userSettings.enableThumbnailGeneration ?? true;
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      {/* Thumbnail Generation Toggle */}
+      <div className="flex items-center justify-between bg-neutral-900/40 p-4 rounded-xl border border-neutral-800">
+        <div>
+          <h3 className="text-sm font-bold text-white uppercase tracking-widest leading-none">
+            AI Video Thumbnails
+          </h3>
+          <p className="text-[10px] text-neutral-500 mt-1">
+            Auto-generate SVG thumbnails for new videos using AI
+          </p>
+        </div>
+        <button
+          onClick={() =>
+            updateUserSettings({
+              enableThumbnailGeneration: !thumbnailEnabled,
+            })
+          }
+          className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
+            thumbnailEnabled ? "bg-orange-500" : "bg-neutral-700"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+              thumbnailEnabled ? "translate-x-5" : "translate-x-0"
+            }`}
+          />
+        </button>
+      </div>
+
       <div className="flex justify-between items-center bg-neutral-900/40 p-4 rounded-xl border border-neutral-800">
         <div>
           <h3 className="text-sm font-bold text-white uppercase tracking-widest leading-none">
