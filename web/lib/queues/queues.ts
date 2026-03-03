@@ -154,6 +154,9 @@ export const verifierQueue = createQueue('verifier');
 /** Image editing (Qwen-Image-Edit-2511 GCM consistency) */
 export const imageEditQueue = createQueue('image-edit');
 
+/** Data retention cleanup (repeatable, every 6 hours) */
+export const dataRetentionCleanupQueue = createQueue('data-retention-cleanup');
+
 /**
  * All active queues for graceful shutdown.
  */
@@ -187,6 +190,7 @@ export const allQueues = [
   videoGenQueue,
   verifierQueue,
   imageEditQueue,
+  dataRetentionCleanupQueue,
 ];
 
 /**

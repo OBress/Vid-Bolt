@@ -393,10 +393,6 @@ export interface Task<
   /** Maximum allowed retries */
   max_retries: number;
   
-  // External references
-  /** Inngest run ID for debugging */
-  inngest_run_id?: string | null;
-  
   // Timestamps
   created_at: string;
   updated_at: string;

@@ -84,6 +84,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: videoError.message }, { status: 500 });
     }
 
+    // Fire-and-forget: generate SVG thumbnail in the background
+    // This never blocks the response — failures are silently logged
+    (async () => {
+      try {
+        const { generateThumbnailSvg } = await import("@/lib/ai/svg-thumbnail");
+        const svg = await generateThumbnailSvg(user.id, name);
+        if (svg) {
+          await supabase.rpc("merge_video_metadata", {
+            p_video_id: video.id,
+            p_updates: { thumbnail_svg: svg },
+          });
+        }
+      } catch (err) {
+        console.error("[SVG Thumbnail] Background generation failed:", err);
+      }
+    })();
+
     return NextResponse.json({ success: true, video }, { status: 201 });
   } catch (error) {
     console.error("Failed to create video:", error);

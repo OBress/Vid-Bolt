@@ -1,7 +1,15 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { requireAdmin, isAuthError } from '@/lib/utils/admin-auth'
 
+/**
+ * SECURITY: Admin-only endpoint.
+ */
 export async function GET() {
+  // Admin-only
+  const authResult = await requireAdmin();
+  if (isAuthError(authResult)) return authResult;
+
   const supabase = await createClient()
 
   // This is a simple query to test database connection

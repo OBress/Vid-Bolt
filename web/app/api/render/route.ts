@@ -19,6 +19,7 @@ import {
   deductGpuHours,
   getGpuHoursBalance,
 } from '@/lib/services/gpu-hours-service';
+import { renderLimiter } from '@/lib/utils/rate-limiters';
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,6 +36,10 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       );
     }
+
+    // Rate limit check
+    const rateLimited = renderLimiter.check(user.id);
+    if (rateLimited) return rateLimited;
 
     // 2. Parse request body
     const body = await request.json();

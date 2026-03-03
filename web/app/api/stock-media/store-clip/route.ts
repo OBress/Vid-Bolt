@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { verifyInternalSecret } from '@/lib/utils/internal-auth';
 
 // Use service role client since this is called from workers without cookies
 const getServiceClient = () => createServiceClient(
@@ -10,8 +11,14 @@ const getServiceClient = () => createServiceClient(
 /**
  * POST /api/stock-media/store-clip
  * Stores a video clip in the vector database for semantic search.
+ * 
+ * SECURITY: Worker-only endpoint. Requires X-Internal-Secret header.
  */
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  // Verify internal caller
+  const authError = verifyInternalSecret(request);
+  if (authError) return authError;
+
   try {
     const clip = await request.json();
     
@@ -51,7 +58,10 @@ export async function POST(request: Request) {
       `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/vector/embed`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Internal-Secret': process.env.INTERNAL_API_SECRET || '',
+        },
         body: JSON.stringify({ text: searchableText }),
       }
     );

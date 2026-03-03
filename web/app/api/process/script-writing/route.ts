@@ -3,6 +3,7 @@ import { scriptWritingQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { processLimiter } from "@/lib/utils/rate-limiters";
 
 // POST /api/process/script-writing - Start a script writing task
 export async function POST(request: NextRequest) {
@@ -26,6 +27,10 @@ export async function POST(request: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Rate limit check
+    const rateLimited = processLimiter.check(user.id);
+    if (rateLimited) return rateLimited;
 
     const body = await request.json();
     const { videoId, scriptAdvanced } = body;

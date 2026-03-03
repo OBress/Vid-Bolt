@@ -7,8 +7,18 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } from '@/lib/services/r2-storage';
+import { requireAdmin, isAuthError } from '@/lib/utils/admin-auth';
 
+/**
+ * DELETE /api/stock-media/clear-storage
+ * 
+ * SECURITY: Admin-only endpoint.
+ */
 export async function DELETE(_request: NextRequest) {
+  // Admin-only
+  const auth = await requireAdmin();
+  if (isAuthError(auth)) return auth;
+
   console.log('[ClearStockMedia] Starting clear request...');
   
   try {

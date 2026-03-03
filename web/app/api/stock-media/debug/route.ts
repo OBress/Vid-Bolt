@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { requireAdmin, isAuthError } from '@/lib/utils/admin-auth';
 
 // Use service role client to read all stock_media entries
 const getServiceClient = () => createServiceClient(
@@ -10,8 +11,14 @@ const getServiceClient = () => createServiceClient(
 /**
  * GET /api/stock-media/debug
  * Returns all entries in stock_media table for debugging
+ * 
+ * SECURITY: Admin-only endpoint.
  */
 export async function GET() {
+  // Admin-only
+  const auth = await requireAdmin();
+  if (isAuthError(auth)) return auth;
+
   try {
     const supabase = getServiceClient();
     

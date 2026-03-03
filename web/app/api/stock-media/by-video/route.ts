@@ -1,13 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/server";
 
 /**
  * GET /api/stock-media/by-video?videoId=xxx
  * 
  * Fetches all stock media scraped for a specific video.
  * Used by Step 5 to populate the Elements Stock tab.
+ * 
+ * SECURITY: Requires authenticated user. Uses user-scoped Supabase client.
  */
 export async function GET(request: NextRequest) {
+  // Authenticate user
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const videoId = searchParams.get("videoId");
 
@@ -18,12 +27,8 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  const supabase = createClient(supabaseUrl, supabaseKey);
-
   try {
-    // Query stock media for this video
+    // Query stock media for this video (uses user-scoped client from auth above)
     const { data, error } = await supabase
       .from("stock_media")
       .select("id, source, r2_key, metadata")

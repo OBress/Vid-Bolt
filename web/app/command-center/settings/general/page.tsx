@@ -49,7 +49,7 @@ function GeneralSettingsContent() {
             }
           />
 
-          <div className="flex-1 overflow-auto p-6 max-h-[calc(100vh-140px)]">
+          <div className="flex-1 overflow-auto p-3 md:p-6 max-h-[calc(100dvh-140px)]">
             {tabs.map((tab) => (
               <TabsContent
                 key={tab.id}

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { stopNode, startNode, getNodeStatus } from "@/lib/gcp/provision";
 import { gcpProvisioningQueue } from "@/lib/queues/queues";
 import { getValidGCPToken } from "@/lib/gcp/token-refresh";
+import { gcpLimiter } from "@/lib/utils/rate-limiters";
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
@@ -11,6 +12,10 @@ export async function POST(req: NextRequest) {
   if (authError || !user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // Rate limit check
+  const rateLimited = gcpLimiter.check(user.id);
+  if (rateLimited) return rateLimited;
 
   try {
     // Check if body exists

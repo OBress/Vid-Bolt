@@ -18,6 +18,7 @@ import { v4 as uuidv4 } from "uuid";
 import { stockMediaQueue } from "@/lib/queues/queues";
 import { generateQueries, convertToSceneInputs } from "@/lib/query-generator";
 import { MEDIA_DENSITY_CONFIG, MediaDensityLevel } from "@/lib/query-generator/types";
+import { stockScrapeLimiter } from "@/lib/utils/rate-limiters";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,10 @@ export async function POST(request: Request) {
     if (authError || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Rate limit check
+    const rateLimited = stockScrapeLimiter.check(user.id);
+    if (rateLimited) return rateLimited;
 
     const body: BatchScrapeRequest = await request.json();
     const { videoId, level, outlineAssets, topic, mediaDensity, spine, expandedBeats } = body;

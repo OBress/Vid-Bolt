@@ -94,7 +94,7 @@ export default function AgentNetworkPage() {
   );
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-3 md:p-6 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
@@ -194,8 +194,8 @@ export default function AgentNetworkPage() {
 
       {/* Agent Detail Modal (Simplified for extraction example) */}
       {selectedAgent && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <Card className="bg-neutral-900 border-neutral-700 w-full max-w-2xl">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-3 md:p-4 z-50">
+          <Card className="bg-neutral-900 border-neutral-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-lg font-bold text-white tracking-wider">

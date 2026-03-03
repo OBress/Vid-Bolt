@@ -918,9 +918,6 @@ BEGIN
   IF NEW.max_retries IS DISTINCT FROM OLD.max_retries THEN
     RAISE EXCEPTION 'Permission denied: cannot modify tasks.max_retries';
   END IF;
-  IF NEW.inngest_run_id IS DISTINCT FROM OLD.inngest_run_id THEN
-    RAISE EXCEPTION 'Permission denied: cannot modify tasks.inngest_run_id';
-  END IF;
   IF NEW.output_data IS DISTINCT FROM OLD.output_data THEN
     RAISE EXCEPTION 'Permission denied: cannot modify tasks.output_data';
   END IF;
@@ -1501,7 +1498,6 @@ CREATE TABLE IF NOT EXISTS "public"."tasks" (
     "error_message" "text",
     "retry_count" integer DEFAULT 0,
     "max_retries" integer DEFAULT 3,
-    "inngest_run_id" "text",
     "input_data" "jsonb" DEFAULT '{}'::"jsonb",
     "output_data" "jsonb" DEFAULT '{}'::"jsonb",
     "created_at" timestamp with time zone DEFAULT "now"(),
@@ -1716,6 +1712,9 @@ CREATE TABLE IF NOT EXISTS "public"."video_projects" (
     "closed_loop_state" "jsonb",
     "worker_prompts" "jsonb",
     "creative_manifest" "jsonb",
+    "cleanup_status" "text",
+    "cleaned_at" timestamp with time zone,
+    "thumbnail_url" "text",
     CONSTRAINT "video_projects_current_stage_check" CHECK (("current_stage" = ANY (ARRAY['idea'::"text", 'outline'::"text", 'stock'::"text", 'script'::"text", 'production'::"text", 'audio'::"text", 'media'::"text", 'shot_planning'::"text", 'shot_creation'::"text", 'video'::"text", 'export'::"text", 'completed'::"text"]))),
     CONSTRAINT "video_projects_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
     CONSTRAINT "video_projects_status_check" CHECK (("status" = ANY (ARRAY['draft'::"text", 'processing'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"])))
@@ -1758,6 +1757,18 @@ COMMENT ON COLUMN "public"."video_projects"."worker_prompts" IS 'Per-worker syst
 
 
 COMMENT ON COLUMN "public"."video_projects"."creative_manifest" IS 'User preferences + style rules merged from user profile and per-video overrides';
+
+
+
+COMMENT ON COLUMN "public"."video_projects"."cleanup_status" IS 'Set to ''cleaned'' after data retention cleanup has processed this video';
+
+
+
+COMMENT ON COLUMN "public"."video_projects"."cleaned_at" IS 'Timestamp when data retention cleanup was performed';
+
+
+
+COMMENT ON COLUMN "public"."video_projects"."thumbnail_url" IS 'Preserved thumbnail URL for display after cleanup deletes all other media';
 
 
 
@@ -2026,6 +2037,10 @@ CREATE INDEX "idx_video_editor_media_user_project_date" ON "public"."video_edito
 
 
 CREATE INDEX "idx_video_project_state_project" ON "public"."video_project_state" USING "btree" ("project_id");
+
+
+
+CREATE INDEX "idx_video_projects_cleanup" ON "public"."video_projects" USING "btree" ("created_at") WHERE (("cleanup_status" IS NULL) AND ("status" = ANY (ARRAY['completed'::"text", 'failed'::"text", 'cancelled'::"text"])));
 
 
 

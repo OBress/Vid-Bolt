@@ -4,12 +4,16 @@ import { writeFile, unlink, readFile, mkdir, stat } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
+import { requireAdmin, isAuthError } from "@/lib/utils/admin-auth";
+import { audioCleanLimiter } from "@/lib/utils/rate-limiters";
 
 /**
  * Audio Cleaning API Route
  * 
  * Uses MMM (Melodic Metadata Massacrer) to remove AI fingerprints,
  * watermarks, and metadata from audio files.
+ * 
+ * SECURITY: Admin-only endpoint. Rate limited to 5 req/min.
  * 
  * @see https://github.com/geeknik/mmm
  */
@@ -33,6 +37,14 @@ async function ensureTempDir() {
 }
 
 export async function POST(request: NextRequest) {
+  // Admin-only
+  const auth = await requireAdmin();
+  if (isAuthError(auth)) return auth;
+
+  // Rate limit check
+  const rateLimited = audioCleanLimiter.check(auth.user.id);
+  if (rateLimited) return rateLimited;
+
   const startTime = Date.now();
   let inputPath: string | null = null;
   let outputPath: string | null = null;

@@ -658,7 +658,7 @@ export function UniversalScriptTester({
         output.expandedBeats?.map((b) => b.narration).join("\n\n") ||
         "";
 
-      // Trigger the Inngest workflow
+      // Trigger the BullMQ job
       const response = await fetch("/api/visual-director/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -44,9 +44,9 @@ import { PROJECT_PRESETS } from "@/lib/constants/project-presets";
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { isCollapsed, toggle, collapse } = useSidebar();
+  const { isCollapsed, isMobile, toggle, collapse } = useSidebar();
   const [isHovered, setIsHovered] = useState(false);
-  const isVisuallyCollapsed = isCollapsed && !isHovered;
+  const isVisuallyCollapsed = isMobile ? isCollapsed : (isCollapsed && !isHovered);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([
     "media",
     "analytics",
@@ -106,13 +106,17 @@ export function Sidebar() {
   return (
     <>
       <div
-        onMouseEnter={() => isCollapsed && setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
+        onMouseEnter={() => !isMobile && isCollapsed && setIsHovered(true)}
+        onMouseLeave={() => !isMobile && setIsHovered(false)}
         className={`${
-          isVisuallyCollapsed ? "w-16" : "w-70"
-        } bg-neutral-900 border-r border-neutral-700 transition-all duration-300 fixed md:relative z-50 md:z-auto h-full md:h-auto ${
-          !isVisuallyCollapsed ? "md:block" : ""
-        }`}
+          isMobile
+            ? `w-72 fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-out ${
+                isCollapsed ? "-translate-x-full" : "translate-x-0"
+              }`
+            : `${
+                isVisuallyCollapsed ? "w-16" : "w-70"
+              } relative transition-all duration-300`
+        } bg-neutral-900 border-r border-neutral-700 h-full`}
       >
         <div
           className={`flex flex-col h-full ${isVisuallyCollapsed ? "p-2" : "p-4"}`}
@@ -125,12 +129,14 @@ export function Sidebar() {
                   : "opacity-100 w-auto"
               }`}
             >
-              <h1 className="text-orange-500 font-bold text-lg tracking-wider whitespace-nowrap">
-                VID BOLT
-              </h1>
-              <p className="text-neutral-500 text-xs whitespace-nowrap">
-                v1.0.0 BETA
-              </p>
+              <Link href="/command-center" className="group/logo">
+                <h1 className="text-orange-500 font-bold text-lg tracking-wider whitespace-nowrap group-hover/logo:text-orange-400 transition-colors">
+                  VID BOLT
+                </h1>
+                <p className="text-neutral-500 text-xs whitespace-nowrap">
+                  v1.0.0 BETA
+                </p>
+              </Link>
             </div>
             <Button
               variant="ghost"
@@ -149,6 +155,7 @@ export function Sidebar() {
           <nav className="space-y-4 mb-8 flex-1 overflow-y-auto custom-scrollbar">
             <Link
               href="/command-center"
+              onClick={() => isMobile && collapse()}
               className={`w-full flex items-center rounded transition-colors mb-4 ${
                 isVisuallyCollapsed ? "justify-center p-2 gap-0" : "p-3 gap-3"
               } ${
@@ -227,6 +234,7 @@ export function Sidebar() {
                             <Link
                               key={item.id}
                               href={item.href}
+                              onClick={() => isMobile && collapse()}
                               className={`block p-2 text-sm rounded transition-colors ${
                                 pathname === item.href
                                   ? "text-orange-500 font-medium"
@@ -264,6 +272,7 @@ export function Sidebar() {
                 <Link
                   key={item.id}
                   href={item.href}
+                  onClick={() => isMobile && collapse()}
                   className={`w-full flex items-center rounded transition-colors ${
                     isVisuallyCollapsed
                       ? "justify-center p-2 gap-0"
@@ -394,9 +403,9 @@ export function Sidebar() {
       </Dialog>
 
       {/* Mobile Overlay */}
-      {!isVisuallyCollapsed && (
+      {isMobile && !isCollapsed && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          className="fixed inset-0 bg-black/60 z-40"
           onClick={collapse}
         />
       )}

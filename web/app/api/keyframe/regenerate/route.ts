@@ -19,6 +19,7 @@ import {
   type AspectRatio 
 } from "@/lib/services/gpu-api-service";
 import { generatePresignedPutUrl } from "@/lib/services/r2-storage";
+import { keyframeLimiter } from "@/lib/utils/rate-limiters";
 
 // Request body type
 interface KeyframeRegenerateRequest {
@@ -70,6 +71,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<KeyframeR
         { status: 401 }
       );
     }
+
+    // Rate limit check
+    const rateLimited = keyframeLimiter.check(user.id);
+    if (rateLimited) return rateLimited as NextResponse<KeyframeRegenerateResponse>;
 
     // Parse request body
     const body: KeyframeRegenerateRequest = await request.json();

@@ -2,6 +2,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { generateEmbedding } from '@/lib/ai/embedding';
+import { requireAdmin, isAuthError } from '@/lib/utils/admin-auth';
 
 // Mock data used for the test
 const MOCK_DATA = {
@@ -18,7 +19,14 @@ const MOCK_DATA = {
   }
 };
 
+/**
+ * SECURITY: Admin-only endpoint.
+ */
 export async function POST() {
+  // Admin-only
+  const auth = await requireAdmin();
+  if (isAuthError(auth)) return auth;
+
   try {
     const supabase = createServiceClient();
     

@@ -35,3 +35,4 @@ export { imageGenProcessor } from './image-gen';
 export { videoGenProcessor } from './video-gen';
 export { verifierProcessor } from './verifier';
 export { imageEditProcessor } from './image-edit';
+export { dataRetentionCleanupProcessor } from './data-retention-cleanup';

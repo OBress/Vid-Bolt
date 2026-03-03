@@ -9,8 +9,18 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteFilesWithPrefix, isR2Configured, STORAGE_PATHS } from '@/lib/services/r2-storage';
+import { requireAdmin, isAuthError } from '@/lib/utils/admin-auth';
 
+/**
+ * DELETE /api/admin/clear-temporary
+ * 
+ * SECURITY: Admin-only endpoint.
+ */
 export async function DELETE(_request: NextRequest) {
+  // Admin-only
+  const auth = await requireAdmin();
+  if (isAuthError(auth)) return auth;
+
   try {
     // Check if R2 is configured
     if (!isR2Configured()) {

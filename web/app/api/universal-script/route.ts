@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-// import { inngest } from "@/lib/inngest/client"; // Replaced with BullMQ
 import { universalScriptQueue } from "@/lib/queues";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
@@ -113,7 +112,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: taskError.message }, { status: 500 });
     }
 
-    // Add job to BullMQ queue (replaces inngest.send)
+    // Add job to BullMQ queue
     const job = await universalScriptQueue.add(
       'universal-script',
       {

@@ -308,19 +308,19 @@ export default function ProjectPage({
               </Button>
             </PageHeader>
 
-            <div className="flex-1 overflow-auto p-6 max-h-[calc(100vh-140px)]">
+            <div className="flex-1 overflow-auto p-3 md:p-6 max-h-[calc(100dvh-140px)]">
               <TabsContent
                 value="videos"
                 className="mt-0 outline-none space-y-6"
               >
-                <div className="flex items-center justify-between bg-neutral-900/40 p-4 rounded-lg border border-neutral-800">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-neutral-900/40 p-3 md:p-4 rounded-lg border border-neutral-800">
                   <div className="space-y-1">
                     <h3 className="text-sm font-medium">Video Assets</h3>
                     <p className="text-xs text-neutral-500">
                       Manage and preview your video project files.
                     </p>
                   </div>
-                  <div className="flex bg-black/40 p-1 rounded-full border border-neutral-800 relative w-60">
+                  <div className="flex bg-black/40 p-1 rounded-full border border-neutral-800 relative w-full sm:w-60">
                     <button
                       onClick={() => setShowFinished(false)}
                       className={`flex-1 px-4 py-1.5 rounded-full text-[10px] font-bold tracking-widest uppercase transition-all duration-300 relative z-10 ${
@@ -387,6 +387,9 @@ export default function ProjectPage({
                             currentStep={video.current_step}
                             thumbnailUrl={
                               (video.metadata as any)?.thumbnail_url
+                            }
+                            thumbnailSvg={
+                              (video.metadata as any)?.thumbnail_svg
                             }
                             onClick={() => handleVideoClick(index)}
                             onDelete={fetchVideos}

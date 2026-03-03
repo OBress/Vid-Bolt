@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-// import { inngest } from "@/lib/inngest/client"; // Replaced with BullMQ
 import { writingQueue } from "@/lib/queues";
 import type { VideoProject } from "@/types/video";
 
@@ -129,7 +128,7 @@ export async function POST(
       })
       .eq("id", videoId);
 
-    // Add job to BullMQ queue (replaces inngest.send)
+    // Add job to BullMQ queue
     const job = await writingQueue.add(
       'write-script', // Job name
       {

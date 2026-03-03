@@ -45,16 +45,16 @@ export function WizardProgress({
   const halfStepPercent = 100 / (stepCount * 2);
 
   return (
-    <div className="w-full flex items-center justify-between px-6 py-4">
+    <div className="w-full flex items-center justify-between px-2 sm:px-6 py-3 sm:py-4">
       {/* Left: Exit Button */}
-      <div className="w-24 flex-shrink-0 flex justify-start z-20">
+      <div className="w-10 sm:w-24 flex-shrink-0 flex justify-start z-20">
         {onBack && (
           <button
             onClick={onBack}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-800/80 border border-neutral-700 hover:border-orange-500/50 hover:bg-neutral-800 transition-all duration-300 group"
           >
             <ArrowLeft className="w-4 h-4 text-neutral-400 group-hover:text-orange-500 transition-colors" />
-            <span className="text-xs font-mono text-neutral-400 group-hover:text-orange-500 uppercase tracking-widest transition-colors">
+            <span className="text-xs font-mono text-neutral-400 group-hover:text-orange-500 uppercase tracking-widest transition-colors hidden sm:inline">
               Exit
             </span>
           </button>
@@ -241,7 +241,7 @@ export function WizardProgress({
                   <span
                     className={`
                       mt-3 text-[10px] font-mono uppercase tracking-wider text-center px-1
-                      transition-all duration-300
+                      transition-all duration-300 hidden sm:block
                       ${
                         isSkipped
                           ? "text-neutral-600 line-through decoration-neutral-600"
@@ -265,7 +265,7 @@ export function WizardProgress({
       </div>
 
       {/* Right spacer (Balances Left) */}
-      <div className="w-24 flex-shrink-0" />
+      <div className="w-10 sm:w-24 flex-shrink-0" />
     </div>
   );
 }

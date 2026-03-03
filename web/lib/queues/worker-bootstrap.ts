@@ -32,7 +32,7 @@ console.log('  PEXELS_API_KEY:', process.env.PEXELS_API_KEY ? 'âœ“ present' : 'â
 
 import { Worker, Processor } from 'bullmq';
 import { getRedisConnection, closeRedisConnection, isRedisReady } from './redis';
-import { closeAllQueues, gpuShutdownCheckQueue } from './queues';
+import { closeAllQueues, gpuShutdownCheckQueue, dataRetentionCleanupQueue } from './queues';
 import { lambdaConfig } from '@/lib/services/render/lambda-config';
 import { 
   writingProcessor, 
@@ -64,6 +64,7 @@ import {
   videoGenProcessor,
   verifierProcessor,
   imageEditProcessor,
+  dataRetentionCleanupProcessor,
 } from './workers';
 
 // ============================================================================
@@ -256,6 +257,12 @@ const workerConfigs: WorkerConfig[] = [
     concurrency: 1,
     description: 'GCM consistency editing (Qwen-Image-Edit-2511)',
   },
+  {
+    queue: 'data-retention-cleanup',
+    processor: dataRetentionCleanupProcessor,
+    concurrency: 1,
+    description: 'Automated data retention cleanup (R2 + Supabase)',
+  },
 ];
 
 // ============================================================================
@@ -279,6 +286,17 @@ async function registerRepeatableJobs(): Promise<void> {
     }
   );
   console.log('[WorkerBootstrap] Registered: gpu-shutdown-check (every 5 minutes)');
+
+  // Data retention cleanup - every 6 hours
+  await dataRetentionCleanupQueue.add(
+    'cleanup-expired-videos',
+    {},
+    {
+      repeat: { every: 6 * 60 * 60 * 1000 },
+      jobId: 'data-retention-repeatable'  // Prevents duplicate registrations
+    }
+  );
+  console.log('[WorkerBootstrap] Registered: data-retention-cleanup (every 6 hours)');
 }
 
 // ============================================================================

@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Bell } from "lucide-react";
+import { Bell, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getActiveLabel } from "@/app/command-center/navigation";
 import { useMediaProjects } from "@/hooks/use-media-projects";
@@ -10,11 +10,13 @@ import { TaskStatusButton } from "@/components/features/tasks/TaskStatusButton";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { VMStatus } from "@/components/layout/VMStatus";
 import { GpuHoursIndicator } from "@/components/layout/GpuHoursIndicator";
+import { useSidebar } from "./SidebarContext";
 
 export function TopBar() {
   const pathname = usePathname();
   const { projects } = useMediaProjects();
   const { currentVideoName } = useNavigationStore();
+  const { toggle } = useSidebar();
 
   // Extract project name if on a media project page
   const { label, displayLabel } = useMemo(() => {
@@ -50,20 +52,38 @@ export function TopBar() {
   }, [pathname, projects, currentVideoName]);
 
   return (
-    <div className="h-16 bg-neutral-800 border-b border-neutral-700 flex items-center justify-between px-6 relative">
-      <div className="flex items-center gap-4">
-        <div className="text-sm text-neutral-400">
-          {label === "COMMAND CENTER" ? (
-            displayLabel
-          ) : (
-            <>COMMAND CENTER / {displayLabel}</>
-          )}
+    <div className="h-14 md:h-16 bg-neutral-800 border-b border-neutral-700 flex items-center justify-between px-3 md:px-6 relative">
+      <div className="flex items-center gap-2 md:gap-4 min-w-0">
+        {/* Mobile hamburger */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggle}
+          className="md:hidden text-neutral-400 hover:text-orange-500 flex-shrink-0"
+        >
+          <Menu className="w-5 h-5" />
+        </Button>
+
+        <div className="text-sm text-neutral-400 truncate">
+          {/* Desktop: full breadcrumb */}
+          <span className="hidden md:inline">
+            {label === "COMMAND CENTER" ? (
+              displayLabel
+            ) : (
+              <>COMMAND CENTER / {displayLabel}</>
+            )}
+          </span>
+          {/* Mobile: short label only */}
+          <span className="md:hidden">{displayLabel}</span>
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        <VMStatus />
-        <GpuHoursIndicator />
+      <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+        {/* Hide VM/GPU indicators on small screens */}
+        <div className="hidden sm:flex items-center gap-2">
+          <VMStatus />
+          <GpuHoursIndicator />
+        </div>
         <TaskStatusButton />
         <Button
           variant="ghost"

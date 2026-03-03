@@ -6,8 +6,18 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { requireAdmin, isAuthError } from '@/lib/utils/admin-auth';
 
+/**
+ * DELETE /api/stock-media/clear-vector-db
+ * 
+ * SECURITY: Admin-only endpoint.
+ */
 export async function DELETE(_request: NextRequest) {
+  // Admin-only
+  const auth = await requireAdmin();
+  if (isAuthError(auth)) return auth;
+
   console.log('[ClearVectorDB] Starting clear request...');
   
   try {

@@ -1,8 +1,7 @@
 /**
  * Shared Worker Utilities
  * ============================================================================
- * Common utilities for BullMQ workers. This replaces the inngest/functions/shared.ts
- * module so workers don't depend on the Inngest folder.
+ * Common utilities for BullMQ workers.
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";

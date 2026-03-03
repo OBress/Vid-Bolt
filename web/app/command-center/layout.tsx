@@ -13,7 +13,7 @@ function CommandCenterContent({ children }: { children: React.ReactNode }) {
   if (isFocusMode) {
     // Focus mode: full viewport, no chrome — maximum performance
     return (
-      <div className="flex h-screen bg-black">
+      <div className="flex h-dvh bg-black">
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 overflow-hidden">{children}</div>
         </div>
@@ -22,7 +22,7 @@ function CommandCenterContent({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen bg-black">
+    <div className="flex h-dvh bg-black">
       <Sidebar />
       <div className={`flex-1 flex flex-col min-w-0`}>
         <TopBar />

@@ -36,6 +36,7 @@ interface VideoCardProps {
   progress: number;
   stage?: VideoStage;
   thumbnailUrl?: string;
+  thumbnailSvg?: string;
   duration?: string;
   updatedAt?: string;
   currentStep?: string | null;
@@ -98,6 +99,7 @@ export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
       progress,
       stage,
       thumbnailUrl,
+      thumbnailSvg,
       duration,
       updatedAt,
       currentStep,
@@ -171,6 +173,11 @@ export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
               src={thumbnailUrl}
               alt={title}
               className="w-full h-full object-cover"
+            />
+          ) : thumbnailSvg ? (
+            <div
+              className="w-full h-full flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-cover"
+              dangerouslySetInnerHTML={{ __html: thumbnailSvg }}
             />
           ) : (
             <Play className="w-8 h-8 text-neutral-700 group-hover:text-orange-500/50 transition-colors" />

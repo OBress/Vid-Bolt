@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { stripe } from "@/lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
+import { stripeLimiter } from "@/lib/utils/rate-limiters";
 
 /**
  * POST /api/stripe/create-checkout
@@ -20,6 +21,10 @@ export async function POST(request: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Rate limit check
+    const rateLimited = stripeLimiter.check(user.id);
+    if (rateLimited) return rateLimited;
 
     const body = await request.json();
     const hours = Math.round(Number(body.hours));

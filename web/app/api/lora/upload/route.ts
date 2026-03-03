@@ -8,6 +8,7 @@ import {
 } from '@/lib/services/r2-storage';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
+import { loraUploadLimiter } from '@/lib/utils/rate-limiters';
 
 // ---------------------------------------------------------------------------
 // Route Segment Config — allow large LoRA uploads (up to 500MB)
@@ -52,6 +53,10 @@ export async function POST(request: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Rate limit check
+    const rateLimited = loraUploadLimiter.check(user.id);
+    if (rateLimited) return rateLimited;
 
     // Parse multipart form data
     const formData = await request.formData();

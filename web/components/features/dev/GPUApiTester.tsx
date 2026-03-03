@@ -3756,7 +3756,7 @@ export function GPUApiTester({
                 <strong className="text-neutral-400">Note:</strong>{" "}
                 {apiMode === "mock" ? (
                   <>
-                    Mock mode uses Inngest workflows for async testing. Results
+                    Mock mode uses BullMQ workers for async testing. Results
                     are polled from the database.
                   </>
                 ) : (

@@ -3,8 +3,7 @@
  * ============================================================================
  * BullMQ worker for the writing workflow (script generation).
  * 
- * This is a direct conversion of the Inngest writing workflow.
- * All step.run() calls are replaced with inline async code.
+ * Processes script generation jobs using the writing workflow.
  * Rate limiting is handled via the withRateLimitHandling wrapper.
  */
 

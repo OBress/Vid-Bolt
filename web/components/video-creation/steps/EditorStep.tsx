@@ -291,7 +291,7 @@ export function EditorStep({
 
   return (
     <div
-      className={`dark flex flex-col h-full w-full bg-background ${isLocked ? "pointer-events-none" : ""}`}
+      className={`dark flex flex-col h-full w-full bg-background overflow-hidden ${isLocked ? "pointer-events-none" : ""}`}
     >
       {/* Editor — wizard data is imported INSIDE the editor provider after store.initialize() */}
       <div className="flex-1 overflow-hidden bg-background">
