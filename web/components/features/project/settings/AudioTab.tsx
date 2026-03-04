@@ -42,7 +42,7 @@ import { generateInworldSpeechAction } from "@/app/actions/inworld-actions";
 const PROVIDER_CONFIG = {
   inworld: {
     models: [
-      { id: "inworld-tts-1-max", label: "Max" },
+      { id: "inworld-tts-1.5-max", label: "Max" },
     ],
     voices: [], // Dynamic selection
     // Settings availability for Inworld

@@ -20,8 +20,8 @@ export const processLimiter = createRateLimiter("process", ONE_MINUTE, 30);
 /** Stripe checkout creation — 10 req/min */
 export const stripeLimiter = createRateLimiter("stripe", ONE_MINUTE, 10);
 
-/** GCP VM operations — 5 req/min */
-export const gcpLimiter = createRateLimiter("gcp", ONE_MINUTE, 5);
+/** GCP VM operations — 20 req/min (status polling every ~10s during transitions) */
+export const gcpLimiter = createRateLimiter("gcp", ONE_MINUTE, 20);
 
 /** Stock media batch scraping — 10 req/min */
 export const stockScrapeLimiter = createRateLimiter("stock-scrape", ONE_MINUTE, 10);

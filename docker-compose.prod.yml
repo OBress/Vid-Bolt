@@ -1,0 +1,174 @@
+# =============================================================================
+# Vibbo Production Stack — Hetzner CX-43
+# =============================================================================
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker rollout -f docker-compose.prod.yml app    (zero-downtime deploy)
+#   docker rollout -f docker-compose.prod.yml workers (zero-downtime deploy)
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Traefik v3 — Reverse Proxy + Auto-SSL
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.3
+    container_name: vibbo-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - ./traefik/acme.json:/acme.json
+    networks:
+      - web
+      - internal
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 — Job Queue Backend
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: vibbo-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+
+  # ---------------------------------------------------------------------------
+  # Next.js App — Web Frontend + API
+  # ---------------------------------------------------------------------------
+  app:
+    image: ghcr.io/obress/vibbo-web:latest
+    container_name: vibbo-app
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - HOSTNAME=0.0.0.0
+      - PORT=3000
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - web
+      - internal
+    healthcheck:
+      test:
+        ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.app.rule=Host(`app.vidbolt.app`)"
+      - "traefik.http.routers.app.entrypoints=websecure"
+      - "traefik.http.routers.app.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.app.middlewares=security-headers@file,compress@file"
+      - "traefik.http.services.app.loadbalancer.server.port=3000"
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+
+  # ---------------------------------------------------------------------------
+  # BullMQ Workers — Background Job Processing
+  # ---------------------------------------------------------------------------
+  workers:
+    image: ghcr.io/obress/vibbo-web:latest
+    container_name: vibbo-workers
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+    command: ["npm", "run", "workers:start"]
+    stop_grace_period: 120s
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('net').connect(6379, 'redis').on('connect', () => process.exit(0)).on('error', () => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "3"
+          memory: 4G
+
+  # ---------------------------------------------------------------------------
+  # Bull Board — Queue Dashboard (admin.vidbolt.app/queues/)
+  # ---------------------------------------------------------------------------
+  bull-board:
+    image: deadly0/bull-board:latest
+    container_name: vibbo-bull-board
+    restart: unless-stopped
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_USE_TLS=false
+      - BULL_PREFIX=bull
+      - BASE_PATH=/queues
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - web
+      - internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.bullboard.rule=Host(`admin.vidbolt.app`) && PathPrefix(`/queues`)"
+      - "traefik.http.routers.bullboard.entrypoints=websecure"
+      - "traefik.http.routers.bullboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.bullboard.middlewares=admin-auth@file"
+      - "traefik.http.services.bullboard.loadbalancer.server.port=3000"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+
+networks:
+  web:
+    external: true
+  internal:
+    driver: bridge
+
+volumes:
+  redis_data:

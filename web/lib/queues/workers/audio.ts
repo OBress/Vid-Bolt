@@ -114,9 +114,22 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
         }
 
         // Generate TTS
-        const { generateSpeech } = await import('@/lib/services/inworld-tts');
+        const { generateSpeech, validateVoice } = await import('@/lib/services/inworld-tts');
+        
+        // Validate voice on first chunk (once per job, not per chunk)
+        let resolvedVoice = voiceName || 'Hades';
+        if (i === 0) {
+          resolvedVoice = await validateVoice(userId, resolvedVoice);
+          // Store validated voice for subsequent chunks
+          (job.data as any)._validatedVoice = resolvedVoice;
+        } else {
+          // Use previously validated voice
+          resolvedVoice = (job.data as any)._validatedVoice || resolvedVoice;
+        }
+
         const ttsResult = await generateSpeech(userId, chunk.text, {
-          voiceId: voiceName || voiceModel,
+          voiceId: resolvedVoice,
+          modelId: voiceModel || undefined,
           speakingRate: voiceSettings?.speakingRate,
           temperature: Math.max(0.1, voiceSettings?.temperature || 1.0),
         });

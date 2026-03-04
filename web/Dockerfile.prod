@@ -1,0 +1,77 @@
+# =============================================================================
+# Vid-Bolt Production Dockerfile — Multi-Stage Standalone Build
+# =============================================================================
+# Produces a ~200MB image (vs ~1.5GB with single-stage).
+#
+# Usage:
+#   docker build -f Dockerfile.prod -t vibbo-web .
+#   docker run -p 3000:3000 vibbo-web
+# =============================================================================
+
+# ---- Stage 1: Dependencies ----
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+# Install system deps needed for native modules
+RUN apk add --no-cache libc6-compat python3 make g++
+
+COPY package*.json ./
+RUN npm ci --legacy-peer-deps --production=false
+
+# ---- Stage 2: Build ----
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Build args for public env vars needed at build time
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_APP_URL
+ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ARG COMMIT_SHA
+
+# Disable telemetry during build
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN npm run build
+
+# ---- Stage 3: Production Runtime ----
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+# Install runtime system dependencies (yt-dlp + ffmpeg)
+RUN apk add --no-cache python3 py3-pip ffmpeg \
+    && pip3 install yt-dlp --break-system-packages
+
+# Verify installations
+RUN yt-dlp --version && ffmpeg -version
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy standalone build output
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Copy worker files (needed for npm run workers:start)
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/lib ./lib
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Default: run the Next.js standalone server (overridden for workers)
+CMD ["node", "server.js"]

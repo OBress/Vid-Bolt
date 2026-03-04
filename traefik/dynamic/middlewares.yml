@@ -1,0 +1,37 @@
+# =============================================================================
+# Traefik Dynamic Configuration — Middlewares
+# =============================================================================
+
+http:
+  middlewares:
+    # Basic Auth for admin subdomain (queues + grafana)
+    # Generate password: htpasswd -nb admin YOUR_PASSWORD
+    # Escape $ with $$ in docker-compose labels
+    admin-auth:
+      basicAuth:
+        users:
+          - "${ADMIN_BASIC_AUTH}"
+
+    # Rate limiting
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 200
+        period: 1s
+
+    # Security headers
+    security-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        frameDeny: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        customFrameOptionsValue: "SAMEORIGIN"
+
+    # Compress responses (exclude SSE streams)
+    compress:
+      compress:
+        excludedContentTypes:
+          - "text/event-stream"

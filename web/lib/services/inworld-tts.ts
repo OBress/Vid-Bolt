@@ -50,6 +50,18 @@ export async function generateSpeech(
   const apiKey = await getInworldApiKey(userId);
   const config = { ...DEFAULT_OPTIONS, ...options };
 
+  const requestBody = {
+    text,
+    voiceId: config.voiceId,
+    modelId: config.modelId,
+    // Inworld requires temperature > 0.0 and <= 2.0
+    // We clamp to 0.1 minimum to be safe, and 2.0 maximum
+    temperature: Math.max(0.1, Math.min(2.0, config.temperature || 1.0)),
+    speakingRate: config.speakingRate ?? 1.0,
+    timestampType: "WORD",
+  };
+
+
   try {
     const response = await fetch(INWORLD_TTS_API_URL, {
       method: "POST",
@@ -57,22 +69,12 @@ export async function generateSpeech(
         "Authorization": `Basic ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        text,
-        voiceId: config.voiceId,
-        modelId: config.modelId,
-        // Inworld requires temperature > 0.0 and <= 2.0
-        // We clamp to 0.1 minimum to be safe, and 2.0 maximum
-        temperature: Math.max(0.1, Math.min(2.0, config.temperature || 1.0)),
-        audioConfig: {
-          speakingRate: config.speakingRate,
-        },
-        timestampType: "WORD",
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error(`[Inworld TTS] API error (${response.status}):`, errorText);
       throw new Error(`Inworld API error (${response.status}): ${errorText}`);
     }
 
@@ -127,24 +129,42 @@ export const INWORLD_VOICES = {
 
 export type InworldVoicePreset = typeof INWORLD_VOICES[keyof typeof INWORLD_VOICES];
 
+/**
+ * Voice shape returned by the Inworld v1/voices API.
+ */
 export interface InworldVoice {
+  /** The voice ID used in TTS generation (e.g. "Alex", "Hades") */
+  voiceId: string;
+  /** Display name for the UI */
+  displayName: string;
+  /** Language codes (e.g. ["en"]) */
+  languages: string[];
+  /** Description of the voice */
+  description?: string;
+  /** Tags (e.g. ["male", "warm", "calm"]) */
+  tags: string[];
+  /** Whether this is a custom/cloned voice */
+  isCustom: boolean;
+  
+  // Legacy compat — kept as alias so old references don't crash
+  /** @deprecated Use voiceId instead */
   name: string;
-  languageCodes: string[];
-  voiceMetadata: {
-    gender: "MALE" | "FEMALE" | "NEUTRAL" | "GENDER_UNSPECIFIED";
-    age: "AGE_UNSPECIFIED" | "TEEN" | "YOUNG_ADULT" | "MIDDLE_AGED" | "OLD";
-    accent: "ACCENT_UNSPECIFIED" | "AMERICAN" | "BRITISH" | "AUSTRALIAN" | "INDIAN" | "AFRICAN" | "ASIAN" | "EUROPEAN";
-    description?: string;
-  };
-  naturalSampleRateHertz: number;
 }
 
 export interface ListVoicesResponse {
-  voices: InworldVoice[];
+  voices: Array<{
+    voiceId: string;
+    displayName: string;
+    languages?: string[];
+    description?: string;
+    tags?: string[];
+    isCustom?: boolean;
+  }>;
 }
 
 /**
  * Fetch available voices from Inworld TTS API.
+ * Uses the v1/voices endpoint (matching the v1/voice generation endpoint).
  */
 export async function listVoices(userId: string): Promise<InworldVoice[]> {
   try {
@@ -154,7 +174,10 @@ export async function listVoices(userId: string): Promise<InworldVoice[]> {
       return [];
     }
 
-    const response = await fetch("https://api.inworld.ai/tts/v1alpha/voices", {
+    // Use v1/voices to match the v1/voice generation endpoint
+    const listUrl = "https://api.inworld.ai/tts/v1/voices";
+
+    const response = await fetch(listUrl, {
       method: "GET",
       headers: {
         Authorization: `Basic ${apiKey}`,
@@ -164,15 +187,56 @@ export async function listVoices(userId: string): Promise<InworldVoice[]> {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Inworld ListVoices failed:", response.status, errorText);
+      console.error("[Inworld TTS] ListVoices failed:", response.status, errorText);
       throw new Error(`Failed to list voices: ${response.statusText}`);
     }
 
     const data = (await response.json()) as ListVoicesResponse;
-    return data.voices || [];
+    const rawVoices = data.voices || [];
+    
+    // Normalize to InworldVoice shape
+    const voices: InworldVoice[] = rawVoices.map(v => ({
+      voiceId: v.voiceId,
+      displayName: v.displayName || v.voiceId,
+      languages: v.languages || [],
+      description: v.description,
+      tags: v.tags || [],
+      isCustom: v.isCustom || false,
+      // Legacy compat
+      name: v.voiceId,
+    }));
+
+    return voices;
   } catch (error) {
-    console.error("Error listing Inworld voices:", error);
+    console.error("[Inworld TTS] Error listing voices:", error);
     return [];
+  }
+}
+
+/**
+ * Validate that a voice ID exists in the Inworld API.
+ * Returns the voice ID if valid, otherwise returns the fallback.
+ */
+export async function validateVoice(
+  userId: string,
+  voiceId: string,
+  fallback: string = DEFAULT_OPTIONS.voiceId
+): Promise<string> {
+  try {
+    const voices = await listVoices(userId);
+    if (voices.length === 0) {
+      console.warn(`[Inworld TTS] No voices returned from API, using fallback: ${fallback}`);
+      return fallback;
+    }
+    const exists = voices.some(v => v.voiceId === voiceId);
+    if (!exists) {
+      console.warn(`[Inworld TTS] Voice "${voiceId}" not found. Available: [${voices.slice(0, 10).map(v => v.voiceId).join(', ')}...]. Using fallback: ${fallback}`);
+      return fallback;
+    }
+    return voiceId;
+  } catch {
+    console.warn(`[Inworld TTS] Voice validation failed, using fallback: ${fallback}`);
+    return fallback;
   }
 }
 

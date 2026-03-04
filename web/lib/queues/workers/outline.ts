@@ -92,6 +92,7 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
       status: 'running',
       current_phase: 'preprocessing',
       current_step: 'Research & Analysis',
+      progress_percent: 0,
       started_at: new Date().toISOString(),
     });
 
@@ -108,6 +109,9 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
 
       await updateStepStatus(taskId, stepId, { status: 'running' });
 
+      // Track last progress update to throttle DB writes (~30s interval)
+      let lastProgressUpdate = 0;
+
       try {
         const result = await executeResearchPhase({
           userId,
@@ -117,6 +121,22 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
           angle: input.angle,
           sourcePreferences: input.sourcePreferences,
           useValyu: true, // Enable Valyu for V2 fields (narrative, keyDevelopments, entitiesV2)
+          onProgress: async (_status: string, elapsedMs: number) => {
+            // Update progress_percent from 1-24% over ~10 minutes during research
+            // Throttle to at most once every 30 seconds to avoid excessive DB writes
+            const now = Date.now();
+            if (now - lastProgressUpdate < 30_000) return;
+            lastProgressUpdate = now;
+
+            const expectedDurationMs = 10 * 60 * 1000; // 10 minutes expected
+            const researchProgress = Math.min(24, Math.round((elapsedMs / expectedDurationMs) * 25));
+            // Only update if progress actually moved
+            if (researchProgress > 0) {
+              await updateTaskStatus(taskId, {
+                progress_percent: researchProgress,
+              });
+            }
+          },
         });
 
         await completeStep(taskId, stepId);
@@ -272,16 +292,14 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
     }
 
     // Save to video_projects.metadata for persistence between steps
-    const { error: videoError } = await supabase
-      .from('video_projects')
-      .update({
-        metadata: {
-          outlineOutput: output,
-          outlineConfig: input,
-        },
-        // Note: current_stage is NOT updated here - it's updated in the wizard when user navigates
-      })
-      .eq('id', videoId);
+    // Uses merge_video_metadata RPC to preserve existing fields (e.g. thumbnail_svg)
+    const { error: videoError } = await supabase.rpc('merge_video_metadata', {
+      p_video_id: videoId,
+      p_updates: {
+        outlineOutput: output,
+        outlineConfig: input,
+      },
+    });
 
     if (videoError) {
       console.error(`[Outline:Finalize] Video DB UPDATE FAILED:`, videoError);

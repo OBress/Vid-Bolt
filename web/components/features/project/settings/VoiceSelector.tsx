@@ -94,14 +94,14 @@ export function VoiceSelector({
     await updateSettings({ favorite_voices: Array.from(newFavorites) });
   };
 
-  const selectedInworldVoice = voices.find((v) => v.name === selectedVoiceId);
+  const selectedInworldVoice = voices.find((v) => v.voiceId === selectedVoiceId);
   const selectedStaticVoice = staticVoices.find(
     (v) => v.id === selectedVoiceId
   );
 
   const displayLabel =
     provider === "inworld"
-      ? selectedInworldVoice?.name || selectedVoiceId
+      ? selectedInworldVoice?.displayName || selectedVoiceId
       : selectedStaticVoice?.label || selectedVoiceId;
 
   const isDynamic = provider === "inworld";
@@ -127,9 +127,10 @@ export function VoiceSelector({
       const q = searchQuery.toLowerCase();
       filtered = voices.filter(
         (v) =>
-          v.name.toLowerCase().includes(q) ||
-          v.voiceMetadata.gender.toLowerCase().includes(q) ||
-          v.voiceMetadata.accent.toLowerCase().includes(q)
+          v.displayName.toLowerCase().includes(q) ||
+          v.voiceId.toLowerCase().includes(q) ||
+          v.tags?.some(t => t.toLowerCase().includes(q)) ||
+          v.description?.toLowerCase().includes(q)
       );
     }
 
@@ -137,7 +138,7 @@ export function VoiceSelector({
     const others: InworldVoice[] = [];
 
     filtered.forEach((v) => {
-      if (favorites.has(v.name)) {
+      if (favorites.has(v.voiceId)) {
         favs.push(v);
       } else {
         others.push(v);
@@ -186,7 +187,7 @@ export function VoiceSelector({
             <Search className="w-4 h-4 text-neutral-500 mr-2 shrink-0" />
             <Input
               placeholder="Search voices..."
-              className="border-0 bg-transparent h-8 p-0 focus-visible:ring-0 placeholder:text-neutral-500 text-sm"
+              className="border-0 bg-transparent h-8 px-1 py-0 focus-visible:ring-0 placeholder:text-neutral-500 text-sm"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               autoFocus
@@ -228,18 +229,18 @@ export function VoiceSelector({
                         </h4>
                         {filteredAndGrouped.favorites.map((voice) => (
                           <VoiceOption
-                            key={(voice as InworldVoice).name}
+                            key={(voice as InworldVoice).voiceId}
                             voice={voice as InworldVoice}
                             isSelected={
-                              selectedVoiceId === (voice as InworldVoice).name
+                              selectedVoiceId === (voice as InworldVoice).voiceId
                             }
                             isFavorite={true}
                             onSelect={() => {
-                              onSelect((voice as InworldVoice).name);
+                              onSelect((voice as InworldVoice).voiceId);
                               setOpen(false);
                             }}
                             onToggleFavorite={(e) =>
-                              toggleFavorite(e, (voice as InworldVoice).name)
+                              toggleFavorite(e, (voice as InworldVoice).voiceId)
                             }
                           />
                         ))}
@@ -253,18 +254,18 @@ export function VoiceSelector({
                         </h4>
                         {filteredAndGrouped.others.map((voice) => (
                           <VoiceOption
-                            key={(voice as InworldVoice).name}
+                            key={(voice as InworldVoice).voiceId}
                             voice={voice as InworldVoice}
                             isSelected={
-                              selectedVoiceId === (voice as InworldVoice).name
+                              selectedVoiceId === (voice as InworldVoice).voiceId
                             }
                             isFavorite={false}
                             onSelect={() => {
-                              onSelect((voice as InworldVoice).name);
+                              onSelect((voice as InworldVoice).voiceId);
                               setOpen(false);
                             }}
                             onToggleFavorite={(e) =>
-                              toggleFavorite(e, (voice as InworldVoice).name)
+                              toggleFavorite(e, (voice as InworldVoice).voiceId)
                             }
                           />
                         ))}
@@ -335,28 +336,27 @@ function VoiceOption({
               isSelected ? "text-orange-500" : "text-white"
             )}
           >
-            {voice.name}
+            {voice.displayName || voice.voiceId}
           </span>
-          {voice.languageCodes.includes("en-US") ? null : (
+          {voice.languages?.length > 0 && !voice.languages.includes("en") ? (
             <Badge
               variant="outline"
               className="text-[9px] h-4 px-1 border-neutral-700 shrink-0"
             >
-              {voice.languageCodes[0]}
+              {voice.languages[0]}
             </Badge>
-          )}
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-neutral-400">
-          <span className="bg-neutral-800/50 px-1 py-0.5 rounded text-neutral-400">
-            {voice.voiceMetadata.gender}
-          </span>
-          <span className="bg-neutral-800/50 px-1 py-0.5 rounded text-neutral-400">
-            {voice.voiceMetadata.age.replace("AGE_", "")}
-          </span>
-          {voice.voiceMetadata.accent !== "ACCENT_UNSPECIFIED" && (
-            <span className="bg-neutral-800/50 px-1 py-0.5 rounded text-neutral-400">
-              {voice.voiceMetadata.accent.replace("ACCENT_", "")}
+          {voice.tags?.map((tag) => (
+            <span key={tag} className="bg-neutral-800/50 px-1 py-0.5 rounded text-neutral-400">
+              {tag}
             </span>
+          ))}
+          {voice.isCustom && (
+            <Badge variant="outline" className="text-[9px] h-4 px-1 border-orange-700/50 text-orange-400 shrink-0">
+              Custom
+            </Badge>
           )}
         </div>
       </div>

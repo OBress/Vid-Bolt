@@ -78,10 +78,11 @@ export function TopBar() {
         </div>
       </div>
 
-      <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-        {/* Hide VM/GPU indicators on small screens */}
-        <div className="hidden sm:flex items-center gap-2">
+      <div className="flex items-center gap-3 flex-shrink-0">
+        <div className="hidden sm:block">
           <VMStatus />
+        </div>
+        <div className="hidden sm:block">
           <GpuHoursIndicator />
         </div>
         <TaskStatusButton />

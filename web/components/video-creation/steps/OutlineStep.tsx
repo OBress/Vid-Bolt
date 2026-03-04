@@ -231,7 +231,9 @@ export function OutlineStep({
   const [hasChanges, setHasChanges] = useState(false);
 
   // Simulated progress for Research phase (0-25% over ~10 minutes)
-  const [progressStartTime, setProgressStartTime] = useState<number | null>(null);
+  const [progressStartTime, setProgressStartTime] = useState<number | null>(
+    activeTaskIdProp ? Date.now() : null
+  );
   const [simulatedProgress, setSimulatedProgress] = useState(0);
 
   // Helper to normalize research toggle (handle legacy values)

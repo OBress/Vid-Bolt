@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import axios from "axios";
 import { toast } from "sonner";
@@ -32,6 +32,12 @@ export function useGCPVM(): UseGCPVMReturn {
   const [apiReady, setApiReady] = useState(false);
   const [targetStatus, setTargetStatus] = useState<string | null>(null);
   const [connectionChecked, setConnectionChecked] = useState(false);
+
+  // Refs so the polling effect can read latest values without restarting
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const targetStatusRef = useRef(targetStatus);
+  targetStatusRef.current = targetStatus;
 
   const supabase = createClient();
 
@@ -138,12 +144,10 @@ export function useGCPVM(): UseGCPVMReturn {
   }, [userId, supabase]);
 
   // Polling for status (only when connected)
-  // Dynamic interval: 5s during transitions, 60s when stable
+  // Dynamic interval: 10s during transitions, 60s when stable
+  // Uses refs for status/targetStatus so the effect doesn't restart on every status change
   useEffect(() => {
     if (!isConnected || !projectId) return;
-
-    const isTransitioning = ["PROVISIONING", "STAGING", "STOPPING"].includes(status);
-    const pollInterval = isTransitioning ? 5000 : 60000; // 5s or 60s
 
     const fetchStatus = async () => {
       try {
@@ -156,13 +160,14 @@ export function useGCPVM(): UseGCPVMReturn {
         if (res.data.success) {
           const { status: newStatus, ip: newIp } = res.data.data;
 
-          // Optimistic UI logic
+          // Optimistic UI logic — read from refs for latest values
+          const currentTarget = targetStatusRef.current;
           let shouldUpdate = true;
-          if (targetStatus) {
-            if (targetStatus === "STOPPED") {
+          if (currentTarget) {
+            if (currentTarget === "STOPPED") {
               if (newStatus === "RUNNING") shouldUpdate = false;
               if (newStatus === "STOPPED" || newStatus === "TERMINATED") setTargetStatus(null);
-            } else if (targetStatus === "RUNNING") {
+            } else if (currentTarget === "RUNNING") {
               // Also ignore NOT_FOUND during provisioning
               if (newStatus === "STOPPED" || newStatus === "TERMINATED" || newStatus === "NOT_FOUND") shouldUpdate = false;
               if (newStatus === "RUNNING") setTargetStatus(null);
@@ -196,14 +201,29 @@ export function useGCPVM(): UseGCPVMReturn {
         if (e.response?.status === 401) {
           setIsConnected(false);
         }
-        console.error("[useGCPVM] Status fetch error:", e);
+        // Silently skip 429 (rate-limited) — next poll will succeed
+        if (e.response?.status !== 429) {
+          console.error("[useGCPVM] Status fetch error:", e);
+        }
       }
     };
 
     fetchStatus();
-    const interval = setInterval(fetchStatus, pollInterval);
+
+    // Use a smart interval that checks the current status via ref
+    // During transitions: poll every tick (10s)
+    // When stable: poll every 6th tick (60s)
+    let tickCount = 0;
+    const interval = setInterval(() => {
+      tickCount++;
+      const isTransitioning = ["PROVISIONING", "STAGING", "STOPPING"].includes(statusRef.current);
+      if (isTransitioning || tickCount % 6 === 0) {
+        fetchStatus();
+      }
+    }, 10_000); // Fixed 10s tick
+
     return () => clearInterval(interval);
-  }, [isConnected, projectId, gcpToken, targetStatus, status]);
+  }, [isConnected, projectId, gcpToken]);
 
   // Perform GCP action
   const performAction = async (action: "provision" | "start" | "stop") => {

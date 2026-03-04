@@ -234,14 +234,11 @@ export async function completeVideo(videoId: string): Promise<void> {
 export async function failVideo(videoId: string, errorMessage: string): Promise<void> {
   const supabase = getServiceClient();
 
+  // Update status fields
   const { error } = await supabase
     .from("video_projects")
     .update({
       status: "failed",
-      metadata: {
-        error: errorMessage,
-        failed_at: new Date().toISOString(),
-      },
       updated_at: new Date().toISOString(),
     })
     .eq("id", videoId);
@@ -249,6 +246,15 @@ export async function failVideo(videoId: string, errorMessage: string): Promise<
   if (error) {
     throw new Error(`Failed to mark video as failed: ${error.message}`);
   }
+
+  // Merge error info into metadata (preserves existing fields like thumbnail_svg)
+  await supabase.rpc("merge_video_metadata", {
+    p_video_id: videoId,
+    p_updates: {
+      error: errorMessage,
+      failed_at: new Date().toISOString(),
+    },
+  });
 }
 
 /**

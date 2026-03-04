@@ -27,6 +27,10 @@ yarn-error.log*
 # local env files
 .env*.local
 .env
+.env.production
+
+# production (server-only)
+traefik/acme.json
 
 # vercel
 .vercel
