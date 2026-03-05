@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ExternalLink,
   Settings as SettingsIcon,
@@ -33,6 +34,7 @@ import { Plus, Loader2 } from "lucide-react";
 import { PROJECT_PRESETS } from "@/lib/constants/project-presets";
 
 export function MediaProjectsTab() {
+  const router = useRouter();
   const { projects, loading, createProject, deleteProject } =
     useMediaProjects();
   const { settings: userSettings, updateSettings: updateUserSettings } =
@@ -65,10 +67,11 @@ export function MediaProjectsTab() {
     if (!newProjectName.trim()) return;
     setCreating(true);
     try {
-      await createProject(newProjectName, sourceProjectId);
+      const newProject = await createProject(newProjectName, sourceProjectId);
       setCreateDialogOpen(false);
       setNewProjectName("");
       setSourceProjectId("preset:standard");
+      router.push(`/command-center/media/${newProject.id}`);
     } catch (_err) {
       // error handled in hook
     } finally {
