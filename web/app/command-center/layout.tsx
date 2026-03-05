@@ -6,6 +6,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { MediaProjectsProvider } from "@/hooks/use-media-projects";
 import { UserStatusGuard } from "@/components/auth/UserStatusGuard";
 import { FocusModeProvider, useFocusMode } from "@/components/layout/FocusModeContext";
+import { GCPVMProvider } from "@/providers/GCPVMProvider";
 
 function CommandCenterContent({ children }: { children: React.ReactNode }) {
   const { isFocusMode } = useFocusMode();
@@ -41,9 +42,11 @@ export default function CommandCenterLayout({
     <MediaProjectsProvider>
       <SidebarProvider>
         <UserStatusGuard>
-          <FocusModeProvider>
-            <CommandCenterContent>{children}</CommandCenterContent>
-          </FocusModeProvider>
+          <GCPVMProvider>
+            <FocusModeProvider>
+              <CommandCenterContent>{children}</CommandCenterContent>
+            </FocusModeProvider>
+          </GCPVMProvider>
         </UserStatusGuard>
       </SidebarProvider>
     </MediaProjectsProvider>

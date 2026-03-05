@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useGCPVM } from "@/hooks/use-gcp-vm";
 import ApiKeyInput from "@/components/ApiKeyInput";
 import {
   Shield,
@@ -46,11 +47,6 @@ interface ApiKeys {
   groq_key: string;
 }
 
-const INITIAL_LOGS = [
-  "[System] GCP Panel initialized.",
-  "[System] Waiting for connection...",
-];
-
 export function ApiKeysTab() {
   const [keys, setKeys] = useState<ApiKeys>({
     openrouter_key: "",
@@ -65,19 +61,29 @@ export function ApiKeysTab() {
   const [userId, setUserId] = useState<string | null>(null);
   const supabase = createClient();
 
-  // GCP DevTools State
+  // Shared GCP VM state from context provider
+  const {
+    status: vmStatus,
+    ip: vmIp,
+    isLoading: gcpLoading,
+    isConnected,
+    apiReady,
+    projectId,
+    gcpToken,
+    displayStatus,
+    statusColor,
+    logs,
+    addLog,
+    setIsConnected,
+    setGcpToken,
+    setProjectId,
+    performAction: performGCPAction,
+  } = useGCPVM();
+
+  // Settings-specific state
   const [_isAdmin, setIsAdmin] = useState(false);
-  const [projectId, setProjectId] = useState("");
   const [_isSaving, setIsSaving] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
-  const [gcpToken, setGcpToken] = useState<string | null>(null);
-  const [logs, setLogs] = useState<string[]>(INITIAL_LOGS);
-  const [vmStatus, setVmStatus] = useState<string>("NOT_FOUND");
-  const [vmIp, setVmIp] = useState<string | null>(null);
-  const [gcpLoading, setGcpLoading] = useState(false);
-  const [_projectValid, _setProjectValid] = useState<boolean | null>(null);
-  const [_projectValidating, _setProjectValidating] = useState(false);
-  const [apiReady, setApiReady] = useState(false);
+  const [_gcpConnectLoading, setGcpConnectLoading] = useState(false);
 
   // Pre-flight check state (APIs + GPU quota)
   const [isChecking, setIsChecking] = useState(false);
@@ -93,19 +99,8 @@ export function ApiKeysTab() {
     allPassing: boolean;
   } | null>(null);
 
-  // State to track desired/transitioning status to prevent polling from reverting optimistic UI
-  const [targetStatus, setTargetStatus] = useState<string | null>(null);
-
-  const addLog = (message: string) => {
-    setLogs((prev) => [
-      `[${new Date().toLocaleTimeString()}] ${message}`,
-      ...prev,
-    ]);
-  };
-
-  // Initial Load (Keys + GCP Config)
+  // Initial Load (API Keys + Admin status only — VM state comes from useGCPVM)
   useEffect(() => {
-    // ... (keep existing init logic, just referencing it here contextually if needed, but we start replacing from below)
     async function init() {
       const {
         data: { user },
@@ -136,52 +131,6 @@ export function ApiKeysTab() {
         });
       }
 
-      // Load GCP Config
-      const { data: gcpData } = await supabase
-        .from("user_gcp_config")
-        .select("project_id, status, external_ip")
-        .eq("user_id", user.id)
-        .single();
-
-      if (gcpData) {
-        if (gcpData.project_id) setProjectId(gcpData.project_id);
-        if (gcpData.status) setVmStatus(gcpData.status);
-        if (gcpData.external_ip) setVmIp(gcpData.external_ip);
-      }
-
-      // Check Session for GCP Token (respect user's disconnect choice)
-      const wasDisconnected =
-        localStorage.getItem("gcp_disconnected") === "true";
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (session && session.provider_token && !wasDisconnected) {
-        // Fresh session token available
-        setGcpToken(session.provider_token);
-        setIsConnected(true);
-        addLog("GCP Session active.");
-      } else if (!wasDisconnected && gcpData?.project_id) {
-        // No session token, but check if we have a stored refresh token
-        addLog("Checking for stored GCP credentials...");
-        try {
-          const res = await axios.post("/api/gcp/vm", {
-            action: "check-connection",
-            projectId: gcpData.project_id,
-          });
-          if (res.data.success && res.data.data?.connected) {
-            setIsConnected(true);
-            addLog("GCP connection restored via stored credentials.");
-          } else {
-            addLog("No active GCP session found.");
-          }
-        } catch {
-          addLog("No active GCP session found.");
-        }
-      } else {
-        addLog("No active GCP session found.");
-      }
-
       // Load user profile to check admin status
       const { data: userData } = await supabase
         .from("users")
@@ -196,134 +145,8 @@ export function ApiKeysTab() {
       setLoading(false);
     }
     init();
-  }, [supabase]);
-
-  // Real-time subscription for VM status updates
-  useEffect(() => {
-    if (!userId) return;
-
-    const channel = supabase
-      .channel('vm-status-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'user_gcp_config',
-          filter: `user_id=eq.${userId}`,
-        },
-        (payload) => {
-          const newData = payload.new as { status?: string; external_ip?: string };
-          if (newData.status) setVmStatus(newData.status);
-          if (newData.external_ip) setVmIp(newData.external_ip);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [userId, supabase]);
-
-  // Polling for GCP status
-  // Dynamic interval: 5s during transitions, 60s when stable
-  useEffect(() => {
-    if (!isConnected || !projectId) return;
-
-    const isTransitioning = ["PROVISIONING", "STAGING", "STOPPING"].includes(
-      vmStatus,
-    );
-    const pollInterval = isTransitioning ? 5000 : 60000; // 5s or 60s
-
-    const fetchStatus = async () => {
-      try {
-        const res = await axios.post(
-          "/api/gcp/vm",
-          { action: "status", projectId },
-          { headers: gcpToken ? { "x-gcp-token": gcpToken } : {} },
-        );
-        if (res.data.success) {
-          const { status, ip } = res.data.data;
-
-          // Logic to prevent stale poll data from overwriting optimistic transition state
-          let shouldUpdate = true;
-          if (targetStatus) {
-            if (targetStatus === "STOPPED") {
-              // Waiting for stop: Ignore RUNNING
-              if (status === "RUNNING") shouldUpdate = false;
-              // If we reached STOPPED or STOPPING (or TERMINATED), update and clear target if done
-              if (status === "STOPPED" || status === "TERMINATED")
-                setTargetStatus(null);
-            } else if (targetStatus === "RUNNING") {
-              // Waiting for start: Ignore STOPPED/TERMINATED/NOT_FOUND
-              if (status === "STOPPED" || status === "TERMINATED" || status === "NOT_FOUND")
-                shouldUpdate = false;
-              if (status === "RUNNING") setTargetStatus(null);
-            }
-          }
-
-          if (shouldUpdate) {
-            setVmStatus(status || "NOT_FOUND");
-          }
-
-          if (ip) {
-            setVmIp(ip);
-            // Check if API is actually reachable when VM is running
-            if (status === "RUNNING") {
-              try {
-                await fetch(`http://${ip}:8000/health`, {
-                  method: "GET",
-                  mode: "no-cors", // Bypass CORS for health check
-                  signal: AbortSignal.timeout(5000),
-                });
-                // no-cors returns opaque response, so we assume success if no error
-                setApiReady(true);
-              } catch {
-                setApiReady(false);
-              }
-            } else {
-              setApiReady(false);
-            }
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    };
-
-    const fetchLogs = async () => {
-      // Fetch logs from DB (for worker progress) - only during transitions
-      if (!isTransitioning) return;
-
-      const { data } = await supabase
-        .from("user_gcp_config")
-        .select("metadata, status")
-        .eq("user_id", userId!)
-        .single();
-
-      if (data && data.metadata && (data.metadata as any).logs) {
-        const remoteLogs = (data.metadata as any).logs as string[];
-        if (remoteLogs.length > 0) {
-          setLogs(remoteLogs);
-        }
-      }
-    };
-
-    fetchStatus(); // Initial call
-    const interval = setInterval(() => {
-      fetchStatus();
-      fetchLogs();
-    }, pollInterval);
-    return () => clearInterval(interval);
-  }, [
-    isConnected,
-    projectId,
-    gcpToken,
-    targetStatus,
-    vmStatus,
-    userId,
-    supabase,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSaveKey = async (field: keyof ApiKeys, value: string) => {
     if (!userId) return false;
@@ -413,7 +236,7 @@ export function ApiKeysTab() {
   };
 
   const handleGCPConnect = async () => {
-    setGcpLoading(true);
+    setGcpConnectLoading(true);
     try {
       addLog("Initiating GCP OAuth flow...");
       // Clear disconnect flag since user is explicitly connecting
@@ -425,53 +248,7 @@ export function ApiKeysTab() {
     } catch (err: any) {
       toast.error("Connection failed: " + err.message);
       addLog("Connection failed: " + err.message);
-      setGcpLoading(false);
-    }
-  };
-
-  const performGCPAction = async (action: "provision" | "start" | "stop") => {
-    if (!gcpToken) {
-      toast.error("Missing GCP Token");
-      return;
-    }
-    if (!projectId) {
-      toast.error("Missing Project ID");
-      return;
-    }
-    setGcpLoading(true);
-    addLog(`Sending ${action} command...`);
-
-    try {
-      const res = await axios.post(
-        "/api/gcp/vm",
-        { action, projectId },
-        { headers: { "x-gcp-token": gcpToken } },
-      );
-
-      if (res.data.success) {
-        toast.success(`Action ${action} initiated`);
-        addLog(`Command ${action} successful.`);
-
-        // Optimistic UI update & Target Status Lock
-        if (action === "provision") {
-          setVmStatus("PROVISIONING");
-          setTargetStatus("RUNNING");
-        } else if (action === "start") {
-          setVmStatus("STAGING");
-          setTargetStatus("RUNNING");
-        } else if (action === "stop") {
-          setVmStatus("STOPPING");
-          setTargetStatus("STOPPED");
-        }
-      } else {
-        throw new Error(res.data.error || "Unknown error");
-      }
-    } catch (err: any) {
-      const msg = err.response?.data?.error || err.message;
-      toast.error(`Error: ${msg}`);
-      addLog(`Error: ${msg}`);
-    } finally {
-      setGcpLoading(false);
+      setGcpConnectLoading(false);
     }
   };
 
@@ -530,10 +307,10 @@ export function ApiKeysTab() {
                 </div>
                 <Button
                   onClick={handleGCPConnect}
-                  disabled={gcpLoading}
+                  disabled={_gcpConnectLoading}
                   className="bg-white text-black hover:bg-neutral-200 font-bold h-8 text-xs"
                 >
-                  {gcpLoading && (
+                  {_gcpConnectLoading && (
                     <Loader2 className="w-3 h-3 mr-2 animate-spin" />
                   )}
                   Connect with Google
@@ -618,50 +395,12 @@ export function ApiKeysTab() {
                       Instance Status
                     </h4>
                     <div className="flex items-center gap-3 p-2 bg-black/20 rounded-lg border border-neutral-800">
-                      {(() => {
-                        // Compute display status locally to match VMStatus logic
-                        let displayStatus = "OFF";
-                        let statusColor = "bg-red-500";
-
-                        if (vmStatus === "NOT_FOUND") {
-                          displayStatus = "SETUP";
-                          statusColor = "bg-neutral-500";
-                        } else if (
-                          vmStatus === "PROVISIONING" ||
-                          vmStatus === "STAGING"
-                        ) {
-                          displayStatus = "SETTING UP";
-                          statusColor = "bg-yellow-500 animate-pulse";
-                        } else if (vmStatus === "RUNNING") {
-                          if (apiReady) {
-                            displayStatus = "ON";
-                            statusColor = "bg-green-500";
-                          } else {
-                            displayStatus = "SETTING UP";
-                            statusColor = "bg-yellow-500 animate-pulse";
-                          }
-                        } else if (vmStatus === "STOPPING") {
-                          displayStatus = "STOPPING";
-                          statusColor = "bg-orange-500 animate-pulse";
-                        } else if (
-                          vmStatus === "STOPPED" ||
-                          vmStatus === "TERMINATED"
-                        ) {
-                          displayStatus = "OFF";
-                          statusColor = "bg-red-500";
-                        }
-
-                        return (
-                          <>
-                            <div
-                              className={`w-2 h-2 rounded-full ${statusColor}`}
-                            />
-                            <span className="text-xs font-mono text-white tracking-wider">
-                              {displayStatus}
-                            </span>
-                          </>
-                        );
-                      })()}
+                      <div
+                        className={`w-2 h-2 rounded-full ${statusColor}`}
+                      />
+                      <span className="text-xs font-mono text-white tracking-wider">
+                        {displayStatus}
+                      </span>
                     </div>
                     {vmIp && (
                       <div className="flex items-center gap-2">
