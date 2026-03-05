@@ -15,7 +15,11 @@
 // ENUMS & CONSTANTS
 // ============================================================================
 
-export const TASK_TYPES = ['writing', 'audio', 'video', 'export', 'universal_script'] as const;
+export const TASK_TYPES = [
+  'writing', 'writing_workflow', 'audio', 'video', 'export', 'universal_script',
+  'outline', 'script_writing', 'av_script_part1', 'av_script_part2',
+  'edit_assembly', 'closed_loop',
+] as const;
 export type TaskType = typeof TASK_TYPES[number];
 
 export const TASK_STATUSES = ['pending', 'running', 'completed', 'failed', 'cancelled'] as const;

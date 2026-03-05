@@ -113,35 +113,38 @@ function derivePhaseStatuses(
 
   const isFailed = taskStatus === "failed";
 
-  // Special handling: if failed with progress=0, parse currentStep for the failed phase name
-  // The orchestrator writes "Failed in phase: <phaseName>" (e.g. "production", "tts", "shot_planning")
-  if (isFailed && progress === 0 && currentStep) {
+  // Map orchestrator phase names to UI phase IDs
+  const phaseNameToId: Record<string, string> = {
+    tts: "tts",
+    shot_planning: "shot_planning",
+    asset_retrieval: "asset_retrieval",
+    production: "production",
+    assembly: "assembly",
+  };
+
+  // When failed, try to determine the failed phase from currentStep text first.
+  // The orchestrator writes "Failed in phase: <phaseName>" or similar messages.
+  // This is more reliable than progress-based derivation because sub-workers
+  // can reset progress_percent during their execution.
+  if (isFailed && currentStep) {
     const phaseMatch = currentStep.match(/failed in phase:\s*(\w+)/i);
     const failedPhaseName = phaseMatch?.[1]?.toLowerCase();
-
-    // Map orchestrator phase names to UI phase IDs
-    const phaseNameToId: Record<string, string> = {
-      tts: "tts_generation",
-      shot_planning: "shot_planning",
-      asset_retrieval: "asset_retrieval",
-      production: "production",
-      assembly: "assembly",
-    };
-
     const failedPhaseId = failedPhaseName ? phaseNameToId[failedPhaseName] : null;
 
     if (failedPhaseId) {
       const failedIdx = PIPELINE_PHASES.findIndex(p => p.id === failedPhaseId);
-      for (let i = 0; i < PIPELINE_PHASES.length; i++) {
-        if (i < failedIdx) {
-          statuses[PIPELINE_PHASES[i].id] = "completed";
-        } else if (i === failedIdx) {
-          statuses[PIPELINE_PHASES[i].id] = "failed";
-        } else {
-          statuses[PIPELINE_PHASES[i].id] = "pending";
+      if (failedIdx >= 0) {
+        for (let i = 0; i < PIPELINE_PHASES.length; i++) {
+          if (i < failedIdx) {
+            statuses[PIPELINE_PHASES[i].id] = "completed";
+          } else if (i === failedIdx) {
+            statuses[PIPELINE_PHASES[i].id] = "failed";
+          } else {
+            statuses[PIPELINE_PHASES[i].id] = "pending";
+          }
         }
+        return statuses;
       }
-      return statuses;
     }
   }
 

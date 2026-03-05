@@ -206,6 +206,7 @@ export async function fetchDynamicGpuApiUrl(_userId?: string): Promise<string> {
 
   // If no Supabase connection details, use env var
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.log(`[GPUApiService] No Supabase env vars, using fallback: ${envUrl || 'http://localhost:8000'}`);
     return envUrl || "http://localhost:8000";
   }
 
@@ -224,16 +225,27 @@ export async function fetchDynamicGpuApiUrl(_userId?: string): Promise<string> {
       .not("external_ip", "is", null)
       .order("updated_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
-    if (!error && data?.external_ip) {
+    if (error) {
+      console.log(`[GPUApiService] DB query failed: ${error.message} (code: ${error.code}). Falling back to env: ${envUrl || 'http://localhost:8000'}`);
+    } else if (!data?.external_ip) {
+      // No RUNNING VM with IP found — log what IS in the table for debugging
+      const { data: debugRow } = await supabase
+        .from("user_gcp_config")
+        .select("external_ip, status")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      console.log(`[GPUApiService] No RUNNING VM with external_ip found. Actual DB row: status=${debugRow?.status || 'NONE'}, ip=${debugRow?.external_ip || 'null'}. Falling back to env: ${envUrl || 'http://localhost:8000'}`);
+    } else {
       cachedGpuApiUrl = `http://${data.external_ip}:8000`;
       cacheTimestamp = Date.now();
-      console.log(`[GPUApiService] Using dynamic GPU URL: ${cachedGpuApiUrl}`);
+      console.log(`[GPUApiService] Using dynamic GPU URL: ${cachedGpuApiUrl} (status: ${data.status})`);
       return cachedGpuApiUrl;
     }
   } catch (_err) {
-    console.log(`[GPUApiService] Failed to fetch dynamic GPU URL, using fallback`);
+    console.log(`[GPUApiService] Exception in fetchDynamicGpuApiUrl: ${_err instanceof Error ? _err.message : _err}`);
   }
 
   // Fallback to env var
@@ -356,6 +368,7 @@ async function callGpuApi<T>(
         "X-API-Key": apiKey,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30000),
     });
 
     console.log(`[GPUApiService] ${endpoint} returned ${response.status}`);
@@ -854,16 +867,20 @@ export async function callGpuHealth(): Promise<{
   const baseUrl = await fetchDynamicGpuApiUrl();
   console.log(`[GPUApiService] Health Check URL: ${baseUrl}/health`);
   try {
-    const response = await fetch(`${baseUrl}/health`);
+    const response = await fetch(`${baseUrl}/health`, {
+      signal: AbortSignal.timeout(10000),
+    });
     if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status}` };
+      return { success: false, error: `HTTP ${response.status} from ${baseUrl}/health` };
     }
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[GPUApiService] Health Check FAILED for ${baseUrl}/health: ${msg}`);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: `${msg} (URL: ${baseUrl}/health)`,
     };
   }
 }
@@ -878,16 +895,20 @@ export async function callGpuHealthReady(): Promise<{
 }> {
   const baseUrl = await fetchDynamicGpuApiUrl();
   try {
-    const response = await fetch(`${baseUrl}/health/ready`);
+    const response = await fetch(`${baseUrl}/health/ready`, {
+      signal: AbortSignal.timeout(10000),
+    });
     if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status}` };
+      return { success: false, error: `HTTP ${response.status} from ${baseUrl}/health/ready` };
     }
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[GPUApiService] Readiness Check FAILED for ${baseUrl}/health/ready: ${msg}`);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: `${msg} (URL: ${baseUrl}/health/ready)`,
     };
   }
 }
@@ -1022,17 +1043,20 @@ export async function callGpuSystemStatus(): Promise<{
   try {
     const response = await fetch(`${baseUrl}/api/v1/system/status`, {
       headers: { "X-API-Key": apiKey },
+      signal: AbortSignal.timeout(10000),
     });
     console.log(`[GPUApiService] System Status returned ${response.status}`);
     if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status}` };
+      return { success: false, error: `HTTP ${response.status} from ${baseUrl}/api/v1/system/status` };
     }
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[GPUApiService] System Status FAILED for ${baseUrl}/api/v1/system/status: ${msg}`);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: `${msg} (URL: ${baseUrl}/api/v1/system/status)`,
     };
   }
 }
@@ -1073,16 +1097,19 @@ export async function callGpuGetMode(): Promise<{
   try {
     const response = await fetch(`${baseUrl}/api/v1/mode`, {
       headers: { "X-API-Key": apiKey },
+      signal: AbortSignal.timeout(10000),
     });
     if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status}` };
+      return { success: false, error: `HTTP ${response.status} from ${baseUrl}/api/v1/mode` };
     }
     const data = await response.json();
     return { success: true, data };
   } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[GPUApiService] Get Mode FAILED for ${baseUrl}/api/v1/mode: ${msg}`);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: `${msg} (URL: ${baseUrl}/api/v1/mode)`,
     };
   }
 }

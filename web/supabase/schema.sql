@@ -1548,7 +1548,7 @@ CREATE TABLE IF NOT EXISTS "public"."tasks" (
     "chapters" "jsonb" DEFAULT '[]'::"jsonb",
     "final_script" "text",
     "steps" "jsonb" DEFAULT '[]'::"jsonb",
-    CONSTRAINT "tasks_current_phase_check" CHECK ((("current_phase" IS NULL) OR ("current_phase" = ANY (ARRAY['preprocessing'::"text", 'writing'::"text", 'postprocessing'::"text", 'audio_generation'::"text", 'audio_processing'::"text", 'image_generation'::"text", 'image_editing'::"text", 'video_generation'::"text", 'compositing'::"text", 'encoding'::"text", 'uploading'::"text"])))),
+    CONSTRAINT "tasks_current_phase_check" CHECK ((("current_phase" IS NULL) OR ("current_phase" = ANY (ARRAY['preprocessing'::"text", 'writing'::"text", 'postprocessing'::"text", 'audio_generation'::"text", 'audio_processing'::"text", 'image_generation'::"text", 'image_editing'::"text", 'video_generation'::"text", 'compositing'::"text", 'encoding'::"text", 'uploading'::"text", 'research'::"text", 'scoping'::"text", 'spine'::"text", 'assets'::"text", 'expansion'::"text", 'assembly'::"text"])))),
     CONSTRAINT "tasks_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
     CONSTRAINT "tasks_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'running'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"]))),
     CONSTRAINT "tasks_type_check" CHECK (("type" = ANY (ARRAY['writing'::"text", 'writing_workflow'::"text", 'audio'::"text", 'video'::"text", 'export'::"text", 'outline'::"text", 'script_writing'::"text", 'av_script_part1'::"text", 'av_script_part2'::"text", 'edit_assembly'::"text", 'closed_loop'::"text"])))
@@ -2598,6 +2598,14 @@ ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
 
 
 
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."tasks";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."video_projects";
 
 
 

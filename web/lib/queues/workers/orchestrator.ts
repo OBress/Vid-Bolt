@@ -1102,7 +1102,22 @@ async function executeAssemblyPhase(
     videoId,
   });
 
-  const assemblyResult = await assemblyJob.waitUntilFinished(queueEvents, 300_000);
+  // Dynamic timeout: base 120s + 15s per shot, clamped [180s, 900s]
+  // Query shot count from metadata (already in DB after Phase II)
+  let shotCount = 30; // sensible fallback
+  try {
+    const supabase = getSupabaseServiceClient();
+    const { data: meta } = await supabase
+      .from('video_projects')
+      .select('metadata')
+      .eq('id', videoId)
+      .single();
+    const shots = (meta?.metadata as any)?.av_script_part1?.shots;
+    if (Array.isArray(shots)) shotCount = shots.length;
+  } catch { /* use fallback */ }
+  const dynamicTimeoutMs = Math.max(180_000, Math.min(900_000, 120_000 + shotCount * 15_000));
+  console.log(`${LOG_PREFIX} Assembly timeout: ${dynamicTimeoutMs / 1000}s for ${shotCount} shots`);
+  const assemblyResult = await assemblyJob.waitUntilFinished(queueEvents, dynamicTimeoutMs);
 
   return {
     editorStateSaved: !!assemblyResult?.success,

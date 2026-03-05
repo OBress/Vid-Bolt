@@ -353,13 +353,20 @@ async function callLLMv2(
   const finishReason = data.choices?.[0]?.finish_reason;
   console.log(`[EditAssembly] LLM response: ${content.length} chars, finish_reason=${finishReason}`);
 
+  // If the response was truncated (hit max_tokens), the JSON is guaranteed
+  // incomplete. Skip parsing and let the caller use the fallback EDL.
+  if (finishReason === 'length') {
+    console.warn(`[EditAssembly] LLM response truncated (finish_reason=length, ${content.length} chars). Skipping parse.`);
+    throw new Error(`LLM response truncated (finish_reason=length, ${content.length} chars) — increase max_tokens or reduce prompt size`);
+  }
+
   // Structured outputs guarantee valid JSON matching the schema —
   // no markdown fence stripping needed
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(content);
   } catch (e) {
-    console.error(`[EditAssembly] JSON parse error: ${e instanceof Error ? e.message : 'unknown'} (response was ${content.length} chars)`);
+    console.error(`[EditAssembly] JSON parse error: ${e instanceof Error ? e.message : 'unknown'} (response was ${content.length} chars, finish_reason=${finishReason})`);
     throw new Error(`Failed to parse LLM response as JSON: ${e instanceof Error ? e.message : 'unknown'}`);
   }
 

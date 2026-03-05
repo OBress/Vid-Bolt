@@ -216,12 +216,11 @@ export function GCPVMProvider({ children }: { children: React.ReactNode }) {
             setIp(newIp);
             if (newStatus === "RUNNING") {
               try {
-                await fetch(`http://${newIp}:8000/health`, {
-                  method: "GET",
-                  mode: "no-cors",
-                  signal: AbortSignal.timeout(5000),
+                const healthRes = await fetch("/api/gpu-api/health", {
+                  signal: AbortSignal.timeout(8000),
                 });
-                setApiReady(true);
+                const healthData = await healthRes.json();
+                setApiReady(healthRes.ok && healthData.success === true);
               } catch {
                 setApiReady(false);
               }

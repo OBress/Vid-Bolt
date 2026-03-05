@@ -4,6 +4,7 @@ import { stopNode, startNode, getNodeStatus } from "@/lib/gcp/provision";
 import { gcpProvisioningQueue } from "@/lib/queues/queues";
 import { getValidGCPToken } from "@/lib/gcp/token-refresh";
 import { gcpLimiter } from "@/lib/utils/rate-limiters";
+import { createClient as createServiceClient } from "@supabase/supabase-js";
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
@@ -27,6 +28,13 @@ export async function POST(req: NextRequest) {
     const { action, projectId } = body;
     const userId = user.id;
     const webhookUrl = `${new URL(req.url).origin}/api/webhooks/gcp-startup`;
+
+    // Service-role client for DB writes (bypasses RLS)
+    const adminDb = createServiceClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
 
     // Validate ProjectID (required for most actions)
     if (!projectId && action !== "validate" && action !== "check-connection") {
@@ -78,7 +86,7 @@ export async function POST(req: NextRequest) {
         });
 
         // Initialize status in DB immediately
-        await supabase.from("user_gcp_config").upsert({
+        await adminDb.from("user_gcp_config").upsert({
             user_id: userId,
             project_id: projectId,
             instance_name: "vidbolt-workflow",
@@ -95,11 +103,11 @@ export async function POST(req: NextRequest) {
         result = { status: 'QUEUED', jobId: job.id };
     } else if (action === "stop") {
         result = await stopNode(gcpToken, projectId);
-        await supabase.from("user_gcp_config").update({ status: 'STOPPING' }).eq('user_id', userId);
+        await adminDb.from("user_gcp_config").update({ status: 'STOPPING' }).eq('user_id', userId);
     } else if (action === "start") {
         result = await startNode(gcpToken, projectId);
         // Reset activity timestamp when starting to prevent immediate shutdown from stale values
-        await supabase.from("user_gcp_config").update({ 
+        await adminDb.from("user_gcp_config").update({ 
             status: 'STAGING',
             last_gpu_activity_at: new Date().toISOString()
         }).eq('user_id', userId);
@@ -108,14 +116,17 @@ export async function POST(req: NextRequest) {
           result = await getNodeStatus(gcpToken, projectId);
           // Update DB with latest status if successful
           if (result && result.status !== "NOT_FOUND") {
-               await supabase.from("user_gcp_config").update({ 
+               const { error: updateError } = await adminDb.from("user_gcp_config").update({ 
                    status: result.status,
                    external_ip: result.ip,
                    last_seen_at: new Date().toISOString()
                }).eq('user_id', userId);
+               if (updateError) {
+                 console.error(`[GCP VM Status] DB update failed:`, updateError.message);
+               }
           } else {
                // Handle Not Found (maybe terminated outside of app)
-               await supabase.from("user_gcp_config").update({ 
+               await adminDb.from("user_gcp_config").update({ 
                    status: 'TERMINATED',
                    external_ip: null
                }).eq('user_id', userId);

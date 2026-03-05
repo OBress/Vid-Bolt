@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { User, Monitor, Key } from "lucide-react";
 import { AccountTab } from "@/components/features/settings/AccountTab";
@@ -9,12 +9,24 @@ import { ApiKeysTab } from "@/components/features/settings/ApiKeysTab";
 
 import { PageHeader } from "@/components/shared/PageHeader";
 
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense } from "react";
 
 function GeneralSettingsContent() {
   const searchParams = useSearchParams();
-  const defaultTab = searchParams.get("tab") || "account";
+  const router = useRouter();
+  const tabParam = searchParams.get("tab") || "account";
+  const [activeTab, setActiveTab] = useState(tabParam);
+
+  // Sync the active tab when the URL search params change (e.g. from the GPU hours popover)
+  useEffect(() => {
+    setActiveTab(tabParam);
+  }, [tabParam]);
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    router.replace(`/command-center/settings/general?tab=${value}`, { scroll: false });
+  };
 
   const tabs = [
     { id: "account", label: "Account", icon: User, Component: AccountTab },
@@ -30,7 +42,7 @@ function GeneralSettingsContent() {
   return (
     <div className="flex flex-col h-full bg-black text-white">
       <div className="border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
-        <Tabs defaultValue={defaultTab} className="w-full">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
           <PageHeader
             title="General Settings"
             center={
