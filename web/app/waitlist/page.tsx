@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
@@ -39,10 +39,19 @@ function WaitlistContent() {
     }
   };
 
-  if (loading) {
+  // Redirect authorized users away from waitlist
+  const isAuthorized = !loading && profile && (profile.status === "active" || profile.is_admin);
+
+  useEffect(() => {
+    if (isAuthorized) {
+      router.replace("/command-center");
+    }
+  }, [isAuthorized, router]);
+
+  if (loading || isAuthorized) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center text-neutral-500">
-        Loading status...
+        {loading ? "Loading status..." : "Redirecting..."}
       </div>
     );
   }

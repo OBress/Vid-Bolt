@@ -10,12 +10,13 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const supabase = createClient();
 
-  const handleGoogleLogin = async () => {
+  const handleDiscordLogin = async () => {
     setIsLoading(true);
     const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
+      provider: "discord",
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
+        scopes: "identify email guilds",
       },
     });
 
@@ -70,14 +71,14 @@ export default function LoginPage() {
                   SYSTEM STATUS: ONLINE
                 </div>
                 <div className="mt-2 text-[10px] text-neutral-600 font-mono uppercase tracking-tight">
-                  PROTO_V0.4 // ENCRYPTION_ACTIVE // OAUTH_MANDATORY
+                  PROTO_V0.4 // ENCRYPTION_ACTIVE // DISCORD_AUTH
                 </div>
               </div>
 
               <Button
-                onClick={handleGoogleLogin}
+                onClick={handleDiscordLogin}
                 disabled={isLoading}
-                className="w-full h-12 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-3 shadow-[0_4px_15px_rgba(249,115,22,0.3)] group"
+                className="w-full h-12 bg-[#5865F2] hover:bg-[#4752C4] text-white font-bold rounded-lg transition-all flex items-center justify-center gap-3 shadow-[0_4px_15px_rgba(88,101,242,0.3)] group"
               >
                 {isLoading ? (
                   <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -85,15 +86,12 @@ export default function LoginPage() {
                   <>
                     <svg
                       className="w-5 h-5 fill-current"
-                      viewBox="0 0 24 24"
+                      viewBox="0 0 256 199"
                       xmlns="http://www.w3.org/2000/svg"
                     >
-                      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                      <path d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z" />
-                      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.53 12-4.53z" />
+                      <path d="M216.856 16.597A208.502 208.502 0 0 0 164.042 0c-2.275 4.113-4.933 9.645-6.766 14.046-19.692-2.961-39.203-2.961-58.533 0-1.832-4.4-4.55-9.933-6.846-14.046a207.809 207.809 0 0 0-52.855 16.638C5.618 67.147-3.443 116.4 1.087 164.956c22.169 16.555 43.653 26.612 64.775 33.193A161.094 161.094 0 0 0 79.735 175.3a136.413 136.413 0 0 1-21.846-10.632 108.636 108.636 0 0 0 5.356-4.237c42.122 19.702 87.89 19.702 129.51 0a131.66 131.66 0 0 0 5.355 4.237 136.07 136.07 0 0 1-21.886 10.653c4.006 8.02 8.638 15.67 13.873 22.848 21.142-6.58 42.646-16.637 64.815-33.213 5.316-56.288-9.08-105.09-38.056-148.36ZM85.474 135.095c-12.645 0-23.015-11.805-23.015-26.18s10.149-26.2 23.015-26.2c12.867 0 23.236 11.804 23.015 26.2.02 14.375-10.148 26.18-23.015 26.18Zm85.051 0c-12.645 0-23.014-11.805-23.014-26.18s10.148-26.2 23.014-26.2c12.867 0 23.236 11.804 23.015 26.2 0 14.375-10.148 26.18-23.015 26.18Z" />
                     </svg>
-                    CONTINUE WITH GOOGLE
+                    CONTINUE WITH DISCORD
                   </>
                 )}
               </Button>

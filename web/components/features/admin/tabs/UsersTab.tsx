@@ -60,6 +60,9 @@ interface User {
   date_joined: string;
   total_count: number;
   last_month_status?: string;
+  discord_username: string | null;
+  discord_avatar: string | null;
+  in_vidbolt_server: boolean;
 }
 
 export function UsersTab() {
@@ -287,6 +290,7 @@ export function UsersTab() {
             <TableHeader className="bg-black/20">
               <TableRow className="border-white/5 hover:bg-transparent">
                 <TableHead className="text-neutral-400 font-medium h-12">User</TableHead>
+                <TableHead className="text-neutral-400 font-medium h-12">Discord</TableHead>
                 <TableHead className="text-neutral-400 font-medium h-12">Status</TableHead>
                 <TableHead className="text-neutral-400 font-medium text-center h-12">Paid Status</TableHead>
                 <TableHead className="text-neutral-400 font-medium h-12">Joined</TableHead>
@@ -296,14 +300,14 @@ export function UsersTab() {
             <TableBody>
               {loading && users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-32 text-center text-neutral-500">
+                  <TableCell colSpan={6} className="h-32 text-center text-neutral-500">
                     <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-neutral-600" />
                     Loading users...
                   </TableCell>
                 </TableRow>
               ) : users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-32 text-center text-neutral-500">
+                  <TableCell colSpan={6} className="h-32 text-center text-neutral-500">
                     No users found matching your criteria.
                   </TableCell>
                 </TableRow>
@@ -333,6 +337,28 @@ export function UsersTab() {
                             @{user.username || "no-username"}
                           </span>
                         </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        {user.discord_username ? (
+                          <>
+                            <div
+                              className={cn(
+                                "w-2 h-2 rounded-full shrink-0",
+                                user.in_vidbolt_server
+                                  ? "bg-[#5865F2] shadow-[0_0_6px_rgba(88,101,242,0.6)]"
+                                  : "bg-neutral-600"
+                              )}
+                              title={user.in_vidbolt_server ? "In VidBolt server" : "Not in VidBolt server"}
+                            />
+                            <span className="text-xs text-neutral-300 font-mono truncate max-w-[120px]">
+                              {user.discord_username}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-xs text-neutral-600">—</span>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell>

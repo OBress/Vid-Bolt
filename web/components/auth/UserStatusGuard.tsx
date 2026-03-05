@@ -62,6 +62,9 @@ export function UserStatusGuard({ children }: UserStatusGuardProps) {
   useEffect(() => {
     if (loading || !profile) return;
 
+    // Admins always bypass waitlist — never lock out the site owner
+    if (profile.is_admin) return;
+
     if (profile.status === "pending") {
       router.replace("/waitlist");
     } else if (profile.status === "paused") {
@@ -81,8 +84,8 @@ export function UserStatusGuard({ children }: UserStatusGuardProps) {
     );
   }
 
-  // If we're not active, we render nothing while redirect happens
-  if (profile && profile.status !== "active") {
+  // If we're not active (and not admin), we render nothing while redirect happens
+  if (profile && profile.status !== "active" && !profile.is_admin) {
     return null;
   }
 
