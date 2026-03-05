@@ -104,20 +104,28 @@ export async function POST(req: NextRequest) {
             last_gpu_activity_at: new Date().toISOString()
         }).eq('user_id', userId);
     } else if (action === "status") {
-        result = await getNodeStatus(gcpToken, projectId);
-        // Update DB with latest status if successful
-        if (result && result.status !== "NOT_FOUND") {
-             await supabase.from("user_gcp_config").update({ 
-                 status: result.status,
-                 external_ip: result.ip,
-                 last_seen_at: new Date().toISOString()
-             }).eq('user_id', userId);
-        } else {
-             // Handle Not Found (maybe terminated outside of app)
-             await supabase.from("user_gcp_config").update({ 
-                 status: 'TERMINATED',
-                 external_ip: null
-             }).eq('user_id', userId);
+        try {
+          result = await getNodeStatus(gcpToken, projectId);
+          // Update DB with latest status if successful
+          if (result && result.status !== "NOT_FOUND") {
+               await supabase.from("user_gcp_config").update({ 
+                   status: result.status,
+                   external_ip: result.ip,
+                   last_seen_at: new Date().toISOString()
+               }).eq('user_id', userId);
+          } else {
+               // Handle Not Found (maybe terminated outside of app)
+               await supabase.from("user_gcp_config").update({ 
+                   status: 'TERMINATED',
+                   external_ip: null
+               }).eq('user_id', userId);
+          }
+        } catch (statusError: any) {
+          console.error("[GCP VM Status] Failed to fetch VM status:", statusError.message);
+          return NextResponse.json({
+            success: false,
+            error: `GCP status check failed: ${statusError.message}`,
+          }, { status: 502 });
         }
     } else if (action === "validate") {
         // Validate if project ID is accessible using Compute API (we already have this scope)

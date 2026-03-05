@@ -67,12 +67,19 @@ const queueEventsCache = new Map<string, QueueEvents>();
 /**
  * Get or create a QueueEvents instance for the given queue name.
  * QueueEvents listens for job completion/failure events on a queue.
+ *
+ * IMPORTANT: This is async because we must wait for the QueueEvents connection
+ * to be fully established before using waitUntilFinished(). Without this,
+ * BullMQ can miss job completion events (known issue with shared connections).
  */
-function getQueueEvents(queueName: string): QueueEvents {
+async function getQueueEvents(queueName: string): Promise<QueueEvents> {
   let events = queueEventsCache.get(queueName);
   if (!events) {
     events = new QueueEvents(queueName, { connection: getRedisConnection() });
     queueEventsCache.set(queueName, events);
+    // Wait for the Redis connection to be fully ready before returning
+    await events.waitUntilReady();
+    console.log(`${LOG_PREFIX} QueueEvents ready for "${queueName}"`);
   }
   return events;
 }
@@ -147,7 +154,7 @@ async function executeTtsPhase(
   });
 
   const { audioQueue } = await import('@/lib/queues/queues');
-  const queueEvents = getQueueEvents('audio-workflow');
+  const queueEvents = await getQueueEvents('audio-workflow');
 
   // Use voice settings from project config instead of hardcoded defaults
   const voice = jobData.projectConfig?.voice;
@@ -214,7 +221,7 @@ async function executeShotPlanningPhase(
   });
 
   const { shotPlannerQueue } = await import('@/lib/queues/queues');
-  const queueEvents = getQueueEvents('shot-planner');
+  const queueEvents = await getQueueEvents('shot-planner');
 
   // Fetch TTS data from metadata
   const supabase = getSupabaseServiceClient();
@@ -401,7 +408,7 @@ async function executeAssetRetrievalPhase(
   });
 
   const { assetScoutQueue } = await import('@/lib/queues/queues');
-  const queueEvents = getQueueEvents('asset-scout');
+  const queueEvents = await getQueueEvents('asset-scout');
 
   const assetJob = await assetScoutQueue.add('closed-loop-asset-retrieval', {
     taskId,
@@ -485,7 +492,7 @@ async function executeWithVerification(
       // --- RECOVERABLE IMAGE: use image-edit (cheaper, no VRAM switch) ---
       console.log(`${LOG_PREFIX} Shot ${shotIndex}: recoverable failure — dispatching to image-edit`);
 
-      const editQueueEvents = getQueueEvents('image-edit');
+      const editQueueEvents = await getQueueEvents('image-edit');
       const editJob = await imageEditQueue.add(
         `image-edit-shot-${shotIndex}`,
         {
@@ -509,7 +516,7 @@ async function executeWithVerification(
       const genQueue = new Queue(generationConfig.queueName, {
         connection: getRedisConnection(),
       });
-      const genQueueEvents = getQueueEvents(generationConfig.queueName);
+      const genQueueEvents = await getQueueEvents(generationConfig.queueName);
 
       const genJob = await genQueue.add(
         generationConfig.jobName,
@@ -532,7 +539,7 @@ async function executeWithVerification(
     // -----------------------------------------------------------------------
     // Verify the result
     // -----------------------------------------------------------------------
-    const verifyQueueEvents = getQueueEvents('verifier');
+    const verifyQueueEvents = await getQueueEvents('verifier');
     const verifyJob = await verifierQueue.add(`verify-shot-${shotIndex}`, {
       taskId: verificationContext.taskId,
       userId: verificationContext.userId,
@@ -827,7 +834,7 @@ async function executeProductionPhase(
       console.log(`${LOG_PREFIX} Video batch timeout: ${Math.round(VIDEO_BATCH_TIMEOUT_MS / 1000)}s for ${totalVideoDuration.toFixed(1)}s of video (${videoShots.length} shots, ${queueDepth} jobs ahead → ${queueMultiplier}x multiplier)`);
 
       // 1. Dispatch video-gen ONCE for the entire batch
-      const genQueueEvents = getQueueEvents('video-gen');
+      const genQueueEvents = await getQueueEvents('video-gen');
       const genJob = await videoGenQueue.add('video-batch', {
         taskId,
         userId: jobData.userId,
@@ -858,14 +865,13 @@ async function executeProductionPhase(
         const mediaUrl = generatedVideos[shotKey];
 
         if (!mediaUrl) {
-          console.warn(`${LOG_PREFIX} Shot ${shot.segment_index}: no video URL in batch results — skipping`);
           videosFailed++;
           continue;
         }
 
         // Run verifier on this shot's video
         try {
-          const verifyQueueEvents = getQueueEvents('verifier');
+          const verifyQueueEvents = await getQueueEvents('verifier');
           const verifyJob = await verifierQueue.add(`verify-video-${shot.segment_index}`, {
             taskId,
             userId: jobData.userId,
@@ -944,6 +950,10 @@ async function executeProductionPhase(
           mediaUrl
         );
       }
+    }
+
+    if (videosFailed > 0) {
+      console.warn(`${LOG_PREFIX} ${videosFailed}/${videoShots.length} video shots had no URL in batch results`);
     }
 
     return generatedAssets;
@@ -1084,7 +1094,7 @@ async function executeAssemblyPhase(
   });
 
   const { editAssemblyQueue } = await import('@/lib/queues/queues');
-  const queueEvents = getQueueEvents('edit-assembly-workflow');
+  const queueEvents = await getQueueEvents('edit-assembly-workflow');
 
   const assemblyJob = await editAssemblyQueue.add('closed-loop-assembly', {
     taskId,
@@ -1144,7 +1154,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       console.log(`${LOG_PREFIX} Step 0-B: Generating portraits for ${entitiesWithoutRefs.length} entities without references`);
 
       const { imageGenQueue } = await import('@/lib/queues/queues');
-      const imageGenQueueEvents = getQueueEvents('image-gen');
+      const imageGenQueueEvents = await getQueueEvents('image-gen');
       const { updateEntity } = await import('@/lib/services/gcm');
 
       for (const entity of entitiesWithoutRefs) {

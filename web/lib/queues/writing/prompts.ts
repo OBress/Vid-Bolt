@@ -237,6 +237,18 @@ DO NOT use a fixed formula. Let the story's natural structure dictate sections.
 - Tone/energy level
 - Engagement markers (opens loop, closes loop, pattern interrupt)
 
+## VISUAL ENGAGEMENT DESIGN
+For each section, also consider the VISUAL dimension — your script will be turned into a video:
+
+- **VISUAL ENERGY**: Tag each section with its natural energy level (HIGH / MEDIUM / LOW) based on content:
+  - HIGH: Reveals, confrontations, shocking facts, rapid-fire sequences — these become fast-cut, dynamic edits
+  - MEDIUM: Explanation, narrative development, context building — steady pacing with visual variety
+  - LOW: Emotional weight, reflection, aftermath — breathing room with atmospheric visuals
+- At least 60% of sections should be HIGH or MEDIUM energy
+- Never have two consecutive LOW energy sections — the audience needs variation
+- **MICRO-CLIFFHANGERS**: Build open loops every 60-90 seconds — tease a question, delay the answer, pay it off later
+- **VISUAL VARIETY IN WRITING**: Vary the SCALE and SPECIFICITY of your descriptions so each sentence suggests a DIFFERENT visual (don't describe the same scene for 5 sentences straight)
+
 ## ENGAGEMENT CHECKLIST (verify ALL before submitting):
 ✓ Could you explain in ONE sentence why viewers should care about this video?
 ✓ Hook is immediately compelling (NO "Today we're going to...", NO "In this video...")
@@ -516,6 +528,12 @@ Every single sentence must earn its place. Apply these tests:
    - Every paragraph should make viewer want to hear the NEXT paragraph
    - End sections with hooks, not summaries
    - Create curiosity gaps that pull viewer forward
+
+6. **VISUAL VARIETY IN WRITING** (IMPORTANT):
+   - Write so each sentence suggests a DIFFERENT visual — vary the scale (macro to micro), perspective, and subject
+   - AVOID 3+ consecutive sentences describing the same scene from the same perspective
+   - Include specific sensory details (sounds, textures, movement) that the visual and audio layer can enhance
+   - Think: "What would a viewer SEE during this sentence?" — if the answer is the same for 3 sentences, rewrite
 
 ## SECTION CONTEXT
 You are writing SECTION {beatIndex} of {totalBeats}.

@@ -87,8 +87,6 @@ function fixSyntaxErrors(code: string): { code: string; fixes: string[] } {
   const braceBalance = countBalanceIgnoringStrings(fixed, '{', '}');
   const parenBalance = countBalanceIgnoringStrings(fixed, '(', ')');
   
-  console.log(`[CodeValidator] Brace balance: ${braceBalance}, Paren balance: ${parenBalance}`);
-  
   if (braceBalance > 5 || parenBalance > 5) {
     console.error('[CodeValidator] ⚠️ SEVERE CODE TRUNCATION DETECTED');
     console.error(`[CodeValidator] Missing: ${braceBalance} closing braces, ${parenBalance} closing parens`);
@@ -223,10 +221,6 @@ function scanCodeForIcons(code: string): string[] {
 
   const icons = Array.from(detectedIcons);
   
-  if (icons.length > 0) {
-    console.log('[CodeValidator] Potential icons detected:', icons.join(', '));
-  }
-  
   return icons;
 }
 
@@ -255,7 +249,6 @@ export function validateCode(code: string): ValidationResult {
     fixedCode = syntaxFixes.code;
     corrections.push(...syntaxFixes.fixes);
     hasAutoFixes = true;
-    console.log('[CodeValidator] Applied syntax fixes:', syntaxFixes.fixes);
   }
 
   // Check for basic component structure
@@ -447,7 +440,6 @@ export function extractAndEnsureIcons(code: string): { icons: string[]; code: st
   
   const finalCode = iconsComment + codeWithoutComment;
   
-  console.log('[CodeValidator] Icons (informational):', allIcons.length > 0 ? allIcons.join(', ') : 'none');
   return { icons: allIcons, code: finalCode };
 }
 
@@ -582,7 +574,7 @@ export function transpileCheck(code: string): { valid: boolean; error?: string }
       errorRecovery: false,
     });
 
-    console.log('[CodeValidator] ✅ Babel syntax check passed');
+    // Babel syntax check passed — silent success
     return { valid: true };
   } catch (err) {
     const error = err as Error & { loc?: { line: number; column: number } };

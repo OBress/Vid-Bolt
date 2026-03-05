@@ -56,6 +56,9 @@ export async function acquireGpuLock(
 
   console.log(`${LOG_PREFIX} Attempting to acquire lock for user ${userId} (TTL: ${ttlSeconds}s)`);
 
+  let lastLogTime = 0;
+  let pollsSinceLastLog = 0;
+
   while (Date.now() < deadline) {
     if (abortSignal?.aborted) {
       throw new Error(`${LOG_PREFIX} Lock acquisition aborted for user ${userId}`);
@@ -70,10 +73,18 @@ export async function acquireGpuLock(
     }
 
     // Lock held by another job — wait and retry
-    const ttl = await redis.ttl(lockKey);
-    console.log(
-      `${LOG_PREFIX} Lock held for user ${userId}, waiting... (lock TTL: ${ttl}s, deadline in ${Math.round((deadline - Date.now()) / 1000)}s)`
-    );
+    // Only log every 30s to avoid spamming (polls every 2s = ~15 polls per log)
+    pollsSinceLastLog++;
+    const now = Date.now();
+    if (now - lastLogTime >= 30_000) {
+      const ttl = await redis.ttl(lockKey);
+      const deadlineIn = Math.round((deadline - now) / 1000);
+      console.log(
+        `${LOG_PREFIX} Waiting for lock (user: ${userId.slice(0, 8)}..., lock TTL: ${ttl}s, deadline in ${deadlineIn}s, polls: ${pollsSinceLastLog})`
+      );
+      lastLogTime = now;
+      pollsSinceLastLog = 0;
+    }
 
     await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
   }
@@ -153,4 +164,22 @@ export async function isGpuLockHeld(userId: string): Promise<{ held: boolean; tt
     held: ttl > 0,
     ttl: Math.max(0, ttl),
   };
+}
+
+/**
+ * Force-release a user's GPU lock regardless of token.
+ * Use ONLY when a lock is stuck due to a crashed/hung worker.
+ */
+export async function forceReleaseGpuLock(userId: string): Promise<boolean> {
+  const redis = getRedisConnection();
+  const lockKey = `gpu-lock:${userId}`;
+  const result = await redis.del(lockKey);
+  
+  if (result === 1) {
+    console.log(`${LOG_PREFIX} Force-released lock for user ${userId}`);
+    return true;
+  }
+  
+  console.log(`${LOG_PREFIX} No lock found to force-release for user ${userId}`);
+  return false;
 }

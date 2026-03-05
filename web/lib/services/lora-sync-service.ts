@@ -92,8 +92,13 @@ async function syncSingleLora(
 
   // Already present on GPU — skip
   if (gpuLoraNames.has(loraName)) {
+    console.log(`[LoRA Sync] "${lora.name}" (extracted: "${loraName}") already on GPU, skipping`);
     return { synced: false };
   }
+
+  console.log(
+    `[LoRA Sync] "${lora.name}" (extracted: "${loraName}") NOT in GPU set: [${[...gpuLoraNames].join(', ')}]`,
+  );
 
   try {
     console.log(`[LoRA Sync] Downloading "${lora.name}" from R2 (key: ${lora.storageKey})...`);
@@ -104,6 +109,11 @@ async function syncSingleLora(
     const result = await callGpuUploadLora(loraBuffer, filename);
 
     if (!result.success) {
+      // Treat "already exists" (409) as success — GPU already has it
+      if (result.error?.includes('already exists') || result.error?.includes('409')) {
+        console.log(`[LoRA Sync] "${lora.name}" already exists on GPU (409), treating as present`);
+        return { synced: false };
+      }
       return { synced: false, error: result.error || 'Upload failed' };
     }
 
@@ -143,12 +153,22 @@ export async function syncLorasToGpuApi(
 
   // 1. List what's already on the GPU
   const gpuResult = await callGpuListLoras();
+
+  if (!gpuResult.success) {
+    console.error(
+      `[LoRA Sync] Failed to list GPU LoRAs: ${gpuResult.error}. ` +
+      `Skipping sync to avoid redundant re-uploads.`,
+    );
+    return result;
+  }
+
   const gpuLoraNames = new Set<string>(
     (gpuResult.data || []).map((l: LoraInfo) => l.name),
   );
 
   console.log(
-    `[LoRA Sync] GPU has ${gpuLoraNames.size} LoRAs, user has ${loras.length} configured`,
+    `[LoRA Sync] GPU has ${gpuLoraNames.size} LoRAs (${[...gpuLoraNames].join(', ') || 'none'}), ` +
+    `user has ${loras.length} configured`,
   );
 
   // 2. Sync each missing LoRA

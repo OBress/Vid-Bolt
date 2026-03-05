@@ -332,7 +332,7 @@ async function callLLMv2(
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.3,
-      max_tokens: 16000,
+      max_tokens: 32000,
       response_format: { type: 'json_schema', json_schema: edlJsonSchema },
     }),
   });
@@ -349,9 +349,9 @@ async function callLLMv2(
     throw new Error('Empty response from LLM');
   }
 
-  // Log raw response for debugging
-  console.log(`[EditAssembly] Raw LLM response length: ${content.length} chars`);
-  console.log(`[EditAssembly] Raw LLM response preview: ${content.substring(0, 200)}...`);
+  // Log concise response info
+  const finishReason = data.choices?.[0]?.finish_reason;
+  console.log(`[EditAssembly] LLM response: ${content.length} chars, finish_reason=${finishReason}`);
 
   // Structured outputs guarantee valid JSON matching the schema —
   // no markdown fence stripping needed
@@ -359,7 +359,7 @@ async function callLLMv2(
   try {
     parsed = JSON.parse(content);
   } catch (e) {
-    console.error(`[EditAssembly] JSON parse error (unexpected with structured outputs). Raw content:\n${content.substring(0, 500)}`);
+    console.error(`[EditAssembly] JSON parse error: ${e instanceof Error ? e.message : 'unknown'} (response was ${content.length} chars)`);
     throw new Error(`Failed to parse LLM response as JSON: ${e instanceof Error ? e.message : 'unknown'}`);
   }
 

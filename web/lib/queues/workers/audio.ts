@@ -49,8 +49,10 @@ const AUDIO_STEP_ORDER = {
 export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobData>) => {
   const { taskId, userId, videoId, script, voiceProvider, voiceModel, voiceName, voiceSettings } = job.data;
   const isClosedLoop = job.name === 'closed-loop-tts';
+  const jobStartTime = Date.now();
 
   console.log(`[Audio] Starting job ${job.id} for task ${taskId}${isClosedLoop ? ' (closed-loop)' : ''}`);
+  console.log(`[Audio] Config: provider=${voiceProvider}, model=${voiceModel}, voice=${voiceName}, script=${script.length} chars`);
 
   try {
     // Cost tracking for Step 4 (Audio/TTS)
@@ -99,6 +101,9 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
+      const chunkStart = Date.now();
+      console.log(`[Audio] === Chunk ${i + 1}/${chunks.length} === (${chunk.charCount} chars, elapsed: ${((Date.now() - jobStartTime) / 1000).toFixed(1)}s)`);
+
       const chunkStepId = !isClosedLoop ? await addTaskStep(taskId, 'audio_generation', `Process Chunk ${i + 1}`, AUDIO_STEP_ORDER.TTS_BASE + i) : null;
       
       if (!isClosedLoop) {
@@ -119,7 +124,9 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
         // Validate voice on first chunk (once per job, not per chunk)
         let resolvedVoice = voiceName || 'Hades';
         if (i === 0) {
+          console.log(`[Audio] Validating voice: ${resolvedVoice}`);
           resolvedVoice = await validateVoice(userId, resolvedVoice);
+          console.log(`[Audio] Resolved voice: ${resolvedVoice}`);
           // Store validated voice for subsequent chunks
           (job.data as any)._validatedVoice = resolvedVoice;
         } else {
@@ -127,12 +134,15 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
           resolvedVoice = (job.data as any)._validatedVoice || resolvedVoice;
         }
 
+        console.log(`[Audio] Chunk ${i + 1}: calling TTS...`);
+        const ttsStart = Date.now();
         const ttsResult = await generateSpeech(userId, chunk.text, {
           voiceId: resolvedVoice,
           modelId: voiceModel || undefined,
           speakingRate: voiceSettings?.speakingRate,
           temperature: Math.max(0.1, voiceSettings?.temperature || 1.0),
         });
+        console.log(`[Audio] Chunk ${i + 1}: TTS done in ${Date.now() - ttsStart}ms (${ttsResult.audioBuffer.length} bytes, ${ttsResult.durationSeconds.toFixed(1)}s audio, ${ttsResult.wordTimestamps?.length ?? 0} timestamps)`);
 
         // Upload to R2
         const { uploadAudioBuffer, generateTtsKey, isR2Configured } = await import('@/lib/services/r2-storage');
@@ -141,8 +151,11 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
           throw new Error('R2 storage is not configured.');
         }
 
+        console.log(`[Audio] Chunk ${i + 1}: uploading to R2...`);
+        const uploadStart = Date.now();
         const key = generateTtsKey(userId, videoId, chunk.index);
         const uploadResult = await uploadAudioBuffer(ttsResult.audioBuffer, key, 'audio/mpeg');
+        console.log(`[Audio] Chunk ${i + 1}: R2 upload done in ${Date.now() - uploadStart}ms`);
 
         await (chunkStepId ? completeStep(taskId, chunkStepId) : Promise.resolve());
 
@@ -153,10 +166,11 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
           wordTimestamps: ttsResult.wordTimestamps,
           text: chunk.text,
         });
+        console.log(`[Audio] Chunk ${i + 1}: complete (${Date.now() - chunkStart}ms total)`);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         if (chunkStepId) await failStep(taskId, chunkStepId, errorMessage);
-        console.error(`[Audio] Chunk ${i} failed:`, error);
+        console.error(`[Audio] Chunk ${i + 1} FAILED after ${Date.now() - chunkStart}ms:`, error);
         failedChunkErrors.push(`Chunk ${chunk.index}: ${errorMessage}`);
       }
     }
@@ -247,7 +261,7 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
       await updateVideoProgress(videoId, 'audio', 'Audio generation complete', 100);
     }
 
-    console.log(`[Audio] Completed for task ${taskId}`);
+    console.log(`[Audio] Completed for task ${taskId} in ${((Date.now() - jobStartTime) / 1000).toFixed(1)}s (${uploadedChunks.length}/${chunks.length} chunks, ${failedChunkErrors.length} failures)`);
 
     return {
       success: true,

@@ -291,10 +291,8 @@ export async function generateMotionGraphic(
 
   if (simplifiedRetry) {
     finalPrompt = buildSimplifiedPrompt(prompt, duration);
-    console.log(`[PipelineMG] Shot ${request.shotIndex}: Using simplified fallback prompt`);
   } else {
     finalPrompt = buildEnrichedMGPrompt(prompt, routingTags, imageAssets, duration, contextHint, narrationText);
-    console.log(`[PipelineMG] Shot ${request.shotIndex}: Enriched prompt (${imageAssets.length} assets)`);
   }
 
   // If we have QC feedback, format it as error correction

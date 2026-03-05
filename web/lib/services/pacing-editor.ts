@@ -111,22 +111,24 @@ export async function reviewTimelinePacing(
       messages: [
         {
           role: 'system',
-          content: 'You are a professional video editor reviewing the pacing of an AI-assembled documentary video.',
+          content: 'You are a YouTube retention specialist and editing supervisor. Review video timelines the way a top creator\'s editor would — looking for pacing issues, missed opportunities for engagement, and moments where the edit doesn\'t match the content\'s energy. Your standard is the best YouTube documentary channels.',
         },
         {
           role: 'user',
-          content: `Review this video timeline for pacing issues:
+          content: `Review this video timeline for engagement quality:
 
 ${JSON.stringify(timelineSummary, null, 2)}
 
-Check for:
-1. Shots significantly longer than their narration text (dead time)
-2. Shots significantly shorter than their narration (rushed)
-3. Consecutive shots with identical transition types (monotonous)
-4. Pacing inconsistencies with content_type (emotional beats should linger, list items should be snappy)
-5. Any shot that looks unreasonably long (>12s) or short (<1.5s)
+Evaluate with a top YouTube editor's eye:
 
-If the pacing looks good, return an empty adjustments array.`,
+1. **Energy mismatch**: Pacing that doesn't match content energy (slow cuts on exciting content, fast cuts on emotional beats that need to breathe)
+2. **Visual monotony**: More than 3-4 consecutive shots at the same rhythm without any variation (transitions, different cut lengths)
+3. **Static periods**: Any shot longer than 6 seconds — modern YouTube rarely holds a single visual that long unless it's an intentional emotional beat
+4. **Rushed moments**: Emotional or impactful content cut too short to land properly (less than 2.5s for meaningful content)
+5. **Missed opportunities**: Section boundaries without transitions, reveals without emphasis, dramatic moments without breathing room
+6. **Pacing flatline**: Extended stretches (>15s) with the same cut rhythm — the pacing should feel like a rollercoaster
+
+For each issue, suggest a specific adjustment. If the pacing is well-crafted with intentional variety, return an empty adjustments array. Don't flag things just to flag them — only flag genuine engagement problems.`,
         },
       ],
       temperature: 0.1,

@@ -14,23 +14,27 @@ import { WordTimestamp } from "@/types/task";
 /**
  * Content types determine segmentation strategy and visual style.
  * Each type has different target duration ranges and visual approaches.
+ * Ranges are intentionally tight to enable modern, fast-paced editing
+ * while still allowing the AI editor to choose appropriate timing per-clip.
  */
 export type ContentType = 
-  | 'list-item'        // 1-3 seconds, tight focus on specific item
-  | 'comparison'       // 2-4 seconds, clear visual contrast
-  | 'concept'          // 5-8 seconds, rich detailed scene
+  | 'list-item'        // 2-5 seconds, punchy focus on specific item
+  | 'comparison'       // 2.5-5 seconds, clear visual contrast
+  | 'concept'          // 3-6 seconds, rich detailed scene
   | 'transition'       // 2-4 seconds, neutral bridging imagery
-  | 'emotional-beat';  // 4-7 seconds, evocative atmospheric imagery
+  | 'emotional-beat';  // 3-6 seconds, evocative atmospheric imagery
 
 /**
- * Duration ranges for each content type (in seconds)
+ * Duration ranges for each content type (in seconds).
+ * These enable modern YouTube-grade pacing — shorter targets that allow
+ * the edit assembly AI to create dynamic, engaging timelines.
  */
 export const CONTENT_DURATION_RANGES: Record<ContentType, { min: number; target: number; max: number }> = {
-  'list-item': { min: 3, target: 4, max: 6 },
-  'comparison': { min: 3, target: 4, max: 6 },
-  'concept': { min: 5, target: 6.5, max: 8 },
-  'transition': { min: 3, target: 4, max: 5 },
-  'emotional-beat': { min: 4, target: 5.5, max: 7 },
+  'list-item': { min: 2, target: 3, max: 5 },
+  'comparison': { min: 2.5, target: 3.5, max: 5 },
+  'concept': { min: 3, target: 4.5, max: 6 },
+  'transition': { min: 2, target: 3, max: 4 },
+  'emotional-beat': { min: 3, target: 4.5, max: 6 },
 };
 
 /**
@@ -48,8 +52,8 @@ export const CONTENT_TYPE_DEFINITIONS: Record<ContentType, string> = {
  * Absolute segment boundaries
  */
 export const SEGMENT_BOUNDS = {
-  MIN_DURATION: 1,   // Never shorter than 1 second
-  MAX_DURATION: 10,  // Never longer than 10 seconds
+  MIN_DURATION: 1.5,  // Never shorter than 1.5 seconds (prevents glitchy micro-clips)
+  MAX_DURATION: 10,   // Never longer than 10 seconds
 };
 
 // ============================================================================

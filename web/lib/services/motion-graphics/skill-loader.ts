@@ -83,7 +83,7 @@ class SkillLoader {
       }
       
       this.initialized = true;
-      console.log(`[SkillLoader] Loaded ${this.skills.size} skills: ${Array.from(this.skills.keys()).join(', ')}`);
+      console.log(`[SkillLoader] Loaded ${this.skills.size} skills`);
     } catch (err) {
       console.error('[SkillLoader] Initialization failed:', err);
       this.initialized = true; // Mark initialized even on error to prevent retries

@@ -11,6 +11,7 @@ import { getInworldApiKey } from "./api-keys";
 import { WordTimestamp } from "@/types/task";
 
 const INWORLD_TTS_API_URL = "https://api.inworld.ai/tts/v1/voice";
+const TTS_FETCH_TIMEOUT_MS = 30_000; // 30s per chunk — safety net
 
 export interface TTSOptions {
   modelId?: string;
@@ -57,20 +58,32 @@ export async function generateSpeech(
     // Inworld requires temperature > 0.0 and <= 2.0
     // We clamp to 0.1 minimum to be safe, and 2.0 maximum
     temperature: Math.max(0.1, Math.min(2.0, config.temperature || 1.0)),
-    speakingRate: config.speakingRate ?? 1.0,
     timestampType: "WORD",
+    audioConfig: {
+      audioEncoding: "MP3" as const,
+      sampleRateHertz: 48000,
+      speakingRate: config.speakingRate ?? 1.0,
+    },
+    applyTextNormalization: "ON" as const,
   };
 
 
   try {
+    const bodyJson = JSON.stringify(requestBody);
+    console.log(`[Inworld TTS] Sending request: ${text.length} chars, voice=${config.voiceId}, model=${config.modelId}, rate=${config.speakingRate}, temp=${requestBody.temperature}`);
+    const fetchStart = Date.now();
+
     const response = await fetch(INWORLD_TTS_API_URL, {
       method: "POST",
       headers: {
         "Authorization": `Basic ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(requestBody),
+      body: bodyJson,
+      signal: AbortSignal.timeout(TTS_FETCH_TIMEOUT_MS),
     });
+
+    console.log(`[Inworld TTS] Response: ${response.status} in ${Date.now() - fetchStart}ms`);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -91,11 +104,21 @@ export async function generateSpeech(
     let wordTimestamps: WordTimestamp[] | undefined;
     if (result.timestampInfo?.wordAlignment) {
       const { words, wordStartTimeSeconds, wordEndTimeSeconds } = result.timestampInfo.wordAlignment;
-      wordTimestamps = words.map((word: string, i: number) => ({
-        word,
-        start_seconds: wordStartTimeSeconds[i],
-        end_seconds: wordEndTimeSeconds[i],
-      }));
+      if (Array.isArray(words) && words.length > 0) {
+        wordTimestamps = words.map((word: string, i: number) => ({
+          word,
+          start_seconds: wordStartTimeSeconds[i],
+          end_seconds: wordEndTimeSeconds[i],
+        }));
+        console.log(`[Inworld TTS] Parsed ${wordTimestamps.length} word timestamps`);
+      } else {
+        console.warn('[Inworld TTS] wordAlignment present but words array is empty or missing');
+      }
+    } else {
+      console.warn('[Inworld TTS] No timestampInfo.wordAlignment in response. Response keys:', Object.keys(result).join(', '));
+      if (result.timestampInfo) {
+        console.warn('[Inworld TTS] timestampInfo keys:', Object.keys(result.timestampInfo).join(', '));
+      }
     }
 
     // Estimate duration: MP3 at ~128kbps = ~16KB per second
@@ -241,7 +264,7 @@ export async function validateVoice(
 }
 
 export const INWORLD_MODELS = {
-  STANDARD: "inworld-tts-1.5-max-mini",
+  MINI: "inworld-tts-1.5-mini",
   MAX: "inworld-tts-1.5-max",
 } as const;
 

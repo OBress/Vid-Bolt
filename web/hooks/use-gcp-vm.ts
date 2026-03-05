@@ -201,9 +201,10 @@ export function useGCPVM(): UseGCPVMReturn {
         if (e.response?.status === 401) {
           setIsConnected(false);
         }
-        // Silently skip 429 (rate-limited) — next poll will succeed
-        if (e.response?.status !== 429) {
-          console.error("[useGCPVM] Status fetch error:", e);
+        // Silently skip 429 (rate-limited) and 500/502 (GCP transient) — next poll will succeed
+        // Only log non-transient errors
+        if (![429, 500, 502].includes(e.response?.status)) {
+          console.error("[useGCPVM] Status fetch error:", e.message || e);
         }
       }
     };

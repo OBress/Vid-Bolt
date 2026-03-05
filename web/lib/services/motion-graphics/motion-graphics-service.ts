@@ -188,7 +188,6 @@ class MotionGraphicsService {
     if (this.initialized) return;
     await skillLoader.initialize();
     this.initialized = true;
-    console.log('[MotionGraphicsService] Initialized');
   }
 
   /**
@@ -236,7 +235,6 @@ class MotionGraphicsService {
 
     const isComplex = wordCount > 12 || hasMultipleConcepts || hasTimingWords || hasDetailedRequest || hasAnimationDetail;
 
-    console.log(`[MotionGraphicsService] Prompt complexity: ${isComplex ? 'COMPLEX' : 'SIMPLE'} (words=${wordCount}, concepts=${hasMultipleConcepts}, timing=${hasTimingWords}, detail=${hasDetailedRequest}, animation=${hasAnimationDetail})`);
     return isComplex;
   }
 
@@ -338,7 +336,7 @@ class MotionGraphicsService {
    */
   async analyzeVision(apiKey: string, prompt: string, model: string): Promise<string | null> {
     try {
-      console.log('[MotionGraphicsService] ========== STEP 1: VISION ANALYSIS ==========');
+
       
       const { content, finishReason } = await callOpenRouter(apiKey, model, [
         { role: 'system', content: VISION_PROMPT },
@@ -355,7 +353,7 @@ class MotionGraphicsService {
 
       const visionJson = this.parseAIJson<{ description?: string }>(content, { description: undefined });
       if (visionJson?.description) {
-        console.log('[MotionGraphicsService] Vision:', visionJson.description);
+
         return visionJson.description;
       }
       
@@ -377,7 +375,7 @@ class MotionGraphicsService {
     model: string
   ): Promise<Record<string, unknown> | null> {
     try {
-      console.log('[MotionGraphicsService] ========== STEP 2: CREATING PLAN ==========');
+
       
       const planningInput = `VISION: ${vision}\n\nORIGINAL REQUEST: ${originalPrompt}`;
       
@@ -396,7 +394,7 @@ class MotionGraphicsService {
 
       const plan = this.parseAIJson(content, null);
       if (plan) {
-        console.log('[MotionGraphicsService] Plan created:', (plan as Record<string, unknown>).title || 'Untitled');
+  
         return plan as Record<string, unknown>;
       }
       
@@ -536,7 +534,6 @@ class MotionGraphicsService {
       const keywordSkills = this.detectSkillsFromKeywords(prompt);
       
       if (keywordSkills.length > 0) {
-        console.log('[MotionGraphicsService] Detected skills (keywords):', keywordSkills);
         return keywordSkills;
       }
       
@@ -558,7 +555,7 @@ class MotionGraphicsService {
       const detectedSkills = result.skills || [];
       const validSkills = detectedSkills.filter(name => skillLoader.hasSkill(name));
       
-      console.log('[MotionGraphicsService] Detected skills (AI):', validSkills);
+
       return validSkills;
     } catch (error) {
       console.error('[MotionGraphicsService] Skill detection error:', error);
@@ -611,7 +608,6 @@ class MotionGraphicsService {
       let detectedSkills: string[];
       if ((isFollowUp || errorCorrection) && previouslyUsedSkills.length > 0) {
         detectedSkills = [...previouslyUsedSkills];
-        console.log('[MotionGraphicsService] Reusing previously detected skills (follow-up):', detectedSkills);
       } else {
         detectedSkills = await this.detectSkills(apiKey, prompt, model);
       }
@@ -669,8 +665,6 @@ class MotionGraphicsService {
             });
           }
         }
-      } else if (!isFollowUp && !errorCorrection) {
-        console.log('[MotionGraphicsService] Simple prompt — skipping vision/planning');
       }
 
       // Step 4: Build enhanced system prompt
@@ -704,7 +698,6 @@ class MotionGraphicsService {
       }
 
       // Step 5: Stream code generation
-      console.log('[MotionGraphicsService] ========== CODE GENERATION ==========');
       sendSSE({ type: 'stage', stage: 'generating', message: 'Generating code...' });
 
       const messages = [
@@ -898,7 +891,7 @@ class MotionGraphicsService {
       // Strategy 2: Whitespace-normalized fuzzy match
       const fuzzyResult = this.fuzzyFindAndReplace(result, old_string, new_string);
       if (fuzzyResult) {
-        console.log(`[MotionGraphicsService] Edit ${i + 1}: exact match failed, fuzzy match succeeded`);
+
         const lineNumber = this.getLineNumber(result, fuzzyResult.matchedOriginal);
         result = fuzzyResult.result;
         enrichedEdits.push({ description: `${description} (fuzzy matched)`, old_string: fuzzyResult.matchedOriginal, new_string, lineNumber });

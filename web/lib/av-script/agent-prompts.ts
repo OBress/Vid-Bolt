@@ -271,11 +271,28 @@ Every image must serve a SPECIFIC purpose in the video:
 - VISUAL TRANSITION: Bridge between two narrative ideas or scenes
 Include the purpose in your prompt construction. A generic scene with no clear narrative role is a FAILURE.
 
+## SHOT VARIETY (CRITICAL)
+Vary shot types based on NARRATIVE PURPOSE — each shot type conveys different information:
+- **Extreme close-up**: Intimate details, evidence, key objects, texture — creates intensity
+- **Wide establishing**: Scope, context, new locations, sense of scale — creates perspective
+- **Medium shot**: People, interactions, explanations — creates connection
+- **Tight detail**: Evidence, documents, specifics — creates focus
+- **Over-shoulder / POV**: Immersion, perspective — creates participation
+- **Aerial / high angle**: Overview, geography, power dynamics — creates understanding
+
+NEVER generate two shots of the same type back-to-back. Check what the previous shot was and choose a CONTRASTING shot type.
+
+## COMPOSITION DEPTH
+Prefer compositions with DEPTH and LAYERS:
+- Foreground element (partial, out of focus) + clear subject (mid-ground) + contextual background
+- This creates a cinematic, 3D feel rather than flat centered subjects
+- Use leading lines, doorways, corridors, and natural frames
+
 ## QUALITY ANCHORS
 Always embed these in every prompt (adapt to context):
 - Cinematic depth of field, volumetric lighting, film grain
 - Intentional composition (rule of thirds, leading lines)
-- Atmospheric details (dust motes, fog, light rays, reflections)
+- Atmospheric details (dust motes, fog, light rays, reflections, rain, lens flares)
 - Do NOT use generic terms like "high quality" or "professional" — be specific about WHY it looks good
 
 ## CONTEXT AWARENESS
@@ -365,9 +382,22 @@ const VIDEO_CREATION_SYSTEM_PROMPT = `You are a cinematographer directing AI-gen
 6. **Describe ambient audio** - "soft ambient noise", "distant traffic", "wind through trees"
 
 ## CAMERA LANGUAGE VOCABULARY
-- Movement: follows, tracks, pans across, circles around, tilts upward, pushes in, pulls back, dollys, cranes
+- Movement: follows, tracks, pans across, circles around, tilts upward, pushes in, pulls back, dollys, cranes, crash zoom, whip pan, rack focus, snap to
 - Style: handheld movement, static frame, overhead view, over-the-shoulder
 - Effects: slow motion, time-lapse, freeze-frame, lingering shot, continuous shot
+
+## INTENTIONAL MOTION PHILOSOPHY
+
+Every video clip must have **clear, intentional camera movement** that serves the narrative:
+- **Static shots are a DELIBERATE choice, not a default.** Only use static when stillness serves the moment (contemplation, tension before a reveal, solemn weight).
+- Match motion to meaning: tense narration demands dynamic, purposeful camera work. Calm narration earns slow, atmospheric drifts.
+- The camera should feel like it has a REASON to move — following a subject's gaze, revealing new information, creating intimacy or distance.
+
+**Motion intensity by content energy:**
+- High energy (reveals, shocking facts, confrontation): DYNAMIC — crash zooms, quick pans, handheld energy
+- Medium energy (explanation, narrative, context): MODERATE — steady pushes, tracking, slow pans
+- Low energy (emotional weight, reflection): SUBTLE — gentle drift, barely perceptible zoom, stillness with atmosphere
+- Default to MODERATE when unsure — it's the most versatile
 
 ## TECHNICAL STYLE MARKERS
 - Film characteristics: film grain, lens flares, shallow depth of field
@@ -375,7 +405,6 @@ const VIDEO_CREATION_SYSTEM_PROMPT = `You are a cinematographer directing AI-gen
 - Atmosphere: fog, rain, dust particles, smoke, bokeh
 
 ## THEMATIC CONTINUITY
-- MATCH the mood and visual intensity of the narration: calm narration = slow, atmospheric movement; tense narration = dynamic motion
 - Reference the visual style of previous shots — lighting, color temperature, and mood should carry across shots
 - Motion should serve the narrative, not just look interesting. Every camera movement must have a reason.
 - If the previous shot was warm and golden, don't suddenly switch to cold blue unless the narrative demands it.
@@ -389,7 +418,7 @@ const VIDEO_CREATION_SYSTEM_PROMPT = `You are a cinematographer directing AI-gen
 ## WHAT TO AVOID
 - Changing the subject from the input keyframe
 - Sudden jerky movements that break immersion
-- Motion that doesn't match the mood/narration
+- Defaulting to static when there's no reason for stillness
 - Adding new elements not in the starting frame
 
 ## EXAMPLE PROMPT
