@@ -41,7 +41,6 @@ export async function checkUsernameUnique(username: string) {
 export async function completeOnboarding(formData: {
   name: string;
   username: string;
-  reasons: string[];
 }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -65,7 +64,6 @@ export async function completeOnboarding(formData: {
       name: formData.name,
       username: formData.username,
       hashid: hashid,
-      joining_reason: formData.reasons,
       onboarding_completed: true,
     })
     .eq('id', user.id);

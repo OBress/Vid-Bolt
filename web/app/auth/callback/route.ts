@@ -5,6 +5,9 @@ import { createClient } from '@/lib/supabase/server'
  * Auth Callback Route
  * 
  * Handles the OAuth callback from Supabase after Discord authentication.
+ * This route is ONLY for Discord login/signup — GCP connect uses a
+ * separate custom flow at /api/gcp/oauth/*.
+ * 
  * - Exchanges the auth code for a session
  * - Checks Discord guild membership (VidBolt server)
  * - Stores Discord identity metadata in the users table
@@ -48,7 +51,6 @@ async function checkVidBoltGuildMembership(
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  // if "next" is in search params, use it as the redirection URL
   const next = searchParams.get('next') ?? '/command-center'
 
   if (code) {
@@ -57,7 +59,7 @@ export async function GET(request: Request) {
     
     if (!error && session) {
       const user = session.user
-      
+
       // =====================================================
       // DISCORD IDENTITY & GUILD MEMBERSHIP CHECK
       // =====================================================
@@ -121,7 +123,7 @@ export async function GET(request: Request) {
       }
 
       const response = NextResponse.redirect(`${origin}${redirectUrl}`)
-      // Set a lightweight cookie for optimization
+      // Set a lightweight cookie for authorization optimization
       response.cookies.set('is_logged_in', 'true', {
         path: '/',
         maxAge: 60 * 60 * 24 * 30, // 30 days

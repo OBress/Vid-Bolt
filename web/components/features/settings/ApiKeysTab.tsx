@@ -415,19 +415,13 @@ export function ApiKeysTab() {
   const handleGCPConnect = async () => {
     setGcpLoading(true);
     try {
-      addLog("Initiating OAuth flow...");
+      addLog("Initiating GCP OAuth flow...");
       // Clear disconnect flag since user is explicitly connecting
       localStorage.removeItem("gcp_disconnected");
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/command-center/settings/general?tab=api-keys")}`,
-          scopes:
-            "https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/cloud-platform.read-only",
-          queryParams: { access_type: "offline", prompt: "consent" },
-        },
-      });
-      if (error) throw error;
+      // Navigate to custom GCP OAuth route — this does NOT touch the
+      // Discord Supabase session. The route redirects to Google's consent
+      // screen, and the callback stores the refresh token independently.
+      window.location.href = "/api/gcp/oauth/authorize";
     } catch (err: any) {
       toast.error("Connection failed: " + err.message);
       addLog("Connection failed: " + err.message);
