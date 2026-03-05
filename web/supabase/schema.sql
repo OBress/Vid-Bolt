@@ -355,6 +355,22 @@ $$;
 ALTER FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."auto_approve_admin"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF NEW.is_admin = true AND NEW.status != 'active' THEN
+    NEW.status := 'active';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."auto_approve_admin"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") RETURNS integer
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
@@ -642,7 +658,7 @@ $$;
 ALTER FUNCTION "public"."get_user_payment_history"("target_user_id" "uuid") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."get_users_paginated"("page" integer DEFAULT 1, "per_page" integer DEFAULT 20, "search_text" "text" DEFAULT ''::"text", "status_filter" "text" DEFAULT 'all'::"text") RETURNS TABLE("id" "uuid", "email" "text", "name" "text", "username" "text", "is_admin" boolean, "status" "public"."account_status", "date_joined" timestamp with time zone, "total_count" bigint, "last_month_status" "text")
+CREATE OR REPLACE FUNCTION "public"."get_users_paginated"("page" integer DEFAULT 1, "per_page" integer DEFAULT 20, "search_text" "text" DEFAULT ''::"text", "status_filter" "text" DEFAULT 'all'::"text") RETURNS TABLE("id" "uuid", "email" "text", "name" "text", "username" "text", "is_admin" boolean, "status" "public"."account_status", "date_joined" timestamp with time zone, "total_count" bigint, "last_month_status" "text", "discord_username" "text", "discord_avatar" "text", "in_vidbolt_server" boolean)
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
@@ -659,7 +675,8 @@ BEGIN
             (search_text = '' OR 
              u.email ILIKE '%' || search_text || '%' OR 
              u.name ILIKE '%' || search_text || '%' OR 
-             u.username ILIKE '%' || search_text || '%')
+             u.username ILIKE '%' || search_text || '%' OR
+             u.discord_username ILIKE '%' || search_text || '%')
             AND
             (status_filter = 'all' OR u.status::text = status_filter)
     )
@@ -682,7 +699,10 @@ BEGIN
                 LIMIT 1
             ), 
             'draft'
-        ) as last_month_status
+        ) as last_month_status,
+        u.discord_username,
+        u.discord_avatar,
+        u.in_vidbolt_server
     FROM filtered_users u
     ORDER BY u.date_joined DESC
     LIMIT per_page
@@ -863,6 +883,9 @@ BEGIN
   IF public.get_request_role() = 'service_role' THEN
     RETURN NEW;
   END IF;
+  IF session_user IN ('postgres', 'supabase_admin') THEN
+    RETURN NEW;
+  END IF;
 
   IF NEW.commission_rate IS DISTINCT FROM OLD.commission_rate THEN
     RAISE EXCEPTION 'Permission denied: cannot modify commission_rate';
@@ -896,6 +919,9 @@ BEGIN
   IF public.get_request_role() = 'service_role' THEN
     RETURN NEW;
   END IF;
+  IF session_user IN ('postgres', 'supabase_admin') THEN
+    RETURN NEW;
+  END IF;
 
   IF NEW.status IS DISTINCT FROM OLD.status THEN
     RAISE EXCEPTION 'Permission denied: cannot modify tasks.status';
@@ -917,6 +943,9 @@ BEGIN
   END IF;
   IF NEW.max_retries IS DISTINCT FROM OLD.max_retries THEN
     RAISE EXCEPTION 'Permission denied: cannot modify tasks.max_retries';
+  END IF;
+  IF NEW.inngest_run_id IS DISTINCT FROM OLD.inngest_run_id THEN
+    RAISE EXCEPTION 'Permission denied: cannot modify tasks.inngest_run_id';
   END IF;
   IF NEW.output_data IS DISTINCT FROM OLD.output_data THEN
     RAISE EXCEPTION 'Permission denied: cannot modify tasks.output_data';
@@ -972,6 +1001,9 @@ BEGIN
   IF public.get_request_role() = 'service_role' THEN
     RETURN NEW;
   END IF;
+  IF session_user IN ('postgres', 'supabase_admin') THEN
+    RETURN NEW;
+  END IF;
 
   IF NEW.gcp_refresh_token IS DISTINCT FROM OLD.gcp_refresh_token THEN
     RAISE EXCEPTION 'Permission denied: cannot modify gcp_refresh_token';
@@ -1012,8 +1044,12 @@ CREATE OR REPLACE FUNCTION "public"."protect_users_sensitive_columns"() RETURNS 
     SET "search_path" TO ''
     AS $$
 BEGIN
-  -- Allow service_role and postgres full access
+  -- Allow service_role (API calls from workers/server)
   IF public.get_request_role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+  -- Allow Supabase dashboard / direct SQL (postgres, supabase_admin)
+  IF session_user IN ('postgres', 'supabase_admin') THEN
     RETURN NEW;
   END IF;
 
@@ -1642,11 +1678,31 @@ CREATE TABLE IF NOT EXISTS "public"."users" (
     "onboarding_completed" boolean DEFAULT false,
     "joining_reason" "text"[],
     "status" "public"."account_status" DEFAULT 'pending'::"public"."account_status",
-    "stripe_customer_id" "text"
+    "stripe_customer_id" "text",
+    "discord_id" "text",
+    "discord_username" "text",
+    "discord_avatar" "text",
+    "in_vidbolt_server" boolean DEFAULT false
 );
 
 
 ALTER TABLE "public"."users" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."users"."discord_id" IS 'Discord user ID from OAuth identity';
+
+
+
+COMMENT ON COLUMN "public"."users"."discord_username" IS 'Discord username (e.g. user#1234 or new-style username)';
+
+
+
+COMMENT ON COLUMN "public"."users"."discord_avatar" IS 'Discord avatar hash for CDN URL construction';
+
+
+
+COMMENT ON COLUMN "public"."users"."in_vidbolt_server" IS 'Whether user is in the VidBolt Discord server (checked at login)';
+
 
 
 CREATE TABLE IF NOT EXISTS "public"."video_editor_media" (
@@ -2020,6 +2076,10 @@ CREATE INDEX "idx_tasks_user_type" ON "public"."tasks" USING "btree" ("user_id",
 
 
 
+CREATE INDEX "idx_users_discord_id" ON "public"."users" USING "btree" ("discord_id");
+
+
+
 CREATE INDEX "idx_video_editor_media_project" ON "public"."video_editor_media" USING "btree" ("project_id");
 
 
@@ -2073,6 +2133,10 @@ CREATE INDEX "idx_video_projects_user_status" ON "public"."video_projects" USING
 
 
 CREATE INDEX "stock_media_embedding_idx" ON "public"."stock_media" USING "ivfflat" ("embedding" "extensions"."vector_cosine_ops") WITH ("lists"='100');
+
+
+
+CREATE OR REPLACE TRIGGER "auto_approve_admin_trigger" BEFORE INSERT OR UPDATE ON "public"."users" FOR EACH ROW EXECUTE FUNCTION "public"."auto_approve_admin"();
 
 
 
@@ -3066,6 +3130,12 @@ GRANT ALL ON FUNCTION "public"."append_task_step"("p_task_id" "uuid", "p_step" "
 GRANT ALL ON FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") TO "anon";
 GRANT ALL ON FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."append_to_output_array"("p_task_id" "uuid", "p_key" "text", "p_item" "jsonb") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."auto_approve_admin"() TO "anon";
+GRANT ALL ON FUNCTION "public"."auto_approve_admin"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."auto_approve_admin"() TO "service_role";
 
 
 
