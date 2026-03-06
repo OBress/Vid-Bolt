@@ -88,9 +88,10 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
 
       const metadata = (video?.metadata || {}) as Record<string, unknown>;
 
-      // Get shots
-      const avScriptPart1 = metadata.av_script_part1 as { shots?: Array<Record<string, unknown>> } | undefined;
-      const allShots = avScriptPart1?.shots || [];
+      // Get shots — primary: shot_plan (matches orchestrator), fallback: av_script_part1 (legacy)
+      const shotPlanData = metadata.shot_plan as { shots?: Array<Record<string, unknown>> } | undefined;
+      const avScriptFallback = metadata.av_script_part1 as { shots?: Array<Record<string, unknown>> } | undefined;
+      const allShots = shotPlanData?.shots || avScriptFallback?.shots || [];
 
       // Get keyframe images from the image-gen worker's output
       const generatedImages = (metadata.generated_images || {}) as Record<string, string>;

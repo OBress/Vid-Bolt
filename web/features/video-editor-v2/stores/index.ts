@@ -112,3 +112,16 @@ export type {
   TimelineItem,
   TrackWithClips,
 } from './video-editor-store';
+
+export {
+  useAIGenerationStore,
+} from './ai-generation-store';
+
+export type {
+  AIGenerationMode,
+  AIGenerationState,
+  ImageGenState,
+  ImageEditState,
+  VideoGenState,
+  GenerationResult,
+} from './ai-generation-store';

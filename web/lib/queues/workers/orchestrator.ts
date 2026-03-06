@@ -19,7 +19,7 @@
  */
 
 import { Job, Processor, Queue, QueueEvents } from 'bullmq';
-import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
+import { getSupabaseServiceClient, updateTaskStatus, appendActivityEvent } from '@/lib/queues/shared';
 import { getRedisConnection } from '@/lib/queues/redis';
 import { generateWorkerPrompts } from '@/lib/services/prompt-generator';
 import { listEntities, incrementAppearance } from '@/lib/services/gcm';
@@ -830,8 +830,14 @@ async function executeProductionPhase(
       const { waiting: waitingJobs, active: activeJobs } = await videoGenQueue.getJobCounts('waiting', 'active');
       const queueDepth = waitingJobs + activeJobs;
       const queueMultiplier = queueDepth + 1;
-      const VIDEO_BATCH_TIMEOUT_MS = Math.max(120_000, totalVideoDuration * 10 * 1_000 * queueMultiplier);
-      console.log(`${LOG_PREFIX} Video batch timeout: ${Math.round(VIDEO_BATCH_TIMEOUT_MS / 1000)}s for ${totalVideoDuration.toFixed(1)}s of video (${videoShots.length} shots, ${queueDepth} jobs ahead → ${queueMultiplier}x multiplier)`);
+      // Query GPU lock state to estimate lock wait time
+      const { isGpuLockHeld } = await import('@/lib/queues/gpu-lock');
+      const lockState = await isGpuLockHeld(jobData.userId);
+      const lockWaitBufferMs = lockState.held ? (lockState.ttl * 1_000) + 60_000 : 60_000;
+      // Dynamic timeout: GPU processing + lock wait buffer + 2 mode switches (~3min each)
+      const gpuProcessingMs = Math.max(120_000, totalVideoDuration * 10 * 1_000 * queueMultiplier);
+      const VIDEO_BATCH_TIMEOUT_MS = gpuProcessingMs + lockWaitBufferMs + 360_000;
+      console.log(`${LOG_PREFIX} Video batch timeout: ${Math.round(VIDEO_BATCH_TIMEOUT_MS / 1000)}s for ${totalVideoDuration.toFixed(1)}s of video (${videoShots.length} shots, ${queueDepth} jobs ahead → ${queueMultiplier}x multiplier, lock buffer: ${Math.round(lockWaitBufferMs / 1000)}s)`);
 
       // 1. Dispatch video-gen ONCE for the entire batch
       const genQueueEvents = await getQueueEvents('video-gen');
@@ -914,7 +920,9 @@ async function executeProductionPhase(
                 });
 
                 const totalVideoDurationForRetry = shot.duration_seconds || 5;
-                const RETRY_TIMEOUT_MS = Math.max(120_000, totalVideoDurationForRetry * 20 * 1_000);
+                const retryLockState = await isGpuLockHeld(jobData.userId);
+                const retryLockBufferMs = retryLockState.held ? (retryLockState.ttl * 1_000) + 60_000 : 60_000;
+                const RETRY_TIMEOUT_MS = Math.max(120_000, totalVideoDurationForRetry * 20 * 1_000) + retryLockBufferMs;
                 const retryResult = await retryJob.waitUntilFinished(genQueueEvents, RETRY_TIMEOUT_MS);
                 const retryUrl = retryResult?.mediaUrl || retryResult?.url;
                 if (retryUrl) {
@@ -1269,12 +1277,24 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
 
     console.log(`${LOG_PREFIX} Worker prompts generated and persisted`);
 
+    await appendActivityEvent(taskId, {
+      phase: 'init',
+      type: 'info',
+      message: 'Pipeline initialized — worker prompts generated',
+    });
+
     // =========================================================================
     // PHASE I: TTS Generation
     // =========================================================================
     state.phase = 'tts';
     state.status = 'running';
     await persistState(videoId, state);
+
+    await appendActivityEvent(taskId, {
+      phase: 'tts',
+      type: 'phase_start',
+      message: 'Phase I: Starting TTS narration generation',
+    });
 
     const ttsResult = await executeTtsPhase(videoId, job.data, taskId);
 
@@ -1286,11 +1306,23 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     await persistState(videoId, state);
     console.log(`${LOG_PREFIX} Phase I complete: ${ttsResult.timestampsCount} word timestamps`);
 
+    await appendActivityEvent(taskId, {
+      phase: 'tts',
+      type: 'phase_complete',
+      message: `Phase I complete — ${ttsResult.timestampsCount} word timestamps generated`,
+    });
+
     // =========================================================================
     // PHASE II: Shot Planning
     // =========================================================================
     state.phase = 'shot_planning';
     await persistState(videoId, state);
+
+    await appendActivityEvent(taskId, {
+      phase: 'shot_planning',
+      type: 'phase_start',
+      message: 'Phase II: Planning shots aligned to narration timing',
+    });
 
     const shotResult = await executeShotPlanningPhase(videoId, job.data, taskId, workerPrompts);
 
@@ -1302,6 +1334,12 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     await persistState(videoId, state);
     console.log(`${LOG_PREFIX} Phase II complete: ${shotResult.shotCount} shots planned`);
 
+    await appendActivityEvent(taskId, {
+      phase: 'shot_planning',
+      type: 'phase_complete',
+      message: `Phase II complete — ${shotResult.shotCount} shots planned`,
+    });
+
     // =========================================================================
     // PHASE II-B: Shot Plan Self-Reflection (for long videos only)
     // =========================================================================
@@ -1309,6 +1347,12 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     // Only triggers for videos with 15+ shots (short videos rarely have plan errors).
     if (shotResult.shotCount >= 15) {
       console.log(`${LOG_PREFIX} Phase II-B: Self-reflection on ${shotResult.shotCount}-shot plan...`);
+
+      await appendActivityEvent(taskId, {
+        phase: 'shot_planning',
+        type: 'reflection',
+        message: `Self-reflection: Reviewing ${shotResult.shotCount}-shot plan for quality issues`,
+      });
 
       try {
         const reflectionResult = await performShotPlanReflection(
@@ -1323,6 +1367,13 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
             reflectionResult.issues
           );
 
+          await appendActivityEvent(taskId, {
+            phase: 'shot_planning',
+            type: 'retry',
+            message: `Self-reflection found ${reflectionResult.issues.length} major issue(s) — re-planning shots`,
+            detail: reflectionResult.issues.join('; '),
+          });
+
           // Prepend feedback to re-run shot planning (max 1 re-plan)
           const replanResult = await executeShotPlanningPhase(
             videoId, job.data, taskId, workerPrompts, reflectionResult.issues.join('; ')
@@ -1335,8 +1386,20 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
           };
           await persistState(videoId, state);
           console.log(`${LOG_PREFIX} Phase II-B: Re-planned → ${replanResult.shotCount} shots`);
+
+          await appendActivityEvent(taskId, {
+            phase: 'shot_planning',
+            type: 'phase_complete',
+            message: `Re-plan complete — ${replanResult.shotCount} shots (iteration 2)`,
+          });
         } else {
           console.log(`${LOG_PREFIX} Phase II-B: Plan OK (severity: ${reflectionResult.severity})`);
+
+          await appendActivityEvent(taskId, {
+            phase: 'shot_planning',
+            type: 'info',
+            message: `Self-reflection passed — plan quality: ${reflectionResult.severity}`,
+          });
         }
       } catch (reflectionError) {
         // Non-blocking: reflection failure shouldn't stop the pipeline
@@ -1350,6 +1413,12 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     state.phase = 'asset_retrieval';
     await persistState(videoId, state);
 
+    await appendActivityEvent(taskId, {
+      phase: 'asset_retrieval',
+      type: 'phase_start',
+      message: 'Phase III: Finding stock media and crafting AI image prompts',
+    });
+
     const assetResult = await executeAssetRetrievalPhase(videoId, job.data, taskId, workerPrompts);
 
     state.phase_data.asset_retrieval = {
@@ -1360,11 +1429,23 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     await persistState(videoId, state);
     console.log(`${LOG_PREFIX} Phase III complete: ${assetResult.promptsGenerated} prompts generated`);
 
+    await appendActivityEvent(taskId, {
+      phase: 'asset_retrieval',
+      type: 'phase_complete',
+      message: `Phase III complete — ${assetResult.stockMatched} stock matched, ${assetResult.promptsGenerated} AI prompts crafted`,
+    });
+
     // =========================================================================
     // PHASE IV: Production (GPU + MG)
     // =========================================================================
     state.phase = 'production';
     await persistState(videoId, state);
+
+    await appendActivityEvent(taskId, {
+      phase: 'production',
+      type: 'phase_start',
+      message: 'Phase IV: Generating AI images, videos, and motion graphics',
+    });
 
     const prodResult = await executeProductionPhase(videoId, job.data, taskId, state, gcmEntities);
 
@@ -1380,6 +1461,15 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     await persistState(videoId, state);
     console.log(`${LOG_PREFIX} Phase IV complete: ${prodResult.imagesCompleted} images, ${prodResult.videosCompleted} videos`);
 
+    await appendActivityEvent(taskId, {
+      phase: 'production',
+      type: 'phase_complete',
+      message: `Phase IV complete — ${prodResult.imagesCompleted} images, ${prodResult.videosCompleted} videos, ${prodResult.mgCompleted} motion graphics`,
+      detail: prodResult.imagesFailed + prodResult.videosFailed > 0
+        ? `${prodResult.imagesFailed} images failed, ${prodResult.videosFailed} videos failed`
+        : undefined,
+    });
+
     // Persist pipeline diagnostics for the Pipeline Debugger
     try {
       const { data: diagProject } = await supabase
@@ -1388,7 +1478,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
         .eq('id', videoId)
         .single();
       const diagMeta = (diagProject?.metadata || {}) as Record<string, unknown>;
-      const diagShots = ((diagMeta.av_script_part1 as any)?.shots || []) as any[];
+      const diagShots = ((diagMeta.shot_plan as any)?.shots || (diagMeta.av_script_part1 as any)?.shots || []) as any[];
       const diagVideos = (diagMeta.generated_videos || {}) as Record<string, string>;
       const diagMG = (diagMeta.generated_motion_graphics || {}) as Record<string, string>;
 
@@ -1430,6 +1520,12 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     if (prodResult.videosCompleted > 0 && process.env.GPU_API_URL) {
       try {
         console.log(`${LOG_PREFIX} Phase IV-B: Trimming ${prodResult.videosCompleted} video clips...`);
+
+        await appendActivityEvent(taskId, {
+          phase: 'production',
+          type: 'info',
+          message: `Analyzing ${prodResult.videosCompleted} video clips for optimal trim points`,
+        });
 
         await updateTaskStatus(taskId, {
           status: 'running',
@@ -1478,6 +1574,12 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     // =========================================================================
     state.phase = 'assembly';
     await persistState(videoId, state);
+
+    await appendActivityEvent(taskId, {
+      phase: 'assembly',
+      type: 'phase_start',
+      message: 'Phase V: Assembling timeline in Video Editor',
+    });
 
     const assemblyResult = await executeAssemblyPhase(videoId, job.data, taskId);
 
@@ -1547,6 +1649,12 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     try {
       console.log(`${LOG_PREFIX} Phase V-B: Reviewing timeline pacing...`);
 
+      await appendActivityEvent(taskId, {
+        phase: 'assembly',
+        type: 'reflection',
+        message: 'Reviewing overall video pacing and timing',
+      });
+
       await updateTaskStatus(taskId, {
         status: 'running',
         current_step: 'Phase V-B: Reviewing overall video pacing...',
@@ -1560,8 +1668,18 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
         console.log(
           `${LOG_PREFIX} Phase V-B: ${pacingResult.adjustments.length} pacing adjustments recommended`
         );
+        await appendActivityEvent(taskId, {
+          phase: 'assembly',
+          type: 'info',
+          message: `Pacing review: ${pacingResult.adjustments.length} adjustments recommended`,
+        });
       } else {
         console.log(`${LOG_PREFIX} Phase V-B: Pacing looks good — ${pacingResult.overallAssessment}`);
+        await appendActivityEvent(taskId, {
+          phase: 'assembly',
+          type: 'info',
+          message: `Pacing review passed — ${pacingResult.overallAssessment}`,
+        });
       }
     } catch (pacingError) {
       console.warn(`${LOG_PREFIX} Phase V-B: Pacing review failed, continuing:`, pacingError);
@@ -1575,6 +1693,18 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     await persistState(videoId, state, {
       current_stage: 'video',
       status: 'processing',
+    });
+
+    await appendActivityEvent(taskId, {
+      phase: 'assembly',
+      type: 'phase_complete',
+      message: 'Phase V complete — timeline assembled and pacing reviewed',
+    });
+
+    await appendActivityEvent(taskId, {
+      phase: 'complete',
+      type: 'phase_complete',
+      message: `Pipeline complete — ${prodResult.imagesCompleted} images, ${prodResult.videosCompleted} videos, ${prodResult.mgCompleted} MG`,
     });
 
     await updateTaskStatus(taskId, {
@@ -1613,6 +1743,13 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     } catch (_persistError) {
       console.error(`${LOG_PREFIX} Failed to persist error state`);
     }
+
+    await appendActivityEvent(taskId, {
+      phase: state.phase,
+      type: 'warning',
+      message: `Pipeline failed in phase: ${state.phase}`,
+      detail: error instanceof Error ? error.message : 'Unknown error',
+    });
 
     await updateTaskStatus(taskId, {
       status: 'failed',

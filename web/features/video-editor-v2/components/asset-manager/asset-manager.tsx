@@ -6,11 +6,13 @@
  * - Text: Text presets and templates
  * - Shapes: Shape elements
  * - Effects: Transitions and effects
+ * - AI: AI-powered image/video generation, editing, and future audio/SFX
  * 
  * Features:
  * - Search functionality
  * - Drag to timeline/canvas
  * - Grid/masonry layout
+ * - Horizontally scrollable tab bar for narrow viewports
  */
 
 import React, { useState } from "react";
@@ -30,7 +32,7 @@ const MediaTab = React.lazy(() => import("./tabs/media-tab").then(m => ({ defaul
 const TextTab = React.lazy(() => import("./tabs/text-tab").then(m => ({ default: m.TextTab })));
 const EffectsTab = React.lazy(() => import("./tabs/effects-tab").then(m => ({ default: m.EffectsTab })));
 const ShapesTab = React.lazy(() => import("./tabs/shapes-tab").then(m => ({ default: m.ShapesTab })));
-const MotionGraphicsTab = React.lazy(() => import("./tabs/motion-graphics-tab").then(m => ({ default: m.MotionGraphicsTab })));
+const AIGenerationTab = React.lazy(() => import("./tabs/ai-generation-tab").then(m => ({ default: m.AIGenerationTab })));
 
 /** Lightweight skeleton shown while tab chunks are loading */
 const TabSkeleton: React.FC = () => (
@@ -51,14 +53,14 @@ import {
   Sparkles,
   PanelLeftClose,
   Shapes,
-  Wand2,
+  Bot,
 } from "lucide-react";
 
 // ==========================================
 // TYPES
 // ==========================================
 
-export type AssetManagerTab = 'media' | 'text' | 'shapes' | 'effects' | 'motion-graphics';
+export type AssetManagerTab = 'media' | 'text' | 'shapes' | 'effects' | 'ai';
 
 interface AssetManagerProps {
   /** Default active tab */
@@ -84,7 +86,7 @@ const TABS_CONFIG: Array<{
   { id: 'text', label: 'Text', icon: Type },
   { id: 'shapes', label: 'Shapes', icon: Shapes },
   { id: 'effects', label: 'Effects', icon: Sparkles },
-  { id: 'motion-graphics', label: 'Motion', icon: Wand2 },
+  { id: 'ai', label: 'AI', icon: Bot },
 ];
 
 // ==========================================
@@ -144,20 +146,21 @@ export const AssetManager: React.FC<AssetManagerProps> = ({
         </div>
         
         {/* Tab Headers - below title */}
-        <div className="absolute top-10 left-0 right-0 z-10 border-b border-border bg-muted/10">
-          <TabsList className="w-full h-9 bg-transparent p-0 rounded-none justify-start">
+        {/* Tab Headers - horizontally scrollable on narrow viewports */}
+        <div className="absolute top-10 left-0 right-0 z-10 border-b border-border bg-muted/10 overflow-x-auto scrollbar-hide">
+          <TabsList className="h-9 bg-transparent p-0 rounded-none justify-start inline-flex min-w-full">
             {TABS_CONFIG.map(({ id, label, icon: Icon }) => (
               <TabsTrigger
                 key={id}
                 value={id}
                 className={cn(
-                  "flex-1 h-full rounded-none border-b-2 border-transparent",
+                  "flex-1 min-w-0 h-full rounded-none border-b-2 border-transparent",
                   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
                   "data-[state=active]:shadow-none",
-                  "flex items-center justify-center gap-1.5"
+                  "flex items-center justify-center gap-1 px-2 whitespace-nowrap"
                 )}
               >
-                {React.createElement(Icon, { className: "h-3.5 w-3.5" })}
+                {React.createElement(Icon, { className: "h-3.5 w-3.5 shrink-0" })}
                 <span className="text-xs">{label}</span>
               </TabsTrigger>
             ))}
@@ -190,9 +193,9 @@ export const AssetManager: React.FC<AssetManagerProps> = ({
             </React.Suspense>
           </TabsContent>
           
-          <TabsContent value="motion-graphics" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden">
+          <TabsContent value="ai" className="h-full m-0 p-0 overflow-hidden data-[state=inactive]:hidden">
             <React.Suspense fallback={<TabSkeleton />}>
-              <MotionGraphicsTab />
+              <AIGenerationTab />
             </React.Suspense>
           </TabsContent>
         </div>

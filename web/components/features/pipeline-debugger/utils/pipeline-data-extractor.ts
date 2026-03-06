@@ -159,7 +159,10 @@ function extractStepInputs(
       };
     case 6: // Scene Review
       return {
-        shotCount: getNestedValue(meta, 'avScriptPart1Output.shots.length') || 0,
+        shotCount: getNestedValue(meta, 'shot_plan.shots.length')
+          || getNestedValue(meta, 'av_script_part1.shots.length')
+          || getNestedValue(meta, 'avScriptPart1Output.shots.length')
+          || 0,
         hasAssetReferenceImages: !!meta.assetReferenceImages,
         hasStockMedia: Array.isArray(meta.stockMediaResults) &&
           (meta.stockMediaResults as unknown[]).length > 0,
@@ -220,8 +223,11 @@ function extractStepOutputs(
       };
     case 5:
       return {
-        avScriptPart1Output: meta.avScriptPart1Output || null,
-        shotCount: getNestedValue(meta, 'avScriptPart1Output.shots.length') || 0,
+        avScriptPart1Output: meta.shot_plan || meta.av_script_part1 || meta.avScriptPart1Output || null,
+        shotCount: getNestedValue(meta, 'shot_plan.shots.length')
+          || getNestedValue(meta, 'av_script_part1.shots.length')
+          || getNestedValue(meta, 'avScriptPart1Output.shots.length')
+          || 0,
         assetReferenceImages: meta.assetReferenceImages || null,
         // Per-shot timing from shot plan (requested durations)
         shotTimings: extractShotTimings(meta),

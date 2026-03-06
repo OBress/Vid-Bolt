@@ -54,6 +54,24 @@ export const TASK_PHASES = [
 export type TaskPhase = typeof TASK_PHASES[number];
 
 // ============================================================================
+// ACTIVITY EVENT TYPES
+// ============================================================================
+
+/** Structured event logged by the orchestrator for the activity feed UI. */
+export interface ActivityEvent {
+  /** ISO 8601 timestamp */
+  timestamp: string;
+  /** Pipeline phase this event belongs to */
+  phase: string;
+  /** Event classification */
+  type: 'phase_start' | 'phase_complete' | 'reflection' | 'retry' | 'verification' | 'info' | 'warning';
+  /** Human-readable description */
+  message: string;
+  /** Optional extra detail (e.g. reflection issues, verification feedback) */
+  detail?: string;
+}
+
+// ============================================================================
 // STEP TYPES
 // ============================================================================
 
@@ -378,6 +396,8 @@ export interface Task<
   current_step?: string | null;
   /** Overall progress (0-100) */
   progress_percent: number;
+  /** Activity events logged by the orchestrator for the real-time feed */
+  activity_events?: ActivityEvent[];
   
   // Step tracking (replaces task_steps table)
   /** Array of workflow steps with their status */

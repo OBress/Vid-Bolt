@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import type { Task, TaskStatus } from "@/types/task";
+import type { Task, TaskStatus, ActivityEvent } from "@/types/task";
 
 interface UseTaskProgressOptions {
   /** Polling interval in milliseconds (default: 2000) */
@@ -21,7 +21,7 @@ interface UseTaskProgressReturn {
   task: Task | null;
   /** Whether polling is active */
   isPolling: boolean;
-  /** Current progress percentage */
+  /** Current progress percentage (monotonic — never decreases) */
   progress: number;
   /** Current step description */
   currentStep: string | null;
@@ -29,6 +29,8 @@ interface UseTaskProgressReturn {
   status: TaskStatus | null;
   /** Error message if any */
   error: string | null;
+  /** Activity events from the orchestrator */
+  activityEvents: ActivityEvent[];
   /** Start polling manually */
   startPolling: () => void;
   /** Stop polling manually */
@@ -62,6 +64,9 @@ export function useTaskProgress(
   const onErrorRef = useRef(onError);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const taskIdRef = useRef(taskId);
+  
+  // Client-side monotonic guard: progress can never decrease
+  const maxProgressRef = useRef(0);
   
   // Keep refs up to date
   useEffect(() => {
@@ -120,8 +125,14 @@ export function useTaskProgress(
     setTask(fetchedTask);
     setError(null);
 
+    // Update monotonic progress (only goes up)
+    if (fetchedTask.progress_percent > maxProgressRef.current) {
+      maxProgressRef.current = fetchedTask.progress_percent;
+    }
+
     // Check if task is complete
     if (fetchedTask.status === "completed") {
+      maxProgressRef.current = 100;
       stopPolling();
       onCompleteRef.current?.(fetchedTask);
       return;
@@ -172,6 +183,7 @@ export function useTaskProgress(
       setTask(null);
       setError(null);
       setRetryCount(0);
+      maxProgressRef.current = 0; // Reset monotonic guard for new task
       
       // Stop any existing polling
       if (intervalRef.current) {
@@ -214,13 +226,18 @@ export function useTaskProgress(
     };
   }, []);
 
+  // Monotonic progress: return the highest value seen
+  const rawProgress = task?.progress_percent ?? 0;
+  const progress = Math.max(rawProgress, maxProgressRef.current);
+
   return {
     task,
     isPolling,
-    progress: task?.progress_percent ?? 0,
+    progress,
     currentStep: task?.current_step ?? null,
     status: task?.status ?? null,
     error,
+    activityEvents: task?.activity_events ?? [],
     startPolling,
     stopPolling,
   };

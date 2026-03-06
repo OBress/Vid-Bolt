@@ -5,7 +5,7 @@
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import type { TaskStep, TaskPhase, WritingTaskOutput } from "@/types/task";
+import type { TaskStep, TaskPhase, WritingTaskOutput, ActivityEvent } from "@/types/task";
 
 // ============================================================================
 // SUPABASE CLIENT
@@ -121,6 +121,7 @@ export async function failStep(
 
 /**
  * Updates task status and progress.
+ * Includes a monotonic guard: progress_percent can never decrease.
  */
 export async function updateTaskStatus(
   taskId: string,
@@ -137,6 +138,24 @@ export async function updateTaskStatus(
   console.log(`[shared:updateTaskStatus] Updating task ${taskId}:`, JSON.stringify(updates));
   
   const supabase = getSupabaseServiceClient();
+
+  // Monotonic progress guard: never allow progress to decrease
+  if (updates.progress_percent !== undefined) {
+    const { data: current } = await supabase
+      .from('tasks')
+      .select('progress_percent')
+      .eq('id', taskId)
+      .single();
+
+    if (current && current.progress_percent > updates.progress_percent) {
+      console.log(
+        `[shared:updateTaskStatus] Monotonic guard: keeping ${current.progress_percent}% (tried to set ${updates.progress_percent}%)`
+      );
+      // Remove the regressive progress — keep the current higher value
+      delete updates.progress_percent;
+    }
+  }
+
   const { error, data } = await supabase
     .from("tasks")
     .update(updates)
@@ -149,6 +168,50 @@ export async function updateTaskStatus(
   }
   
   console.log(`[shared:updateTaskStatus] SUCCESS for task ${taskId}:`, JSON.stringify(data));
+}
+
+/**
+ * Append a structured activity event to the task's activity_events array.
+ * Uses atomic JSONB array append to avoid race conditions.
+ */
+export async function appendActivityEvent(
+  taskId: string,
+  event: Omit<ActivityEvent, 'timestamp'>
+): Promise<void> {
+  const fullEvent: ActivityEvent = {
+    ...event,
+    timestamp: new Date().toISOString(),
+  };
+
+  const supabase = getSupabaseServiceClient();
+
+  // Atomic append using raw SQL via rpc, with fallback to read-modify-write
+  try {
+    const { error: rpcError } = await supabase.rpc('append_activity_event', {
+      p_task_id: taskId,
+      p_event: fullEvent,
+    });
+
+    if (rpcError) {
+      // Fallback: read-modify-write (slightly less safe but works without the RPC)
+      const { data: row } = await supabase
+        .from('tasks')
+        .select('activity_events')
+        .eq('id', taskId)
+        .single();
+
+      const events: ActivityEvent[] = (row?.activity_events as ActivityEvent[] | null) || [];
+      events.push(fullEvent);
+
+      await supabase
+        .from('tasks')
+        .update({ activity_events: events as any })
+        .eq('id', taskId);
+    }
+  } catch {
+    // Non-blocking: activity event logging should never fail the pipeline
+    console.warn(`[shared:appendActivityEvent] Failed for task ${taskId}:`, event.message);
+  }
 }
 
 /**

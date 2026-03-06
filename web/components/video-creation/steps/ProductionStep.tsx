@@ -20,6 +20,7 @@ import { useTaskProgress } from "@/hooks/use-task-progress";
 import { useGCPVM } from "@/hooks/use-gcp-vm";
 import { useProjectSettings } from "@/hooks/use-project-settings";
 import { hasAnyLocalModel } from "@/lib/constants/model-registry";
+import { ActivityFeed } from "@/components/video-creation/ActivityFeed";
 
 // ============================================================================
 // TYPES
@@ -246,6 +247,7 @@ export function ProductionStep({
     status: taskStatus,
     isPolling,
     error: pollError,
+    activityEvents,
   } = useTaskProgress(taskId, {
     pollInterval: 3000,
     onComplete: handleComplete,
@@ -511,7 +513,14 @@ export function ProductionStep({
                       <p className="text-xs text-neutral-500 mt-0.5 truncate">
                         {status === "failed"
                           ? "Failed — check logs for details"
-                          : phase.description}
+                          : (() => {
+                              // Show latest activity event for this phase, fall back to static description
+                              const phaseEvents = activityEvents.filter(
+                                (e) => e.phase === phase.id
+                              );
+                              const latest = phaseEvents[phaseEvents.length - 1];
+                              return latest?.message || phase.description;
+                            })()}
                       </p>
                     )}
                   </div>
@@ -555,6 +564,11 @@ export function ProductionStep({
           })}
         </div>
       </div>
+
+      {/* Activity Feed — shows agent communication in real-time */}
+      {(isRunning || activityEvents.length > 0) && (
+        <ActivityFeed events={activityEvents} isRunning={isRunning} />
+      )}
 
       {/* Action Buttons */}
       <div className="flex items-center gap-3 w-full">
