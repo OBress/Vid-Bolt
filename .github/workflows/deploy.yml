@@ -64,7 +64,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-            NEXT_PUBLIC_APP_URL=https://app.vidbolt.app
+            NEXT_PUBLIC_APP_URL=https://studio.vidbolt.app
             COMMIT_SHA=${{ github.sha }}
 
   # ─────────────────────────────────────────────
@@ -113,7 +113,7 @@ jobs:
             sleep 15
 
             # Check app is responding
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://app.vidbolt.app/api/health)
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://studio.vidbolt.app/api/health)
             if [ "$HTTP_STATUS" != "200" ]; then
               echo "❌ Health check failed (HTTP $HTTP_STATUS)"
               exit 1

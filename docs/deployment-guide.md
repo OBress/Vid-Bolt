@@ -1,4 +1,4 @@
-# Deployment Guide — Vid-Bolt on Hetzner CX-43
+# Deployment Guide — Vid-Bolt on Hetzner CPX31
 
 End-to-end instructions to host Vid-Bolt (Vibbo) in production. Follow these steps in order.
 
@@ -27,9 +27,9 @@ End-to-end instructions to host Vid-Bolt (Vibbo) in production. Follow these ste
 1. Go to [Hetzner Cloud Console](https://console.hetzner.cloud/)
 2. Create a new project (e.g., "Vibbo Production")
 3. Add a server:
-   - **Type**: CX-43 (8 vCPUs, 16 GB RAM, 160 GB SSD)
+   - **Type**: CPX31 (4 vCPUs, 8 GB RAM, 160 GB SSD) — Regular Performance, x86 (AMD)
    - **Image**: Ubuntu 24.04 LTS
-   - **Location**: closest to your users (e.g., `fsn1` Falkenstein or `nbg1` Nuremberg)
+   - **Location**: `ash` Ashburn, Virginia (co-located with Supabase & Cloudflare R2)
    - **SSH Key**: add your public SSH key
    - **Firewall**: enable before first boot
 4. Note down the **server IP address**
@@ -89,7 +89,7 @@ ufw allow 443/tcp  # HTTPS (Traefik)
 ufw --force enable
 
 # Swap (safety net for memory spikes)
-fallocate -l 4G /swapfile
+fallocate -l 2G /swapfile
 chmod 600 /swapfile
 mkswap /swapfile
 swapon /swapfile
@@ -168,21 +168,59 @@ chmod 600 /home/deploy/vibbo/traefik/acme.json
 
 ## 3. DNS Configuration
 
-In your **Cloudflare** dashboard (or DNS provider):
+You manage DNS in **Cloudflare** since that’s where `vidbolt.app` is registered.
 
-| Type | Name    | Content        | Proxy                 |
-| ---- | ------- | -------------- | --------------------- |
-| A    | `app`   | YOUR_SERVER_IP | DNS only (grey cloud) |
-| A    | `admin` | YOUR_SERVER_IP | DNS only (grey cloud) |
+### Step-by-Step Cloudflare Setup
 
-> [!WARNING]
-> **Set Cloudflare proxy to DNS-only (grey cloud)** for both records. This lets Traefik handle SSL directly via Let's Encrypt. If you enable Cloudflare's proxy (orange cloud), Traefik's HTTP challenge will fail.
+1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/) → select **vidbolt.app**
+2. Go to **DNS** → **Records**
+3. Add the following **A records** (replace `YOUR_SERVER_IP` with the Hetzner CPX31 IP):
 
-### Cloudflare SSL Settings (if using Cloudflare)
+| Type | Name     | Content        | Proxy Status              | TTL  |
+| ---- | -------- | -------------- | ------------------------- | ---- |
+| A    | `studio` | YOUR_SERVER_IP | **Proxied (orange cloud)** | Auto |
+| A    | `admin`  | YOUR_SERVER_IP | **Proxied (orange cloud)** | Auto |
 
-- **SSL/TLS mode**: Full (Strict)
-- **Always Use HTTPS**: On
-- **Minimum TLS Version**: 1.2
+> [!TIP]
+> Using Cloudflare's proxy (orange cloud) hides your server IP and provides DDoS protection.
+> This works because Traefik verifies domain ownership via DNS TXT records (DNS-01 challenge) rather than HTTP requests.
+
+
+### Create Cloudflare API Token
+
+Traefik needs a Cloudflare API token to create DNS TXT records for SSL certificate verification:
+
+1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/) → **My Profile** → **API Tokens**
+2. Click **Create Token**
+3. Use the **"Edit zone DNS"** template
+4. Under **Zone Resources**, select **Include** → **Specific zone** → `vidbolt.app`
+5. Click **Continue to summary** → **Create Token**
+6. Copy the token — add it to `.env.production` as `CF_DNS_API_TOKEN` (see Section 4)
+
+### Cloudflare SSL/TLS Settings
+
+Go to **SSL/TLS** in the Cloudflare sidebar:
+
+1. **Overview** → Set encryption mode to **Full (Strict)**
+2. **Edge Certificates**:
+   - **Always Use HTTPS**: On
+   - **Minimum TLS Version**: 1.2
+   - **Automatic HTTPS Rewrites**: On
+
+### How HTTPS Works in This Setup
+
+- **Traefik** (running on your Hetzner server) automatically requests free SSL certificates from **Let’s Encrypt** for both `studio.vidbolt.app` and `admin.vidbolt.app`
+- Certificates are stored in `traefik/acme.json` and auto-renew before expiry
+- You do **not** need to buy or manually configure any SSL certificates
+- **Cloudflare's proxy** terminates the public-facing TLS connection and forwards traffic to Traefik over an encrypted connection (Full Strict mode)
+
+### Resulting URLs
+
+| URL                                  | Purpose                          |
+| ------------------------------------ | -------------------------------- |
+| `https://studio.vidbolt.app`         | Main dashboard application       |
+| `https://admin.vidbolt.app/queues/`  | Bull Board — job queue dashboard |
+| `https://admin.vidbolt.app/grafana/` | Grafana — monitoring dashboards  |
 
 ---
 
@@ -248,12 +286,15 @@ GCP_PROJECT_ID=your_project
 GCP_CREDENTIALS_JSON={"type":"service_account",...}
 
 # ---- Application ----
-NEXT_PUBLIC_APP_URL=https://app.vidbolt.app
+NEXT_PUBLIC_APP_URL=https://studio.vidbolt.app
 RENDER_CONCURRENCY_LIMIT=4
 DATA_RETENTION_DAYS=20
 
 # ---- Monitoring ----
 GRAFANA_PASSWORD=your_secure_grafana_password
+
+# ---- Cloudflare (DNS-01 SSL challenge) ----
+CF_DNS_API_TOKEN=your_cloudflare_api_token
 
 # ---- Admin Auth (for admin.vidbolt.app) ----
 # Generate with: htpasswd -nb admin YOUR_PASSWORD
@@ -318,7 +359,7 @@ docker compose -f docker-compose.prod.yml logs -f app
 
 ```bash
 # From your local machine
-curl -s https://app.vidbolt.app/api/health | python -m json.tool
+curl -s https://studio.vidbolt.app/api/health | python -m json.tool
 # Expected: { "status": "healthy", "redis": "connected", ... }
 ```
 
@@ -359,14 +400,14 @@ curl -s -o /dev/null -w "%{http_code}" https://admin.vidbolt.app/grafana/login
 
 ### Supabase
 
-- [ ] Update auth callback URLs: `https://app.vidbolt.app/auth/callback`
+- [ ] Update auth callback URLs: `https://studio.vidbolt.app/auth/callback`
 - [ ] Enable MFA on your Supabase dashboard account
 - [ ] Verify RLS is enabled on all tables
 
 ### Stripe
 
 - [ ] Switch to **live API keys** (Dashboard → Developers → API keys)
-- [ ] Create production webhook endpoint: `https://app.vidbolt.app/api/webhooks/stripe`
+- [ ] Create production webhook endpoint: `https://studio.vidbolt.app/api/webhooks/stripe`
 - [ ] Update `STRIPE_WEBHOOK_SECRET` in `.env.production`
 - [ ] Test a real payment flow
 
@@ -378,7 +419,7 @@ curl -s -o /dev/null -w "%{http_code}" https://admin.vidbolt.app/grafana/login
 ### AWS (Remotion Lambda)
 
 - [ ] Ensure Hetzner server IP is not blocked by AWS security groups
-- [ ] Verify S3 bucket CORS allows `https://app.vidbolt.app`
+- [ ] Verify S3 bucket CORS allows `https://studio.vidbolt.app`
 
 ---
 
@@ -386,8 +427,8 @@ curl -s -o /dev/null -w "%{http_code}" https://admin.vidbolt.app/grafana/login
 
 Run through this checklist:
 
-- [ ] `https://app.vidbolt.app` — loads the application
-- [ ] `https://app.vidbolt.app/api/health` — returns `{"status": "healthy"}`
+- [ ] `https://studio.vidbolt.app` — loads the application
+- [ ] `https://studio.vidbolt.app/api/health` — returns `{"status": "healthy"}`
 - [ ] `https://admin.vidbolt.app/queues/` — shows Bull Board (after Basic Auth)
 - [ ] `https://admin.vidbolt.app/grafana/` — shows Grafana login (after Basic Auth)
 - [ ] Create a test video project — verify the full pipeline works
@@ -452,7 +493,7 @@ chmod +x /home/deploy/scripts/backup-redis.sh
 
 ### Disaster Recovery
 
-1. Provision new CX-43 server
+1. Provision new CPX31 server in Ashburn (`ash`)
 2. Run the first-boot setup script (Section 2)
 3. Copy config files from Git repo to server
 4. Place `.env.production` from password manager

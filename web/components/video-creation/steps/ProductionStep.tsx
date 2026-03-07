@@ -9,17 +9,14 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  Volume2,
-  Clapperboard,
-  Search,
   Film,
-  Layers,
   Zap,
 } from "lucide-react";
 import { useTaskProgress } from "@/hooks/use-task-progress";
 import { useGCPVM } from "@/hooks/use-gcp-vm";
 import { useProjectSettings } from "@/hooks/use-project-settings";
 import { hasAnyLocalModel } from "@/lib/constants/model-registry";
+import { PipelineGraph } from "@/components/video-creation/PipelineGraph";
 import { ActivityFeed } from "@/components/video-creation/ActivityFeed";
 
 // ============================================================================
@@ -39,141 +36,8 @@ interface ProductionStepProps {
   lockedMessage?: string;
 }
 
-/** Orchestrator pipeline phases */
-interface PipelinePhase {
-  id: string;
-  label: string;
-  description: string;
-  icon: React.ReactNode;
-  progressRange: [number, number]; // [startPercent, endPercent]
-}
-
-type PhaseStatus = "pending" | "running" | "completed" | "failed" | "skipped";
-
-// ============================================================================
-// CONSTANTS
-// ============================================================================
-
-const PIPELINE_PHASES: PipelinePhase[] = [
-  {
-    id: "tts",
-    label: "TTS Generation",
-    description: "Generating narration audio with word-level timestamps",
-    icon: <Volume2 className="w-4 h-4" />,
-    progressRange: [0, 15],
-  },
-  {
-    id: "shot_planning",
-    label: "Shot Planning",
-    description: "Planning shots aligned to narration timing",
-    icon: <Clapperboard className="w-4 h-4" />,
-    progressRange: [15, 30],
-  },
-  {
-    id: "asset_retrieval",
-    label: "Asset Retrieval",
-    description: "Finding stock media and crafting AI image prompts",
-    icon: <Search className="w-4 h-4" />,
-    progressRange: [30, 45],
-  },
-  {
-    id: "production",
-    label: "Production",
-    description: "Generating AI images, videos, and motion graphics",
-    icon: <Film className="w-4 h-4" />,
-    progressRange: [45, 85],
-  },
-  {
-    id: "assembly",
-    label: "Assembly",
-    description: "Building edit decisions and timeline",
-    icon: <Layers className="w-4 h-4" />,
-    progressRange: [85, 100],
-  },
-];
-
-/**
- * Derive phase status from the task's progress_percent.
- * Uses progress ranges only — no fragile text matching.
- * The orchestrator is the sole writer of progress, so ranges are reliable.
- */
-function derivePhaseStatuses(
-  progress: number,
-  currentStep: string | null,
-  taskStatus: string | null
-): Record<string, PhaseStatus> {
-  const statuses: Record<string, PhaseStatus> = {};
-
-  // No active task — everything is pending
-  if (!taskStatus || (taskStatus !== "running" && taskStatus !== "pending" && taskStatus !== "failed" && taskStatus !== "completed")) {
-    for (const phase of PIPELINE_PHASES) {
-      statuses[phase.id] = "pending";
-    }
-    return statuses;
-  }
-
-  const isFailed = taskStatus === "failed";
-
-  // Map orchestrator phase names to UI phase IDs
-  const phaseNameToId: Record<string, string> = {
-    tts: "tts",
-    shot_planning: "shot_planning",
-    asset_retrieval: "asset_retrieval",
-    production: "production",
-    assembly: "assembly",
-  };
-
-  // When failed, try to determine the failed phase from currentStep text first.
-  // The orchestrator writes "Failed in phase: <phaseName>" or similar messages.
-  // This is more reliable than progress-based derivation because sub-workers
-  // can reset progress_percent during their execution.
-  if (isFailed && currentStep) {
-    const phaseMatch = currentStep.match(/failed in phase:\s*(\w+)/i);
-    const failedPhaseName = phaseMatch?.[1]?.toLowerCase();
-    const failedPhaseId = failedPhaseName ? phaseNameToId[failedPhaseName] : null;
-
-    if (failedPhaseId) {
-      const failedIdx = PIPELINE_PHASES.findIndex(p => p.id === failedPhaseId);
-      if (failedIdx >= 0) {
-        for (let i = 0; i < PIPELINE_PHASES.length; i++) {
-          if (i < failedIdx) {
-            statuses[PIPELINE_PHASES[i].id] = "completed";
-          } else if (i === failedIdx) {
-            statuses[PIPELINE_PHASES[i].id] = "failed";
-          } else {
-            statuses[PIPELINE_PHASES[i].id] = "pending";
-          }
-        }
-        return statuses;
-      }
-    }
-  }
-
-  // Find the currently active phase (last phase whose start <= progress)
-  let activePhaseIdx = -1;
-  for (let i = 0; i < PIPELINE_PHASES.length; i++) {
-    const [start] = PIPELINE_PHASES[i].progressRange;
-    if (progress >= start) {
-      activePhaseIdx = i;
-    }
-  }
-
-  for (let i = 0; i < PIPELINE_PHASES.length; i++) {
-    const [, end] = PIPELINE_PHASES[i].progressRange;
-
-    if (progress >= end) {
-      // Progress is past this phase's end → completed
-      statuses[PIPELINE_PHASES[i].id] = "completed";
-    } else if (i === activePhaseIdx) {
-      // This is the active phase
-      statuses[PIPELINE_PHASES[i].id] = isFailed ? "failed" : "running";
-    } else {
-      statuses[PIPELINE_PHASES[i].id] = "pending";
-    }
-  }
-
-  return statuses;
-}
+// Types and constants for pipeline phases removed — status derivation
+// now lives in PipelineGraph.tsx and is event-driven.
 
 // ============================================================================
 // COMPONENT
@@ -263,7 +127,6 @@ export function ProductionStep({
   }, [pollError, errorMessage]);
 
   const isRunning = isLoadingProp || (!!taskId && isPolling && (taskStatus === "running" || taskStatus === "pending"));
-  const phaseStatuses = derivePhaseStatuses(progress, currentStep, taskStatus);
 
   // =========================================================================
   // Actions
@@ -399,8 +262,8 @@ export function ProductionStep({
             : errorMessage
               ? errorMessage
               : isRunning
-                ? currentStep || "Starting production pipeline..."
-                : "Start the AI pipeline to generate TTS, imagery, video clips, and assemble your edit."}
+                ? currentStep?.replace(/phase\s+[ivxIVX\-]+\w*:\s*/gi, "") || "Starting production pipeline..."
+                : "Start the AI pipeline to generate your video assets and assemble your edit."}
         </p>
       </div>
 
@@ -449,123 +312,18 @@ export function ProductionStep({
         </div>
       )}
 
-      {/* Pipeline Phase Checklist */}
-      <div className="w-full bg-neutral-900/60 border border-neutral-800 rounded-xl p-5">
-        <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-4">
-          Pipeline Phases
-        </h3>
-        <div className="space-y-1">
-          {PIPELINE_PHASES.map((phase, index) => {
-            const status = phaseStatuses[phase.id] || "pending";
+      {/* Pipeline Graph — live node graph showing pipeline topology */}
+      {(isRunning || hasCompleted || activityEvents.length > 0 || progress > 0) && (
+        <PipelineGraph
+          activityEvents={activityEvents}
+          currentStep={currentStep}
+          taskStatus={taskStatus}
+          progress={progress}
+          isRunning={isRunning}
+        />
+      )}
 
-            return (
-              <div key={phase.id}>
-                <div
-                  className={`flex items-center gap-3 py-2.5 px-3 rounded-lg transition-all duration-300 ${
-                    status === "running"
-                      ? "bg-blue-500/5 border border-blue-500/20"
-                      : status === "completed"
-                        ? "bg-green-500/5"
-                        : status === "failed"
-                          ? "bg-red-500/5 border border-red-500/20"
-                          : ""
-                  }`}
-                >
-                  {/* Phase Icon / Status Indicator */}
-                  <div
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-300 ${
-                      status === "completed"
-                        ? "bg-green-500/20 text-green-400"
-                        : status === "running"
-                          ? "bg-blue-500/20 text-blue-400"
-                          : status === "failed"
-                            ? "bg-red-500/20 text-red-400"
-                            : "bg-neutral-800 text-neutral-500"
-                    }`}
-                  >
-                    {status === "completed" ? (
-                      <CheckCircle2 className="w-4 h-4" />
-                    ) : status === "running" ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : status === "failed" ? (
-                      <AlertCircle className="w-4 h-4" />
-                    ) : (
-                      phase.icon
-                    )}
-                  </div>
-
-                  {/* Phase Info */}
-                  <div className="flex-1 min-w-0">
-                    <div
-                      className={`text-sm font-medium transition-colors duration-300 ${
-                        status === "completed"
-                          ? "text-green-400"
-                          : status === "running"
-                            ? "text-blue-300"
-                            : status === "failed"
-                              ? "text-red-400"
-                              : "text-neutral-500"
-                      }`}
-                    >
-                      Phase {index + 1}: {phase.label}
-                    </div>
-                    {(status === "running" || status === "failed") && (
-                      <p className="text-xs text-neutral-500 mt-0.5 truncate">
-                        {status === "failed"
-                          ? "Failed — check logs for details"
-                          : (() => {
-                              // Show latest activity event for this phase, fall back to static description
-                              const phaseEvents = activityEvents.filter(
-                                (e) => e.phase === phase.id
-                              );
-                              const latest = phaseEvents[phaseEvents.length - 1];
-                              return latest?.message || phase.description;
-                            })()}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Status Badge */}
-                  <div
-                    className={`text-[10px] font-mono px-2 py-0.5 rounded-full flex-shrink-0 ${
-                      status === "completed"
-                        ? "bg-green-500/10 text-green-400"
-                        : status === "running"
-                          ? "bg-blue-500/10 text-blue-400"
-                          : status === "failed"
-                            ? "bg-red-500/10 text-red-400"
-                            : "text-neutral-600"
-                    }`}
-                  >
-                    {status === "completed"
-                      ? "Done"
-                      : status === "running"
-                        ? "Running"
-                        : status === "failed"
-                          ? "Failed"
-                          : "Pending"}
-                  </div>
-                </div>
-
-                {/* Connector line between phases */}
-                {index < PIPELINE_PHASES.length - 1 && (
-                  <div className="flex items-center ml-[22px] h-1">
-                    <div
-                      className={`w-[1px] h-full ${
-                        status === "completed"
-                          ? "bg-green-500/30"
-                          : "bg-neutral-800"
-                      }`}
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Activity Feed — shows agent communication in real-time */}
+      {/* Activity Feed — detailed log of agent communication */}
       {(isRunning || activityEvents.length > 0) && (
         <ActivityFeed events={activityEvents} isRunning={isRunning} />
       )}
@@ -629,14 +387,7 @@ export function ProductionStep({
         )}
       </div>
 
-      {/* Connection Status */}
-      {isRunning && (
-        <p className="text-xs text-neutral-600 font-mono">
-          {isPolling
-            ? "Connected to orchestrator..."
-            : "Waiting for task..."}
-        </p>
-      )}
+      {/* Connection status is now shown inside the PipelineGraph component */}
     </div>
   );
 }
