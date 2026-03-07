@@ -117,7 +117,7 @@ export async function assembleEdit(request: AssembleEditRequest): Promise<Assemb
       const agentEdl = generateFallbackAgentEDL(shots, generatedMedia, fps, scriptText);
       const legacyEdl = agentEdlToLegacy(agentEdl);
       return { success: true, agentEdl, edl: legacyEdl };
-    } catch (fallbackError) {
+    } catch (_fallbackError) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'EDL generation failed',
@@ -777,7 +777,7 @@ function generateFallbackAgentEDL(
   shots: ShotDataInput[],
   generatedMedia: GeneratedMedia[],
   fps: number,
-  scriptText: string = ''
+  _scriptText: string = ''
 ): EditorAgentEDL {
   const mediaByShot = new Map<number, GeneratedMedia>();
   generatedMedia.forEach(m => mediaByShot.set(m.shot_index, m));

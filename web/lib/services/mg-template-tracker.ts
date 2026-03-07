@@ -186,7 +186,7 @@ export function recordStyle(
 export function buildMgConsistencyPrompt(
   registry: MgTemplateRegistry,
   compositionType: string,
-  shotIndex: number,
+  _shotIndex: number,
 ): string {
   const existing = getExistingStyle(registry, compositionType);
 

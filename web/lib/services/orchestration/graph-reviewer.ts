@@ -13,7 +13,7 @@
 
 import { callOpenRouter } from '@/lib/ai/openrouter';
 import { topologicalSort } from './dag-executor';
-import type { GraphTemplate, GraphNode } from './graph-templates';
+import type { GraphTemplate } from './graph-templates';
 import type { CreativeManifest } from '@/lib/types/closed-loop';
 
 // ============================================================================
@@ -219,14 +219,16 @@ ${template.edges.map((e) => `  ${e.from} → ${e.to}: ${e.dataFlow || 'data'}`).
 Please review this pipeline configuration.`;
 
   try {
-    const rawResponse = await callOpenRouter(
+    const response = await callOpenRouter(
       userId,
-      systemPrompt,
-      userPrompt,
-      'google/gemini-3-flash-preview',
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      { model: 'google/gemini-3-flash-preview' },
     );
 
-    let cleaned = rawResponse.trim();
+    let cleaned = response.content.trim();
     if (cleaned.startsWith('```json')) cleaned = cleaned.slice(7);
     else if (cleaned.startsWith('```')) cleaned = cleaned.slice(3);
     if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3);
@@ -284,14 +286,16 @@ ${initialSuggestions.map((s) => `- ${s}`).join('\n')}
 Was this review accurate? Did it miss anything?`;
 
   try {
-    const rawResponse = await callOpenRouter(
+    const response = await callOpenRouter(
       userId,
-      systemPrompt,
-      userPrompt,
-      'google/gemini-3-flash-preview',
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      { model: 'google/gemini-3-flash-preview' },
     );
 
-    let cleaned = rawResponse.trim();
+    let cleaned = response.content.trim();
     if (cleaned.startsWith('```json')) cleaned = cleaned.slice(7);
     else if (cleaned.startsWith('```')) cleaned = cleaned.slice(3);
     if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3);
