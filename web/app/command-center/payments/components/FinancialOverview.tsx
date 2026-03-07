@@ -39,7 +39,7 @@ function StatCard({
   value,
   color,
 }: {
-  icon: React.ElementType;
+  icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: number;
   color: "emerald" | "red" | "blue" | "primary";
@@ -65,7 +65,7 @@ function StatCard({
       icon: "text-primary",
       value: "text-primary",
     },
-  };
+  } as Record<string, { bg: string; icon: string; value: string }>;
 
   const c = colorMap[color];
 

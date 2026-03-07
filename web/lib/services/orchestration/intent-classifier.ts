@@ -118,14 +118,16 @@ export async function classifyContentIntent(
   const userPrompt = buildClassificationPrompt(scriptText, manifest);
 
   try {
-    const rawResponse = await callOpenRouter(
+    const response = await callOpenRouter(
       userId,
-      systemPrompt,
-      userPrompt,
-      'google/gemini-3-flash-preview',
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      { model: 'google/gemini-3-flash-preview' },
     );
 
-    const result = parseClassificationResponse(rawResponse);
+    const result = parseClassificationResponse(response.content);
     console.log(
       `${LOG_PREFIX} Selected template: ${result.templateId} (confidence: ${result.confidence}) — ${result.reasoning}`,
     );

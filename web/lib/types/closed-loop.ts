@@ -105,7 +105,7 @@ export const MessageEnvelope = z.object({
     gcm_ref: z.string().optional(),
     locked_script_ref: z.string().optional(),
   }),
-  payload: z.record(z.unknown()).default({}),
+  payload: z.record(z.string(), z.unknown()).default({}),
   delta_feedback: DeltaFeedback.optional(),
   context_locked: z.boolean().default(true),
   timestamp: z.string().datetime(),
@@ -254,7 +254,7 @@ export const CreativeManifest = z.object({
   /** Video-specific creative direction prompt */
   video_creative_prompt: z.string().optional(),
   /** Per-worker prompt overrides from user settings */
-  worker_prompt_overrides: z.record(z.string()).optional(),
+  worker_prompt_overrides: z.record(z.string(), z.string()).optional(),
   /** Model selection from project settings — passed through to workers */
   models: z.object({
     image: z.string().default('local-z-image'),
@@ -324,8 +324,8 @@ export const ShotPlan = z.object({
     total_segments: z.number().int(),
     total_duration_seconds: z.number(),
     average_segment_duration: z.number(),
-    content_type_breakdown: z.record(z.number()),
-    media_type_breakdown: z.record(z.number()),
+    content_type_breakdown: z.record(z.string(), z.number()),
+    media_type_breakdown: z.record(z.string(), z.number()),
   }),
 });
 export type ShotPlan = z.infer<typeof ShotPlan>;

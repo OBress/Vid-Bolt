@@ -247,14 +247,16 @@ ${truncatedScript}
 Design the optimal production pipeline for this content.`;
 
   try {
-    const rawResponse = await callOpenRouter(
+    const response = await callOpenRouter(
       userId,
-      systemPrompt,
-      userPrompt,
-      'google/gemini-3-flash-preview',
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      { model: 'google/gemini-3-flash-preview' },
     );
 
-    const composed = parseComposedGraph(rawResponse);
+    const composed = parseComposedGraph(response.content);
     console.log(
       `${LOG_PREFIX} Composed graph: "${composed.template.name}" (${composed.template.nodes.length} nodes, ${composed.template.edges.length} edges)`,
     );
