@@ -51,8 +51,10 @@ export interface EditAssemblyJobData {
 // CONSTANTS
 // ============================================================================
 
-/** Maximum shots per batch for chunked EDL generation */
-const SHOTS_PER_BATCH = 10;
+/** Maximum shots per batch for chunked EDL generation.
+ * Reduced from 10 to 8 to prevent LLM response truncation on large batches —
+ * 10 shots with keyframes/transitions can exceed token limits. */
+const SHOTS_PER_BATCH = 8;
 
 // ============================================================================
 // WORKER PROCESSOR

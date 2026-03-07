@@ -19,6 +19,7 @@ import type {
   AgentClip,
   AgentTrack,
   AgentTransition,
+  AgentKeyframes,
 } from './editor-capability-manifest';
 import type { GeneratedMedia } from '@/types/video';
 
@@ -97,7 +98,7 @@ export async function assembleEdit(request: AssembleEditRequest): Promise<Assemb
     console.log(`[EditAssembly] Context: ${context.shots.length} shots, ${context.failedShots.length} failed, ${context.audioChunks.length} audio chunks`);
 
     // 3. Call LLM for v2 format
-    let agentEdl = await callLLMv2(apiKey, model, EDIT_ASSEMBLY_SYSTEM_PROMPT, userPrompt);
+    let agentEdl = await callLLMv2(apiKey, model, EDIT_ASSEMBLY_SYSTEM_PROMPT, userPrompt, shots.length);
 
     // 4. Validate and fix
     agentEdl = validateAndFixV2(agentEdl, shots);
@@ -204,7 +205,8 @@ async function callLLMv2(
   apiKey: string,
   model: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  shotCount: number = 10
 ): Promise<EditorAgentEDL> {
   // JSON Schema for EditorAgentEDL — constrains LLM output at the token level
   const edlJsonSchema = {
@@ -332,7 +334,9 @@ async function callLLMv2(
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.3,
-      max_tokens: 32000,
+      // Dynamic token budget: ~250 tokens per shot for structured JSON + base overhead
+      // Min 32000, max 65536 (Gemini Flash output limit)
+      max_tokens: Math.min(65536, Math.max(32000, shotCount * 250 + 8000)),
       response_format: { type: 'json_schema', json_schema: edlJsonSchema },
     }),
   });
@@ -829,30 +833,55 @@ function generateFallbackAgentEDL(
     };
 
     // Add keyframe animations for image clips — vary Ken Burns style
-    // based on segment index to prevent monotonous identical animations
+    // based on segment index to prevent monotonous identical animations.
+    // 8 patterns: push-in, pull-out, drift-left, drift-right, diagonal NE,
+    // diagonal SW, Ken Burns combo (scale+drift), subtle snap-zoom.
     if (clipType === 'image') {
-      const animPattern = shot.segment_index % 4;
-      clip.keyframes = [
-        animPattern === 0
-          ? { property: 'transform.scale' as const, points: [
-              { time: 0, value: 1.0, easing: 'easeInOut' as const },
-              { time: shot.duration_seconds, value: 1.08 },
-            ]}
-          : animPattern === 1
-          ? { property: 'transform.scale' as const, points: [
-              { time: 0, value: 1.08, easing: 'easeInOut' as const },
-              { time: shot.duration_seconds, value: 1.0 },
-            ]}
-          : animPattern === 2
-          ? { property: 'transform.x' as const, points: [
-              { time: 0, value: 0, easing: 'easeInOut' as const },
-              { time: shot.duration_seconds, value: -40 },
-            ]}
-          : { property: 'transform.x' as const, points: [
-              { time: 0, value: 0, easing: 'easeInOut' as const },
-              { time: shot.duration_seconds, value: 40 },
-            ]},
+      const animPattern = shot.segment_index % 8;
+      const dur = shot.duration_seconds;
+      const patterns: Array<AgentKeyframes[]> = [
+        // 0: Slow push-in (scale 1.0 → 1.08)
+        [{ property: 'transform.scale' as const, points: [
+          { time: 0, value: 1.0, easing: 'easeInOut' as const }, { time: dur, value: 1.08 },
+        ]}],
+        // 1: Slow pull-out (scale 1.08 → 1.0)
+        [{ property: 'transform.scale' as const, points: [
+          { time: 0, value: 1.08, easing: 'easeInOut' as const }, { time: dur, value: 1.0 },
+        ]}],
+        // 2: Drift left
+        [{ property: 'transform.x' as const, points: [
+          { time: 0, value: 0, easing: 'easeInOut' as const }, { time: dur, value: -40 },
+        ]}],
+        // 3: Drift right
+        [{ property: 'transform.x' as const, points: [
+          { time: 0, value: 0, easing: 'easeInOut' as const }, { time: dur, value: 40 },
+        ]}],
+        // 4: Diagonal drift NE (drift right + slight scale up)
+        [{ property: 'transform.x' as const, points: [
+          { time: 0, value: -20, easing: 'easeInOut' as const }, { time: dur, value: 20 },
+        ]}, { property: 'transform.scale' as const, points: [
+          { time: 0, value: 1.0, easing: 'easeInOut' as const }, { time: dur, value: 1.05 },
+        ]}],
+        // 5: Diagonal drift SW (drift left + slight scale down)
+        [{ property: 'transform.x' as const, points: [
+          { time: 0, value: 20, easing: 'easeInOut' as const }, { time: dur, value: -20 },
+        ]}, { property: 'transform.scale' as const, points: [
+          { time: 0, value: 1.06, easing: 'easeInOut' as const }, { time: dur, value: 1.0 },
+        ]}],
+        // 6: Ken Burns combo (scale up + drift left — most cinematic)
+        [{ property: 'transform.scale' as const, points: [
+          { time: 0, value: 1.0, easing: 'easeInOut' as const }, { time: dur, value: 1.1 },
+        ]}, { property: 'transform.x' as const, points: [
+          { time: 0, value: 15, easing: 'easeInOut' as const }, { time: dur, value: -15 },
+        ]}],
+        // 7: Subtle snap-zoom for dramatic beats (quick scale in first 30%)
+        [{ property: 'transform.scale' as const, points: [
+          { time: 0, value: 1.0, easing: 'easeOut' as const },
+          { time: dur * 0.3, value: 1.04 },
+          { time: dur, value: 1.06 },
+        ]}],
       ];
+      clip.keyframes = patterns[animPattern]!;
     }
 
     clips.push(clip);
@@ -874,9 +903,13 @@ function generateFallbackAgentEDL(
 
 
   // --- TRANSITIONS ---
-  // Place transitions at content-type boundaries instead of every 4th clip
+  // Place transitions at content-type boundaries AND at regular intervals
+  // to ensure the fallback EDL always has some visual flow (not all hard cuts).
   const transitions: AgentTransition[] = [];
   const mainClips = clips.filter(c => c.trackId === 'main-video');
+  const transitionTypes: Array<AgentTransition['type']> = ['crossfade', 'dissolve', 'crossfade', 'crossfade'];
+  let clipsSinceLastTransition = 0;
+
   for (let i = 1; i < mainClips.length; i++) {
     const fromClip = mainClips[i - 1];
     const toClip = mainClips[i];
@@ -884,15 +917,41 @@ function generateFallbackAgentEDL(
 
     const fromShot = shots.find(s => s.segment_index === fromClip.shotIndex);
     const toShot = shots.find(s => s.segment_index === toClip.shotIndex);
+    clipsSinceLastTransition++;
 
-    // Crossfade at section breaks (content_type = 'transition') or after emotional beats
-    if (toShot?.content_type === 'transition' || fromShot?.content_type === 'emotional-beat') {
+    // Determine if this boundary deserves a transition:
+    // 1. Content-type boundaries (section break, emotional beat, concept change)
+    // 2. Regular interval (every 4-6 clips) to prevent monotonous hard cuts
+    const isContentBoundary =
+      toShot?.content_type === 'transition' ||
+      fromShot?.content_type === 'emotional-beat' ||
+      (fromShot?.content_type !== toShot?.content_type);
+    const isRegularInterval = clipsSinceLastTransition >= 5;
+
+    if (isContentBoundary || isRegularInterval) {
+      // Vary transition type based on context
+      let transType: AgentTransition['type'];
+      let transDur: number;
+
+      if (toShot?.content_type === 'transition') {
+        transType = 'fadeToBlack';
+        transDur = 0.6;
+      } else if (fromShot?.content_type === 'emotional-beat') {
+        transType = 'dissolve';
+        transDur = 0.5;
+      } else {
+        // Cycle through transition types for variety
+        transType = transitionTypes[transitions.length % transitionTypes.length];
+        transDur = 0.4;
+      }
+
       transitions.push({
-        type: fromShot?.content_type === 'emotional-beat' ? 'dissolve' : 'crossfade',
+        type: transType,
         fromShotIndex: fromClip.shotIndex,
         toShotIndex: toClip.shotIndex,
-        duration: 0.5,
+        duration: transDur,
       });
+      clipsSinceLastTransition = 0;
     }
   }
 

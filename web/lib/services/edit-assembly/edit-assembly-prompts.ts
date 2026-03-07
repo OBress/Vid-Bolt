@@ -277,14 +277,21 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   lines.push(`Total duration: ${context.totalDuration.toFixed(1)}s | FPS: ${context.fps}`);
   lines.push('');
 
-  // Shot list
+  // Shot list with full narration for content-aware pacing decisions
   lines.push('## Shots');
   for (const shot of context.shots) {
     const mediaStatus = shot.hasMedia ? `✓ ${shot.mediaType}` : '✗ no media';
     const hybridTag = (shot.hasRemotionCode && shot.hasMedia && shot.mediaType !== 'motiongraphic') ? ' ⚡ HYBRID' : '';
     const sectionTag = shot.sectionBreak ? ' 🔶 SECTION-BREAK' : '';
     const ctTag = shot.contentType ? ` [${shot.contentType}]` : '';
-    lines.push(`  [${shot.index}] ${shot.startSeconds.toFixed(1)}s-${shot.endSeconds.toFixed(1)}s (${shot.durationSeconds.toFixed(1)}s) | ${mediaStatus}${hybridTag}${ctTag}${sectionTag} | "${shot.text.substring(0, 150)}"`);
+
+    // Classify content energy for pacing guidance
+    const energy = classifyEnergy(shot.contentType || '', shot.text);
+    const energyTag = ` ⚡${energy}`;
+
+    lines.push(`  [${shot.index}] ${shot.startSeconds.toFixed(1)}s-${shot.endSeconds.toFixed(1)}s (${shot.durationSeconds.toFixed(1)}s) | ${mediaStatus}${hybridTag}${ctTag}${energyTag}${sectionTag}`);
+    // Include full narration text so the LLM can match pacing to content
+    lines.push(`    Narration: "${shot.text}"`);
   }
   lines.push('');
 
@@ -295,16 +302,26 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
     lines.push('');
   }
 
-  // Audio chunks
-  lines.push('## Audio');
+  // Audio chunks with timing for sync awareness
+  lines.push('## Audio Timeline');
+  let audioRunning = 0;
   for (const chunk of context.audioChunks) {
-    lines.push(`  Chunk ${chunk.index}: ${chunk.durationSeconds.toFixed(1)}s${chunk.text ? ` | "${chunk.text.substring(0, 50)}..."` : ''}`);
+    const chunkEnd = audioRunning + chunk.durationSeconds;
+    lines.push(`  Chunk ${chunk.index}: ${audioRunning.toFixed(1)}s-${chunkEnd.toFixed(1)}s (${chunk.durationSeconds.toFixed(1)}s)${chunk.text ? ` | "${chunk.text.substring(0, 80)}..."` : ''}`);
+    audioRunning = chunkEnd;
   }
+  lines.push(`  Total audio: ${audioRunning.toFixed(1)}s`);
   lines.push('');
 
   lines.push('## Instructions');
   lines.push('');
   lines.push('Generate the EditorAgentEDL JSON now. Create an edit that a top YouTube channel would be proud of.');
+  lines.push('');
+  lines.push('**Use the narration text to drive your editing:**');
+  lines.push('- Read what is being SAID in each shot and match your visual pacing to the content energy');
+  lines.push('- ⚡HIGH energy narration: rapid cuts (2-3s), aggressive zoom, hard cuts');
+  lines.push('- ⚡MED energy narration: moderate 3-5s clips, subtle keyframes, crossfades');
+  lines.push('- ⚡LOW energy narration: let it breathe (4-6s), slow push-in, dissolves');
   lines.push('');
   lines.push('Remember:');
   lines.push('- Every image clip MUST have purposeful keyframe animations (choose based on the shot\'s narrative role)');
@@ -313,11 +330,28 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   lines.push('- HYBRID shots (⚡) need TWO clips: base on "main-video" + overlay on "overlays" at same timing');
   lines.push('- Do NOT create any text clips — text is handled by motion graphics');
   lines.push('- Choose transitions that MEAN something — crossfade for connection, dissolve for time, wipe for contrast, fadeToBlack for chapter end');
-  lines.push('- Match pacing to content energy — fast cuts for intensity, breathing room for impact');
   lines.push('- Use SFX intentionally as emotional punctuation on the "sfx" track');
   lines.push('- Include fadeIn and fadeOut audio fades');
+  lines.push(`- The timeline MUST match total audio duration (~${audioRunning.toFixed(0)}s). Do NOT exceed this.`);
 
   return lines.join('\n');
+}
+
+/**
+ * Classify a shot's content energy level based on content type and text cues.
+ * Used to guide the LLM's pacing decisions.
+ */
+function classifyEnergy(contentType: string, text: string): 'HIGH' | 'MED' | 'LOW' {
+  // High-energy indicators: reveals, shocking content, rapid information
+  const highCues = /shock|reveal|expos|scandal|secret|discovered|broke|explod|arrest|murder|kill|death|breaking|urgent|crisis/i;
+  if (contentType === 'list-item' || highCues.test(text)) return 'HIGH';
+
+  // Low-energy indicators: reflective, transitional, contextual
+  const lowCues = /reflect|remember|look back|aftermath|legacy|silence|pause|consider|meanwhile|background|context|overview/i;
+  if (contentType === 'transition' || contentType === 'emotional-beat' || lowCues.test(text)) return 'LOW';
+
+  // Default: medium energy
+  return 'MED';
 }
 
 // ============================================================

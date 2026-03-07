@@ -414,7 +414,12 @@ async function generateChunkShots(
       media_type: aiSummary?.media_type || 'video',
       text: segment.text,
       summary: aiSummary?.summary || generateFallbackSummary(segment),
-      stock_worthy: aiSummary?.stock_worthy ?? false,
+      // Post-processing override: if the shot references named entities from the outline
+      // (characters, locations), real stock footage almost always enhances quality.
+      // This catches cases where the AI is too conservative with stock_worthy.
+      stock_worthy: (aiSummary?.stock_worthy ?? false) ||
+        characterRefs.length > 0 ||
+        locationRefs.length > 0,
       image_count: aiSummary?.image_count,
       visual_description: aiSummary?.visual_description,
       visual_elements: aiSummary?.visual_elements,
@@ -465,14 +470,25 @@ Ask: "Is this a SINGLE SCENE or a COMPOSITION of elements?"
 
 ## STOCK FOOTAGE & ENTITY REUSE
 
-stock_worthy = TRUE only for "proof" moments:
-- INTRODUCING a famous person for the first time (show THE actual person)
-- REVEALING an iconic landmark being discussed (show THE actual place)
-- HISTORICAL FOOTAGE of a specific documented event
+Think like a professional documentary editor. Real footage from the real world
+adds AUTHENTICITY and CREDIBILITY that AI-generated visuals cannot replicate.
 
-stock_worthy = FALSE (use AI instead) for:
-- Generic concepts (documents, money, crowds, skylines)
-- Atmospheric b-roll where AI interpretation would be more premium
+stock_worthy = TRUE when real footage enhances the production:
+- ANY named person discussed in the narration (e.g., "Jeffrey Epstein" → show the real person)
+- ANY specific real-world location (e.g., "Little St. James" → show the real island)
+- Historical events, courtrooms, buildings, landmarks being discussed
+- Real institutions, companies, or organizations mentioned by name
+- Newsworthy moments, press conferences, public appearances
+- Anything where showing THE REAL THING adds impact over an AI interpretation
+
+stock_worthy = FALSE (use AI-generated instead) for:
+- Abstract concepts with no specific real-world referent ("corruption", "power")
+- Atmospheric mood shots where stylized AI visuals are more cinematic
+- Imagined or hypothetical scenarios ("imagine a world where...")
+- Generic b-roll categories (generic crowds, generic skylines, generic documents)
+
+As a rule: if the narration NAMES a specific person, place, event, or organization,
+real stock footage is almost always the better choice.
 
 reuse_entity: For VISUAL CONSISTENCY when an entity appears AGAIN:
 - If showing @(Donald Trump) and you showed him before → reuse_entity: "Donald Trump"
@@ -508,7 +524,7 @@ For each segment, provide:
 2. media_type: "video" (default) or "motiongraphic"
    - PREFER "motiongraphic" for: list-items, comparisons, step-by-step, data/stats, quotes, evidence
    - PREFER "video" for: emotional beats, transitions, atmospheric moments, single-scene cinematics
-3. stock_worthy: true ONLY for famous people, iconic landmarks, or historical footage
+3. stock_worthy: true when real-world footage of a named person, place, event, or organization would enhance authenticity
 4. reuse_entity: The entity name if this entity appeared before and should reuse its image
 5. image_count: (optional) for motiongraphics, number of images if multiple improve clarity
 6. visual_description: A detailed description of what you envision (1-2 sentences)
