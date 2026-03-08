@@ -1601,7 +1601,8 @@ CREATE TABLE IF NOT EXISTS "public"."user_api_keys" (
     "google_cloud_credentials" "text",
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
-    "groq_key" "text"
+    "groq_key" "text",
+    "valyu_key" "text"
 );
 
 
@@ -1609,6 +1610,10 @@ ALTER TABLE "public"."user_api_keys" OWNER TO "postgres";
 
 
 COMMENT ON COLUMN "public"."user_api_keys"."groq_key" IS 'Groq API key for Whisper transcription with word-level timestamps';
+
+
+
+COMMENT ON COLUMN "public"."user_api_keys"."valyu_key" IS 'Valyu API key for research search and DeepResearch features';
 
 
 

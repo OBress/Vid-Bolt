@@ -187,13 +187,21 @@ function parseSpring(expression: string, fps: number = 30): Keyframe[] | null {
   
   // Extract spring config if present
   const configMatch = expression.match(/config:\s*\{([^}]+)\}/);
-  let config = undefined;
+  let config: Record<string, any> | undefined = undefined;
   
   if (configMatch) {
     try {
-      // Parse config object
-      const configStr = `{${configMatch[1]}}`;
-      config = eval(`(${configStr})`);
+      // Safe parsing: extract known numeric config properties (no eval)
+      const configStr = configMatch[1];
+      config = {} as Record<string, any>;
+      const dampingMatch = configStr.match(/damping\s*:\s*([\d.]+)/);
+      const massMatch = configStr.match(/mass\s*:\s*([\d.]+)/);
+      const stiffnessMatch = configStr.match(/stiffness\s*:\s*([\d.]+)/);
+      const overshootClampingMatch = configStr.match(/overshootClamping\s*:\s*(true|false)/);
+      if (dampingMatch) config.damping = parseFloat(dampingMatch[1]);
+      if (massMatch) config.mass = parseFloat(massMatch[1]);
+      if (stiffnessMatch) config.stiffness = parseFloat(stiffnessMatch[1]);
+      if (overshootClampingMatch) config.overshootClamping = overshootClampingMatch[1] === 'true';
     } catch (error) {
       console.warn('[JSX Parser] Failed to parse spring config:', error);
     }

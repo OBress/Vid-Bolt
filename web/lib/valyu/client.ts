@@ -2,7 +2,7 @@
  * Valyu API Client
  * ============================================================================
  * Provides wrapper functions for Valyu's Search and DeepResearch APIs.
- * Uses app-level API key from environment variables.
+ * API key is provided per-call from the user's Supabase settings.
  * 
  * Documentation: https://docs.valyu.ai
  */
@@ -18,24 +18,6 @@ import type {
 const VALYU_API_URL = 'https://api.valyu.ai/v1';
 
 // ============================================================================
-// API KEY MANAGEMENT
-// ============================================================================
-
-/**
- * Get the Valyu API key from environment variables
- */
-function getApiKey(): string {
-  const key = process.env.VALYU_API_KEY;
-  if (!key) {
-    throw new Error(
-      'VALYU_API_KEY environment variable is not set. ' +
-      'Please add your Valyu API key to .env.local'
-    );
-  }
-  return key;
-}
-
-// ============================================================================
 // SEARCH API
 // ============================================================================
 
@@ -43,6 +25,7 @@ function getApiKey(): string {
  * Perform a Valyu web search
  * 
  * @param params - Search parameters
+ * @param apiKey - User's Valyu API key (from Supabase user_api_keys)
  * @returns Search results with content
  * 
  * @example
@@ -51,13 +34,12 @@ function getApiKey(): string {
  *   search_type: 'web',
  *   max_num_results: 15,
  *   response_length: 'large',
- * });
+ * }, userApiKey);
  */
 export async function valyuSearch(
-  params: ValyuSearchParams
+  params: ValyuSearchParams,
+  apiKey: string
 ): Promise<ValyuSearchResponse> {
-  const apiKey = getApiKey();
-
   console.log(`[Valyu:Search] Searching for: "${params.query.substring(0, 50)}..."`);
 
   try {
@@ -111,6 +93,7 @@ export async function valyuSearch(
  * Create a new DeepResearch task
  * 
  * @param params - Research parameters
+ * @param apiKey - User's Valyu API key (from Supabase user_api_keys)
  * @returns Task ID for polling
  * 
  * @example
@@ -119,13 +102,12 @@ export async function valyuSearch(
  *   mode: 'standard',
  *   output_formats: ['markdown'],  // or include a JSON Schema object for structured output
  *   strategy: 'Focus on verified historical facts and expert analysis',
- * });
+ * }, userApiKey);
  */
 export async function createDeepResearch(
-  params: ValyuDeepResearchParams
+  params: ValyuDeepResearchParams,
+  apiKey: string
 ): Promise<ValyuDeepResearchCreateResponse> {
-  const apiKey = getApiKey();
-
   console.log(`[Valyu:DeepResearch] Creating task for: "${params.query.substring(0, 50)}..."`);
   console.log(`[Valyu:DeepResearch] Mode: ${params.mode}`);
 
@@ -185,13 +167,13 @@ export async function createDeepResearch(
  * Get the status/result of a DeepResearch task
  * 
  * @param deepresearchId - Task ID from createDeepResearch
+ * @param apiKey - User's Valyu API key (from Supabase user_api_keys)
  * @returns Current status and results if completed
  */
 export async function getDeepResearchStatus(
-  deepresearchId: string
+  deepresearchId: string,
+  apiKey: string
 ): Promise<ValyuDeepResearchResult> {
-  const apiKey = getApiKey();
-
   try {
     const response = await fetch(
       `${VALYU_API_URL}/deepresearch/tasks/${deepresearchId}/status`,
@@ -272,13 +254,14 @@ export async function getDeepResearchStatus(
  * Polls the status endpoint until completion or timeout
  * 
  * @param deepresearchId - Task ID from createDeepResearch
+ * @param apiKey - User's Valyu API key (from Supabase user_api_keys)
  * @param options - Polling options
  * @returns Final research results
  * 
  * @throws Error if task fails or times out
  * 
  * @example
- * const result = await waitForDeepResearch(task.deepresearch_id, {
+ * const result = await waitForDeepResearch(task.deepresearch_id, userApiKey, {
  *   maxWaitMs: 20 * 60 * 1000, // 20 minutes
  *   pollIntervalMs: 5000,       // Poll every 5 seconds
  *   onProgress: (status) => console.log(`Status: ${status}`),
@@ -286,6 +269,7 @@ export async function getDeepResearchStatus(
  */
 export async function waitForDeepResearch(
   deepresearchId: string,
+  apiKey: string,
   options: {
     maxWaitMs?: number;
     pollIntervalMs?: number;
@@ -302,7 +286,7 @@ export async function waitForDeepResearch(
   while (Date.now() - startTime < maxWaitMs) {
     const elapsedMs = Date.now() - startTime;
     
-    const result = await getDeepResearchStatus(deepresearchId);
+    const result = await getDeepResearchStatus(deepresearchId, apiKey);
 
     // Report progress
     if (options.onProgress) {
@@ -345,9 +329,14 @@ export async function waitForDeepResearch(
 /**
  * Perform a quick search with sensible defaults
  * Convenience wrapper around valyuSearch
+ * 
+ * @param query - Search query
+ * @param apiKey - User's Valyu API key (from Supabase user_api_keys)
+ * @param maxResults - Maximum number of results
  */
 export async function quickSearch(
   query: string,
+  apiKey: string,
   maxResults: number = 10
 ): Promise<ValyuSearchResponse> {
   return valyuSearch({
@@ -355,7 +344,7 @@ export async function quickSearch(
     search_type: 'web',
     max_num_results: maxResults,
     response_length: 'medium',
-  });
+  }, apiKey);
 }
 
 /**
@@ -363,11 +352,13 @@ export async function quickSearch(
  * Combines create + wait into a single call
  * 
  * @param query - Research topic/question
+ * @param apiKey - User's Valyu API key (from Supabase user_api_keys)
  * @param mode - 'fast' (~5-10 min) or 'standard' (~10-30 min)
  * @param options - Additional options
  */
 export async function performDeepResearch(
   query: string,
+  apiKey: string,
   mode: 'fast' | 'standard' = 'standard',
   options: {
     strategy?: string;
@@ -478,14 +469,14 @@ export async function performDeepResearch(
       'The script writer has ZERO prior knowledge - extract EVERYTHING needed including context, ' +
       'chronological developments, key figures with their backgrounds, verified facts, and direct quotes. ' +
       'Cite all sources with URLs.',
-  });
+  }, apiKey);
 
   if (!createResponse.success) {
     throw new Error(`Failed to create DeepResearch task: ${createResponse.error}`);
   }
 
   // Wait for completion
-  return waitForDeepResearch(createResponse.deepresearch_id, {
+  return waitForDeepResearch(createResponse.deepresearch_id, apiKey, {
     maxWaitMs: options.maxWaitMs,
     onProgress: options.onProgress,
   });

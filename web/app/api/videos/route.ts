@@ -125,27 +125,28 @@ export async function POST(request: NextRequest) {
 // GET /api/videos - List user's videos with filtering
 export async function GET(request: NextRequest) {
   try {
+    // Authenticate user - always use server-side identity (not query param)
+    const { user, error: authError } = await getAuthenticatedUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: authError }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     
-    // Extract query parameters
-    const userId = searchParams.get("userId");
+    // Extract query parameters (userId param ignored — server-side auth used instead)
     const projectId = searchParams.get("projectId");
     const status = searchParams.get("status");
     const stage = searchParams.get("stage");
     const limit = parseInt(searchParams.get("limit") || "20", 10);
     const offset = parseInt(searchParams.get("offset") || "0", 10);
 
-    if (!userId) {
-      return NextResponse.json({ error: "userId is required" }, { status: 400 });
-    }
-
     const supabase = getServiceClient();
 
-    // Build query with filters
+    // Build query with filters — always scoped to the authenticated user
     let query = supabase
       .from("video_projects")
       .select("*", { count: "exact" })
-      .eq("user_id", userId)
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 

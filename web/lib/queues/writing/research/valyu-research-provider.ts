@@ -11,6 +11,7 @@
 import { 
   performDeepResearch 
 } from '@/lib/valyu';
+import { getValyuApiKey } from '@/lib/services/api-keys';
 import type { 
   ValyuSearchResult, 
   ValyuDeepResearchResult,
@@ -92,11 +93,14 @@ async function performDeepModeResearch(
 ): Promise<ExtractedFacts> {
   console.log('[ValyuResearch] Starting DeepResearch (single-query mode)...');
 
+  // Resolve the user's Valyu API key from Supabase
+  const valyuApiKey = await getValyuApiKey(userId);
+
   // Build clean query - DeepResearch handles decomposition internally
   const researchQuery = buildDeepResearchQuery(topic, sourcePreferences);
 
   // Perform deep research - using 'fast' mode for quicker results (~5-10 min)
-  const result = await performDeepResearch(researchQuery, 'fast', {
+  const result = await performDeepResearch(researchQuery, valyuApiKey, 'fast', {
     strategy: buildResearchStrategy(sourcePreferences),
     maxWaitMs: 12 * 60 * 1000, // 12 minutes timeout
     onProgress,

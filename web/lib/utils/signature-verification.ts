@@ -8,10 +8,14 @@ export function verifySignature(
   signature: string | null,
   secret: string | undefined
 ): boolean {
-  // If no secret configured, skip verification (for dev/testing)
+  // Fail closed in production; only skip in development
   if (!secret) {
-    console.log("[GPUCallback] No webhook secret configured, skipping signature verification");
-    return true;
+    if (process.env.NODE_ENV === 'development') {
+      console.warn("[GPUCallback] No webhook secret configured, skipping verification (dev only)");
+      return true;
+    }
+    console.error("[GPUCallback] GPU_WEBHOOK_SECRET not configured — rejecting request");
+    return false;
   }
 
   if (!signature) {

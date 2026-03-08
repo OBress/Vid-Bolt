@@ -31,6 +31,7 @@ export interface UserApiKeys {
   replicate_key?: string | null;
   google_cloud_credentials?: string | null;
   groq_key?: string | null;
+  valyu_key?: string | null;
 }
 
 /**
@@ -139,4 +140,24 @@ export async function getOpenRouterApiKey(userId: string): Promise<string> {
   }
 
   return platformKey;
+}
+
+/**
+ * Get Valyu API key for a user from Supabase.
+ * Users must configure their own key in Settings → API Keys.
+ * No environment variable fallback — this is a required per-user key.
+ * 
+ * @param userId - User ID
+ * @returns Valyu API key
+ */
+export async function getValyuApiKey(userId: string): Promise<string> {
+  const userKeys = await getUserApiKeys(userId);
+  
+  if (!userKeys?.valyu_key) {
+    throw new Error(
+      "No Valyu API key found. Please configure your Valyu API key in Settings → API Keys."
+    );
+  }
+
+  return userKeys.valyu_key;
 }

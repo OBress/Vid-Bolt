@@ -45,6 +45,7 @@ interface ApiKeys {
   replicate_key: string;
   google_cloud_credentials: string;
   groq_key: string;
+  valyu_key: string;
 }
 
 export function ApiKeysTab() {
@@ -56,6 +57,7 @@ export function ApiKeysTab() {
     replicate_key: "",
     google_cloud_credentials: "",
     groq_key: "",
+    valyu_key: "",
   });
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
@@ -128,6 +130,7 @@ export function ApiKeysTab() {
           replicate_key: keyData.replicate_key || "",
           google_cloud_credentials: keyData.google_cloud_credentials || "",
           groq_key: keyData.groq_key || "",
+          valyu_key: keyData.valyu_key || "",
         });
       }
 
@@ -599,6 +602,13 @@ export function ApiKeysTab() {
                 onSave={(val) => handleSaveKey("inworld_tts_key", val)}
                 placeholder="Enter Inworld key..."
                 tooltip="Required for generating realistic text-to-speech voices for the agent."
+              />
+              <ApiKeyInput
+                label="VALYU API KEY"
+                value={keys.valyu_key}
+                onSave={(val) => handleSaveKey("valyu_key", val)}
+                placeholder="Enter Valyu key..."
+                tooltip="Required for AI-powered research, web search, and DeepResearch features."
               />
             </CardContent>
           </Card>

@@ -3,12 +3,12 @@ import { updateSession } from './lib/supabase/middleware'
 
 export async function middleware(request: NextRequest) {
   const { nextUrl } = request
-  const isLoggedIn = request.cookies.get('is_logged_in')?.value === 'true'
 
-  // Allow access to auth callback, login page, and endpoints with their own auth mechanisms
+  // Allow access to auth callback, login page, landing page, and endpoints with their own auth mechanisms
   if (
     nextUrl.pathname.startsWith('/auth') ||
     nextUrl.pathname === '/login' ||
+    nextUrl.pathname === '/' ||
     nextUrl.pathname.startsWith('/api/gpu-callback') ||
     nextUrl.pathname.startsWith('/api/stripe/webhook') ||  // Stripe uses its own signature verification
     nextUrl.pathname.startsWith('/api/stock-media') ||     // Uses internal-secret or user auth per-route
@@ -26,14 +26,7 @@ export async function middleware(request: NextRequest) {
     return await updateSession(request)
   }
 
-  // Fast check: if no cookie, redirect to login
-  if (!isLoggedIn) {
-    const url = nextUrl.clone()
-    url.pathname = '/login'
-    url.searchParams.set('next', nextUrl.pathname)
-    return NextResponse.redirect(url)
-  }
-
+  // All other paths require a valid Supabase session (JWT-based, not cookie-based)
   return await updateSession(request)
 }
 

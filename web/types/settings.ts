@@ -225,4 +225,5 @@ export interface ApiKeys {
   replicate_key: string;
   google_cloud_credentials: string;
   groq_key: string;
+  valyu_key: string;
 }

@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  turbopack: {
+    root: '.',
+  },
   eslint: {
     // Lint errors (mostly unused-vars in in-development components) are caught
     // by the IDE; don't let them block CI/CD deployments.
@@ -14,9 +17,9 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     serverActions: {
-      bodySizeLimit: '500mb',
+      bodySizeLimit: '100mb',
     },
-    middlewareClientMaxBodySize: '500mb',
+    middlewareClientMaxBodySize: '100mb',
   },
   images: {
     formats: ['image/avif', 'image/webp'],
@@ -35,6 +38,22 @@ const nextConfig: NextConfig = {
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+          {
+            key: 'Content-Security-Policy',
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' https://assets.vidbolt.app https://images.unsplash.com https://images.pexels.com data: blob:",
+              "media-src 'self' https://assets.vidbolt.app blob:",
+              "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://assets.vidbolt.app https://api.stripe.com",
+              "font-src 'self' https://fonts.gstatic.com",
+              "frame-ancestors 'none'",
+              "base-uri 'self'",
+              "form-action 'self'",
+            ].join('; '),
+          },
         ],
       },
       {
