@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getPublicOrigin } from '@/lib/utils/get-public-origin'
 
 /**
  * Auth Callback Route
@@ -49,7 +50,9 @@ async function checkVidBoltGuildMembership(
 }
 
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url)
+  const searchParams = new URL(request.url).searchParams
+  const origin = getPublicOrigin(request)
+
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? '/command-center'
 

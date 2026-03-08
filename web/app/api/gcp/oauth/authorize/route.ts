@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getPublicOrigin } from '@/lib/utils/get-public-origin'
 
 /**
  * GCP OAuth Authorize
@@ -15,7 +16,7 @@ const GCP_SCOPES = [
 ].join(' ')
 
 export async function GET(request: Request) {
-  const { origin } = new URL(request.url)
+  const origin = getPublicOrigin(request)
 
   // Verify the user is authenticated before starting OAuth
   const supabase = await createClient()
