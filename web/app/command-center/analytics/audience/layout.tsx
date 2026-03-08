@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Audience Analytics",
+  title: "Vid Bolt",
   description: "Audience insights and analytics for VID-BOLT.",
 };
 

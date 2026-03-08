@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Sign In",
+  title: "Vid Bolt",
   description: "Secure access to VID-BOLT Command & Control.",
 };
 

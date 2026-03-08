@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Project",
+  title: "Vid Bolt",
   description: "Media project workspace in VID-BOLT.",
 };
 

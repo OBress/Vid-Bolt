@@ -13,10 +13,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: {
-    default: "Vid-Bolt — AI Video Production Platform",
-    template: "%s | Vid-Bolt",
-  },
+  title: "Vid Bolt",
   description:
     "Semi-automated video production platform powered by AI. Generate scripts, visuals, and publish — all from one command center.",
   metadataBase: new URL(
@@ -25,7 +22,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    siteName: "Vid-Bolt",
+    siteName: "Vid Bolt",
   },
   twitter: {
     card: "summary_large_image",

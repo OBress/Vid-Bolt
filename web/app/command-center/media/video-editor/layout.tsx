@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Video Editor",
+  title: "Vid Bolt",
   description: "Professional timeline-based video editor in VID-BOLT.",
 };
 

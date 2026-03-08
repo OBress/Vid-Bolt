@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Agent Network",
+  title: "Vid Bolt",
   description: "Manage and monitor AI agents in the VID-BOLT network.",
 };
 

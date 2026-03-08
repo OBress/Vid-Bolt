@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Asset Manager",
+  title: "Vid Bolt",
   description: "Manage and browse media assets in VID-BOLT.",
 };
 

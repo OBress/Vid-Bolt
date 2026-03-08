@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Systems Monitor",
+  title: "Vid Bolt",
   description:
     "Infrastructure health and performance monitoring for VID-BOLT.",
 };

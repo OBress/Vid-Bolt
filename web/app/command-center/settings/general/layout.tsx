@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Settings",
+  title: "Vid Bolt",
   description: "Configure your VID-BOLT account, projects, and API keys.",
 };
 

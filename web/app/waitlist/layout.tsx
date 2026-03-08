@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Access Pending",
+  title: "Vid Bolt",
   description: "Your VID-BOLT access is pending approval.",
 };
 
