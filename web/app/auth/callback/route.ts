@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getPublicOrigin } from '@/lib/utils/get-public-origin'
+import { notifyNewWaitlistUser } from '@/lib/discord-webhook'
 
 /**
  * Auth Callback Route
@@ -106,6 +107,15 @@ export async function GET(request: Request) {
           discord_avatar: discordAvatar,
           in_vidbolt_server: inVidBoltServer,
         })
+
+        // Fire-and-forget: notify Discord channel about new waitlist signup
+        notifyNewWaitlistUser({
+          email: user.email,
+          discordId,
+          discordUsername,
+          discordAvatar,
+          inVidBoltServer: inVidBoltServer,
+        }).catch((err) => console.error('[Auth Callback] Discord webhook error:', err))
       } else {
         // Update Discord metadata on every login
         await supabase
