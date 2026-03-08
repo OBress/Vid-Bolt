@@ -136,3 +136,36 @@ jobs:
             echo "⚠️ Deployment failed — rolling back..."
             cd /home/deploy/vibbo
             docker compose -f docker-compose.prod.yml up -d --force-recreate app workers
+
+      # ─────────────────────────────────────────────
+      # Discord Notifications
+      # ─────────────────────────────────────────────
+      - name: Notify Discord (success)
+        if: success()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl -sS -H "Content-Type: application/json" -d '{
+            "embeds": [{
+              "title": "✅ Deployment Succeeded",
+              "description": "**Commit:** `'"${{ github.sha }}"'`\n**Author:** '"${{ github.actor }}"'\n**Message:** '"$(echo '${{ github.event.head_commit.message }}' | head -1)"'",
+              "color": 3066993,
+              "footer": { "text": "VidBolt CI/CD" },
+              "timestamp": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"
+            }]
+          }' "$DISCORD_WEBHOOK"
+
+      - name: Notify Discord (failure)
+        if: failure()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl -sS -H "Content-Type: application/json" -d '{
+            "embeds": [{
+              "title": "❌ Deployment Failed",
+              "description": "**Commit:** `'"${{ github.sha }}"'`\n**Author:** '"${{ github.actor }}"'\n**Run:** [View logs]('"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"')",
+              "color": 15158332,
+              "footer": { "text": "VidBolt CI/CD" },
+              "timestamp": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"
+            }]
+          }' "$DISCORD_WEBHOOK"
