@@ -73,6 +73,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      packages: read
 
     steps:
       - name: Deploy via SSH
@@ -80,22 +82,24 @@ jobs:
         env:
           REGISTRY: ghcr.io
           IMAGE_NAME: ${{ github.repository_owner }}/vibbo-web
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         with:
           host: ${{ secrets.HETZNER_HOST }}
           username: deploy
           key: ${{ secrets.HETZNER_SSH_KEY }}
-          envs: REGISTRY,IMAGE_NAME
+          envs: REGISTRY,IMAGE_NAME,GHCR_TOKEN,GHCR_USER
           script: |
             cd /home/deploy/vibbo
+
+            # Authenticate with GitHub Container Registry
+            echo "${GHCR_TOKEN}" | docker login ${REGISTRY} -u ${GHCR_USER} --password-stdin
 
             # Pull latest image
             docker pull ${REGISTRY}/${IMAGE_NAME}:latest
 
-            # Zero-downtime rollout for app
-            docker rollout -f docker-compose.prod.yml app
-
-            # Zero-downtime rollout for workers
-            docker rollout -f docker-compose.prod.yml workers
+            # Deploy (or recreate) app + workers
+            docker compose --env-file .env.production -f docker-compose.prod.yml up -d --force-recreate app workers
 
             # Clean up old images (keep last 3 days)
             docker image prune -a --filter "until=72h" -f
