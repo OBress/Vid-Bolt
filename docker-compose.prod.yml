@@ -12,11 +12,12 @@ services:
   # Traefik v3 — Reverse Proxy + Auto-SSL
   # ---------------------------------------------------------------------------
   traefik:
-    image: traefik:v3.3
+    image: traefik:latest
     container_name: vibbo-traefik
     restart: unless-stopped
     environment:
       - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+      - DOCKER_API_VERSION=1.45
     ports:
       - "80:80"
       - "443:443"
@@ -80,7 +81,7 @@ services:
       - internal
     healthcheck:
       test:
-        ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+        ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)throw r;process.exit(0)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
