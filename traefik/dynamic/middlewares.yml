@@ -5,12 +5,16 @@
 http:
   middlewares:
     # Basic Auth for admin subdomain (queues + grafana)
-    # Generate password: htpasswd -nb admin YOUR_PASSWORD
-    # Escape $ with $$ in docker-compose labels
     admin-auth:
       basicAuth:
         users:
-          - "${ADMIN_BASIC_AUTH}"
+          - "admin:$apr1$PCLR3JR/$imavJ9UR/GRa82vDAqRFH."
+
+    # Strip /queues prefix before forwarding to BullBoard
+    strip-queues:
+      stripPrefix:
+        prefixes:
+          - "/queues"
 
     # Rate limiting
     rate-limit:

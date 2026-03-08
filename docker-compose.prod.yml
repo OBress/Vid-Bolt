@@ -159,13 +159,37 @@ services:
       - "traefik.http.routers.bullboard.rule=Host(`admin.vidbolt.app`) && PathPrefix(`/queues`)"
       - "traefik.http.routers.bullboard.entrypoints=websecure"
       - "traefik.http.routers.bullboard.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.bullboard.middlewares=admin-auth@file"
+      - "traefik.http.routers.bullboard.middlewares=admin-auth@file,strip-queues@file"
       - "traefik.http.services.bullboard.loadbalancer.server.port=3000"
     deploy:
       resources:
         limits:
           cpus: "0.25"
           memory: 256M
+
+  # ---------------------------------------------------------------------------
+  # Admin Landing Page — Nginx static
+  # ---------------------------------------------------------------------------
+  admin-landing:
+    image: nginx:alpine
+    container_name: vibbo-admin-landing
+    restart: unless-stopped
+    volumes:
+      - ./traefik/admin:/usr/share/nginx/html:ro
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.admin-landing.rule=Host(`admin.vidbolt.app`) && Path(`/`)"
+      - "traefik.http.routers.admin-landing.entrypoints=websecure"
+      - "traefik.http.routers.admin-landing.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.admin-landing.middlewares=admin-auth@file"
+      - "traefik.http.services.admin-landing.loadbalancer.server.port=80"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 32M
 
 networks:
   web:
