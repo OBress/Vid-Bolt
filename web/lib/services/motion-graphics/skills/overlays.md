@@ -1,7 +1,7 @@
 ---
 name: overlays
-description: Visual overlay and compositing patterns for Remotion. Use when adding vignettes, scanlines, glitch effects, blend modes, or layered visual treatments.
-tags: overlay, compositing, blend-mode, vignette, scanline, glitch, texture, layer
+description: Visual overlay and compositing patterns for Remotion. Use when adding vignettes, scanlines, glitch effects, blend modes, transparent overlays on video/images, location tags, lower-thirds, badges, or any layered visual treatment.
+tags: overlay, compositing, blend-mode, vignette, scanline, glitch, texture, layer, transparent, location, lower-third, badge, hud, border, lens, effect
 ---
 
 # Visual Overlays & Compositing

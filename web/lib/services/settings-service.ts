@@ -38,24 +38,21 @@ export const SettingsService = {
   },
 
   /**
-   * Update settings for a specific project (merges with existing)
+   * Update settings for a specific project.
+   * Accepts the full merged settings object — the hook is responsible for
+   * maintaining the complete state so we can upsert directly without
+   * re-fetching, avoiding race conditions and stale overwrites.
    */
   async updateProjectSettings(
     projectId: string,
-    settings: Partial<ProjectSettings>
+    settings: ProjectSettings
   ): Promise<void> {
     const supabase = createClient();
-    // First get current settings to merge
-    const current = await this.getProjectSettings(projectId);
-    const merged = {
-      ...(current || {}),
-      ...settings,
-    };
 
     const { error } = await supabase
       .from('project_settings')
       .upsert(
-        { project_id: projectId, settings: merged },
+        { project_id: projectId, settings },
         { onConflict: 'project_id' }
       );
 

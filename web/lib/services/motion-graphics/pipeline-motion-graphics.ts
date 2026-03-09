@@ -101,23 +101,45 @@ export function buildEnrichedMGPrompt(
 
   // Narration text — helps the AI time visual elements to match spoken content
   if (narrationText) {
+    const wordCount = narrationText.split(/\s+/).length;
+    const wordsPerSecond = wordCount / duration;
     parts.push(`\n\nNARRATION (spoken during this shot — time visual elements to match):\n"${narrationText}"`);
-    parts.push(`\nUse the narration to pace animations: reveal text/graphics roughly when the narrator mentions them.`);
+    parts.push(`\n\nTIMING ALIGNMENT (CRITICAL):
+- This narration has ${wordCount} words spoken over ${duration}s (~${wordsPerSecond.toFixed(1)} words/sec)
+- Map your animation phases to the narration structure:
+  * Entrance animations should trigger within the first 0.5s
+  * Key visual elements (labels, badges, highlights) should appear when the narrator reaches the relevant words
+  * Don't front-load all animations at the start — spread them across the duration to match pacing
+  * Reserve the final 0.3-0.5s for a clean hold or subtle exit
+- If the narration mentions specific items in sequence, animate corresponding elements in the SAME sequence`);
   }
 
   // Image assets — only for image/video manipulation tags
   const hasImageManipulation = routingTags.includes('remotion_image_manipulation');
   const hasVideoManipulation = routingTags.includes('remotion_video_manipulation');
 
-  // Video overlay constraints — prevent precision positioning on dynamic video
+  // Video overlay guidance — creative overlay composition on dynamic video
   if (hasVideoManipulation) {
-    parts.push('\n\nVIDEO OVERLAY CONSTRAINTS (this is a transparent overlay on dynamic video):');
-    parts.push('\n- Do NOT attempt to track, circle, highlight, or point to specific objects in the video');
-    parts.push('\n- Do NOT use position-specific annotations — the underlying video is dynamic and unpredictable');
-    parts.push('\n- DO use: full-screen text overlays, lower-thirds, corner graphics, border effects, general screen tints/vignettes, animated titles/labels, info boxes in fixed screen positions');
-    parts.push('\n- Keep overlays in screen-edge/corner safe zones — never rely on center-positioning to "match" video content');
-    parts.push('\n- Prefer semi-transparent backgrounds behind text for readability over dynamic video');
-    parts.push('\n- Think of this as a HUD or broadcast-style overlay, NOT a video annotation tool');
+    parts.push('\n\nVIDEO OVERLAY MODE (your component will be rendered ON TOP of video footage):');
+    parts.push('\n- Your component background MUST be transparent — use background: "transparent" on AbsoluteFill');
+    parts.push('\n- Design elements that COMPLEMENT the underlying video, not compete with it');
+    parts.push('\n- Use semi-transparent backgrounds behind text for readability (e.g., rgba(0,0,0,0.6))');
+    parts.push('\n');
+    parts.push('\nCREATIVE OVERLAY TYPES you should create:');
+    parts.push('\n- Location tags: Animated pin icon + location name, slides in from edge with spring animation');
+    parts.push('\n- Lower-thirds: Name/title bar at bottom 20% with smooth entrance, semi-transparent background');
+    parts.push('\n- Animated titles: Large text that fades/slides in, positioned top or center, bold and cinematic');
+    parts.push('\n- Info badges: Icon + text in rounded container, appears in corners');
+    parts.push('\n- Border/frame effects: Animated borders, corner brackets, or cinematic letterboxing');
+    parts.push('\n- Vignette/tint: Color wash or vignette overlay, driven by frame for animation');
+    parts.push('\n- Data HUD: Stats, meters, or progress bars styled like a broadcast overlay');
+    parts.push('\n- Lens effects: Glow, light leak, or subtle flare overlaid as CSS effects');
+    parts.push('\n');
+    parts.push('\nPOSITIONING RULES:');
+    parts.push('\n- Prefer screen edges and corners for persistent elements (lower-thirds, badges)');
+    parts.push('\n- Center is OK for brief title reveals that fade in and out');
+    parts.push('\n- Do NOT try to track or circle specific objects in the video — the video content is dynamic');
+    parts.push('\n- Do NOT use position-specific annotations that assume knowledge of video content');
   }
 
   if ((hasImageManipulation || hasVideoManipulation) && imageAssets.length > 0) {

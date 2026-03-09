@@ -539,15 +539,29 @@ CORE (GPU generation):
 
 STOCK (real footage):
 - "stock_image" → Static photos of real people/places
+- "stock_video" → Stock video footage of real people/places/events
 
-REMOTION (composition):
-- "remotion_overlay" → Text, captions, lower-thirds on top
-- "remotion_image_manipulation" → Ken Burns, layers, montages
-- "remotion_video_manipulation" → Annotations on video
+REMOTION (composition — USE THESE CREATIVELY):
+- "remotion_overlay" → Overlays OVER video or images: location tags, info badges, lower-thirds, animated labels, lens flare effects, animated borders/frames, countdown timers, progress indicators, reaction emojis, data HUDs, split-screen layouts, picture-in-picture. This is NOT just plain text — think broadcast-quality overlays.
+- "remotion_image_manipulation" → Full-frame compositions built around AI/stock images: Ken Burns zoom, parallax layers, image montages, before/after reveals, photo grids, annotated images with callouts, image with animated text overlay
+- "remotion_video_manipulation" → Overlays composed on TOP of video: cinematic title sequences, location tags that slide in, animated borders, glitch/distortion effects, color tint washes, vignette effects, lower-thirds with names/titles, info-HUD overlays (temperature, distance, stats)
 
 AUDIO (optional):
 - "sound_effects" → SFX (whoosh, impact, etc.)
 - "music" → Background music/score
+
+## WHEN TO USE OVERLAYS (CRITICAL — READ CAREFULLY)
+
+Motion graphics overlays are one of the most powerful tools. Use them at PRECISE moments that match the narration:
+
+- When the narrator NAMES a location → use remotion_overlay with a location tag overlay on video/image
+- When showing someone's face → use remotion_overlay for a lower-third with their name/title
+- When presenting data/statistics → use remotion_overlay for animated stat badges, charts, or progress bars
+- When transitioning between topics → use remotion_overlay for a cinematic title card
+- When building suspense or emphasis → use remotion_overlay for lens effects, vignettes, or visual accents
+- When comparing things → use remotion_image_manipulation for split-screen or before/after layouts
+
+Overlays should NOT be generic — they should react to and complement what the narrator is saying at that exact moment.
 
 ## SOUND DESIGN
 
@@ -562,11 +576,23 @@ When adding SFX to a shot:
 Good SFX: Enhances reveal moments, emphasizes impacts, builds tension
 Bad SFX: Generic whooshes on every cut, distracting clicks
 
-Examples:
+## COMBINATION EXAMPLES
+
 - Single AI video: ["ai_video"]
-- Photo montage with Ken Burns: ["stock_image", "remotion_image_manipulation"]
-- Video with lower-third caption: ["ai_video", "remotion_overlay"]
-- Quote card with no base media: ["remotion_overlay"]`);
+- AI video with location tag overlay: ["ai_video", "remotion_overlay"]
+- AI video with lower-third name card: ["ai_video", "remotion_overlay"]
+- AI video with cinematic title overlay: ["ai_video", "remotion_overlay"]
+- AI video with lens flare/distortion effect: ["ai_video", "remotion_video_manipulation"]
+- Stock photo with animated Ken Burns zoom + text: ["stock_image", "remotion_image_manipulation"]
+- Stock photo with annotated callouts: ["stock_image", "remotion_image_manipulation"]
+- Stock video with data HUD overlay: ["stock_video", "remotion_video_manipulation"]
+- Multiple stock photos in animated grid/montage: ["stock_image", "remotion_image_manipulation"]
+- Before/after comparison with split screen: ["ai_image", "remotion_image_manipulation"]
+- Quote card with cinematic styling (no base media): ["remotion_overlay"]
+- Stat/data card with animated numbers (no base media): ["remotion_overlay"]
+- Full-screen infographic with icons: ["remotion_overlay"]
+- Video with animated border + lower-third: ["ai_video", "remotion_video_manipulation", "remotion_overlay"]
+- Photo montage with transition effects: ["stock_image", "remotion_image_manipulation", "sound_effects"]`);
 
   // Upcoming content preview (for transitions)
   if (!context.isLastChunk && context.upcomingSegments.length > 0) {

@@ -89,6 +89,7 @@ export function useProjectSettings(projectId: string | undefined) {
   const cacheKey = `project_${projectId}`;
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const statusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingSettingsRef = useRef<ProjectSettings | null>(null);
 
   const loadSettings = useCallback(async () => {
     if (!projectId) return;
@@ -142,6 +143,8 @@ export function useProjectSettings(projectId: string | undefined) {
       
       // Update cache immediately
       SettingsCache.set(cacheKey, next);
+      // Track the latest full state for the debounced save
+      pendingSettingsRef.current = next;
       return next;
     });
 
@@ -152,9 +155,13 @@ export function useProjectSettings(projectId: string | undefined) {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     
     saveTimeoutRef.current = setTimeout(async () => {
+      const settingsToSave = pendingSettingsRef.current;
+      if (!settingsToSave) return;
+      pendingSettingsRef.current = null;
+
       setSyncing(true);
       try {
-        await SettingsService.updateProjectSettings(projectId, partial);
+        await SettingsService.updateProjectSettings(projectId, settingsToSave);
         setSyncing(false);
         setSaveStatus('saved');
         

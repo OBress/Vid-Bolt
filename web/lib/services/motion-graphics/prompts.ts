@@ -373,6 +373,95 @@ Wrong ❌ - BREAKS deterministic rendering
 - Consider adding a subtle vignette or gradient overlay for depth
 - Use shadows sparingly but effectively
 
+## OVERLAY MODE (CRITICAL — READ IF PROMPT MENTIONS OVERLAY OR PROVIDES MEDIA ASSETS)
+
+Your component may be used as a TRANSPARENT OVERLAY on top of video or image content.
+When the prompt mentions "overlay", "on top of", "over video", or provides media asset URLs:
+
+1. Use transparent background: Set background: 'transparent' on your root AbsoluteFill
+2. Design for compositing: Your elements should complement, not replace, the underlying media
+3. Text readability: Always put semi-transparent backgrounds behind text (e.g., rgba(0,0,0,0.65))
+4. **Edge positioning**: Place persistent elements (badges, labels) at screen edges/corners
+5. **Brief center content**: Center is OK for title reveals that fade in and out quickly
+
+### Creative Overlay Types You Can Create
+
+- **Location tags**: Animated pin/marker icon + location name, slides in from edge with spring physics
+- **Lower-thirds**: Name/title bar at bottom ~20%, with smooth entrance and semi-transparent backdrop
+- **Cinematic titles**: Large bold text that fades/scales in at center, holds briefly, fades out
+- **Info badges**: Icon + label in a rounded pill, appears in corners (e.g., MapPin icon + "New York")
+- **Animated borders**: Corner brackets, cinematic letterboxing, or pulsing frame edges
+- **Vignette/tint**: Animated color wash or vignette using radial-gradient + mixBlendMode
+- **Data HUD**: Stats, meters, progress bars, or counters styled like broadcast overlays
+- **Lens effects**: Glow, light leak, or subtle flare using CSS box-shadow/filter
+- **Reaction indicators**: Emoji or icon pop-ins that appear and scale with spring physics
+- **Split-screen**: Divide the frame to show multiple images/elements side by side
+
+### Transparent Background Pattern
+
+\`\`\`tsx
+return (
+  <AbsoluteFill style={{ background: 'transparent' }}>
+    {/* Your overlay elements here — they composite over the underlying video/image */}
+    <div style={{
+      position: 'absolute',
+      bottom: 60,
+      left: 40,
+      background: 'rgba(0,0,0,0.65)',
+      padding: '12px 24px',
+      borderRadius: 8,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      opacity: entranceProgress,
+      transform: \`translateX(\${interpolate(entranceProgress, [0, 1], [-40, 0])}px)\`,
+    }}>
+      {/* Location tag, lower-third, info badge, etc. */}
+    </div>
+  </AbsoluteFill>
+);
+\`\`\`
+
+## IMAGE & MEDIA INTEGRATION
+
+When the prompt provides R2 image URLs (real, accessible URLs), you MUST use them:
+
+### Background Image with Ken Burns Zoom
+
+\`\`\`tsx
+import { Img, useCurrentFrame, useVideoConfig, AbsoluteFill, interpolate } from 'remotion';
+
+const IMAGE_URL = 'https://...'; // R2 URL from prompt
+
+const frame = useCurrentFrame();
+const { durationInFrames } = useVideoConfig();
+
+const scale = interpolate(frame, [0, durationInFrames], [1, 1.15], {
+  extrapolateRight: 'clamp',
+});
+
+return (
+  <AbsoluteFill>
+    <Img src={IMAGE_URL} style={{
+      width: '100%',
+      height: '100%',
+      objectFit: 'cover',
+      transform: \`scale(\${scale})\`,
+    }} />
+    {/* Overlay elements on top of the image */}
+  </AbsoluteFill>
+);
+\`\`\`
+
+### Narration-Synced Animation Timing
+
+When narration text is provided, time your animations to match:
+- Calculate total duration from fps and durationInFrames
+- Divide the narration into logical sections
+- Reveal visual elements progressively as the narrator covers each section
+- Don't front-load all animations — spread them across the duration
+- Reserve the last ~15 frames for a clean hold state
+
 ## OUTPUT FORMAT (CRITICAL)
 
 - Output ONLY valid JavaScript/JSX code

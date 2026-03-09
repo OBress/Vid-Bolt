@@ -419,10 +419,32 @@ function createComponentFromTranspiled(
   try {
     const skipIconInjection = options.skipIcons === true;
 
+    // Safe interpolate wrapper for AI-generated code.
+    // AI code may pass undefined, NaN, or string values in inputRange/outputRange
+    // which causes Remotion to throw "outputRange must contain only numbers".
+    // This wrapper sanitizes the arrays before passing to the real interpolate.
+    const safeInterpolate: typeof interpolate = (input, inputRange, outputRange, options) => {
+      const sanitize = (arr: readonly number[]): readonly number[] =>
+        arr.map(v => {
+          const n = Number(v);
+          if (Number.isNaN(n)) {
+            console.warn('[Compiler] interpolate: non-numeric value in range, defaulting to 0. Original:', v);
+            return 0;
+          }
+          return n;
+        });
+      return interpolate(
+        Number.isNaN(Number(input)) ? 0 : Number(input),
+        sanitize(inputRange),
+        sanitize(outputRange),
+        options,
+      );
+    };
+
     // Build the Remotion namespace
     const Remotion = {
       AbsoluteFill,
-      interpolate,
+      interpolate: safeInterpolate,
       interpolateColors,
       useCurrentFrame,
       useVideoConfig,
@@ -490,7 +512,7 @@ function createComponentFromTranspiled(
       THREE,
       Math,
       AbsoluteFill,
-      interpolate,
+      safeInterpolate,
       interpolateColors,
       interpolateColors,
       useCurrentFrame,

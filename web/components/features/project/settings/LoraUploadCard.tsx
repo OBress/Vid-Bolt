@@ -221,11 +221,11 @@ export function LoraUploadCard({
       )}
 
       {/* ── Uploaded LoRAs library ───────────────────────────────────── */}
-      {loras.length > 0 && (
-        <div className="space-y-2">
-          <Label className="text-[10px] text-neutral-500 uppercase font-black tracking-widest">
-            Uploaded LoRAs ({loras.length})
-          </Label>
+      <div className="space-y-2">
+        <Label className="text-[10px] text-neutral-500 uppercase font-black tracking-widest">
+          Uploaded LoRAs ({loras.length})
+        </Label>
+        {loras.length > 0 ? (
           <div className="space-y-1.5">
             {loras.map((lora) => (
               <div
@@ -318,8 +318,14 @@ export function LoraUploadCard({
               </div>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="p-3 rounded-lg bg-black/20 border border-neutral-800/50">
+            <p className="text-[11px] text-neutral-500 italic text-center">
+              No LoRAs uploaded yet.
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* ── Upload area ──────────────────────────────────────────────── */}
       {loras.length > 0 && !showUploader && (
@@ -387,12 +393,6 @@ export function LoraUploadCard({
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
           {uploadError}
         </div>
-      )}
-
-      {loras.length === 0 && (
-        <p className="text-[10px] text-neutral-500 italic text-center">
-          No LoRAs uploaded. Upload a .safetensors file to apply a custom style to Z-Image Turbo generated images.
-        </p>
       )}
     </div>
   );
