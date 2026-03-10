@@ -32,7 +32,7 @@ console.log('  PEXELS_API_KEY:', process.env.PEXELS_API_KEY ? 'âœ“ present' : 'â
 
 import { Worker, Processor } from 'bullmq';
 import { getRedisConnection, closeRedisConnection, isRedisReady } from './redis';
-import { closeAllQueues, gpuShutdownCheckQueue, dataRetentionCleanupQueue } from './queues';
+import { closeAllQueues, gpuShutdownCheckQueue, dataRetentionCleanupQueue, analyticsChannelStatsQueue, analyticsDailySnapshotQueue, analyticsVideoQueue, analyticsDemographicsQueue, analyticsCompetitorQueue, analyticsPlatformAggregateQueue, nicheDiscoveryQueue } from './queues';
 import { lambdaConfig } from '@/lib/services/render/lambda-config';
 import { 
   writingProcessor, 
@@ -65,6 +65,13 @@ import {
   verifierProcessor,
   imageEditProcessor,
   dataRetentionCleanupProcessor,
+  channelStatsSyncProcessor,
+  dailySnapshotSyncProcessor,
+  videoAnalyticsSyncProcessor,
+  demographicsSyncProcessor,
+  competitorSyncProcessor,
+  platformDailyAggregateProcessor,
+  nicheDiscoveryProcessor,
 } from './workers';
 
 // ============================================================================
@@ -263,6 +270,49 @@ const workerConfigs: WorkerConfig[] = [
     concurrency: 1,
     description: 'Automated data retention cleanup (R2 + Supabase)',
   },
+  // Analytics sync workers
+  {
+    queue: 'analytics-channel-stats',
+    processor: channelStatsSyncProcessor,
+    concurrency: 1,
+    description: 'YouTube channel stats sync (daily 11 AM UTC)',
+  },
+  {
+    queue: 'analytics-daily-snapshot',
+    processor: dailySnapshotSyncProcessor,
+    concurrency: 1,
+    description: 'YouTube daily snapshot sync (daily 2 AM UTC)',
+  },
+  {
+    queue: 'analytics-video',
+    processor: videoAnalyticsSyncProcessor,
+    concurrency: 1,
+    description: 'YouTube video analytics sync (daily 3 AM UTC)',
+  },
+  {
+    queue: 'analytics-demographics',
+    processor: demographicsSyncProcessor,
+    concurrency: 1,
+    description: 'YouTube demographics sync (weekly Sunday 4 AM UTC)',
+  },
+  {
+    queue: 'analytics-competitor',
+    processor: competitorSyncProcessor,
+    concurrency: 1,
+    description: 'Competitor channel sync (daily 5 AM UTC)',
+  },
+  {
+    queue: 'analytics-platform-aggregate',
+    processor: platformDailyAggregateProcessor,
+    concurrency: 1,
+    description: 'Platform daily aggregate (daily 6 AM UTC, admin)',
+  },
+  {
+    queue: 'niche-discovery',
+    processor: nicheDiscoveryProcessor,
+    concurrency: 1,
+    description: 'Niche network discovery (weekly Sunday 1 AM UTC)',
+  },
 ];
 
 // ============================================================================
@@ -297,6 +347,83 @@ async function registerRepeatableJobs(): Promise<void> {
     }
   );
   console.log('[WorkerBootstrap] Registered: data-retention-cleanup (every 6 hours)');
+
+  // Analytics: Channel stats sync - daily at 11 AM UTC (after YouTube data refresh ~10 AM UTC)
+  await analyticsChannelStatsQueue.add(
+    'sync-channel-stats',
+    {},
+    {
+      repeat: { pattern: '0 11 * * *' },
+      jobId: 'analytics-channel-stats-repeatable'
+    }
+  );
+  console.log('[WorkerBootstrap] Registered: analytics-channel-stats (daily 11 AM UTC)');
+
+  // Analytics: Daily snapshot - daily at 11:30 AM UTC
+  await analyticsDailySnapshotQueue.add(
+    'sync-daily-snapshot',
+    {},
+    {
+      repeat: { pattern: '30 11 * * *' },
+      jobId: 'analytics-daily-snapshot-repeatable'
+    }
+  );
+  console.log('[WorkerBootstrap] Registered: analytics-daily-snapshot (daily 11:30 AM UTC)');
+
+  // Analytics: Video analytics - daily at 12 PM UTC
+  await analyticsVideoQueue.add(
+    'sync-video-analytics',
+    {},
+    {
+      repeat: { pattern: '0 12 * * *' },
+      jobId: 'analytics-video-repeatable'
+    }
+  );
+  console.log('[WorkerBootstrap] Registered: analytics-video (daily 12 PM UTC)');
+
+  // Analytics: Demographics - weekly Sunday at 4 AM UTC
+  await analyticsDemographicsQueue.add(
+    'sync-demographics',
+    {},
+    {
+      repeat: { pattern: '0 4 * * 0' },
+      jobId: 'analytics-demographics-repeatable'
+    }
+  );
+  console.log('[WorkerBootstrap] Registered: analytics-demographics (weekly Sun 4 AM UTC)');
+
+  // Analytics: Competitor sync - daily at 1 PM UTC
+  await analyticsCompetitorQueue.add(
+    'sync-competitors',
+    {},
+    {
+      repeat: { pattern: '0 13 * * *' },
+      jobId: 'analytics-competitor-repeatable'
+    }
+  );
+  console.log('[WorkerBootstrap] Registered: analytics-competitor (daily 1 PM UTC)');
+
+  // Analytics: Platform daily aggregate - daily at 2 PM UTC
+  await analyticsPlatformAggregateQueue.add(
+    'sync-platform-aggregate',
+    {},
+    {
+      repeat: { pattern: '0 14 * * *' },
+      jobId: 'analytics-platform-aggregate-repeatable'
+    }
+  );
+  console.log('[WorkerBootstrap] Registered: analytics-platform-aggregate (daily 2 PM UTC)');
+
+  // Niche discovery - weekly Sunday at 1 AM UTC
+  await nicheDiscoveryQueue.add(
+    'discover-niche-channels',
+    {},
+    {
+      repeat: { pattern: '0 1 * * 0' },
+      jobId: 'niche-discovery-repeatable'
+    }
+  );
+  console.log('[WorkerBootstrap] Registered: niche-discovery (weekly Sun 1 AM UTC)');
 }
 
 // ============================================================================

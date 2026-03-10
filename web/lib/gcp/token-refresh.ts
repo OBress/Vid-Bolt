@@ -206,6 +206,136 @@ export async function clearStoredTokens(userId: string): Promise<void> {
     .update({
       gcp_refresh_token: null,
       gcp_token_expires_at: null,
+      gcp_access_token: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId);
+}
+
+// ============================================================================
+// YouTube Token Management (Per-User OAuth Credentials)
+// ============================================================================
+
+/**
+ * Refresh a YouTube access token using the user's own OAuth credentials.
+ */
+async function refreshYouTubeAccessToken(
+  refreshToken: string,
+  clientId: string,
+  clientSecret: string
+): Promise<TokenRefreshResult> {
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+
+  const data: GoogleTokenResponse = await response.json();
+
+  if (data.error) {
+    console.error("[YouTube Token Refresh] Error:", data.error, data.error_description);
+    throw new Error(`YouTube token refresh failed: ${data.error_description || data.error}`);
+  }
+
+  if (!data.access_token) {
+    throw new Error("YouTube token refresh failed: No access token in response");
+  }
+
+  return {
+    accessToken: data.access_token,
+    expiresAt: new Date(Date.now() + data.expires_in * 1000),
+  };
+}
+
+/**
+ * Get a valid YouTube access token for a user.
+ * Uses per-user OAuth credentials (not global env vars).
+ * 
+ * @param userId - The user's ID
+ * @returns Valid YouTube access token
+ * @throws Error if user hasn't configured YouTube OAuth
+ */
+export async function getValidYouTubeToken(userId: string): Promise<string> {
+  const supabase = createServiceClient();
+
+  const { data: config } = await supabase
+    .from("user_gcp_config")
+    .select(
+      "youtube_refresh_token, youtube_access_token, youtube_token_expires_at, " +
+      "youtube_oauth_client_id, youtube_oauth_client_secret"
+    )
+    .eq("user_id", userId)
+    .single();
+
+  if (!config?.youtube_refresh_token) {
+    throw new Error("YouTube not connected. User needs to set up YouTube OAuth in settings.");
+  }
+
+  if (!config.youtube_oauth_client_id || !config.youtube_oauth_client_secret) {
+    throw new Error("YouTube OAuth credentials not configured.");
+  }
+
+  // Check if cached token is still valid (>5 min until expiry)
+  if (config.youtube_access_token && config.youtube_token_expires_at) {
+    const expiresAt = new Date(config.youtube_token_expires_at);
+    const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
+
+    if (expiresAt > fiveMinutesFromNow) {
+      return config.youtube_access_token;
+    }
+  }
+
+  // Refresh using per-user credentials
+  const { accessToken, expiresAt } = await refreshYouTubeAccessToken(
+    config.youtube_refresh_token,
+    config.youtube_oauth_client_id,
+    config.youtube_oauth_client_secret
+  );
+
+  // Cache the new token
+  await supabase
+    .from("user_gcp_config")
+    .update({
+      youtube_access_token: accessToken,
+      youtube_token_expires_at: expiresAt.toISOString(),
+    })
+    .eq("user_id", userId);
+
+  return accessToken;
+}
+
+/**
+ * Check if a user has YouTube OAuth configured.
+ */
+export async function hasYouTubeToken(userId: string): Promise<boolean> {
+  const supabase = createServiceClient();
+
+  const { data } = await supabase
+    .from("user_gcp_config")
+    .select("youtube_refresh_token")
+    .eq("user_id", userId)
+    .single();
+
+  return !!data?.youtube_refresh_token;
+}
+
+/**
+ * Clear YouTube-specific tokens (does not affect GCP compute tokens).
+ */
+export async function clearYouTubeTokens(userId: string): Promise<void> {
+  const supabase = createServiceClient();
+
+  await supabase
+    .from("user_gcp_config")
+    .update({
+      youtube_refresh_token: null,
+      youtube_access_token: null,
+      youtube_token_expires_at: null,
       updated_at: new Date().toISOString(),
     })
     .eq("user_id", userId);

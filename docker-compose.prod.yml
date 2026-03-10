@@ -12,7 +12,7 @@ services:
   # Traefik v3 — Reverse Proxy + Auto-SSL
   # ---------------------------------------------------------------------------
   traefik:
-    image: traefik:latest
+    image: traefik:v3.3.4
     container_name: vibbo-traefik
     restart: unless-stopped
     environment:
@@ -39,7 +39,7 @@ services:
   # Redis 7 — Job Queue Backend
   # ---------------------------------------------------------------------------
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: vibbo-redis
     restart: unless-stopped
     volumes:
@@ -70,7 +70,7 @@ services:
       - .env.production
     environment:
       - NODE_ENV=production
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-vidbolt_redis_changeme}@redis:6379
       - HOSTNAME=0.0.0.0
       - PORT=3000
     depends_on:
@@ -91,7 +91,7 @@ services:
       - "traefik.http.routers.app.rule=Host(`studio.vidbolt.app`)"
       - "traefik.http.routers.app.entrypoints=websecure"
       - "traefik.http.routers.app.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.app.middlewares=security-headers@file,compress@file"
+      - "traefik.http.routers.app.middlewares=rate-limit@file,security-headers@file,compress@file"
       - "traefik.http.services.app.loadbalancer.server.port=3000"
     deploy:
       resources:
@@ -110,7 +110,7 @@ services:
       - .env.production
     environment:
       - NODE_ENV=production
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-vidbolt_redis_changeme}@redis:6379
     command: ["npm", "run", "workers:start"]
     stop_grace_period: 120s
     depends_on:
@@ -171,7 +171,7 @@ services:
   # Admin Landing Page — Nginx static
   # ---------------------------------------------------------------------------
   admin-landing:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     container_name: vibbo-admin-landing
     restart: unless-stopped
     volumes:

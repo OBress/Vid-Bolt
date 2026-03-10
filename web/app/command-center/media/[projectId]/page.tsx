@@ -7,7 +7,7 @@ import { Video, BarChart2, Settings, Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/layout/SidebarContext";
 import { VideoCard } from "@/components/features/project/VideoCard";
-import { AnalyticsTab } from "@/components/features/project/AnalyticsTab";
+import AnalyticsTab from "@/components/features/project/AnalyticsTab";
 import { SettingsTab } from "@/components/features/project/SettingsTab";
 import { VideoCreationWizard } from "@/components/video-creation/VideoCreationWizard";
 import {
@@ -425,7 +425,7 @@ export default function ProjectPage({
               </TabsContent>
 
               <TabsContent value="analytics" className="mt-0 outline-none">
-                <AnalyticsTab />
+                <AnalyticsTab projectId={projectId} />
               </TabsContent>
 
               <TabsContent value="settings" className="mt-0 outline-none">

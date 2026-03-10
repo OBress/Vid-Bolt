@@ -12,15 +12,19 @@ import {
   YouTubeApiSearchResponse,
   YouTubeVideoDetails,
   YouTubeApiError,
+  YouTubeChannelInfo,
+  YouTubePlaylistItem,
 } from './types';
 
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
 
 export class YouTubeApi {
   private accessToken: string;
+  private projectId?: string;
 
-  constructor(accessToken: string) {
+  constructor(accessToken: string, projectId?: string) {
     this.accessToken = accessToken;
+    this.projectId = projectId;
   }
 
   /**
@@ -33,6 +37,7 @@ export class YouTubeApi {
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
         Accept: 'application/json',
+        ...(this.projectId && { 'X-Goog-User-Project': this.projectId }),
       },
     });
 
@@ -237,4 +242,282 @@ export class YouTubeApi {
     
     return hours * 3600 + minutes * 60 + seconds;
   }
+
+  // ==========================================================================
+  // Channel Management Methods (for Analytics)
+  // ==========================================================================
+
+  /**
+   * Get all channels owned by the authenticated user.
+   * Quota cost: 1 unit
+   */
+  async getMyChannels(): Promise<YouTubeChannelInfo[]> {
+    const params = new URLSearchParams({
+      part: 'snippet,statistics,contentDetails,brandingSettings',
+      mine: 'true',
+    });
+
+    const response = await this.request<{
+      items: Array<{
+        id: string;
+        snippet: {
+          title: string;
+          customUrl?: string;
+          description: string;
+          publishedAt: string;
+          thumbnails: {
+            high?: { url: string };
+            default?: { url: string };
+          };
+        };
+        statistics: {
+          subscriberCount: string;
+          viewCount: string;
+          videoCount: string;
+          hiddenSubscriberCount: boolean;
+        };
+        contentDetails: {
+          relatedPlaylists: { uploads: string };
+        };
+        brandingSettings?: {
+          image?: { bannerExternalUrl?: string };
+        };
+      }>;
+    }>('/channels', params);
+
+    return (response.items || []).map((ch) => ({
+      id: ch.id,
+      title: ch.snippet.title,
+      handle: ch.snippet.customUrl?.replace('@', ''),
+      customUrl: ch.snippet.customUrl,
+      description: ch.snippet.description,
+      thumbnailUrl: ch.snippet.thumbnails.high?.url || ch.snippet.thumbnails.default?.url || '',
+      bannerUrl: ch.brandingSettings?.image?.bannerExternalUrl,
+      subscriberCount: ch.statistics.hiddenSubscriberCount
+        ? 0
+        : parseInt(ch.statistics.subscriberCount || '0', 10),
+      viewCount: parseInt(ch.statistics.viewCount || '0', 10),
+      videoCount: parseInt(ch.statistics.videoCount || '0', 10),
+      uploadsPlaylistId: ch.contentDetails.relatedPlaylists.uploads,
+      publishedAt: ch.snippet.publishedAt,
+    }));
+  }
+
+  /**
+   * Get channel info by channel ID (for competitors / niche discovery).
+   * Quota cost: 1 unit
+   */
+  async getChannelById(channelId: string): Promise<YouTubeChannelInfo | null> {
+    const params = new URLSearchParams({
+      part: 'snippet,statistics,contentDetails,brandingSettings',
+      id: channelId,
+    });
+
+    const response = await this.request<{
+      items: Array<{
+        id: string;
+        snippet: {
+          title: string;
+          customUrl?: string;
+          description: string;
+          publishedAt: string;
+          thumbnails: {
+            high?: { url: string };
+            default?: { url: string };
+          };
+        };
+        statistics: {
+          subscriberCount: string;
+          viewCount: string;
+          videoCount: string;
+          hiddenSubscriberCount: boolean;
+        };
+        contentDetails: {
+          relatedPlaylists: { uploads: string };
+        };
+        brandingSettings?: {
+          image?: { bannerExternalUrl?: string };
+        };
+      }>;
+    }>('/channels', params);
+
+    if (!response.items || response.items.length === 0) return null;
+
+    const ch = response.items[0];
+    return {
+      id: ch.id,
+      title: ch.snippet.title,
+      handle: ch.snippet.customUrl?.replace('@', ''),
+      customUrl: ch.snippet.customUrl,
+      description: ch.snippet.description,
+      thumbnailUrl: ch.snippet.thumbnails.high?.url || ch.snippet.thumbnails.default?.url || '',
+      bannerUrl: ch.brandingSettings?.image?.bannerExternalUrl,
+      subscriberCount: ch.statistics.hiddenSubscriberCount
+        ? 0
+        : parseInt(ch.statistics.subscriberCount || '0', 10),
+      viewCount: parseInt(ch.statistics.viewCount || '0', 10),
+      videoCount: parseInt(ch.statistics.videoCount || '0', 10),
+      uploadsPlaylistId: ch.contentDetails.relatedPlaylists.uploads,
+      publishedAt: ch.snippet.publishedAt,
+    };
+  }
+
+  /**
+   * Get videos from a playlist (e.g., uploads playlist).
+   * Quota cost: 1 unit per call
+   */
+  async getChannelVideos(
+    playlistId: string,
+    maxResults: number = 50,
+    pageToken?: string,
+  ): Promise<{ items: YouTubePlaylistItem[]; nextPageToken?: string }> {
+    const params = new URLSearchParams({
+      part: 'snippet',
+      playlistId,
+      maxResults: Math.min(maxResults, 50).toString(),
+    });
+
+    if (pageToken) params.set('pageToken', pageToken);
+
+    const response = await this.request<{
+      nextPageToken?: string;
+      items: Array<{
+        snippet: {
+          title: string;
+          description: string;
+          publishedAt: string;
+          position: number;
+          resourceId: { videoId: string };
+          thumbnails: {
+            high?: { url: string };
+            medium?: { url: string };
+            default?: { url: string };
+          };
+        };
+      }>;
+    }>('/playlistItems', params);
+
+    return {
+      nextPageToken: response.nextPageToken,
+      items: (response.items || []).map((item) => ({
+        videoId: item.snippet.resourceId.videoId,
+        title: item.snippet.title,
+        description: item.snippet.description,
+        thumbnailUrl:
+          item.snippet.thumbnails.high?.url ||
+          item.snippet.thumbnails.medium?.url ||
+          item.snippet.thumbnails.default?.url ||
+          '',
+        publishedAt: item.snippet.publishedAt,
+        position: item.snippet.position,
+      })),
+    };
+  }
+
+  /**
+   * Search for channels by query (name, @handle, etc.).
+   * Quota cost: 100 units per call
+   */
+  async searchChannels(
+    query: string,
+    maxResults: number = 10,
+  ): Promise<Array<{ channelId: string; title: string; thumbnailUrl: string; description: string }>> {
+    const params = new URLSearchParams({
+      part: 'snippet',
+      q: query,
+      type: 'channel',
+      maxResults: Math.min(maxResults, 50).toString(),
+    });
+
+    const response = await this.request<YouTubeApiSearchResponse>('/search', params);
+
+    return (response.items || [])
+      .filter((item) => item.id.channelId)
+      .map((item) => ({
+        channelId: item.id.channelId!,
+        title: item.snippet.title,
+        thumbnailUrl:
+          item.snippet.thumbnails.high?.url ||
+          item.snippet.thumbnails.medium?.url ||
+          item.snippet.thumbnails.default?.url ||
+          '',
+        description: item.snippet.description,
+      }));
+  }
+
+  /**
+   * Get details for multiple videos at once (up to 50 per call).
+   * Quota cost: 1 unit per call
+   */
+  async getMultipleVideoDetails(
+    videoIds: string[],
+  ): Promise<Array<{
+    id: string;
+    title: string;
+    publishedAt: string;
+    thumbnailUrl: string;
+    durationSeconds: number;
+    viewCount: number;
+    likeCount: number;
+    commentCount: number;
+    tags?: string[];
+  }>> {
+    if (videoIds.length === 0) return [];
+
+    // Process in batches of 50
+    const results: Array<{
+      id: string;
+      title: string;
+      publishedAt: string;
+      thumbnailUrl: string;
+      durationSeconds: number;
+      viewCount: number;
+      likeCount: number;
+      commentCount: number;
+      tags?: string[];
+    }> = [];
+
+    for (let i = 0; i < videoIds.length; i += 50) {
+      const batch = videoIds.slice(i, i + 50);
+      const params = new URLSearchParams({
+        part: 'snippet,contentDetails,statistics',
+        id: batch.join(','),
+      });
+
+      const response = await this.request<{
+        items: Array<{
+          id: string;
+          snippet: {
+            title: string;
+            publishedAt: string;
+            thumbnails: { high?: { url: string }; maxres?: { url: string } };
+            tags?: string[];
+          };
+          contentDetails: { duration: string };
+          statistics: {
+            viewCount: string;
+            likeCount: string;
+            commentCount: string;
+          };
+        }>;
+      }>('/videos', params);
+
+      for (const v of response.items || []) {
+        results.push({
+          id: v.id,
+          title: v.snippet.title,
+          publishedAt: v.snippet.publishedAt,
+          thumbnailUrl: v.snippet.thumbnails.maxres?.url || v.snippet.thumbnails.high?.url || '',
+          durationSeconds: this.parseDuration(v.contentDetails.duration),
+          viewCount: parseInt(v.statistics.viewCount || '0', 10),
+          likeCount: parseInt(v.statistics.likeCount || '0', 10),
+          commentCount: parseInt(v.statistics.commentCount || '0', 10),
+          tags: v.snippet.tags,
+        });
+      }
+    }
+
+    return results;
+  }
 }
+

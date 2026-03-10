@@ -6,7 +6,7 @@ import {
   Info,
   MonitorPlay,
   Scissors,
-  Share2,
+  LinkIcon,
   ScrollText,
   Volume2,
 } from "lucide-react";
@@ -14,7 +14,7 @@ import { BasicInfoTab } from "./settings/BasicInfoTab";
 import { AudioTab } from "./settings/AudioTab";
 import { VisualsTab } from "./settings/VisualsTab";
 import { EditingTab } from "./settings/EditingTab";
-import { ExportTab } from "./settings/ExportTab";
+import { ConnectionsTab } from "./settings/ConnectionsTab";
 import { ScriptTab } from "./settings/ScriptTab";
 
 export function SettingsTab({ projectId }: { projectId?: string }) {
@@ -56,10 +56,10 @@ export function SettingsTab({ projectId }: { projectId?: string }) {
       ),
     },
     {
-      id: "export",
-      label: "Export",
-      icon: Share2,
-      Component: (props: any) => <ExportTab {...props} projectId={projectId} />,
+      id: "connections",
+      label: "Connections",
+      icon: LinkIcon,
+      Component: (props: any) => <ConnectionsTab {...props} projectId={projectId} />,
     },
   ];
 

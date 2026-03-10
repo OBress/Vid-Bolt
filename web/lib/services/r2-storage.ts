@@ -214,6 +214,24 @@ export function generatePaymentProofKey(
 export const generateRevenueProofKey = generatePaymentProofKey;
 
 /**
+ * Generate a storage key for a user-uploaded LoRA file.
+ * Path format: loras/{userId}/{loraId}/{filename}
+ *
+ * @param userId - User ID
+ * @param loraId - UUID for this LoRA upload
+ * @param filename - Original filename (sanitised automatically)
+ * @returns Storage key
+ */
+export function generateLoraStorageKey(
+  userId: string,
+  loraId: string,
+  filename: string,
+): string {
+  const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `loras/${userId}/${loraId}/${cleanFilename}`;
+}
+
+/**
  * Generate a storage key for TTS audio chunk.
  * Path format: {userId}/{videoId}/audio/tts/chunk_XXX.mp3
  * 

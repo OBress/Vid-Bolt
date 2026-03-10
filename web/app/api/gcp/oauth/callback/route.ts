@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { storeRefreshToken } from '@/lib/gcp/token-refresh'
 import { getPublicOrigin } from '@/lib/utils/get-public-origin'
 
 /**
  * GCP OAuth Callback
  * 
- * Handles the Google OAuth callback for GCP API access.
- * Exchanges the authorization code for tokens, stores the refresh token,
- * and redirects back to settings. The Discord Supabase session is never touched.
+ * Handles the Google OAuth callback for GCP Compute Engine access.
+ * Exchanges the authorization code for tokens, fetches Google userinfo,
+ * stores in social_connections + user_gcp_config, and redirects back.
+ * 
+ * YouTube OAuth is handled separately via /api/youtube/oauth/callback.
  */
 
 interface GoogleTokenResponse {
@@ -21,24 +24,56 @@ interface GoogleTokenResponse {
   error_description?: string
 }
 
+interface GoogleUserInfo {
+  email: string
+  name: string
+  picture: string
+}
+
+interface OAuthState {
+  userId: string
+  returnTo?: string
+  connectionId?: string
+}
+
+function decodeState(state: string): OAuthState | null {
+  try {
+    return JSON.parse(Buffer.from(state, 'base64url').toString('utf-8'))
+  } catch {
+    // Fallback: old-style bare user ID
+    return { userId: state }
+  }
+}
+
 export async function GET(request: Request) {
   const searchParams = new URL(request.url).searchParams
   const origin = getPublicOrigin(request)
   const code = searchParams.get('code')
-  const state = searchParams.get('state') // user ID passed from authorize route
+  const stateParam = searchParams.get('state')
   const error = searchParams.get('error')
-  const settingsUrl = `${origin}/command-center/settings/general?tab=api-keys`
+  const fallbackUrl = `${origin}/command-center/settings/general?tab=api-keys`
 
   // Handle user denying consent
   if (error) {
     console.warn('[GCP OAuth Callback] User denied consent:', error)
-    return NextResponse.redirect(`${settingsUrl}&error=consent_denied`)
+    return NextResponse.redirect(`${fallbackUrl}&error=consent_denied`)
   }
 
-  if (!code || !state) {
+  if (!code || !stateParam) {
     console.error('[GCP OAuth Callback] Missing code or state')
-    return NextResponse.redirect(`${settingsUrl}&error=missing_params`)
+    return NextResponse.redirect(`${fallbackUrl}&error=missing_params`)
   }
+
+  // Decode state
+  const state = decodeState(stateParam)
+  if (!state) {
+    console.error('[GCP OAuth Callback] Failed to decode state')
+    return NextResponse.redirect(`${fallbackUrl}&error=invalid_state`)
+  }
+
+  const redirectUrl = state.returnTo
+    ? `${origin}${state.returnTo.startsWith('/') ? state.returnTo : `/${state.returnTo}`}`
+    : fallbackUrl
 
   // Verify the user is still authenticated with their Discord session
   const supabase = await createClient()
@@ -49,9 +84,9 @@ export async function GET(request: Request) {
   }
 
   // Validate that the state matches the current user (CSRF protection)
-  if (user.id !== state) {
+  if (user.id !== state.userId) {
     console.error('[GCP OAuth Callback] State mismatch — potential CSRF')
-    return NextResponse.redirect(`${settingsUrl}&error=state_mismatch`)
+    return NextResponse.redirect(`${redirectUrl}${redirectUrl.includes('?') ? '&' : '?'}error=state_mismatch`)
   }
 
   // Exchange authorization code for tokens
@@ -60,7 +95,7 @@ export async function GET(request: Request) {
 
   if (!clientId || !clientSecret) {
     console.error('[GCP OAuth Callback] Missing Google OAuth credentials')
-    return NextResponse.redirect(`${settingsUrl}&error=missing_config`)
+    return NextResponse.redirect(`${redirectUrl}${redirectUrl.includes('?') ? '&' : '?'}error=missing_config`)
   }
 
   try {
@@ -80,21 +115,119 @@ export async function GET(request: Request) {
 
     if (tokenData.error) {
       console.error('[GCP OAuth Callback] Token exchange error:', tokenData.error, tokenData.error_description)
-      return NextResponse.redirect(`${settingsUrl}&error=token_exchange_failed`)
+      return NextResponse.redirect(`${redirectUrl}${redirectUrl.includes('?') ? '&' : '?'}error=token_exchange_failed`)
     }
 
     if (!tokenData.refresh_token) {
       console.error('[GCP OAuth Callback] No refresh_token received — user may need to re-consent')
-      return NextResponse.redirect(`${settingsUrl}&error=no_refresh_token`)
+      return NextResponse.redirect(`${redirectUrl}${redirectUrl.includes('?') ? '&' : '?'}error=no_refresh_token`)
     }
 
-    // Store the refresh token for the current (Discord) user
-    await storeRefreshToken(user.id, tokenData.refresh_token)
-    console.log('[GCP OAuth Callback] Stored GCP refresh token for user:', user.id)
+    // Fetch Google userinfo (email, name, picture)
+    let userInfo: GoogleUserInfo | null = null
+    try {
+      const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      })
+      if (userinfoRes.ok) {
+        userInfo = await userinfoRes.json()
+      }
+    } catch (err) {
+      console.warn('[GCP OAuth Callback] Failed to fetch userinfo:', err)
+    }
 
-    return NextResponse.redirect(`${settingsUrl}&gcp_connected=true`)
+    // Store in social_connections
+    const serviceSupabase = createServiceClient()
+    const tokenExpiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+    const scopes = tokenData.scope?.split(' ') || []
+
+    console.log('[OAuth Callback] Token exchange result:', {
+      hasRefreshToken: !!tokenData.refresh_token,
+      hasAccessToken: !!tokenData.access_token,
+      scopes,
+      connectionId: state.connectionId,
+      userEmail: userInfo?.email,
+    })
+
+    if (state.connectionId) {
+      // Re-auth existing connection
+      await serviceSupabase
+        .from('social_connections')
+        .update({
+          refresh_token: tokenData.refresh_token,
+          access_token: tokenData.access_token,
+          token_expires_at: tokenExpiresAt,
+          provider_email: userInfo?.email || null,
+          provider_name: userInfo?.name || null,
+          provider_avatar: userInfo?.picture || null,
+          scopes,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', state.connectionId)
+        .eq('user_id', user.id)
+    } else {
+      // Check if this Google account (by email) is already connected
+      let existingConnection: { id: string } | null = null
+      if (userInfo?.email) {
+        const { data } = await serviceSupabase
+          .from('social_connections')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('provider', 'google')
+          .eq('provider_email', userInfo.email)
+          .single()
+        existingConnection = data
+      }
+
+      if (existingConnection) {
+        // Update existing connection for this email
+        await serviceSupabase
+          .from('social_connections')
+          .update({
+            refresh_token: tokenData.refresh_token,
+            access_token: tokenData.access_token,
+            token_expires_at: tokenExpiresAt,
+            provider_name: userInfo?.name || null,
+            provider_avatar: userInfo?.picture || null,
+            scopes,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingConnection.id)
+      } else {
+        // Check if user has any existing Google connections to determine primary status
+        const { count } = await serviceSupabase
+          .from('social_connections')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .eq('provider', 'google')
+
+        await serviceSupabase
+          .from('social_connections')
+          .insert({
+            user_id: user.id,
+            provider: 'google',
+            provider_email: userInfo?.email || null,
+            provider_name: userInfo?.name || null,
+            provider_avatar: userInfo?.picture || null,
+            refresh_token: tokenData.refresh_token,
+            access_token: tokenData.access_token,
+            token_expires_at: tokenExpiresAt,
+            scopes,
+            is_primary: (count ?? 0) === 0, // First connection is primary
+          })
+      }
+    }
+
+    // Store GCP tokens (this is always a GCP connection now — YouTube is separate)
+    await storeRefreshToken(user.id, tokenData.refresh_token)
+    console.log('[OAuth Callback] Stored GCP token for user:', user.id)
+    console.log('[OAuth Callback] Stored social connection for:', user.id, userInfo?.email || 'unknown')
+
+    const separator = redirectUrl.includes('?') ? '&' : '?'
+    return NextResponse.redirect(`${redirectUrl}${separator}gcp_connected=true`)
   } catch (err) {
     console.error('[GCP OAuth Callback] Unexpected error:', err)
-    return NextResponse.redirect(`${settingsUrl}&error=unexpected`)
+    const separator = redirectUrl.includes('?') ? '&' : '?'
+    return NextResponse.redirect(`${redirectUrl}${separator}error=unexpected`)
   }
 }

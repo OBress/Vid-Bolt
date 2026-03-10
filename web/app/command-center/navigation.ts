@@ -1,4 +1,4 @@
-import { Target, Folder, type LucideIcon } from "lucide-react";
+import { Target, Folder, Compass, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   id: string;
@@ -36,6 +36,11 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: Target,
     items: [
       {
+        id: "overview",
+        label: "Overview",
+        href: "/command-center/analytics/overview",
+      },
+      {
         id: "performance",
         label: "Performance",
         href: "/command-center/analytics/performance",
@@ -45,7 +50,28 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Audience",
         href: "/command-center/analytics/audience",
       },
-
+      {
+        id: "costs",
+        label: "Costs",
+        href: "/command-center/analytics/costs",
+      },
+      {
+        id: "competitors",
+        label: "Competitors",
+        href: "/command-center/analytics/competitors",
+      },
+    ],
+  },
+  {
+    id: "strategy",
+    label: "CONTENT STRATEGY",
+    icon: Compass,
+    items: [
+      {
+        id: "niche",
+        label: "Niche Network",
+        href: "/command-center/analytics/niche",
+      },
     ],
   },
 ];

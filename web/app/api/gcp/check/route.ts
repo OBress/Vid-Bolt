@@ -18,17 +18,16 @@ interface QuotaResult {
 
 interface CheckResponse {
   computeApi: CheckResult;
-  youtubeApi: CheckResult;
   gpuQuota: QuotaResult;
   allPassing: boolean;
 }
 
 /**
- * Check if required GCP APIs are enabled and GPU quota is available
+ * Check if required GCP APIs are enabled and GPU quota is available.
+ * Only checks Compute Engine + GPU quota (YouTube checks are separate).
  */
 export async function POST(request: Request) {
   try {
-    // Authenticate user
     const supabase = await createClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
@@ -43,7 +42,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Project ID is required' }, { status: 400 });
     }
 
-    // Get valid GCP token
     let accessToken: string;
     try {
       accessToken = await getValidGCPToken(user.id);
@@ -56,12 +54,11 @@ export async function POST(request: Request) {
 
     const results: CheckResponse = {
       computeApi: { enabled: false },
-      youtubeApi: { enabled: false },
       gpuQuota: { available: false, quota: 0 },
       allPassing: false,
     };
 
-    // 1. Check Compute Engine API by listing zones (simple, read-only call)
+    // 1. Check Compute Engine API
     try {
       const computeRes = await fetch(
         `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones?maxResults=1`,
@@ -87,33 +84,7 @@ export async function POST(request: Request) {
       results.computeApi.error = 'Failed to check Compute Engine API';
     }
 
-    // 2. Check YouTube Data API by listing video categories (only 1 quota unit!)
-    try {
-      const youtubeRes = await fetch(
-        `https://www.googleapis.com/youtube/v3/videoCategories?part=snippet&regionCode=US`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
-      );
-
-      if (youtubeRes.ok) {
-        results.youtubeApi.enabled = true;
-      } else {
-        const errorData = await youtubeRes.json();
-        
-        if (errorData.error?.errors?.[0]?.reason === 'accessNotConfigured') {
-          results.youtubeApi.error = 'YouTube Data API V3 is not enabled';
-        } else if (youtubeRes.status === 403) {
-          results.youtubeApi.error = errorData.error?.message || 'Access denied';
-        } else {
-          results.youtubeApi.error = errorData.error?.message || 'API check failed';
-        }
-      }
-    } catch (_e) {
-      results.youtubeApi.error = 'Failed to check YouTube Data API';
-    }
-
-    // 3. Check GPU Quota (check us-central1 as primary region)
+    // 2. Check GPU Quota
     const GPU_REGIONS = ['us-central1', 'us-west1', 'us-east1', 'europe-west4'];
     
     for (const region of GPU_REGIONS) {
@@ -127,7 +98,6 @@ export async function POST(request: Request) {
 
         if (quotaRes.ok) {
           const data = await quotaRes.json();
-          // Look for NVIDIA GPU quotas
           const gpuQuotas = (data.quotas || []).filter((q: any) => 
             q.metric?.includes('NVIDIA') || q.metric?.includes('GPU')
           );
@@ -154,10 +124,9 @@ export async function POST(request: Request) {
       results.gpuQuota.error = 'No GPU quota found. Request quota increase in GCP Console.';
     }
 
-    // Determine if all checks pass
+    // Only Compute + GPU needed for GCP to pass
     results.allPassing = 
       results.computeApi.enabled && 
-      results.youtubeApi.enabled && 
       results.gpuQuota.available;
 
     return NextResponse.json(results);

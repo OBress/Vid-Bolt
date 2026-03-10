@@ -157,6 +157,31 @@ export const imageEditQueue = createQueue('image-edit');
 /** Data retention cleanup (repeatable, every 6 hours) */
 export const dataRetentionCleanupQueue = createQueue('data-retention-cleanup');
 
+// ============================================================================
+// ANALYTICS SYNC QUEUES
+// ============================================================================
+
+/** Channel stats sync (repeatable, every 6 hours) */
+export const analyticsChannelStatsQueue = createQueue('analytics-channel-stats');
+
+/** Daily snapshot sync (repeatable, daily cron) */
+export const analyticsDailySnapshotQueue = createQueue('analytics-daily-snapshot');
+
+/** Video analytics sync (repeatable, daily cron) */
+export const analyticsVideoQueue = createQueue('analytics-video');
+
+/** Demographics sync (repeatable, weekly cron) */
+export const analyticsDemographicsQueue = createQueue('analytics-demographics');
+
+/** Competitor sync (repeatable, daily cron) */
+export const analyticsCompetitorQueue = createQueue('analytics-competitor');
+
+/** Platform daily aggregate (repeatable, daily cron — admin) */
+export const analyticsPlatformAggregateQueue = createQueue('analytics-platform-aggregate');
+
+/** Niche network discovery (repeatable, weekly cron) */
+export const nicheDiscoveryQueue = createQueue('niche-discovery');
+
 /**
  * All active queues for graceful shutdown.
  */
@@ -191,6 +216,13 @@ export const allQueues = [
   verifierQueue,
   imageEditQueue,
   dataRetentionCleanupQueue,
+  analyticsChannelStatsQueue,
+  analyticsDailySnapshotQueue,
+  analyticsVideoQueue,
+  analyticsDemographicsQueue,
+  analyticsCompetitorQueue,
+  analyticsPlatformAggregateQueue,
+  nicheDiscoveryQueue,
 ];
 
 /**

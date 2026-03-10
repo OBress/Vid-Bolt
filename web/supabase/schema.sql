@@ -1335,6 +1335,67 @@ $$;
 ALTER FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "text", "proof_url" "text") OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."analytics_sync_log" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "channel_id" "uuid",
+    "sync_type" "text" NOT NULL,
+    "status" "text" DEFAULT 'running'::"text" NOT NULL,
+    "records_synced" integer DEFAULT 0,
+    "quota_used" integer DEFAULT 0,
+    "error_message" "text",
+    "started_at" timestamp with time zone DEFAULT "now"(),
+    "completed_at" timestamp with time zone,
+    "duration_ms" integer,
+    CONSTRAINT "analytics_sync_log_status_check" CHECK (("status" = ANY (ARRAY['running'::"text", 'completed'::"text", 'failed'::"text"]))),
+    CONSTRAINT "analytics_sync_log_sync_type_check" CHECK (("sync_type" = ANY (ARRAY['channel_stats'::"text", 'daily_snapshot'::"text", 'video_analytics'::"text", 'demographics'::"text", 'full_sync'::"text", 'competitor_sync'::"text", 'platform_aggregate'::"text", 'niche_discovery'::"text"])))
+);
+
+
+ALTER TABLE "public"."analytics_sync_log" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."competitor_channel_snapshots" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "competitor_id" "uuid" NOT NULL,
+    "snapshot_date" "date" NOT NULL,
+    "subscriber_count" bigint,
+    "view_count" bigint,
+    "video_count" integer,
+    "recent_avg_views" bigint,
+    "recent_avg_likes" integer,
+    "recent_avg_comments" integer,
+    "engagement_rate" numeric(8,4),
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."competitor_channel_snapshots" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."competitor_channels" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "channel_id" "text" NOT NULL,
+    "channel_title" "text",
+    "channel_handle" "text",
+    "thumbnail_url" "text",
+    "banner_url" "text",
+    "subscriber_count" bigint DEFAULT 0,
+    "view_count" bigint DEFAULT 0,
+    "video_count" integer DEFAULT 0,
+    "avg_views_per_video" bigint DEFAULT 0,
+    "upload_frequency" numeric(5,2),
+    "niche_tags" "text"[] DEFAULT '{}'::"text"[],
+    "label" "text",
+    "last_synced_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."competitor_channels" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."continuity_state" (
     "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
     "task_id" "uuid" NOT NULL,
@@ -1385,6 +1446,53 @@ CREATE TABLE IF NOT EXISTS "public"."media_projects" (
 ALTER TABLE "public"."media_projects" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."niche_network_channels" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "channel_id" "text" NOT NULL,
+    "channel_title" "text",
+    "channel_handle" "text",
+    "thumbnail_url" "text",
+    "subscriber_count" bigint DEFAULT 0,
+    "view_count" bigint DEFAULT 0,
+    "video_count" integer DEFAULT 0,
+    "discovery_method" "text" NOT NULL,
+    "discovery_keywords" "text"[] DEFAULT '{}'::"text"[],
+    "similarity_score" numeric(5,4) DEFAULT 0,
+    "shared_topics" "text"[] DEFAULT '{}'::"text"[],
+    "topic_categories" "text"[] DEFAULT '{}'::"text"[],
+    "growth_rate_30d" numeric(8,4),
+    "avg_views_recent" bigint,
+    "upload_frequency" numeric(5,2),
+    "channel_created_at" timestamp with time zone,
+    "is_emerging" boolean DEFAULT false,
+    "graph_x" numeric(10,4),
+    "graph_y" numeric(10,4),
+    "graph_cluster" integer,
+    "last_discovered_at" timestamp with time zone DEFAULT "now"(),
+    "last_synced_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "niche_network_channels_discovery_method_check" CHECK (("discovery_method" = ANY (ARRAY['keyword_search'::"text", 'expansion'::"text", 'topic_match'::"text", 'manual'::"text"])))
+);
+
+
+ALTER TABLE "public"."niche_network_channels" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."niche_network_edges" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "source_channel" "text" NOT NULL,
+    "target_channel" "text" NOT NULL,
+    "weight" numeric(5,4) DEFAULT 0,
+    "shared_keywords" "text"[] DEFAULT '{}'::"text"[],
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."niche_network_edges" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."pending_gpu_jobs" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "user_id" "uuid" NOT NULL,
@@ -1411,6 +1519,34 @@ ALTER TABLE "public"."pending_gpu_jobs" OWNER TO "postgres";
 
 COMMENT ON TABLE "public"."pending_gpu_jobs" IS 'Stores GPU jobs waiting for VM readiness. Jobs are dispatched automatically when VM becomes ready via GCP startup webhook.';
 
+
+
+CREATE TABLE IF NOT EXISTS "public"."platform_analytics_daily" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "snapshot_date" "date" NOT NULL,
+    "total_users" integer,
+    "active_users" integer,
+    "pending_users" integer,
+    "new_users_today" integer,
+    "videos_created" integer DEFAULT 0,
+    "videos_completed" integer DEFAULT 0,
+    "scripts_generated" integer DEFAULT 0,
+    "renders_completed" integer DEFAULT 0,
+    "renders_failed" integer DEFAULT 0,
+    "gpu_hours_purchased" integer DEFAULT 0,
+    "gpu_hours_consumed" integer DEFAULT 0,
+    "gpu_revenue_usd" numeric(10,2) DEFAULT 0,
+    "total_yt_views" bigint DEFAULT 0,
+    "total_yt_subs" bigint DEFAULT 0,
+    "total_yt_videos" integer DEFAULT 0,
+    "total_yt_revenue" numeric(12,2) DEFAULT 0,
+    "avg_render_time_ms" integer,
+    "api_errors_count" integer DEFAULT 0,
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."platform_analytics_daily" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."project_entities" (
@@ -1470,6 +1606,29 @@ CREATE TABLE IF NOT EXISTS "public"."render_jobs" (
 
 
 ALTER TABLE "public"."render_jobs" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."social_connections" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "provider" "text" NOT NULL,
+    "provider_email" "text",
+    "provider_name" "text",
+    "provider_avatar" "text",
+    "refresh_token" "text",
+    "access_token" "text",
+    "token_expires_at" timestamp with time zone,
+    "scopes" "text"[],
+    "is_primary" boolean DEFAULT false,
+    "connected_at" timestamp with time zone DEFAULT "now"(),
+    "last_used_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "social_connections_provider_check" CHECK (("provider" = ANY (ARRAY['google'::"text", 'tiktok'::"text", 'instagram'::"text", 'x'::"text", 'facebook'::"text", 'snapchat'::"text", 'spotify'::"text"])))
+);
+
+
+ALTER TABLE "public"."social_connections" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."stock_media" (
@@ -1636,6 +1795,12 @@ CREATE TABLE IF NOT EXISTS "public"."user_gcp_config" (
     "gcp_access_token" "text",
     "gpu_auto_shutdown_minutes" integer DEFAULT 60,
     "last_gpu_activity_at" timestamp with time zone DEFAULT "now"(),
+    "youtube_oauth_client_id" "text",
+    "youtube_oauth_client_secret" "text",
+    "youtube_refresh_token" "text",
+    "youtube_access_token" "text",
+    "youtube_token_expires_at" timestamp with time zone,
+    "youtube_oauth_verified" boolean DEFAULT false,
     CONSTRAINT "gpu_auto_shutdown_minutes_range" CHECK ((("gpu_auto_shutdown_minutes" >= 10) AND ("gpu_auto_shutdown_minutes" <= 600)))
 );
 
@@ -1656,6 +1821,22 @@ COMMENT ON COLUMN "public"."user_gcp_config"."gpu_auto_shutdown_minutes" IS 'Min
 
 
 COMMENT ON COLUMN "public"."user_gcp_config"."last_gpu_activity_at" IS 'Timestamp of last GPU API call for auto-shutdown tracking';
+
+
+
+COMMENT ON COLUMN "public"."user_gcp_config"."youtube_oauth_client_id" IS 'Per-user OAuth Client ID from their own GCP project';
+
+
+
+COMMENT ON COLUMN "public"."user_gcp_config"."youtube_oauth_client_secret" IS 'Per-user OAuth Client Secret from their own GCP project';
+
+
+
+COMMENT ON COLUMN "public"."user_gcp_config"."youtube_refresh_token" IS 'YouTube refresh token obtained via per-user OAuth';
+
+
+
+COMMENT ON COLUMN "public"."user_gcp_config"."youtube_oauth_verified" IS 'Whether the user has verified their OAuth setup';
 
 
 
@@ -1776,6 +1957,7 @@ CREATE TABLE IF NOT EXISTS "public"."video_projects" (
     "cleanup_status" "text",
     "cleaned_at" timestamp with time zone,
     "thumbnail_url" "text",
+    "youtube_channel_id" "uuid",
     CONSTRAINT "video_projects_current_stage_check" CHECK (("current_stage" = ANY (ARRAY['idea'::"text", 'outline'::"text", 'stock'::"text", 'script'::"text", 'production'::"text", 'audio'::"text", 'media'::"text", 'shot_planning'::"text", 'shot_creation'::"text", 'video'::"text", 'export'::"text", 'completed'::"text"]))),
     CONSTRAINT "video_projects_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
     CONSTRAINT "video_projects_status_check" CHECK (("status" = ANY (ARRAY['draft'::"text", 'processing'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"])))
@@ -1833,6 +2015,126 @@ COMMENT ON COLUMN "public"."video_projects"."thumbnail_url" IS 'Preserved thumbn
 
 
 
+CREATE TABLE IF NOT EXISTS "public"."youtube_audience_demographics" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "channel_id" "uuid" NOT NULL,
+    "snapshot_date" "date" NOT NULL,
+    "age_gender_data" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "country_data" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "device_data" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "traffic_data" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "os_data" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."youtube_audience_demographics" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."youtube_channel_snapshots" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "channel_id" "uuid" NOT NULL,
+    "snapshot_date" "date" NOT NULL,
+    "subscriber_count" bigint,
+    "view_count" bigint,
+    "video_count" integer,
+    "estimated_revenue" numeric(12,2),
+    "views_day" bigint,
+    "subscribers_gained" integer,
+    "subscribers_lost" integer,
+    "estimated_minutes_watched" bigint,
+    "average_view_duration" numeric(10,2),
+    "likes" integer,
+    "dislikes" integer,
+    "comments" integer,
+    "shares" integer,
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."youtube_channel_snapshots" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."youtube_channels" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "channel_id" "text" NOT NULL,
+    "channel_title" "text" NOT NULL,
+    "channel_handle" "text",
+    "thumbnail_url" "text",
+    "subscriber_count" bigint DEFAULT 0,
+    "view_count" bigint DEFAULT 0,
+    "video_count" integer DEFAULT 0,
+    "custom_url" "text",
+    "is_primary" boolean DEFAULT false,
+    "linked_at" timestamp with time zone DEFAULT "now"(),
+    "last_synced_at" timestamp with time zone,
+    "sync_status" "text" DEFAULT 'pending'::"text",
+    "sync_error" "text",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "connection_id" "uuid",
+    CONSTRAINT "youtube_channels_sync_status_check" CHECK (("sync_status" = ANY (ARRAY['pending'::"text", 'syncing'::"text", 'synced'::"text", 'error'::"text"])))
+);
+
+
+ALTER TABLE "public"."youtube_channels" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."youtube_video_analytics" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "channel_id" "uuid" NOT NULL,
+    "video_id" "text" NOT NULL,
+    "title" "text",
+    "published_at" timestamp with time zone,
+    "thumbnail_url" "text",
+    "duration_seconds" integer,
+    "views" bigint DEFAULT 0,
+    "likes" integer DEFAULT 0,
+    "comments" integer DEFAULT 0,
+    "shares" integer DEFAULT 0,
+    "estimated_minutes_watched" bigint DEFAULT 0,
+    "average_view_duration" numeric(10,2),
+    "estimated_revenue" numeric(10,2),
+    "subscriber_impact" integer DEFAULT 0,
+    "traffic_sources" "jsonb" DEFAULT '{}'::"jsonb",
+    "demographics" "jsonb" DEFAULT '{}'::"jsonb",
+    "geography" "jsonb" DEFAULT '{}'::"jsonb",
+    "devices" "jsonb" DEFAULT '{}'::"jsonb",
+    "last_synced_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."youtube_video_analytics" OWNER TO "postgres";
+
+
+ALTER TABLE ONLY "public"."analytics_sync_log"
+    ADD CONSTRAINT "analytics_sync_log_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."competitor_channel_snapshots"
+    ADD CONSTRAINT "competitor_channel_snapshots_competitor_id_snapshot_date_key" UNIQUE ("competitor_id", "snapshot_date");
+
+
+
+ALTER TABLE ONLY "public"."competitor_channel_snapshots"
+    ADD CONSTRAINT "competitor_channel_snapshots_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."competitor_channels"
+    ADD CONSTRAINT "competitor_channels_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."competitor_channels"
+    ADD CONSTRAINT "competitor_channels_user_id_channel_id_key" UNIQUE ("user_id", "channel_id");
+
+
+
 ALTER TABLE ONLY "public"."continuity_state"
     ADD CONSTRAINT "continuity_state_pkey" PRIMARY KEY ("id");
 
@@ -1863,8 +2165,38 @@ ALTER TABLE ONLY "public"."monthly_statements"
 
 
 
+ALTER TABLE ONLY "public"."niche_network_channels"
+    ADD CONSTRAINT "niche_network_channels_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."niche_network_channels"
+    ADD CONSTRAINT "niche_network_channels_user_id_channel_id_key" UNIQUE ("user_id", "channel_id");
+
+
+
+ALTER TABLE ONLY "public"."niche_network_edges"
+    ADD CONSTRAINT "niche_network_edges_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."niche_network_edges"
+    ADD CONSTRAINT "niche_network_edges_user_id_source_channel_target_channel_key" UNIQUE ("user_id", "source_channel", "target_channel");
+
+
+
 ALTER TABLE ONLY "public"."pending_gpu_jobs"
     ADD CONSTRAINT "pending_gpu_jobs_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."platform_analytics_daily"
+    ADD CONSTRAINT "platform_analytics_daily_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."platform_analytics_daily"
+    ADD CONSTRAINT "platform_analytics_daily_snapshot_date_key" UNIQUE ("snapshot_date");
 
 
 
@@ -1885,6 +2217,11 @@ ALTER TABLE ONLY "public"."project_settings"
 
 ALTER TABLE ONLY "public"."render_jobs"
     ADD CONSTRAINT "render_jobs_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."social_connections"
+    ADD CONSTRAINT "social_connections_pkey" PRIMARY KEY ("id");
 
 
 
@@ -1973,6 +2310,62 @@ ALTER TABLE ONLY "public"."video_projects"
 
 
 
+ALTER TABLE ONLY "public"."youtube_audience_demographics"
+    ADD CONSTRAINT "youtube_audience_demographics_channel_id_snapshot_date_key" UNIQUE ("channel_id", "snapshot_date");
+
+
+
+ALTER TABLE ONLY "public"."youtube_audience_demographics"
+    ADD CONSTRAINT "youtube_audience_demographics_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."youtube_channel_snapshots"
+    ADD CONSTRAINT "youtube_channel_snapshots_channel_id_snapshot_date_key" UNIQUE ("channel_id", "snapshot_date");
+
+
+
+ALTER TABLE ONLY "public"."youtube_channel_snapshots"
+    ADD CONSTRAINT "youtube_channel_snapshots_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."youtube_channels"
+    ADD CONSTRAINT "youtube_channels_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."youtube_channels"
+    ADD CONSTRAINT "youtube_channels_user_id_channel_id_key" UNIQUE ("user_id", "channel_id");
+
+
+
+ALTER TABLE ONLY "public"."youtube_video_analytics"
+    ADD CONSTRAINT "youtube_video_analytics_channel_id_video_id_key" UNIQUE ("channel_id", "video_id");
+
+
+
+ALTER TABLE ONLY "public"."youtube_video_analytics"
+    ADD CONSTRAINT "youtube_video_analytics_pkey" PRIMARY KEY ("id");
+
+
+
+CREATE INDEX "idx_audience_demo_channel_date" ON "public"."youtube_audience_demographics" USING "btree" ("channel_id", "snapshot_date" DESC);
+
+
+
+CREATE INDEX "idx_channel_snapshots_date" ON "public"."youtube_channel_snapshots" USING "btree" ("channel_id", "snapshot_date" DESC);
+
+
+
+CREATE INDEX "idx_competitor_channels_user" ON "public"."competitor_channels" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_competitor_snapshots_date" ON "public"."competitor_channel_snapshots" USING "btree" ("competitor_id", "snapshot_date" DESC);
+
+
+
 CREATE INDEX "idx_gpu_hours_transactions_stripe_session" ON "public"."gpu_hours_transactions" USING "btree" ("stripe_session_id") WHERE ("stripe_session_id" IS NOT NULL);
 
 
@@ -1989,11 +2382,31 @@ CREATE INDEX "idx_monthly_statements_user_date" ON "public"."monthly_statements"
 
 
 
+CREATE INDEX "idx_niche_edges_user" ON "public"."niche_network_edges" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_niche_network_emerging" ON "public"."niche_network_channels" USING "btree" ("user_id", "is_emerging") WHERE ("is_emerging" = true);
+
+
+
+CREATE INDEX "idx_niche_network_similarity" ON "public"."niche_network_channels" USING "btree" ("user_id", "similarity_score" DESC);
+
+
+
+CREATE INDEX "idx_niche_network_user" ON "public"."niche_network_channels" USING "btree" ("user_id");
+
+
+
 CREATE INDEX "idx_pending_gpu_jobs_expires" ON "public"."pending_gpu_jobs" USING "btree" ("expires_at") WHERE ("status" = 'pending'::"text");
 
 
 
 CREATE INDEX "idx_pending_gpu_jobs_user_status" ON "public"."pending_gpu_jobs" USING "btree" ("user_id", "status");
+
+
+
+CREATE INDEX "idx_platform_daily_date" ON "public"."platform_analytics_daily" USING "btree" ("snapshot_date" DESC);
 
 
 
@@ -2017,6 +2430,14 @@ CREATE INDEX "idx_render_jobs_video_id" ON "public"."render_jobs" USING "btree" 
 
 
 
+CREATE INDEX "idx_social_connections_provider" ON "public"."social_connections" USING "btree" ("user_id", "provider");
+
+
+
+CREATE INDEX "idx_social_connections_user" ON "public"."social_connections" USING "btree" ("user_id");
+
+
+
 CREATE INDEX "idx_stock_media_user_id" ON "public"."stock_media" USING "btree" ("user_id");
 
 
@@ -2030,6 +2451,10 @@ CREATE INDEX "idx_stock_media_video_entity" ON "public"."stock_media" USING "btr
 
 
 CREATE INDEX "idx_stock_media_video_id" ON "public"."stock_media" USING "btree" ("video_id");
+
+
+
+CREATE INDEX "idx_sync_log_user" ON "public"."analytics_sync_log" USING "btree" ("user_id", "started_at" DESC);
 
 
 
@@ -2085,6 +2510,18 @@ CREATE INDEX "idx_users_discord_id" ON "public"."users" USING "btree" ("discord_
 
 
 
+CREATE INDEX "idx_video_analytics_channel" ON "public"."youtube_video_analytics" USING "btree" ("channel_id");
+
+
+
+CREATE INDEX "idx_video_analytics_published" ON "public"."youtube_video_analytics" USING "btree" ("published_at" DESC);
+
+
+
+CREATE INDEX "idx_video_analytics_views" ON "public"."youtube_video_analytics" USING "btree" ("views" DESC);
+
+
+
 CREATE INDEX "idx_video_editor_media_project" ON "public"."video_editor_media" USING "btree" ("project_id");
 
 
@@ -2134,6 +2571,14 @@ CREATE INDEX "idx_video_projects_user_id" ON "public"."video_projects" USING "bt
 
 
 CREATE INDEX "idx_video_projects_user_status" ON "public"."video_projects" USING "btree" ("user_id", "status");
+
+
+
+CREATE INDEX "idx_youtube_channels_channel_id" ON "public"."youtube_channels" USING "btree" ("channel_id");
+
+
+
+CREATE INDEX "idx_youtube_channels_user_id" ON "public"."youtube_channels" USING "btree" ("user_id");
 
 
 
@@ -2209,6 +2654,26 @@ CREATE OR REPLACE TRIGGER "video_project_state_updated_at" BEFORE UPDATE ON "pub
 
 
 
+ALTER TABLE ONLY "public"."analytics_sync_log"
+    ADD CONSTRAINT "analytics_sync_log_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "public"."youtube_channels"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."analytics_sync_log"
+    ADD CONSTRAINT "analytics_sync_log_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."competitor_channel_snapshots"
+    ADD CONSTRAINT "competitor_channel_snapshots_competitor_id_fkey" FOREIGN KEY ("competitor_id") REFERENCES "public"."competitor_channels"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."competitor_channels"
+    ADD CONSTRAINT "competitor_channels_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."continuity_state"
     ADD CONSTRAINT "continuity_state_task_id_fkey" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE CASCADE;
 
@@ -2226,6 +2691,16 @@ ALTER TABLE ONLY "public"."media_projects"
 
 ALTER TABLE ONLY "public"."monthly_statements"
     ADD CONSTRAINT "monthly_statements_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."niche_network_channels"
+    ADD CONSTRAINT "niche_network_channels_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."niche_network_edges"
+    ADD CONSTRAINT "niche_network_edges_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
 
 
 
@@ -2256,6 +2731,11 @@ ALTER TABLE ONLY "public"."project_settings"
 
 ALTER TABLE ONLY "public"."render_jobs"
     ADD CONSTRAINT "render_jobs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."social_connections"
+    ADD CONSTRAINT "social_connections_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
 
 
 
@@ -2339,6 +2819,42 @@ ALTER TABLE ONLY "public"."video_projects"
 
 
 
+ALTER TABLE ONLY "public"."video_projects"
+    ADD CONSTRAINT "video_projects_youtube_channel_id_fkey" FOREIGN KEY ("youtube_channel_id") REFERENCES "public"."youtube_channels"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."youtube_audience_demographics"
+    ADD CONSTRAINT "youtube_audience_demographics_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "public"."youtube_channels"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."youtube_channel_snapshots"
+    ADD CONSTRAINT "youtube_channel_snapshots_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "public"."youtube_channels"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."youtube_channels"
+    ADD CONSTRAINT "youtube_channels_connection_id_fkey" FOREIGN KEY ("connection_id") REFERENCES "public"."social_connections"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."youtube_channels"
+    ADD CONSTRAINT "youtube_channels_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."youtube_video_analytics"
+    ADD CONSTRAINT "youtube_video_analytics_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "public"."youtube_channels"("id") ON DELETE CASCADE;
+
+
+
+CREATE POLICY "Admins view platform analytics" ON "public"."platform_analytics_daily" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true)))));
+
+
+
 CREATE POLICY "Authenticated users can view stock media" ON "public"."stock_media" FOR SELECT TO "authenticated" USING (true);
 
 
@@ -2364,6 +2880,50 @@ CREATE POLICY "Service role full access to project_entities" ON "public"."projec
 
 
 CREATE POLICY "Service role full access to render jobs" ON "public"."render_jobs" USING (("auth"."role"() = 'service_role'::"text")) WITH CHECK (("auth"."role"() = 'service_role'::"text"));
+
+
+
+CREATE POLICY "System insert channel snapshots" ON "public"."youtube_channel_snapshots" FOR INSERT WITH CHECK ((("channel_id" IN ( SELECT "youtube_channels"."id"
+   FROM "public"."youtube_channels"
+  WHERE ("youtube_channels"."user_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "System insert competitor snapshots" ON "public"."competitor_channel_snapshots" FOR INSERT WITH CHECK ((("competitor_id" IN ( SELECT "competitor_channels"."id"
+   FROM "public"."competitor_channels"
+  WHERE ("competitor_channels"."user_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "System insert demographics" ON "public"."youtube_audience_demographics" FOR INSERT WITH CHECK ((("channel_id" IN ( SELECT "youtube_channels"."id"
+   FROM "public"."youtube_channels"
+  WHERE ("youtube_channels"."user_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "System insert platform analytics" ON "public"."platform_analytics_daily" FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true)))));
+
+
+
+CREATE POLICY "System insert sync logs" ON "public"."analytics_sync_log" FOR INSERT WITH CHECK ((("auth"."uid"() = "user_id") OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "System manage video analytics" ON "public"."youtube_video_analytics" USING ((("channel_id" IN ( SELECT "youtube_channels"."id"
+   FROM "public"."youtube_channels"
+  WHERE ("youtube_channels"."user_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
 
 
 
@@ -2539,8 +3099,85 @@ CREATE POLICY "Users can view their own video projects" ON "public"."video_proje
 
 
 
+CREATE POLICY "Users manage own channels" ON "public"."youtube_channels" USING ((("auth"."uid"() = "user_id") OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "Users manage own competitors" ON "public"."competitor_channels" USING ((("auth"."uid"() = "user_id") OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "Users manage own connections" ON "public"."social_connections" USING ((("auth"."uid"() = "user_id") OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "Users manage own niche edges" ON "public"."niche_network_edges" USING ((("auth"."uid"() = "user_id") OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "Users manage own niche network" ON "public"."niche_network_channels" USING ((("auth"."uid"() = "user_id") OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
 CREATE POLICY "Users manage own pending jobs" ON "public"."pending_gpu_jobs" USING (("auth"."uid"() = "user_id"));
 
+
+
+CREATE POLICY "Users view own channel snapshots" ON "public"."youtube_channel_snapshots" FOR SELECT USING ((("channel_id" IN ( SELECT "youtube_channels"."id"
+   FROM "public"."youtube_channels"
+  WHERE ("youtube_channels"."user_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "Users view own competitor snapshots" ON "public"."competitor_channel_snapshots" FOR SELECT USING ((("competitor_id" IN ( SELECT "competitor_channels"."id"
+   FROM "public"."competitor_channels"
+  WHERE ("competitor_channels"."user_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "Users view own demographics" ON "public"."youtube_audience_demographics" FOR SELECT USING ((("channel_id" IN ( SELECT "youtube_channels"."id"
+   FROM "public"."youtube_channels"
+  WHERE ("youtube_channels"."user_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "Users view own sync logs" ON "public"."analytics_sync_log" FOR SELECT USING ((("auth"."uid"() = "user_id") OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+CREATE POLICY "Users view own video analytics" ON "public"."youtube_video_analytics" FOR SELECT USING ((("channel_id" IN ( SELECT "youtube_channels"."id"
+   FROM "public"."youtube_channels"
+  WHERE ("youtube_channels"."user_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true))))));
+
+
+
+ALTER TABLE "public"."analytics_sync_log" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."competitor_channel_snapshots" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."competitor_channels" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."continuity_state" ENABLE ROW LEVEL SECURITY;
@@ -2555,7 +3192,16 @@ ALTER TABLE "public"."media_projects" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."monthly_statements" ENABLE ROW LEVEL SECURITY;
 
 
+ALTER TABLE "public"."niche_network_channels" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."niche_network_edges" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."pending_gpu_jobs" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."platform_analytics_daily" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."project_entities" ENABLE ROW LEVEL SECURITY;
@@ -2565,6 +3211,9 @@ ALTER TABLE "public"."project_settings" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."render_jobs" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."social_connections" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."stock_media" ENABLE ROW LEVEL SECURITY;
@@ -2595,6 +3244,18 @@ ALTER TABLE "public"."video_project_state" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."video_projects" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."youtube_audience_demographics" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."youtube_channel_snapshots" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."youtube_channels" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."youtube_video_analytics" ENABLE ROW LEVEL SECURITY;
 
 
 
@@ -3359,6 +4020,24 @@ GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "
 
 
 
+GRANT ALL ON TABLE "public"."analytics_sync_log" TO "anon";
+GRANT ALL ON TABLE "public"."analytics_sync_log" TO "authenticated";
+GRANT ALL ON TABLE "public"."analytics_sync_log" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."competitor_channel_snapshots" TO "anon";
+GRANT ALL ON TABLE "public"."competitor_channel_snapshots" TO "authenticated";
+GRANT ALL ON TABLE "public"."competitor_channel_snapshots" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."competitor_channels" TO "anon";
+GRANT ALL ON TABLE "public"."competitor_channels" TO "authenticated";
+GRANT ALL ON TABLE "public"."competitor_channels" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."continuity_state" TO "anon";
 GRANT ALL ON TABLE "public"."continuity_state" TO "authenticated";
 GRANT ALL ON TABLE "public"."continuity_state" TO "service_role";
@@ -3377,9 +4056,27 @@ GRANT ALL ON TABLE "public"."media_projects" TO "service_role";
 
 
 
+GRANT ALL ON TABLE "public"."niche_network_channels" TO "anon";
+GRANT ALL ON TABLE "public"."niche_network_channels" TO "authenticated";
+GRANT ALL ON TABLE "public"."niche_network_channels" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."niche_network_edges" TO "anon";
+GRANT ALL ON TABLE "public"."niche_network_edges" TO "authenticated";
+GRANT ALL ON TABLE "public"."niche_network_edges" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."pending_gpu_jobs" TO "anon";
 GRANT ALL ON TABLE "public"."pending_gpu_jobs" TO "authenticated";
 GRANT ALL ON TABLE "public"."pending_gpu_jobs" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."platform_analytics_daily" TO "anon";
+GRANT ALL ON TABLE "public"."platform_analytics_daily" TO "authenticated";
+GRANT ALL ON TABLE "public"."platform_analytics_daily" TO "service_role";
 
 
 
@@ -3398,6 +4095,12 @@ GRANT ALL ON TABLE "public"."project_settings" TO "service_role";
 GRANT ALL ON TABLE "public"."render_jobs" TO "anon";
 GRANT ALL ON TABLE "public"."render_jobs" TO "authenticated";
 GRANT ALL ON TABLE "public"."render_jobs" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."social_connections" TO "anon";
+GRANT ALL ON TABLE "public"."social_connections" TO "authenticated";
+GRANT ALL ON TABLE "public"."social_connections" TO "service_role";
 
 
 
@@ -3458,6 +4161,30 @@ GRANT ALL ON TABLE "public"."video_project_state" TO "service_role";
 GRANT ALL ON TABLE "public"."video_projects" TO "anon";
 GRANT ALL ON TABLE "public"."video_projects" TO "authenticated";
 GRANT ALL ON TABLE "public"."video_projects" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."youtube_audience_demographics" TO "anon";
+GRANT ALL ON TABLE "public"."youtube_audience_demographics" TO "authenticated";
+GRANT ALL ON TABLE "public"."youtube_audience_demographics" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."youtube_channel_snapshots" TO "anon";
+GRANT ALL ON TABLE "public"."youtube_channel_snapshots" TO "authenticated";
+GRANT ALL ON TABLE "public"."youtube_channel_snapshots" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."youtube_channels" TO "anon";
+GRANT ALL ON TABLE "public"."youtube_channels" TO "authenticated";
+GRANT ALL ON TABLE "public"."youtube_channels" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."youtube_video_analytics" TO "anon";
+GRANT ALL ON TABLE "public"."youtube_video_analytics" TO "authenticated";
+GRANT ALL ON TABLE "public"."youtube_video_analytics" TO "service_role";
 
 
 

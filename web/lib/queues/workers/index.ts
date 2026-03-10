@@ -36,3 +36,12 @@ export { videoGenProcessor } from './video-gen';
 export { verifierProcessor } from './verifier';
 export { imageEditProcessor } from './image-edit';
 export { dataRetentionCleanupProcessor } from './data-retention-cleanup';
+export {
+  channelStatsSyncProcessor,
+  dailySnapshotSyncProcessor,
+  videoAnalyticsSyncProcessor,
+  demographicsSyncProcessor,
+  competitorSyncProcessor,
+  platformDailyAggregateProcessor,
+} from './analytics-sync';
+export { nicheDiscoveryProcessor } from './niche-discovery';

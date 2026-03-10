@@ -50,6 +50,7 @@ export function Sidebar() {
   const [expandedGroups, setExpandedGroups] = useState<string[]>([
     "media",
     "analytics",
+    "strategy",
   ]);
 
   // Dynamic project loading

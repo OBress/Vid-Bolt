@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useGCPVM } from "@/hooks/use-gcp-vm";
 import ApiKeyInput from "@/components/ApiKeyInput";
@@ -13,6 +14,10 @@ import {
   Loader2,
   CheckCircle,
   XCircle,
+  Youtube,
+  ChevronDown,
+  ChevronRight,
+  Info,
 } from "lucide-react";
 import {
   Card,
@@ -87,11 +92,23 @@ export function ApiKeysTab() {
   const [_isSaving, setIsSaving] = useState(false);
   const [_gcpConnectLoading, setGcpConnectLoading] = useState(false);
 
+  // YouTube OAuth state
+  const [ytClientId, setYtClientId] = useState("");
+  const [ytClientSecret, setYtClientSecret] = useState("");
+  const [ytVerified, setYtVerified] = useState(false);
+  const [ytConnected, setYtConnected] = useState(false);
+  const [ytVerifying, setYtVerifying] = useState(false);
+  const [ytSaving, setYtSaving] = useState(false);
+  const [ytGuideOpen, setYtGuideOpen] = useState(false);
+  const [ytVerifyResults, setYtVerifyResults] = useState<{
+    credentials: { valid: boolean; error?: string };
+    allPassing: boolean;
+  } | null>(null);
+
   // Pre-flight check state (APIs + GPU quota)
   const [isChecking, setIsChecking] = useState(false);
   const [checkResults, setCheckResults] = useState<{
     computeApi: { enabled: boolean; error?: string };
-    youtubeApi: { enabled: boolean; error?: string };
     gpuQuota: {
       available: boolean;
       quota: number;
@@ -100,6 +117,22 @@ export function ApiKeysTab() {
     };
     allPassing: boolean;
   } | null>(null);
+
+  const searchParams = useSearchParams();
+
+  // Handle OAuth error query params
+  useEffect(() => {
+    const error = searchParams.get("error");
+    if (!error) return;
+    const messages: Record<string, string> = {
+      app_not_published: "Your OAuth app is in Testing mode. Go to OAuth consent screen → Audience → click \"Publish App\".",
+      consent_denied: "Google sign-in was cancelled.",
+      youtube_not_configured: "Set up your YouTube OAuth credentials first.",
+      youtube_not_verified: "Verify your YouTube OAuth setup before connecting.",
+    };
+    const msg = messages[error];
+    if (msg) toast.error(msg);
+  }, [searchParams]);
 
   // Initial Load (API Keys + Admin status only — VM state comes from useGCPVM)
   useEffect(() => {
@@ -143,6 +176,20 @@ export function ApiKeysTab() {
 
       if (userData) {
         setIsAdmin(userData.is_admin || false);
+      }
+
+      // Load YouTube OAuth config
+      const { data: gcpConfig } = await supabase
+        .from("user_gcp_config")
+        .select("youtube_oauth_client_id, youtube_oauth_client_secret, youtube_oauth_verified, youtube_refresh_token")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (gcpConfig) {
+        setYtClientId((gcpConfig as any).youtube_oauth_client_id || "");
+        setYtClientSecret((gcpConfig as any).youtube_oauth_client_secret || "");
+        setYtVerified((gcpConfig as any).youtube_oauth_verified || false);
+        setYtConnected(!!(gcpConfig as any).youtube_refresh_token);
       }
 
       setLoading(false);
@@ -224,7 +271,6 @@ export function ApiKeysTab() {
       } else {
         const failures: string[] = [];
         if (!results.computeApi.enabled) failures.push("Compute Engine API");
-        if (!results.youtubeApi.enabled) failures.push("YouTube Data API");
         if (!results.gpuQuota.available) failures.push("GPU Quota");
         addLog(`✗ Failed: ${failures.join(", ")}`);
         toast.error(`Failed: ${failures.join(", ")}`);
@@ -252,6 +298,57 @@ export function ApiKeysTab() {
       toast.error("Connection failed: " + err.message);
       addLog("Connection failed: " + err.message);
       setGcpConnectLoading(false);
+    }
+  };
+
+  // Save YouTube OAuth credentials
+  const handleSaveYouTubeCredentials = async () => {
+    if (!userId || !ytClientId || !ytClientSecret) {
+      toast.error("Please enter both Client ID and Client Secret");
+      return;
+    }
+    setYtSaving(true);
+    try {
+      const { error } = await supabase.from("user_gcp_config").upsert(
+        {
+          user_id: userId,
+          youtube_oauth_client_id: ytClientId,
+          youtube_oauth_client_secret: ytClientSecret,
+          youtube_oauth_verified: false,
+          updated_at: new Date().toISOString(),
+        } as any,
+        { onConflict: "user_id" },
+      );
+      if (error) throw error;
+      setYtVerified(false);
+      setYtVerifyResults(null);
+      toast.success("YouTube OAuth credentials saved");
+    } catch (err: any) {
+      toast.error("Failed to save: " + err.message);
+    } finally {
+      setYtSaving(false);
+    }
+  };
+
+  // Verify YouTube OAuth setup
+  const handleVerifyYouTubeOAuth = async () => {
+    setYtVerifying(true);
+    setYtVerifyResults(null);
+    try {
+      const res = await axios.post("/api/youtube/oauth/verify");
+      const { results } = res.data;
+      setYtVerifyResults(results);
+      if (results.allPassing) {
+        setYtVerified(true);
+        toast.success("YouTube OAuth credentials verified!");
+      } else {
+        toast.error(`Verification failed: ${results.credentials.error || 'Invalid credentials'}`);
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message;
+      toast.error("Verification failed: " + msg);
+    } finally {
+      setYtVerifying(false);
     }
   };
 
@@ -284,7 +381,7 @@ export function ApiKeysTab() {
                     GOOGLE SERVICES
                   </CardTitle>
                   <CardDescription className="text-neutral-600 text-[11px] mt-0.5 font-medium uppercase tracking-tight">
-                    VM + YouTube Data API V3
+                    GCP Compute Engine — VM + GPU Management
                   </CardDescription>
                 </div>
               </div>
@@ -355,7 +452,7 @@ export function ApiKeysTab() {
 
                   {/* Check Results */}
                   {checkResults && (
-                    <div className="grid grid-cols-3 gap-2 p-3 bg-black/30 rounded-lg border border-neutral-800">
+                    <div className="grid grid-cols-2 gap-2 p-3 bg-black/30 rounded-lg border border-neutral-800">
                       <div
                         className={`flex items-center gap-2 text-xs ${checkResults.computeApi.enabled ? "text-green-400" : "text-red-400"}`}
                       >
@@ -365,16 +462,6 @@ export function ApiKeysTab() {
                           <XCircle className="w-3 h-3" />
                         )}
                         <span>Compute API</span>
-                      </div>
-                      <div
-                        className={`flex items-center gap-2 text-xs ${checkResults.youtubeApi.enabled ? "text-green-400" : "text-red-400"}`}
-                      >
-                        {checkResults.youtubeApi.enabled ? (
-                          <CheckCircle className="w-3 h-3" />
-                        ) : (
-                          <XCircle className="w-3 h-3" />
-                        )}
-                        <span>YouTube API</span>
                       </div>
                       <div
                         className={`flex items-center gap-2 text-xs ${checkResults.gpuQuota.available ? "text-green-400" : "text-red-400"}`}
@@ -510,6 +597,7 @@ export function ApiKeysTab() {
                   </ScrollArea>
                 </div>
 
+                {_isAdmin ? (
                 <Dialog>
                   <DialogTrigger asChild>
                     <Button
@@ -563,6 +651,173 @@ export function ApiKeysTab() {
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
+                ) : (
+                  <p className="text-[9px] text-neutral-600 font-mono uppercase tracking-widest mt-2 text-center">
+                    Contact an admin to disconnect your GCP account
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* YouTube Connection (Optional) */}
+        <Card className="bg-neutral-900/40 border-neutral-800 backdrop-blur-sm overflow-hidden">
+          <CardHeader className="border-b border-neutral-800/50 pb-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-red-500/10 rounded-lg">
+                  <Youtube className="text-red-500" size={18} />
+                </div>
+                <div>
+                  <CardTitle className="text-sm font-bold text-neutral-200 tracking-widest uppercase font-mono">
+                    YOUTUBE CONNECTION
+                  </CardTitle>
+                  <CardDescription className="text-neutral-600 text-[11px] mt-0.5 font-medium uppercase tracking-tight">
+                    Analytics, Channel Data & Auto-Upload (Optional)
+                  </CardDescription>
+                </div>
+              </div>
+              <Badge
+                variant={ytConnected ? "default" : "secondary"}
+                className="uppercase tracking-widest"
+              >
+                {ytConnected ? "CONNECTED" : "NOT SET UP"}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-4 pb-6 space-y-4">
+            {/* Info banner */}
+            <div className="flex items-start gap-2 p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+              <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-neutral-400">
+                To use YouTube analytics and auto-uploading, you need to set up your own OAuth credentials in your Google Cloud project. This is a one-time setup that takes about 5 minutes.
+              </p>
+            </div>
+
+            {/* Setup Guide (collapsible) */}
+            <button
+              onClick={() => setYtGuideOpen(!ytGuideOpen)}
+              className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white transition-colors font-mono uppercase tracking-widest"
+            >
+              {ytGuideOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+              Setup Guide
+            </button>
+            {ytGuideOpen && (
+              <div className="p-4 bg-black/30 rounded-lg border border-neutral-800 space-y-3 text-[11px] text-neutral-400 font-mono">
+                <p className="text-neutral-300 font-medium">Follow these steps in your GCP project:</p>
+                <ol className="list-decimal list-inside space-y-2">
+                  <li>
+                    Go to <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" className="text-blue-400 hover:underline">APIs & Services → OAuth consent screen</a>
+                  </li>
+                  <li>
+                    Select <strong className="text-white">&quot;External&quot;</strong> → Create → Fill in app name + email addresses → Save
+                  </li>
+                  <li>
+                    Go to the <strong className="text-white">Audience</strong> tab → click <strong className="text-white">&quot;Publish App&quot;</strong> so any Google account can connect
+                  </li>
+                  <li>
+                    Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" className="text-blue-400 hover:underline">Credentials</a> → <strong className="text-white">&quot;+ Create Credentials&quot;</strong> → <strong className="text-white">OAuth client ID</strong> → Web application
+                  </li>
+                  <li>
+                    Add Authorized JavaScript origin: <code className="text-orange-400 bg-black/50 px-1 rounded">https://studio.vidbolt.app</code>
+                  </li>
+                  <li>
+                    Add Authorized redirect URI: <code className="text-orange-400 bg-black/50 px-1 rounded">https://studio.vidbolt.app/api/youtube/oauth/callback</code>
+                  </li>
+                  <li>
+                    Copy <strong className="text-white">Client ID</strong> and <strong className="text-white">Client Secret</strong> below
+                  </li>
+                </ol>
+                <p className="text-neutral-500 text-[10px]">
+                  Make sure YouTube Data API V3 and YouTube Analytics API are enabled in your project.
+                </p>
+              </div>
+            )}
+
+            {/* Credentials Input */}
+            <div className="space-y-6">
+              <ApiKeyInput
+                label="OAUTH CLIENT ID"
+                value={ytClientId}
+                onSave={async (val) => {
+                  if (!userId) return false;
+                  const { error } = await supabase.from("user_gcp_config").upsert(
+                    {
+                      user_id: userId,
+                      youtube_oauth_client_id: val,
+                      youtube_oauth_verified: false,
+                      updated_at: new Date().toISOString(),
+                    } as any,
+                    { onConflict: "user_id" },
+                  );
+                  if (error) return false;
+                  setYtClientId(val);
+                  setYtVerified(false);
+                  setYtVerifyResults(null);
+                  return true;
+                }}
+                placeholder="123456789-abc.apps.googleusercontent.com"
+              />
+              <ApiKeyInput
+                label="OAUTH CLIENT SECRET"
+                value={ytClientSecret}
+                onSave={async (val) => {
+                  if (!userId) return false;
+                  const { error } = await supabase.from("user_gcp_config").upsert(
+                    {
+                      user_id: userId,
+                      youtube_oauth_client_secret: val,
+                      youtube_oauth_verified: false,
+                      updated_at: new Date().toISOString(),
+                    } as any,
+                    { onConflict: "user_id" },
+                  );
+                  if (error) return false;
+                  setYtClientSecret(val);
+                  setYtVerified(false);
+                  setYtVerifyResults(null);
+                  return true;
+                }}
+                placeholder="GOCSPX-..."
+              />
+            </div>
+
+            {/* Verify + Results */}
+            <div className="flex items-center gap-3 pt-2 border-t border-neutral-800/30">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleVerifyYouTubeOAuth}
+                disabled={ytVerifying || !ytClientId || !ytClientSecret}
+                className="border-red-600 text-red-400 hover:bg-red-500/20 h-8 text-xs font-mono"
+              >
+                {ytVerifying ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : null}
+                Verify OAuth Setup
+              </Button>
+              {ytVerified && (
+                <span className="flex items-center gap-1 text-xs text-green-400">
+                  <CheckCircle className="w-3 h-3" /> Verified
+                </span>
+              )}
+            </div>
+
+            {ytVerifyResults && (
+              <div className="p-3 bg-black/30 rounded-lg border border-neutral-800">
+                <div className={`flex items-center gap-2 text-xs ${ytVerifyResults.credentials.valid ? "text-green-400" : "text-red-400"}`}>
+                  {ytVerifyResults.credentials.valid ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                  <span>{ytVerifyResults.credentials.valid ? 'Credentials valid' : (ytVerifyResults.credentials.error || 'Invalid credentials')}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Info: YouTube accounts are connected per-project */}
+            {ytVerified && (
+              <div className="flex items-start gap-2 p-3 bg-green-500/5 border border-green-500/20 rounded-lg mt-1">
+                <CheckCircle className="w-4 h-4 text-green-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-neutral-400">
+                  OAuth setup verified. You can now connect YouTube accounts in each media project&apos;s export settings.
+                </p>
               </div>
             )}
           </CardContent>

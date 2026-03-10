@@ -188,6 +188,10 @@ export interface EditingSettings {
   [key: string]: any;
 }
 
+export interface ConnectionsSettings {
+  youtubeChannelId?: string | null;
+}
+
 export interface ProjectSettings {
   basic_info: BasicInfoSettings;
   voice: VoiceSettings;
@@ -195,6 +199,7 @@ export interface ProjectSettings {
   editing: EditingSettings;
   export: ExportSettings;
   script: ScriptSettings;
+  connections?: ConnectionsSettings;
 }
 
 export interface MediaProject {

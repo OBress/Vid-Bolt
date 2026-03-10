@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { LoraConfig } from '@/types/settings';
-import { uploadLoraAction } from '@/app/actions/lora-actions';
+import { getLoraUploadUrl } from '@/app/actions/lora-actions';
 
 interface LoraUploadCardProps {
   loras: LoraConfig[];
@@ -23,6 +23,41 @@ interface LoraUploadCardProps {
   onLorasChange: (loras: LoraConfig[]) => void;
   onDefaultChange: (name: string | undefined) => void;
   projectId: string;
+}
+
+/**
+ * Upload a file directly to R2 via presigned PUT URL.
+ * Uses XMLHttpRequest for upload progress tracking.
+ */
+function uploadFileToR2(
+  putUrl: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    });
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`R2 upload failed with status ${xhr.status}`));
+      }
+    });
+
+    xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+    xhr.addEventListener('abort', () => reject(new Error('Upload was cancelled')));
+
+    xhr.open('PUT', putUrl);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.send(file);
+  });
 }
 
 /**
@@ -38,6 +73,7 @@ export function LoraUploadCard({
 }: LoraUploadCardProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [showUploader, setShowUploader] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
@@ -46,7 +82,7 @@ export function LoraUploadCard({
 
   const activeLora = loras.find((l) => l.name === defaultLoraName);
 
-  // ── Upload ────────────────────────────────────────────────────────────
+  // ── Upload (presigned URL → direct to R2) ─────────────────────────────
   const handleUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -62,20 +98,24 @@ export function LoraUploadCard({
       }
 
       setUploading(true);
+      setUploadProgress(0);
       setUploadError(null);
 
       try {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('projectId', projectId);
+        // Step 1: Get presigned URL from server (tiny JSON request)
+        const urlResult = await getLoraUploadUrl(file.name, file.size, projectId);
+        if (urlResult.error) throw new Error(urlResult.error);
+        if (!urlResult.putUrl || !urlResult.storageKey || !urlResult.publicUrl) {
+          throw new Error('Server did not return upload URL');
+        }
 
-        const result = await uploadLoraAction(formData);
-        if (result.error) throw new Error(result.error);
+        // Step 2: Upload file directly to R2 (bypasses Cloudflare proxy)
+        await uploadFileToR2(urlResult.putUrl, file, setUploadProgress);
 
         const newLora: LoraConfig = {
           name: file.name.replace(/\.safetensors$/i, ''),
-          storageKey: result.storageKey!,
-          url: result.url!,
+          storageKey: urlResult.storageKey,
+          url: urlResult.publicUrl,
           defaultWeight: 0.8,
           uploadedAt: new Date().toISOString(),
         };
@@ -88,41 +128,47 @@ export function LoraUploadCard({
         setUploadError(err instanceof Error ? err.message : 'Upload failed');
       } finally {
         setUploading(false);
+        setUploadProgress(0);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     },
     [loras, onLorasChange, onDefaultChange, defaultLoraName, projectId],
   );
 
+  // Keep a ref to the latest loras so delete callbacks never read stale state
+  const lorasRef = useRef(loras);
+  lorasRef.current = loras;
+
   // ── Mutations ─────────────────────────────────────────────────────────
   const removeLora = useCallback(
     (name: string) => {
-      const updated = loras.filter((l) => l.name !== name);
+      const current = lorasRef.current;
+      const updated = current.filter((l) => l.name !== name);
       onLorasChange(updated);
       if (defaultLoraName === name) {
         onDefaultChange(updated.length > 0 ? updated[0].name : undefined);
       }
       setConfirmDelete(null);
     },
-    [loras, onLorasChange, defaultLoraName, onDefaultChange],
+    [onLorasChange, defaultLoraName, onDefaultChange],
   );
 
   const updateWeight = useCallback(
     (name: string, weight: number) => {
-      onLorasChange(loras.map((l) => (l.name === name ? { ...l, defaultWeight: weight } : l)));
+      onLorasChange(lorasRef.current.map((l) => (l.name === name ? { ...l, defaultWeight: weight } : l)));
     },
-    [loras, onLorasChange],
+    [onLorasChange],
   );
 
   const updateTriggerWords = useCallback(
     (name: string, triggerWords: string) => {
       onLorasChange(
-        loras.map((l) =>
+        lorasRef.current.map((l) =>
           l.name === name ? { ...l, triggerWords: triggerWords || undefined } : l,
         ),
       );
     },
-    [loras, onLorasChange],
+    [onLorasChange],
   );
 
   const renameLora = useCallback(
@@ -131,11 +177,11 @@ export function LoraUploadCard({
         setEditingName(null);
         return;
       }
-      onLorasChange(loras.map((l) => (l.name === oldName ? { ...l, name: newName.trim() } : l)));
+      onLorasChange(lorasRef.current.map((l) => (l.name === oldName ? { ...l, name: newName.trim() } : l)));
       if (defaultLoraName === oldName) onDefaultChange(newName.trim());
       setEditingName(null);
     },
-    [loras, onLorasChange, defaultLoraName, onDefaultChange],
+    [onLorasChange, defaultLoraName, onDefaultChange],
   );
 
   // ── Render ────────────────────────────────────────────────────────────
@@ -358,9 +404,15 @@ export function LoraUploadCard({
               className="hidden"
             />
             {uploading ? (
-              <div className="flex flex-col items-center gap-2">
+              <div className="flex flex-col items-center gap-3 w-full">
                 <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
-                <p className="text-sm text-neutral-400">Uploading LoRA...</p>
+                <p className="text-sm text-neutral-400">Uploading LoRA… {uploadProgress}%</p>
+                <div className="w-full max-w-xs h-2 bg-neutral-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-orange-500 to-amber-500 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
               </div>
             ) : (
               <div className="flex flex-col items-center gap-2">
