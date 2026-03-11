@@ -17,231 +17,245 @@ import {
 // ============================================================================
 
 interface PipelineGraphProps {
-  /** Activity events from the orchestrator */
   activityEvents: ActivityEvent[];
-  /** Raw current_step text from the task */
   currentStep: string | null;
-  /** Task status (pending, running, completed, failed, cancelled) */
   taskStatus: string | null;
-  /** Overall progress percentage */
-  progress: number;
-  /** Whether the pipeline is actively running */
+  progress?: number;
   isRunning: boolean;
 }
 
 // ============================================================================
 // NODE ↔ ORCHESTRATOR PHASE MAPPING
-// (Internal only — never exposed to UI)
+// ============================================================================
+
+const NODE_PHASE_MAP: Record<string, string[]> = {
+  preparing: ["init"],
+  narrating: ["tts"],
+  scripting: ["shot_planning"],
+  designing: ["asset_retrieval"],
+  creating: ["production"],
+  composing: ["production"],
+  assembling: ["assembly"],
+  finalizing: ["assembly", "complete"],
+};
+
+// ============================================================================
+// SVG VIEWBOX DIMENSIONS
+// ============================================================================
+
+const DESKTOP_SVG_WIDTH = 820;
+const DESKTOP_SVG_HEIGHT = 240;
+const MOBILE_SVG_WIDTH = 240;
+const MOBILE_SVG_HEIGHT = 520;
+
+// ============================================================================
+// EDGE PATH GENERATION
 // ============================================================================
 
 /**
- * Maps each abstracted UI node to the orchestrator phases it represents.
- * This is the bridge between user-friendly labels and the real pipeline.
+ * Approximate half-width of a node chip in viewbox units.
+ * Lines exit from right edge (center.x + HALF_W) and enter at
+ * left edge (center.x - HALF_W).
  */
-const NODE_PHASE_MAP: Record<string, string[]> = {
-  preparing: ["init"],
-  scripting: ["tts", "shot_planning"],
-  designing: ["asset_retrieval"],
-  creating: ["production"], // GPU pipeline: images + videos + clip trim
-  composing: ["production"], // CPU pipeline: motion graphics (parallel)
-  assembling: ["assembly"],
-  finalizing: ["assembly", "complete"], // pacing review + done
-};
+const NODE_HALF_W = 58;
+
+/**
+ * Generate SVG path for an edge.
+ * - Row 1 horizontal: straight line from right-exit to left-entry
+ * - Designing→Creating/Composing: loopback (right→down→left→down)
+ * - Creating/Composing→Assembling: bezier to merge
+ * - Assembling→Finalizing: straight horizontal
+ */
+function generateEdgePath(
+  fromId: string,
+  toId: string,
+  positions: Record<string, { x: number; y: number }>
+): string {
+  const f = positions[fromId];
+  const t = positions[toId];
+  if (!f || !t) return "";
+
+  const exitX = f.x + NODE_HALF_W;
+  const exitY = f.y;
+  const entryX = t.x - NODE_HALF_W;
+  const entryY = t.y;
+
+  // ── Designing → Creating (loopback wire) ──
+  if (fromId === "designing" && toId === "creating") {
+    const r = 795;                 // right turn x
+    const cy = f.y + 44;          // corridor y (below row 1 nodes)
+    const l = t.x - NODE_HALF_W;  // left entry x
+    return `M ${exitX} ${exitY} L ${r} ${exitY} L ${r} ${cy} L ${l} ${cy} L ${l} ${entryY}`;
+  }
+
+  // ── Designing → Composing (same loopback, extends further down) ──
+  if (fromId === "designing" && toId === "composing") {
+    const r = 795;
+    const cy = f.y + 44;
+    const l = t.x - NODE_HALF_W;
+    return `M ${exitX} ${exitY} L ${r} ${exitY} L ${r} ${cy} L ${l} ${cy} L ${l} ${entryY}`;
+  }
+
+  // ── Same row (horizontal): straight line right-exit → left-entry ──
+  if (Math.abs(exitY - entryY) < 10) {
+    return `M ${exitX} ${exitY} L ${entryX} ${entryY}`;
+  }
+
+  // ── Different row (merge curves): bezier from right-exit to left-entry ──
+  const midX = (exitX + entryX) / 2;
+  return `M ${exitX} ${exitY} C ${midX} ${exitY}, ${midX} ${entryY}, ${entryX} ${entryY}`;
+}
+
+// ============================================================================
+// ORDERED NODES — for fallback derivation
+// ============================================================================
+
+const ORDERED_NODES = [
+  "preparing", "narrating", "scripting", "designing",
+  "creating", "composing", "assembling", "finalizing",
+] as const;
+
+function detectPhaseFromStep(step: string, progress?: number): number {
+  const s = step.toLowerCase();
+
+  // Text-based detection
+  if (s.includes("phase v-b") || s.includes("pacing")) return 7; // finalizing
+  if (s.includes("phase v")) return 6; // assembling
+  if (s.includes("edl") || s.includes("compositing") || s.includes("assembly")) return 6; // assembling
+  if (s.includes("phase iv")) return 4; // creating
+  if (s.includes("phase iii")) return 3; // designing
+  if (s.includes("phase ii")) return 2; // scripting
+  if (s.includes("phase i")) return 1; // narrating
+  if (s.includes("initializing") || s.includes("init")) return 0; // preparing
+
+  // Progress-based fallback when text doesn't match
+  if (progress !== undefined) {
+    if (progress >= 92) return 7; // finalizing
+    if (progress >= 75) return 6; // assembling
+    if (progress >= 30) return 4; // creating/composing
+    if (progress >= 20) return 3; // designing
+    if (progress >= 12) return 2; // scripting
+    if (progress >= 5) return 1;  // narrating
+    return 0; // preparing
+  }
+
+  return -1;
+}
 
 // ============================================================================
 // STATUS DERIVATION
 // ============================================================================
 
-/**
- * Derive the status of each graph node from the activity_events stream.
- *
- * Rules:
- *   1. Simple nodes (preparing, scripting, designing, assembling):
- *      - Has ANY phase_complete event for mapped phases → COMPLETED
- *      - Has ANY phase_start event for mapped phases (no complete) → RUNNING
- *      - Otherwise → PENDING
- *
- *   2. "creating" vs "composing" (both map to 'production'):
- *      - "creating" = GPU work (images, videos, clip trim)
- *      - "composing" = CPU work (motion graphics, parallel)
- *      - Disambiguated via currentStep text and event messages
- *
- *   3. "finalizing":
- *      - Becomes RUNNING when assembly completes and pacing review starts
- *      - Becomes COMPLETED when 'complete' phase_complete event exists
- *
- *   4. On failure, the node that was RUNNING becomes FAILED
- */
 function deriveNodeStatuses(
   events: ActivityEvent[],
   currentStep: string | null,
-  taskStatus: string | null
+  taskStatus: string | null,
+  progress: number
 ): Record<string, NodeStatus> {
   const statuses: Record<string, NodeStatus> = {};
   const stepLower = (currentStep || "").toLowerCase();
 
-  // Build a quick lookup: phase → { hasStart, hasComplete }
-  const phaseState = new Map<string, { hasStart: boolean; hasComplete: boolean }>();
-  for (const event of events) {
-    const state = phaseState.get(event.phase) || { hasStart: false, hasComplete: false };
-    if (event.type === "phase_start") state.hasStart = true;
-    if (event.type === "phase_complete") state.hasComplete = true;
-    phaseState.set(event.phase, state);
-  }
+  if (events.length > 0) {
+    const phaseState = new Map<string, { hasStart: boolean; hasComplete: boolean }>();
+    for (const event of events) {
+      const state = phaseState.get(event.phase) || { hasStart: false, hasComplete: false };
+      if (event.type === "phase_start") state.hasStart = true;
+      if (event.type === "phase_complete") state.hasComplete = true;
+      phaseState.set(event.phase, state);
+    }
 
-  // Helper: does any mapped phase have a start/complete?
-  function hasStartForNode(nodeId: string): boolean {
-    const phases = NODE_PHASE_MAP[nodeId] || [];
-    return phases.some((p) => phaseState.get(p)?.hasStart);
-  }
+    const hasStart = (nodeId: string) =>
+      (NODE_PHASE_MAP[nodeId] || []).some((p) => phaseState.get(p)?.hasStart);
+    const hasComplete = (nodeId: string) =>
+      (NODE_PHASE_MAP[nodeId] || []).some((p) => phaseState.get(p)?.hasComplete);
 
-  function hasCompleteForNode(nodeId: string): boolean {
-    const phases = NODE_PHASE_MAP[nodeId] || [];
-    return phases.some((p) => phaseState.get(p)?.hasComplete);
-  }
+    for (const nodeId of ["preparing", "narrating", "scripting", "designing", "assembling"]) {
+      if (hasComplete(nodeId)) statuses[nodeId] = "completed";
+      else if (hasStart(nodeId)) statuses[nodeId] = "running";
+      else statuses[nodeId] = "pending";
+    }
 
-  // 1. Derive status for simple sequential nodes
-  for (const nodeId of ["preparing", "scripting", "designing", "assembling"]) {
-    if (hasCompleteForNode(nodeId)) {
-      statuses[nodeId] = "completed";
-    } else if (hasStartForNode(nodeId)) {
-      statuses[nodeId] = "running";
+    const prodStarted = phaseState.get("production")?.hasStart ?? false;
+    const prodComplete = phaseState.get("production")?.hasComplete ?? false;
+    const hasMg = events.some(
+      (e) =>
+        e.phase === "production" &&
+        (e.message.toLowerCase().includes("motion graphic") ||
+          e.message.toLowerCase().includes("composing") ||
+          e.message.toLowerCase().includes("composition"))
+    );
+
+    if (prodComplete) {
+      statuses.creating = "completed";
+      statuses.composing = hasMg ? "completed" : "skipped";
+    } else if (prodStarted) {
+      statuses.creating = "running";
+      statuses.composing = hasMg ? "running" : "pending";
     } else {
+      statuses.creating = "pending";
+      statuses.composing = "pending";
+    }
+
+    const asmComplete = phaseState.get("assembly")?.hasComplete ?? false;
+    const doneComplete = phaseState.get("complete")?.hasComplete ?? false;
+    if (doneComplete) statuses.finalizing = "completed";
+    else if (asmComplete || stepLower.includes("v-b") || stepLower.includes("pacing"))
+      statuses.finalizing = "running";
+    else statuses.finalizing = "pending";
+
+  } else if (currentStep && taskStatus === "running") {
+    const activeIdx = detectPhaseFromStep(currentStep, progress);
+    for (let i = 0; i < ORDERED_NODES.length; i++) {
+      const nodeId = ORDERED_NODES[i];
+      if (activeIdx < 0) {
+        statuses[nodeId] = "pending";
+      } else if (i < activeIdx) {
+        statuses[nodeId] = "completed";
+      } else if (i === activeIdx) {
+        statuses[nodeId] = "running";
+      } else if (activeIdx === 4 && i === 5) {
+        // Phase IV runs Creating + Composing in parallel — always light both
+        statuses[nodeId] = "running";
+      } else {
+        statuses[nodeId] = "pending";
+      }
+    }
+  } else {
+    for (const nodeId of ORDERED_NODES) {
       statuses[nodeId] = "pending";
     }
   }
 
-  // 2. Special handling: "scripting" maps to tts + shot_planning
-  //    It should only be COMPLETED if shot_planning is complete
-  const ttsComplete = phaseState.get("tts")?.hasComplete ?? false;
-  const shotComplete = phaseState.get("shot_planning")?.hasComplete ?? false;
-  const ttsStarted = phaseState.get("tts")?.hasStart ?? false;
-  if (shotComplete) {
-    statuses.scripting = "completed";
-  } else if (ttsComplete || ttsStarted) {
-    statuses.scripting = "running";
-  }
-
-  // 3. "creating" (GPU) vs "composing" (Motion GFX)
-  const productionStarted = phaseState.get("production")?.hasStart ?? false;
-  const productionComplete = phaseState.get("production")?.hasComplete ?? false;
-
-  // Check for MG-related events
-  const hasMgEvents = events.some(
-    (e) =>
-      e.phase === "production" &&
-      (e.message.toLowerCase().includes("motion graphic") ||
-        e.message.toLowerCase().includes("composing") ||
-        e.message.toLowerCase().includes("composition"))
-  );
-
-  // Check for clip trim (part of "creating")
-  const hasClipTrimEvents =
-    stepLower.includes("iv-b") ||
-    events.some(
-      (e) =>
-        e.phase === "production" &&
-        (e.message.toLowerCase().includes("trim") ||
-          e.message.toLowerCase().includes("clip"))
-    );
-
-  if (productionComplete) {
-    statuses.creating = "completed";
-    statuses.composing = hasMgEvents ? "completed" : "skipped";
-  } else if (productionStarted) {
-    // Both can be running in parallel
-    statuses.creating = "running";
-    statuses.composing = hasMgEvents ? "running" : "pending";
-
-    // If we detect "videos done" or clip trimming, creating is still running
-    if (
-      stepLower.includes("images done") ||
-      stepLower.includes("generating videos") ||
-      hasClipTrimEvents
-    ) {
-      statuses.creating = "running";
-    }
-  } else {
-    statuses.creating = "pending";
-    statuses.composing = "pending";
-  }
-
-  // 4. "finalizing" = pacing review + complete
-  const assemblyComplete = phaseState.get("assembly")?.hasComplete ?? false;
-  const completePhase = phaseState.get("complete")?.hasComplete ?? false;
-
-  if (completePhase) {
-    statuses.finalizing = "completed";
-  } else if (
-    assemblyComplete ||
-    stepLower.includes("v-b") ||
-    stepLower.includes("pacing")
-  ) {
-    statuses.finalizing = "running";
-  } else {
-    statuses.finalizing = "pending";
-  }
-
-  // 5. Handle task failure — mark the running node(s) as failed
   if (taskStatus === "failed") {
     for (const nodeId of Object.keys(statuses)) {
-      if (statuses[nodeId] === "running") {
-        statuses[nodeId] = "failed";
-      }
+      if (statuses[nodeId] === "running") statuses[nodeId] = "failed";
     }
   }
-
-  // 6. Handle full completion
   if (taskStatus === "completed") {
     for (const nodeId of Object.keys(statuses)) {
-      if (statuses[nodeId] !== "skipped") {
-        statuses[nodeId] = "completed";
-      }
+      if (statuses[nodeId] !== "skipped") statuses[nodeId] = "completed";
     }
   }
 
   return statuses;
 }
 
-/**
- * Get a user-friendly sub-label for the currently running node.
- * Extracts the latest relevant event message.
- */
 function getNodeSubLabel(
   nodeId: string,
   events: ActivityEvent[],
   currentStep: string | null
 ): string | undefined {
-  // Find events related to this node's mapped phases
   const phases = NODE_PHASE_MAP[nodeId] || [];
   const relevantEvents = events.filter((e) => phases.includes(e.phase));
   const latest = relevantEvents[relevantEvents.length - 1];
-
-  if (latest?.message) {
-    // Strip phase prefixes like "Phase I: " or "Phase IV: " for cleaner display
-    return latest.message.replace(/phase\s+[ivxIVX\-]+\w*:\s*/gi, "");
-  }
-
-  // Fallback: parse currentStep text
-  if (currentStep) {
-    return currentStep.replace(/phase\s+[ivxIVX\-]+\w*:\s*/gi, "");
-  }
-
+  if (latest?.message) return latest.message.replace(/phase\s+[ivxIVX\-]+\w*:\s*/gi, "");
+  if (currentStep) return currentStep.replace(/phase\s+[ivxIVX\-]+\w*:\s*/gi, "");
   return undefined;
 }
 
-/**
- * Derive edge status from connected node statuses.
- */
-function deriveEdgeStatus(
-  fromStatus: NodeStatus,
-  toStatus: NodeStatus
-): EdgeStatus {
+function deriveEdgeStatus(fromStatus: NodeStatus, toStatus: NodeStatus): EdgeStatus {
   if (fromStatus === "completed" && toStatus === "completed") return "completed";
-  if (
-    fromStatus === "completed" &&
-    (toStatus === "running" || toStatus === "failed")
-  )
+  if (fromStatus === "completed" && (toStatus === "running" || toStatus === "failed"))
     return "active";
   if (fromStatus === "running" || fromStatus === "failed") return "active";
   return "pending";
@@ -253,14 +267,12 @@ function deriveEdgeStatus(
 
 function useIsMobile(breakpoint = 640): boolean {
   const [isMobile, setIsMobile] = useState(false);
-
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < breakpoint);
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, [breakpoint]);
-
   return isMobile;
 }
 
@@ -272,35 +284,45 @@ export function PipelineGraph({
   activityEvents,
   currentStep,
   taskStatus,
+  progress = 0,
   isRunning,
 }: PipelineGraphProps) {
   const isMobile = useIsMobile();
   const positions = isMobile ? MOBILE_POSITIONS : DESKTOP_POSITIONS;
+  const svgWidth = isMobile ? MOBILE_SVG_WIDTH : DESKTOP_SVG_WIDTH;
+  const svgHeight = isMobile ? MOBILE_SVG_HEIGHT : DESKTOP_SVG_HEIGHT;
 
-  // Derive statuses from events (no progress ranges!)
   const nodeStatuses = useMemo(
-    () => deriveNodeStatuses(activityEvents, currentStep, taskStatus),
-    [activityEvents, currentStep, taskStatus]
+    () => deriveNodeStatuses(activityEvents, currentStep, taskStatus, progress),
+    [activityEvents, currentStep, taskStatus, progress]
   );
 
-  // SVG viewport
-  const svgWidth = isMobile ? 240 : 720;
-  const svgHeight = isMobile ? 400 : 200;
+  const edgePaths = useMemo(
+    () =>
+      GRAPH_EDGES.map((edge) => ({
+        ...edge,
+        pathData: generateEdgePath(edge.from, edge.to, positions),
+      })),
+    [positions]
+  );
 
   return (
-    <div className="w-full bg-neutral-900/60 border border-neutral-800 rounded-xl p-5 overflow-hidden">
-      <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-4">
+    <div className="w-full bg-neutral-900/60 border border-neutral-800 rounded-xl overflow-hidden">
+      <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider px-5 pt-4 pb-2">
         Pipeline
       </h3>
 
-      <div className="relative" style={{ height: svgHeight }}>
-        {/* SVG layer for edges */}
+      <div
+        className="relative w-full"
+        style={{ aspectRatio: `${svgWidth} / ${svgHeight}` }}
+      >
+        {/* SVG edge layer — BEHIND nodes (z-index: 1) */}
         <svg
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
           className="absolute inset-0 w-full h-full"
+          style={{ zIndex: 1 }}
           preserveAspectRatio="xMidYMid meet"
         >
-          {/* CSS animation for edge flow */}
           <defs>
             <style>{`
               @keyframes pipelineEdgeFlow {
@@ -310,11 +332,8 @@ export function PipelineGraph({
             `}</style>
           </defs>
 
-          {GRAPH_EDGES.map((edge, i) => {
-            const fromPos = positions[edge.from];
-            const toPos = positions[edge.to];
-            if (!fromPos || !toPos) return null;
-
+          {edgePaths.map((edge, i) => {
+            if (!edge.pathData) return null;
             const fromStatus = nodeStatuses[edge.from] || "pending";
             const toStatus = nodeStatuses[edge.to] || "pending";
             const edgeStatus = deriveEdgeStatus(fromStatus, toStatus);
@@ -322,8 +341,7 @@ export function PipelineGraph({
             return (
               <PipelineGraphEdge
                 key={`${edge.from}-${edge.to}`}
-                from={fromPos}
-                to={toPos}
+                pathData={edge.pathData}
                 status={edgeStatus}
                 index={i}
               />
@@ -331,23 +349,9 @@ export function PipelineGraph({
           })}
         </svg>
 
-        {/* HTML layer for nodes (positioned absolutely over SVG) */}
-        <div
-          className="absolute inset-0"
-          style={{
-            /* Scale the node positions to match the SVG viewBox → actual container */
-          }}
-        >
-          {/* 
-            We need to map SVG viewBox coordinates to the actual container size.
-            Use a wrapper that scales from viewBox space to container space.
-          */}
-          <div
-            className="relative w-full h-full"
-            style={{
-              /* Nodes are positioned with left/top percentages */
-            }}
-          >
+        {/* HTML node layer — ON TOP of edges (z-index: 2) */}
+        <div className="absolute inset-0" style={{ zIndex: 2 }}>
+          <div className="relative w-full h-full">
             {GRAPH_NODES.map((node) => {
               const pos = positions[node.id];
               if (!pos) return null;
@@ -358,7 +362,6 @@ export function PipelineGraph({
                   ? getNodeSubLabel(node.id, activityEvents, currentStep)
                   : undefined;
 
-              // Convert SVG viewbox coords to percentages
               const xPercent = (pos.x / svgWidth) * 100;
               const yPercent = (pos.y / svgHeight) * 100;
 
@@ -368,10 +371,7 @@ export function PipelineGraph({
                   node={node}
                   status={status}
                   subLabel={subLabel}
-                  position={{
-                    x: xPercent,
-                    y: yPercent,
-                  }}
+                  position={{ x: xPercent, y: yPercent }}
                 />
               );
             })}
@@ -379,9 +379,8 @@ export function PipelineGraph({
         </div>
       </div>
 
-      {/* Connection status indicator */}
       {isRunning && (
-        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-neutral-800">
+        <div className="flex items-center gap-2 mx-5 mb-3 mt-1 pt-2 border-t border-neutral-800">
           <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
           <span className="text-[10px] text-neutral-600 font-mono">
             Connected to pipeline

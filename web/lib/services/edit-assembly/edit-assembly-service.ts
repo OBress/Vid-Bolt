@@ -54,6 +54,8 @@ export interface AssembleEditRequest {
   fps?: number;
   apiKey: string;
   model?: string;
+  /** Optional shot time range for batch-mode audio chunk filtering */
+  shotTimeRange?: { startSeconds: number; endSeconds: number };
 }
 
 export interface AssembleEditResult {
@@ -84,13 +86,14 @@ export async function assembleEdit(request: AssembleEditRequest): Promise<Assemb
     fps = 30,
     apiKey,
     model = 'google/gemini-3-flash-preview',
+    shotTimeRange,
   } = request;
 
   console.log(`[EditAssembly] Starting EDL generation for "${videoTitle}" (${shots.length} shots, ${generatedMedia.length} media items)`);
 
   try {
     // 1. Build context object
-    const context = buildContext(shots, generatedMedia, videoTitle, audioChunks, scriptText, fps);
+    const context = buildContext(shots, generatedMedia, videoTitle, audioChunks, scriptText, fps, shotTimeRange);
 
     // 2. Build user prompt
     const userPrompt = buildEditAssemblyUserPrompt(context);
@@ -137,7 +140,8 @@ function buildContext(
   videoTitle: string,
   audioChunks: Array<{ index: number; duration_seconds: number; text?: string }>,
   scriptText: string,
-  fps: number
+  fps: number,
+  shotTimeRange?: { startSeconds: number; endSeconds: number }
 ): EditAssemblyContext {
   const mediaByShot = new Map<number, GeneratedMedia>();
   generatedMedia.forEach(m => mediaByShot.set(m.shot_index, m));
@@ -194,6 +198,7 @@ function buildContext(
       durationSeconds: c.duration_seconds,
       text: c.text,
     })),
+    shotTimeRange,
   };
 }
 
@@ -320,48 +325,70 @@ async function callLLMv2(
     },
   };
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': process.env.NEXT_PUBLIC_SITE_URL || 'https://vidbolt.com',
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.3,
-      // Dynamic token budget: ~250 tokens per shot for structured JSON + base overhead
-      // Min 32000, max 65536 (Gemini Flash output limit)
-      max_tokens: Math.min(65536, Math.max(32000, shotCount * 250 + 8000)),
-      response_format: { type: 'json_schema', json_schema: edlJsonSchema },
-    }),
-  });
+  // Dynamic token budget: ~2000 tokens per shot for structured JSON (clips +
+  // keyframes + transitions + overlays + SFX) + base overhead for tracks/fades.
+  // Min 32000, max 65536 (Gemini Flash output limit).
+  const initialMaxTokens = Math.min(65536, Math.max(32000, shotCount * 2000 + 8000));
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`OpenRouter API error (${response.status}): ${errorBody}`);
-  }
+  // Prompt size diagnostic logging
+  const promptChars = systemPrompt.length + userPrompt.length;
+  const estimatedInputTokens = Math.ceil(promptChars / 4);
+  console.log(`[EditAssembly] Prompt size: ~${promptChars} chars (~${estimatedInputTokens} input tokens), max_tokens=${initialMaxTokens}`);
 
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
+  // Helper to make the actual API call with a given max_tokens budget
+  const callWithBudget = async (maxTokens: number, attempt: number) => {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.NEXT_PUBLIC_SITE_URL || 'https://vidbolt.com',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.3,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_schema', json_schema: edlJsonSchema },
+      }),
+    });
 
-  if (!content) {
-    throw new Error('Empty response from LLM');
-  }
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`OpenRouter API error (${response.status}): ${errorBody}`);
+    }
 
-  // Log concise response info
-  const finishReason = data.choices?.[0]?.finish_reason;
-  console.log(`[EditAssembly] LLM response: ${content.length} chars, finish_reason=${finishReason}`);
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
 
-  // If the response was truncated (hit max_tokens), the JSON is guaranteed
-  // incomplete. Skip parsing and let the caller use the fallback EDL.
+    if (!content) {
+      throw new Error('Empty response from LLM');
+    }
+
+    const finishReason = data.choices?.[0]?.finish_reason;
+    console.log(`[EditAssembly] LLM response (attempt ${attempt}): ${content.length} chars, finish_reason=${finishReason}, max_tokens=${maxTokens}`);
+
+    return { content, finishReason };
+  };
+
+  // Attempt 1 with calculated budget
+  let { content, finishReason } = await callWithBudget(initialMaxTokens, 1);
+
+  // If truncated, retry once with maximum budget (65536)
   if (finishReason === 'length') {
-    console.warn(`[EditAssembly] LLM response truncated (finish_reason=length, ${content.length} chars). Skipping parse.`);
-    throw new Error(`LLM response truncated (finish_reason=length, ${content.length} chars) — increase max_tokens or reduce prompt size`);
+    if (initialMaxTokens < 65536) {
+      console.warn(`[EditAssembly] Response truncated (${content.length} chars). Retrying with max_tokens=65536...`);
+      ({ content, finishReason } = await callWithBudget(65536, 2));
+    }
+
+    // If still truncated after retry (or already at max), throw
+    if (finishReason === 'length') {
+      console.warn(`[EditAssembly] LLM response truncated after retry (finish_reason=length, ${content.length} chars). Skipping parse.`);
+      throw new Error(`LLM response truncated (finish_reason=length, ${content.length} chars) — prompt too large for model output limit`);
+    }
   }
 
   // Structured outputs guarantee valid JSON matching the schema —
@@ -716,12 +743,18 @@ function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAg
 
     // === GAP-FILLING (main-video track only) ===
     if (trackId === 'main-video' && clips.length > 0) {
-      // 1. Snap first clip to t=0 if offset (prevent black screen at start)
+      // 1. Snap first clip to t=0 if offset (prevent black screen at start).
+      //    Only shift startTime — do NOT extend duration, because in batched
+      //    mode the LLM may emit absolute timestamps (e.g., 161s for batch 5)
+      //    and inflating duration creates absurdly long clips. The merger
+      //    handles absolute-to-sequential rebasing correctly.
       if (clips[0].startTime > 0) {
-        const gap = clips[0].startTime;
-        console.warn(`[EditAssembly] Fix: First clip on main-video started at ${gap}s — snapping to 0s (no black screen)`);
-        clips[0].duration += gap;
-        clips[0].startTime = 0;
+        const offset = clips[0].startTime;
+        console.warn(`[EditAssembly] Fix: First clip on main-video started at ${offset.toFixed(1)}s — shifting to 0s (no black screen)`);
+        // Shift all clips in this track back by the offset
+        for (const c of clips) {
+          c.startTime = Math.max(0, c.startTime - offset);
+        }
       }
 
       // 2. Fill any gaps between clips by extending the preceding clip.

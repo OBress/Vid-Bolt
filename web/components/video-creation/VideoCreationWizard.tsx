@@ -242,7 +242,7 @@ export function VideoCreationWizard({
         const video: VideoProject = data.video;
 
         // Determine the correct step based on current_stage
-        const targetStep = stageToStepNumber(video.current_stage);
+        let targetStep = stageToStepNumber(video.current_stage);
 
         // Get expanded idea from metadata if available
         const expandedIdea = (video.metadata as any)?.expanded_idea || "";
@@ -277,6 +277,23 @@ export function VideoCreationWizard({
 
         const outlineConfig = (video.metadata as any)?.outlineConfig || null;
         const scriptOutput = (video.metadata as any)?.scriptOutput || null;
+
+        // RECONCILE: If metadata shows more progress than current_stage indicates,
+        // bump the target step and fix the persisted stage for future loads.
+        if (scriptOutput && targetStep < 2) {
+          console.log(
+            `[Wizard] Stage mismatch: current_stage="${video.current_stage}" but scriptOutput exists. Bumping to step 2.`,
+          );
+          targetStep = 2;
+          // Patch the database so this is fixed for future loads
+          fetch(`/api/videos/${video.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ current_stage: "script" }),
+          }).catch((err) =>
+            console.error("[Wizard] Failed to reconcile stage:", err),
+          );
+        }
 
         // Extract pipeline outputs (audioChunks, shots, media) from metadata
         const pipelineOutputs = extractPipelineOutputs((video.metadata || {}) as Record<string, any>);
@@ -517,47 +534,61 @@ export function VideoCreationWizard({
           );
         }
       } else if (currentStep === 1 && state.outlineOutput) {
-        // Step 1 → Step 2: OPTIMISTIC - Navigate immediately, start script generation in background
-        console.log(
-          "[Wizard] OPTIMISTIC: Navigating to Step 2, firing script generation...",
-        );
+        // Step 1 → Step 2: If script already exists, just navigate; otherwise generate
+        if (state.scriptOutput) {
+          console.log("[Wizard] Script already exists, navigating to Step 2 without regeneration");
+          advanceToStep(2);
+        } else {
+          console.log(
+            "[Wizard] OPTIMISTIC: Navigating to Step 2, firing script generation...",
+          );
 
-        setState((prev) => ({
-          ...prev,
-          isScriptLoading: true,
-        }));
-        advanceToStep(2);
+          // Persist current_stage so resume works
+          if (state.videoId) {
+            fetch(`/api/videos/${state.videoId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ current_stage: "script" }),
+            }).catch((err) => console.error("[Wizard] Failed to update stage:", err));
+          }
 
-        // Trigger script generation in background
-        if (state.videoId) {
-          fetch("/api/process/script-writing", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ videoId: state.videoId }),
-          })
-            .then((res) => res.json())
-            .then((data) => {
-              if (data.taskId) {
-                console.log("[Wizard] Script task created:", data.taskId);
-                setState((prev) => ({
-                  ...prev,
-                  scriptTaskId: data.taskId,
-                }));
-              } else {
-                console.error("[Wizard] Failed to create script task:", data);
+          setState((prev) => ({
+            ...prev,
+            isScriptLoading: true,
+          }));
+          advanceToStep(2);
+
+          // Trigger script generation in background
+          if (state.videoId) {
+            fetch("/api/process/script-writing", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ videoId: state.videoId }),
+            })
+              .then((res) => res.json())
+              .then((data) => {
+                if (data.taskId) {
+                  console.log("[Wizard] Script task created:", data.taskId);
+                  setState((prev) => ({
+                    ...prev,
+                    scriptTaskId: data.taskId,
+                  }));
+                } else {
+                  console.error("[Wizard] Failed to create script task:", data);
+                  setState((prev) => ({
+                    ...prev,
+                    isScriptLoading: false,
+                  }));
+                }
+              })
+              .catch((err) => {
+                console.error("[Wizard] Script generation failed:", err);
                 setState((prev) => ({
                   ...prev,
                   isScriptLoading: false,
                 }));
-              }
-            })
-            .catch((err) => {
-              console.error("[Wizard] Script generation failed:", err);
-              setState((prev) => ({
-                ...prev,
-                isScriptLoading: false,
-              }));
-            });
+              });
+          }
         }
       } else if (currentStep === 2 && step2ScriptRef.current) {
         // Step 2 → 3: Trigger script completion (which handles its own navigation)
@@ -897,6 +928,7 @@ export function VideoCreationWizard({
                 shotList: pipelineOutputs.shotList,
                 generatedMedia: pipelineOutputs.generatedMedia,
               });
+              resumedAtEditorRef.current = true;
               advanceToStep(4);
             }}
             onError={(error) => {

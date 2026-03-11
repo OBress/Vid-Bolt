@@ -62,6 +62,7 @@ const TYPE_CONFIG: Record<string, { label: string; color: string; bg: string }> 
   av_script_part2:  { label: "AV Script P2",   color: "text-violet-400",  bg: "bg-violet-500/15 border-violet-500/25" },
   edit_assembly:    { label: "Edit Assembly",   color: "text-rose-400",    bg: "bg-rose-500/15 border-rose-500/25" },
   closed_loop:      { label: "Closed Loop",    color: "text-yellow-400",  bg: "bg-yellow-500/15 border-yellow-500/25" },
+  niche_discovery:  { label: "Niche Scan",     color: "text-teal-400",    bg: "bg-teal-500/15 border-teal-500/25" },
 };
 
 const PHASE_LABELS: Record<string, string> = {
@@ -82,6 +83,16 @@ const PHASE_LABELS: Record<string, string> = {
   assets: "Assets",
   expansion: "Expansion",
   assembly: "Assembly",
+  // Niche Discovery phases
+  channel_profiling: "Channel Profiling",
+  channel_crawling: "Crawling Featured Channels",
+  keyword_search: "Keyword Search",
+  enrichment: "Enriching Candidates",
+  snowball_expansion: "Network Expansion",
+  embedding_similarity: "Computing Embeddings",
+  ai_analysis: "AI Similarity Analysis",
+  scoring: "Multi-Signal Scoring",
+  storing_results: "Storing Results",
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

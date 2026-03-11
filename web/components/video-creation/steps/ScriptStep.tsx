@@ -246,13 +246,16 @@ export const ScriptStep = memo(
       }, [output]);
 
       // Sync external taskId prop with internal state (for auto-generation from parent)
+      // Guard: don't override the output view if we already have a completed script
       useEffect(() => {
-        if (taskIdProp && !taskId) {
+        if (taskIdProp && !taskId && !initialScriptOutput) {
           console.log("[Step3] Syncing external taskId:", taskIdProp);
           setTaskId(taskIdProp);
           setView("progress");
           setTaskStatus("pending");
         }
+        // Note: initialScriptOutput deliberately omitted from deps to avoid re-triggering
+        // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [taskIdProp, taskId]);
 
       // Note: isLoading sync removed - no longer needed since we default to progress view

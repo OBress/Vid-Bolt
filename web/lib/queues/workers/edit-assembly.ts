@@ -238,6 +238,10 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
         }
       }
 
+      // Compute batch time range for audio chunk filtering
+      const batchStartSeconds = batchShots.length > 0 ? batchShots[0].start_seconds : 0;
+      const batchEndSeconds = batchShots.length > 0 ? batchShots[batchShots.length - 1].end_seconds : 0;
+
       try {
         const result = await assembleEdit({
           videoId,
@@ -249,6 +253,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
           fps: 30,
           apiKey,
           model,
+          shotTimeRange: { startSeconds: batchStartSeconds, endSeconds: batchEndSeconds },
         });
 
         if (result.success) {

@@ -166,6 +166,10 @@ export interface YouTubeChannelInfo {
   videoCount: number;
   uploadsPlaylistId: string;
   publishedAt: string;
+  /** Channel IDs featured by this channel (from brandingSettings) */
+  featuredChannelsUrls?: string[];
+  /** YouTube topic categories (Freebase IDs) */
+  topicCategories?: string[];
 }
 
 /** Playlist item from playlistItems.list */

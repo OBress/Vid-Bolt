@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useCallback, useEffect, useState } from "react";
+import { useRef, useCallback, useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
+import { forceCollide } from "d3-force";
 
 // Dynamically import to avoid SSR issues with canvas
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
@@ -29,6 +30,11 @@ export interface NicheNode {
   graph_y: number | null;
   graph_cluster: number | null;
   is_emerging: boolean;
+  discovery_method: string;
+  embedding_similarity: number | null;
+  tag_overlap_score: number | null;
+  similarity_reason: string | null;
+  shared_audience: string | null;
 }
 
 export interface NicheEdge {
@@ -92,7 +98,9 @@ export default function NicheNetworkGraph({
   const [layoutStable, setLayoutStable] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
-  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  // Use ref instead of state for hover — avoids full React re-render on every
+  // mouse move, which was causing the graph to rebuild and "glitch".
+  const hoveredNodeRef = useRef<string | null>(null);
 
   // Resize handler
   useEffect(() => {
@@ -121,8 +129,11 @@ export default function NicheNetworkGraph({
     }
   }, [nodes]);
 
-  // Build graph data — let force layout handle positioning
-  const graphData = useCallback(() => {
+  // Build graph data — memoized to prevent re-creating on every render.
+  // Previously called inline as graphData(), which caused re-render on every
+  // hover because setHoveredNode triggered a new graphData object reference,
+  // resetting the force simulation.
+  const memoizedGraphData = useMemo(() => {
     const nodeIdSet = new Set(nodes.map((n) => n.channel_id));
 
     const graphNodes: GraphNode[] = nodes.map((n, i) => {
@@ -172,7 +183,8 @@ export default function NicheNetworkGraph({
       if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
       const size = (node.val as number) * 2;
       const isSelected = node.id === selectedNodeId;
-      const isHovered = node.id === hoveredNode;
+      // Read from ref (no re-render needed for hover changes)
+      const isHovered = node.id === hoveredNodeRef.current;
       const isUserChannel = node.isUserChannel as boolean;
 
       const clusterColor = isUserChannel
@@ -240,13 +252,19 @@ export default function NicheNetworkGraph({
         ctx.restore();
       }
 
-      // Label — always show for user's channel and high-similarity nodes
-      const showLabel =
-        isUserChannel ||
-        isSelected ||
-        isHovered ||
-        (node.similarity as number) > 0.3 ||
-        globalScale > 0.8;
+      // Level-of-detail labels: hide all when very zoomed out,
+      // show only key nodes at medium zoom, show all at close zoom
+      let showLabel = false;
+      if (globalScale < 0.4) {
+        // Very zoomed out: only user channel
+        showLabel = isUserChannel;
+      } else if (globalScale < 0.8) {
+        // Medium zoom: user + selected + hovered + high similarity
+        showLabel = isUserChannel || isSelected || isHovered || (node.similarity as number) > 0.5;
+      } else {
+        // Close zoom: all labels
+        showLabel = isUserChannel || isSelected || isHovered || (node.similarity as number) > 0.3 || globalScale > 1.0;
+      }
 
       if (showLabel) {
         const label = node.label as string;
@@ -294,7 +312,8 @@ export default function NicheNetworkGraph({
         }
       }
     },
-    [selectedNodeId, hoveredNode]
+    // Only depends on selectedNodeId — hoveredNodeRef is a ref, not state
+    [selectedNodeId]
   );
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -309,7 +328,10 @@ export default function NicheNetworkGraph({
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleNodeHover = useCallback((graphNode: any) => {
-    setHoveredNode(graphNode?.id || null);
+    hoveredNodeRef.current = graphNode?.id || null;
+    // No explicit refresh needed — nodeCanvasObject's drawNode reads
+    // hoveredNodeRef.current on each canvas frame automatically.
+    // The force-graph rerenders the canvas every animation frame.
   }, []);
 
   // Configure d3 forces via ref after mount
@@ -327,6 +349,13 @@ export default function NicheNetworkGraph({
       .strength((link: any) => {
         return Math.max(0.1, (link.weight ?? 0.3) * 0.5);
       });
+    // Collision force to prevent node overlap
+    fg.d3Force('collide', forceCollide()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .radius((node: any) => (node.val as number) * 2 + 4)
+      .strength(0.7)
+      .iterations(2)
+    );
     // Reheat to apply new forces
     fg.d3ReheatSimulation();
   }, [nodes.length, edges.length]);
@@ -351,11 +380,12 @@ export default function NicheNetworkGraph({
     <div ref={containerRef} className="w-full h-full relative">
       <ForceGraph2D
         ref={graphRef}
-        graphData={graphData()}
+        graphData={memoizedGraphData}
         width={dimensions.width}
         height={dimensions.height}
         backgroundColor="transparent"
         nodeCanvasObject={drawNode}
+        nodeCanvasObjectMode={() => "replace"}
         nodePointerAreaPaint={(node, color, ctx) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const n = node as any;

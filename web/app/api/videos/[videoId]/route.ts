@@ -77,30 +77,21 @@ export async function GET(
     
     // Check metadata first (new source of truth)
     if (video.metadata && (video.metadata as any).audio_chunks) {
-        console.log("[API DEBUG] Found chunks in metadata:", (video.metadata as any).audio_chunks.length);
         audioChunks = (video.metadata as any).audio_chunks;
-    } else {
-        console.log("[API DEBUG] No chunks in metadata. Metadata keys:", Object.keys(video.metadata || {}));
     }
 
     // Fallback to task output (legacy)
     if ((!audioChunks || audioChunks.length === 0) && video.audio_task_id) {
-      console.log("[API DEBUG] Checking task output for task:", video.audio_task_id);
       const { data: task } = await supabase
         .from("tasks")
         .select("output_data")
         .eq("id", video.audio_task_id)
         .single();
       
-      console.log("[API DEBUG] Task output_data keys:", Object.keys(task?.output_data || {}));
-      
       if (task?.output_data) {
         const outputData = task.output_data as { tts_chunks?: Array<{ chapterNumber: number; url: string; duration_seconds?: number }> };
         if (outputData.tts_chunks && Array.isArray(outputData.tts_chunks)) {
-          console.log("[API DEBUG] Found chunks in task output:", outputData.tts_chunks.length);
           audioChunks = outputData.tts_chunks;
-        } else {
-           console.log("[API DEBUG] No tts_chunks in task output");
         }
       }
     }

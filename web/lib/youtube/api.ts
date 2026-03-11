@@ -253,7 +253,7 @@ export class YouTubeApi {
    */
   async getMyChannels(): Promise<YouTubeChannelInfo[]> {
     const params = new URLSearchParams({
-      part: 'snippet,statistics,contentDetails,brandingSettings',
+      part: 'snippet,statistics,contentDetails,brandingSettings,topicDetails',
       mine: 'true',
     });
 
@@ -281,6 +281,10 @@ export class YouTubeApi {
         };
         brandingSettings?: {
           image?: { bannerExternalUrl?: string };
+          channel?: { featuredChannelsUrls?: string[] };
+        };
+        topicDetails?: {
+          topicCategories?: string[];
         };
       }>;
     }>('/channels', params);
@@ -300,6 +304,8 @@ export class YouTubeApi {
       videoCount: parseInt(ch.statistics.videoCount || '0', 10),
       uploadsPlaylistId: ch.contentDetails.relatedPlaylists.uploads,
       publishedAt: ch.snippet.publishedAt,
+      featuredChannelsUrls: ch.brandingSettings?.channel?.featuredChannelsUrls || [],
+      topicCategories: ch.topicDetails?.topicCategories || [],
     }));
   }
 
@@ -309,7 +315,7 @@ export class YouTubeApi {
    */
   async getChannelById(channelId: string): Promise<YouTubeChannelInfo | null> {
     const params = new URLSearchParams({
-      part: 'snippet,statistics,contentDetails,brandingSettings',
+      part: 'snippet,statistics,contentDetails,brandingSettings,topicDetails',
       id: channelId,
     });
 
@@ -337,6 +343,10 @@ export class YouTubeApi {
         };
         brandingSettings?: {
           image?: { bannerExternalUrl?: string };
+          channel?: { featuredChannelsUrls?: string[] };
+        };
+        topicDetails?: {
+          topicCategories?: string[];
         };
       }>;
     }>('/channels', params);
@@ -359,6 +369,8 @@ export class YouTubeApi {
       videoCount: parseInt(ch.statistics.videoCount || '0', 10),
       uploadsPlaylistId: ch.contentDetails.relatedPlaylists.uploads,
       publishedAt: ch.snippet.publishedAt,
+      featuredChannelsUrls: ch.brandingSettings?.channel?.featuredChannelsUrls || [],
+      topicCategories: ch.topicDetails?.topicCategories || [],
     };
   }
 

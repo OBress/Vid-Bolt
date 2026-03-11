@@ -268,6 +268,8 @@ export interface EditAssemblyContext {
     durationSeconds: number;
     text?: string;
   }>;
+  /** Optional time window for batch-mode audio chunk filtering */
+  shotTimeRange?: { startSeconds: number; endSeconds: number };
 }
 
 export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): string {
@@ -290,8 +292,9 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
     const energyTag = ` ⚡${energy}`;
 
     lines.push(`  [${shot.index}] ${shot.startSeconds.toFixed(1)}s-${shot.endSeconds.toFixed(1)}s (${shot.durationSeconds.toFixed(1)}s) | ${mediaStatus}${hybridTag}${ctTag}${energyTag}${sectionTag}`);
-    // Include full narration text so the LLM can match pacing to content
-    lines.push(`    Narration: "${shot.text}"`);
+    // Include truncated narration text so the LLM can match pacing to content
+    const narrationPreview = shot.text.length > 150 ? shot.text.substring(0, 147) + '...' : shot.text;
+    lines.push(`    Narration: "${narrationPreview}"`);
   }
   lines.push('');
 
@@ -302,14 +305,40 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
     lines.push('');
   }
 
-  // Audio chunks with timing for sync awareness
-  lines.push('## Audio Timeline');
-  let audioRunning = 0;
-  for (const chunk of context.audioChunks) {
-    const chunkEnd = audioRunning + chunk.durationSeconds;
-    lines.push(`  Chunk ${chunk.index}: ${audioRunning.toFixed(1)}s-${chunkEnd.toFixed(1)}s (${chunk.durationSeconds.toFixed(1)}s)${chunk.text ? ` | "${chunk.text.substring(0, 80)}..."` : ''}`);
-    audioRunning = chunkEnd;
+  // Audio chunks — filter to batch-relevant window if provided
+  const AUDIO_PADDING_S = 5; // include chunks that overlap ±5s of the shot range
+  let relevantAudioChunks = context.audioChunks;
+  if (context.shotTimeRange) {
+    const rangeStart = context.shotTimeRange.startSeconds - AUDIO_PADDING_S;
+    const rangeEnd = context.shotTimeRange.endSeconds + AUDIO_PADDING_S;
+    let chunkStart = 0;
+    relevantAudioChunks = context.audioChunks.filter(chunk => {
+      const chunkEnd = chunkStart + chunk.durationSeconds;
+      const overlaps = chunkEnd > rangeStart && chunkStart < rangeEnd;
+      chunkStart = chunkEnd;
+      return overlaps;
+    });
+    if (relevantAudioChunks.length < context.audioChunks.length) {
+      lines.push(`## Audio Timeline (filtered to batch window ${context.shotTimeRange.startSeconds.toFixed(0)}s-${context.shotTimeRange.endSeconds.toFixed(0)}s)`);
+    } else {
+      lines.push('## Audio Timeline');
+    }
+  } else {
+    lines.push('## Audio Timeline');
   }
+
+  let audioRunning = 0;
+  // Re-compute running offset for ALL chunks to get correct timestamps,
+  // but only print the relevant ones
+  let chunkOffset = 0;
+  for (const chunk of context.audioChunks) {
+    const chunkEnd = chunkOffset + chunk.durationSeconds;
+    if (relevantAudioChunks.includes(chunk)) {
+      lines.push(`  Chunk ${chunk.index}: ${chunkOffset.toFixed(1)}s-${chunkEnd.toFixed(1)}s (${chunk.durationSeconds.toFixed(1)}s)${chunk.text ? ` | "${chunk.text.substring(0, 80)}..."` : ''}`);
+    }
+    chunkOffset = chunkEnd;
+  }
+  audioRunning = chunkOffset; // total audio duration
   lines.push(`  Total audio: ${audioRunning.toFixed(1)}s`);
   lines.push('');
 
