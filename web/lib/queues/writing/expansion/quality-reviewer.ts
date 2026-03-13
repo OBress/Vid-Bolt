@@ -540,7 +540,7 @@ Return a scores array with exactly ${beats.length} numbers.`;
     const config: OpenRouterConfig = {
       model: BATCH_RATING_MODEL,
       temperature: 0.1,
-      maxTokens: 256,
+      maxTokens: 512,
       responseFormat: {
         type: 'json_schema',
         json_schema: {

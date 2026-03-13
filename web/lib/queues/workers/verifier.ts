@@ -19,7 +19,7 @@
 import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient } from '@/lib/queues/shared';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
-import { checkStaticVideo } from '@/lib/services/frame-extraction';
+// Static video detection removed — VLM verifier catches bad media directly
 
 // ============================================================================
 // TYPES
@@ -471,22 +471,23 @@ function parseVerifierResponse(rawResponse: string): VerifierResult {
   } catch (parseError) {
     console.error(`${LOG_PREFIX} Failed to parse verifier response:`, cleaned.substring(0, 200));
 
-    // Fallback: if we can't parse, default to PASS with low confidence
-    // This prevents the pipeline from blocking on a malformed response
+    // Fallback: if we can't parse, default to FAIL — malformed verification
+    // should NOT auto-approve media. The orchestrator's Best-Fit Salvage
+    // already handles FAILed shots gracefully.
     return {
-      verdict: 'PASS',
-      failure_type: undefined,
+      verdict: 'FAIL',
+      failure_type: 'fundamental' as FailureType,
       dimension_feedback: {
-        semantic_alignment: 'Parse error — defaulting to PASS',
-        entity_consistency: 'Parse error — defaulting to PASS',
-        temporal_continuity: 'Parse error — defaulting to PASS',
-        visual_quality: 'Parse error — defaulting to PASS',
-        style_consistency: 'Parse error — defaulting to PASS',
-        thematic_consistency: 'Parse error — defaulting to PASS',
+        semantic_alignment: 'Parse error — verification result unusable',
+        entity_consistency: 'Parse error — verification result unusable',
+        temporal_continuity: 'Parse error — verification result unusable',
+        visual_quality: 'Parse error — verification result unusable',
+        style_consistency: 'Parse error — verification result unusable',
+        thematic_consistency: 'Parse error — verification result unusable',
       },
-      suggested_corrections: [],
-      recommended_action: 'accept',
-      confidence: 0.3,
+      suggested_corrections: ['Verification response could not be parsed — regenerate media'],
+      recommended_action: 'regenerate' as RecommendedAction,
+      confidence: 0.0,
     };
   }
 }
@@ -509,42 +510,7 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
     const apiKey = await getOpenRouterApiKey(userId);
     const userContent = buildVerificationPrompt(job.data);
 
-    // =====================================================================
-    // SSIM Pre-Check: Catch static videos before wasting a VLM call
-    // =====================================================================
-    if (mediaType === 'video') {
-      const staticCheck = await checkStaticVideo(mediaUrl, videoId, shotIndex);
-
-      if (staticCheck.isStatic) {
-        console.warn(`${LOG_PREFIX} Shot ${shotIndex}: Auto-FAIL — static video (SSIM=${staticCheck.ssim.toFixed(4)})`);
-
-        return {
-          success: true,
-          shotIndex,
-          videoId,
-          result: {
-            verdict: 'FAIL' as VerifierVerdict,
-            failure_type: 'fundamental' as FailureType,
-            dimension_feedback: {
-              semantic_alignment: 'Unable to assess — video has no meaningful motion',
-              entity_consistency: 'Unable to assess — video has no meaningful motion',
-              temporal_continuity: 'FAIL — video is essentially a still image',
-              visual_quality: `FAIL — static video detected (SSIM=${staticCheck.ssim.toFixed(4)})`,
-              style_consistency: 'Unable to assess — video has no meaningful motion',
-              thematic_consistency: 'Unable to assess — video has no meaningful motion',
-            },
-            suggested_corrections: [
-              'Video is essentially static with no meaningful motion.',
-              'Regenerate with a more action-oriented prompt.',
-              'Add motion keywords: "camera slowly pans", "wind blowing", "walking", "gesturing".',
-            ],
-            recommended_action: 'regenerate' as RecommendedAction,
-            confidence: 0.99,
-          } satisfies VerifierResult,
-          staticVideoDetected: true,
-        };
-      }
-    }
+    // SSIM pre-check removed (C1) — VLM verifier catches static/bad media directly
 
     for (let attempt = 1; attempt <= MAX_VERIFIER_RETRIES; attempt++) {
       try {
@@ -603,25 +569,27 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
     console.error(`${LOG_PREFIX} Verification setup failed for shot ${shotIndex}:`, lastError);
   }
 
-  // All retries exhausted — return PASS with verificationSkipped flag
-  console.warn(`${LOG_PREFIX} Shot ${shotIndex}: all ${MAX_VERIFIER_RETRIES} verification attempts failed — defaulting to PASS with verificationSkipped`);
+  // All retries exhausted — return FAIL so bad media doesn't silently pass.
+  // The orchestrator's Best-Fit Salvage will handle this gracefully.
+  console.warn(`${LOG_PREFIX} Shot ${shotIndex}: all ${MAX_VERIFIER_RETRIES} verification attempts failed — defaulting to FAIL`);
   return {
     success: false,
     shotIndex,
     videoId,
     verificationSkipped: true,
     result: {
-      verdict: 'PASS' as VerifierVerdict,
+      verdict: 'FAIL' as VerifierVerdict,
+      failure_type: 'fundamental' as FailureType,
       dimension_feedback: {
-        semantic_alignment: 'Verification failed after retries — defaulting to PASS',
-        entity_consistency: 'Verification failed after retries — defaulting to PASS',
-        temporal_continuity: 'Verification failed after retries — defaulting to PASS',
-        visual_quality: 'Verification failed after retries — defaulting to PASS',
-        style_consistency: 'Verification failed after retries — defaulting to PASS',
-        thematic_consistency: 'Verification failed after retries — defaulting to PASS',
+        semantic_alignment: 'Verification failed after all retries',
+        entity_consistency: 'Verification failed after all retries',
+        temporal_continuity: 'Verification failed after all retries',
+        visual_quality: 'Verification failed after all retries',
+        style_consistency: 'Verification failed after all retries',
+        thematic_consistency: 'Verification failed after all retries',
       },
-      suggested_corrections: [],
-      recommended_action: 'accept' as RecommendedAction,
+      suggested_corrections: ['All verification attempts failed — regenerate media'],
+      recommended_action: 'regenerate' as RecommendedAction,
       confidence: 0.0,
     } satisfies VerifierResult,
     error: lastError?.message || 'Max retries exhausted',

@@ -204,14 +204,18 @@ Create tracks based on content needs:
 
 1. NEVER create overlapping clips on the SAME track
 2. Every transition duration must be <= min(fromClipDuration, toClipDuration) / 2
-3. For failed shots (listed in failedShots): EXTEND the previous or next successful clip's duration to COVER the gap time range. Also include them as mediaIssues for tracking.
+3. For failed shots (listed in failedShots): SKIP them — do NOT create a clip for them. Include them as mediaIssues for tracking. NEVER extend neighboring clips to fill a gap.
 4. ALL image clips MUST have keyframe animations — static images look dead on video
 5. Always include audio fades: fadeIn on start, fadeOut on end
 6. Do NOT create any "text" clips — all text/titles are handled by motion graphics in a separate pipeline
 7. Hybrid shots (marked ⚡ in the shot list) MUST produce TWO clips: base on "main-video" + overlay on "overlays"
 8. The FIRST clip MUST start at exactly startTime: 0. There must NEVER be a black screen at the beginning.
-9. The timeline MUST have CONTINUOUS visual coverage — NO gaps between clips on the main-video track. Every second from 0 to total duration must be covered.
-10. When a shot has no media, extend the neighboring clip's duration to fill that time range rather than leaving a gap.
+9. Place each clip at its narration-aligned startTime from the shot data. Gaps are acceptable — the renderer handles them gracefully. NEVER sacrifice audio sync for visual coverage.
+10. NEVER stretch or extend any clip beyond its narration segment boundary. Stretched clips create frozen frames — the single worst artifact possible.
+11. Every major section break (sectionBreak=true shots) MUST have a fadeToBlack transition of 0.5–0.7s AND an SFX clip labeled "section-transition" on the sfx track.
+12. Shot 0 MUST have an aggressive Ken Burns push-in keyframe (scale 1.0→1.10 over the shot duration) to hook the viewer from frame one.
+13. Vary Ken Burns patterns — alternate push-in, pull-out, drift-left, drift-right across consecutive image clips. Never use the same animation on two adjacent clips.
+14. For emotional beat shots, use a dissolve transition (0.5s). For high-energy shots, use hard cuts only.
 
 ## REQUIRED JSON FORMAT
 

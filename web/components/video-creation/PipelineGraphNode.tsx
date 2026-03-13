@@ -39,8 +39,6 @@ interface PipelineGraphNodeProps {
   status: NodeStatus;
   /** Live activity sub-label shown when running */
   subLabel?: string;
-  /** Position within the graph as percentages (0–100) */
-  position: { x: number; y: number };
 }
 
 // ============================================================================
@@ -181,7 +179,6 @@ export function PipelineGraphNode({
   node,
   status,
   subLabel,
-  position,
 }: PipelineGraphNodeProps) {
   const styles = getNodeStyles(status);
 
@@ -201,13 +198,6 @@ export function PipelineGraphNode({
 
   return (
     <motion.div
-      className="absolute"
-      style={{
-        left: `${position.x}%`,
-        top: `${position.y}%`,
-        transform: "translate(-50%, -50%)",
-        zIndex: status === "running" ? 10 : 1,
-      }}
       initial={{ opacity: 0, scale: 0.8 }}
       animate={{
         opacity: 1,
@@ -218,6 +208,7 @@ export function PipelineGraphNode({
           ? { scale: { repeat: Infinity, duration: 2, ease: "easeInOut" } }
           : { duration: 0.3 }
       }
+      style={{ display: "inline-flex" }}
     >
       <div
         className="relative flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-500"

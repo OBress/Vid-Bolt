@@ -147,6 +147,29 @@ export async function GET(
       // Non-fatal - continue without active task info
     }
 
+    // Fetch linked task records for pipeline debugger (timing, steps, activity events)
+    let linkedTasks: Array<Record<string, unknown>> = [];
+    try {
+      const taskIds = [
+        video.script_task_id,
+        video.audio_task_id,
+        video.video_task_id,
+        video.export_task_id,
+      ].filter(Boolean);
+
+      if (taskIds.length > 0) {
+        const { data: tasks } = await supabase
+          .from("tasks")
+          .select("id, type, status, name, started_at, completed_at, steps, activity_events, retry_count, current_phase, progress_percent, error_message")
+          .in("id", taskIds);
+
+        linkedTasks = (tasks || []) as Array<Record<string, unknown>>;
+      }
+    } catch (err) {
+      console.error("[API] Failed to fetch linked tasks:", err);
+      // Non-fatal - continue without linked task info
+    }
+
     // Sanitize generatedMedia URLs: convert presigned PUT URLs to public URLs
     // This fixes existing data where media_url was stored as a presigned upload URL
     const metadata = video.metadata as any;
@@ -185,7 +208,7 @@ export async function GET(
       }
     }
 
-    return NextResponse.json({ video, audioChunks, activeTasks });
+    return NextResponse.json({ video, audioChunks, activeTasks, linkedTasks });
   } catch (error) {
     console.error("Failed to get video:", error);
     return NextResponse.json(

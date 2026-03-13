@@ -35,6 +35,8 @@ export interface ImageGenJobData {
   aspectRatio?: '16:9' | '9:16';
   /** Optional LoRA name to apply for all image generations */
   loraName?: string;
+  /** Optional LoRA trigger words to prepend to image prompts */
+  loraTriggerWords?: string;
 }
 
 // ============================================================================
@@ -46,7 +48,7 @@ const LOG_PREFIX = '[ImageGen]';
 export const imageGenProcessor: Processor<ImageGenJobData> = async (
   job: Job<ImageGenJobData>
 ) => {
-  const { taskId, userId, videoId, aspectRatio = '16:9', loraName } = job.data;
+  const { taskId, userId, videoId, aspectRatio = '16:9', loraName, loraTriggerWords } = job.data;
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
 
@@ -151,6 +153,7 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
           onProgress,
           onItemComplete,
           loraName,
+          loraTriggerWords,
         );
       }, lockTtlMs);
 

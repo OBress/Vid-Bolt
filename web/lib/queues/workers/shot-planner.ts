@@ -157,6 +157,14 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         });
       }
 
+      // Build a lookup from segment_index → word_timestamps for millisecond-precision timing
+      const segmentWordTimestamps = new Map<number, import('@/types/task').WordTimestamp[]>();
+      for (const seg of segments) {
+        if (seg.word_timestamps && seg.word_timestamps.length > 0) {
+          segmentWordTimestamps.set(seg.segment_index, seg.word_timestamps);
+        }
+      }
+
       const plannedShots: PlannedShot[] = shotSummaries.map((shot, idx) => ({
         segment_index: shot.segment_index ?? idx,
         start_seconds: shot.start_seconds ?? 0,
@@ -167,10 +175,17 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         content_type: shot.content_type || 'concept',
         media_type: (shot.media_type as PlannedShot['media_type']) || 'motiongraphic',
         entity_refs: [],
-        visual_elements: [],
-        sound_effects: [],
-        stock_worthy: false,
-        image_count: 1,
+        // Preserve AI-generated visual decisions (were previously being dropped)
+        visual_elements: (shot.visual_elements || []) as string[],
+        visual_description: shot.visual_description,
+        stock_worthy: shot.stock_worthy ?? false,
+        sound_effects: (shot.sound_effects || []).map(sfx => ({
+          type: sfx.type,
+          description: sfx.description,
+          trigger_at_seconds: sfx.trigger_at_seconds,
+          anchor_word: sfx.anchor_word,
+        })),
+        image_count: shot.image_count ?? 1,
       }));
 
       // Compute media type breakdown

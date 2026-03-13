@@ -741,45 +741,29 @@ function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAg
       }
     }
 
-    // === GAP-FILLING (main-video track only) ===
+    // === GAP PREVENTION (main-video track only) ===
     if (trackId === 'main-video' && clips.length > 0) {
       // 1. Snap first clip to t=0 if offset (prevent black screen at start).
-      //    Only shift startTime — do NOT extend duration, because in batched
-      //    mode the LLM may emit absolute timestamps (e.g., 161s for batch 5)
-      //    and inflating duration creates absurdly long clips. The merger
-      //    handles absolute-to-sequential rebasing correctly.
       if (clips[0].startTime > 0) {
         const offset = clips[0].startTime;
         console.warn(`[EditAssembly] Fix: First clip on main-video started at ${offset.toFixed(1)}s — shifting to 0s (no black screen)`);
-        // Shift all clips in this track back by the offset
         for (const c of clips) {
           c.startTime = Math.max(0, c.startTime - offset);
         }
       }
 
-      // 2. Fill any gaps between clips by extending the preceding clip.
-      //    For large gaps (≥ 2s), emit a mediaIssue so the user is warned
-      //    about sections where the video may freeze or show stretched content.
+      // 2. TIGHT TILING: Close gaps by sliding clips forward.
+      //    Gap-filling via clip extension (2x duration) has been REMOVED
+      //    because it produces frozen frames. Instead, we ensure each clip
+      //    starts exactly where the previous one ends.
       for (let i = 1; i < clips.length; i++) {
         const prev = clips[i - 1];
         const curr = clips[i];
         const prevEnd = prev.startTime + prev.duration;
         const gap = curr.startTime - prevEnd;
-        if (gap > 0.05) { // >50ms gap
-          console.warn(`[EditAssembly] Fix: Filling ${gap.toFixed(2)}s gap on main-video by extending clip (shot ${prev.shotIndex}) from ${prev.duration.toFixed(2)}s to ${(prev.duration + gap).toFixed(2)}s`);
-          prev.duration += gap;
-
-          // Large extensions likely exceed the source video duration — warn the user
-          if (gap >= 2.0) {
-            fixed.mediaIssues = fixed.mediaIssues || [];
-            fixed.mediaIssues.push({
-              shotIndex: prev.shotIndex ?? -1,
-              severity: 'warning',
-              type: 'substituted_media',
-              title: `Shot ${prev.shotIndex ?? '?'} extended by ${gap.toFixed(1)}s`,
-              description: `This clip was extended to fill a ${gap.toFixed(1)}s gap from missing media. Review this section for visual quality.`,
-            });
-          }
+        if (gap > 0.05) { // >50ms gap — close it
+          console.log(`[EditAssembly] Tight-tiling: closing ${gap.toFixed(2)}s gap before shot ${curr.shotIndex}`);
+          curr.startTime = prevEnd;
         }
       }
     }
@@ -830,7 +814,9 @@ function generateFallbackAgentEDL(
   // --- CLIPS ---
   const clips: AgentClip[] = [];
   const mediaIssues: EditorAgentEDL['mediaIssues'] = [];
-  let currentTime = 0;
+  // P6 Fix: Use shot.start_seconds for narration-aligned placement
+  // instead of a running currentTime accumulator.
+  let fallbackTime = 0; // Only used when shot.start_seconds is missing
 
   for (const shot of shots) {
     const media = mediaByShot.get(shot.segment_index);
@@ -855,12 +841,15 @@ function generateFallbackAgentEDL(
       ? 'motion-graphics' as const
       : (media?.media_type || 'image') as 'image' | 'video';
 
+    // P6: Use narration-aligned start_seconds when available
+    const clipStartTime = typeof shot.start_seconds === 'number' ? shot.start_seconds : fallbackTime;
+
     // Base media clip always goes on main-video
     const clip: AgentClip = {
       trackId: 'main-video',
       shotIndex: shot.segment_index,
       type: clipType,
-      startTime: currentTime,
+      startTime: clipStartTime,
       duration: shot.duration_seconds,
       label: shot.text?.substring(0, 40),
     };
@@ -925,13 +914,13 @@ function generateFallbackAgentEDL(
         trackId: 'overlays',
         shotIndex: shot.segment_index,
         type: 'motion-graphics',
-        startTime: currentTime,
+        startTime: clipStartTime,
         duration: shot.duration_seconds,
         label: `${shot.text?.substring(0, 30)} (overlay)`,
       });
     }
 
-    currentTime += shot.duration_seconds;
+    fallbackTime = clipStartTime + shot.duration_seconds;
   }
 
 
@@ -994,7 +983,7 @@ function generateFallbackAgentEDL(
     transitions,
     audioFades: [
       { target: 'main', type: 'fadeIn', startTime: 0, duration: 1 },
-      { target: 'main', type: 'fadeOut', startTime: Math.max(0, currentTime - 2), duration: 2 },
+      { target: 'main', type: 'fadeOut', startTime: Math.max(0, fallbackTime - 2), duration: 2 },
     ],
     mediaIssues,
   };

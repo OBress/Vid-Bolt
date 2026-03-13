@@ -115,19 +115,42 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     const generatedVideos = (metadata.generated_videos || {}) as Record<string, string>;
     const generatedMG = (metadata.generated_motion_graphics || {}) as Record<string, string>;
     const avScriptShots = (avScriptPart1.shots || []) as Array<Record<string, unknown>>;
+    
+    // Read clip trim data computed by the VLM-guided clip trimmer (C5)
+    const clipTrims = (metadata.clip_trims || []) as Array<{
+      shotIndex: number;
+      trimStart: number;
+      trimEnd: number;
+      trimmedDuration: number;
+      wasTrimmed: boolean;
+    }>;
+    const trimsByShot = new Map(clipTrims.map(t => [t.shotIndex, t]));
+    if (clipTrims.length > 0) {
+      const trimmedCount = clipTrims.filter(t => t.wasTrimmed).length;
+      console.log(`[EditAssembly Worker] Clip trims available: ${trimmedCount}/${clipTrims.length} clips trimmed`);
+    }
+    
     const generatedMedia: GeneratedMedia[] = avScriptShots.map((shot) => {
       const idx = shot.segment_index as number;
       const key = `shot-${idx}`;
       const imageUrl = generatedImages[key];
       const videoUrl = generatedVideos[key];
       const url = videoUrl || imageUrl;
+      const mgCode = generatedMG[key];
+      const trim = trimsByShot.get(idx);
       return {
         shot_index: idx,
         media_type: (shot.media_type as string || 'image') as 'image' | 'video' | 'motiongraphic',
-        generation_status: url ? 'completed' : 'failed',
+        // MG shots have remotion_code instead of a media URL — treat as completed
+        generation_status: (url || mgCode) ? 'completed' : 'failed',
         media_url: url,
         visual_prompt: (shot.visual_prompt as string) || (shot.summary as string) || '',
-        remotion_code: generatedMG[key],
+        remotion_code: mgCode,
+        // Apply clip trim data if available
+        ...(trim?.wasTrimmed ? {
+          trimStart: trim.trimStart,
+          trimEnd: trim.trimEnd,
+        } : {}),
       } as GeneratedMedia;
     });
 
@@ -290,8 +313,8 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       progress_percent: 85,
     });
 
-    // Merge v2 agent EDLs
-    const mergedAgentEDL = mergeAgentEDLChunks(chunkAgentEDLs, totalAudioDuration);
+    // Merge v2 agent EDLs — pass shot timing data for absolute position rebasing
+    const mergedAgentEDL = mergeAgentEDLChunks(chunkAgentEDLs, totalAudioDuration, shots);
     // Merge legacy EDLs for backward compat
     const mergedLegacyEDL = mergeLegacyEDLChunks(chunkLegacyEDLs);
 
@@ -374,7 +397,11 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
 // AGENT EDL CHUNK MERGER (V2)
 // ============================================================================
 
-function mergeAgentEDLChunks(chunks: EditorAgentEDL[], totalAudioDuration: number = 0): EditorAgentEDL {
+function mergeAgentEDLChunks(
+  chunks: EditorAgentEDL[],
+  totalAudioDuration: number = 0,
+  shots: AssembleEditRequest['shots'] = []
+): EditorAgentEDL {
   if (chunks.length === 0) {
     return {
       tracks: [
@@ -388,7 +415,31 @@ function mergeAgentEDLChunks(chunks: EditorAgentEDL[], totalAudioDuration: numbe
     };
   }
 
-  if (chunks.length === 1) return chunks[0];
+  if (chunks.length === 1) {
+    // Single chunk — still need to sanitize audio fades
+    const single = { ...chunks[0] };
+    const lastClip = single.clips
+      .filter(c => c.trackId === 'main-video')
+      .reduce((best, c) => {
+        const end = c.startTime + c.duration;
+        return end > best ? end : best;
+      }, 0);
+    const endTime = totalAudioDuration > 0 ? totalAudioDuration : lastClip;
+    single.audioFades = [
+      { target: 'main' as const, type: 'fadeIn' as const, startTime: 0, duration: 1 },
+      { target: 'main' as const, type: 'fadeOut' as const, startTime: Math.max(0, endTime - 2), duration: 2 },
+    ];
+    return single;
+  }
+
+  // Build shot timing lookup for absolute position rebasing
+  const shotTimingMap = new Map<number, { start_seconds: number; duration_seconds: number }>();
+  for (const shot of shots) {
+    shotTimingMap.set(shot.segment_index, {
+      start_seconds: shot.start_seconds,
+      duration_seconds: shot.duration_seconds,
+    });
+  }
 
   // Merge tracks (deduplicate by id)
   const trackMap = new Map<string, AgentTrack>();
@@ -439,44 +490,55 @@ function mergeAgentEDLChunks(chunks: EditorAgentEDL[], totalAudioDuration: numbe
       return a.startTime - b.startTime;
     });
 
-    // Only rebuild absolute timing for main-video track.
-    // Overlay tracks (e.g., "overlays") must stay synced to their main-video
-    // counterpart by shotIndex — rebuilding them independently would destroy
-    // the synchronization that hybrid shots depend on.
     if (trackId === 'main-video') {
-      // Step 1: Cap individual clip durations to prevent any single shot from
-      // consuming disproportionate timeline real estate (max 15s per clip)
-      const MAX_CLIP_DURATION = 15;
-      for (const clip of clips) {
-        if (clip.duration > MAX_CLIP_DURATION) {
-          console.log(`[EditAssembly Merge] Capping clip (shot ${clip.shotIndex}) duration: ${clip.duration.toFixed(2)}s → ${MAX_CLIP_DURATION}s`);
-          clip.duration = MAX_CLIP_DURATION;
-        }
-      }
-
-      // Step 2: Rebuild sequential timing
-      let runningTime = 0;
-      for (let i = 0; i < clips.length; i++) {
-        if (clips[i].startTime !== runningTime) {
-          console.log(`[EditAssembly Merge] Rebasing clip (shot ${clips[i].shotIndex}) on ${trackId}: ${clips[i].startTime.toFixed(2)}s → ${runningTime.toFixed(2)}s`);
-        }
-        clips[i].startTime = runningTime;
-        runningTime += clips[i].duration;
-      }
-
-      // Step 3: If total overshoots audio duration by >5%, proportionally scale
-      // all clips to fit. This prevents the timeline from being dramatically
-      // longer than the narration (e.g., ~600s instead of ~211s).
-      if (totalAudioDuration > 0 && runningTime > totalAudioDuration * 1.05) {
-        const scale = totalAudioDuration / runningTime;
-        console.log(`[EditAssembly Merge] ⚠️ Timeline (${runningTime.toFixed(1)}s) exceeds audio (${totalAudioDuration.toFixed(1)}s) — scaling by ${scale.toFixed(3)}`);
-        let scaledRunning = 0;
+      // REBASE: Use original shot timing for absolute positions.
+      // The LLM generates each batch with startTime relative to that batch
+      // (starting near 0). We must rebase to absolute narration-aligned positions.
+      if (shotTimingMap.size > 0) {
         for (const clip of clips) {
-          clip.startTime = scaledRunning;
-          clip.duration = Math.max(0.5, clip.duration * scale); // min 0.5s per clip
-          scaledRunning += clip.duration;
+          const shotData = clip.shotIndex != null ? shotTimingMap.get(clip.shotIndex) : undefined;
+          if (shotData) {
+            clip.startTime = shotData.start_seconds;
+            // Duration comes from the shot plan — do NOT cap or scale it.
+            // We control both media generation duration and timeline placement,
+            // so mismatches should not occur. If they do, investigate the source.
+          }
         }
-        console.log(`[EditAssembly Merge] ✅ Scaled timeline: ${scaledRunning.toFixed(1)}s (target: ${totalAudioDuration.toFixed(1)}s)`);
+        // Re-sort after rebasing since positions changed
+        clips.sort((a, b) => a.startTime - b.startTime);
+      }
+
+      // Duration capping mechanisms REMOVED (see implementation_plan.md C3):
+      // - 15s hard cap: removed — arbitrary truncation
+      // - Narration-duration cap: removed — discards usable video
+      // - 80% proportional scaling: removed — creates frozen frames
+
+      // Fix overlaps — only adjust when consecutive clips actually overlap
+      for (let i = 1; i < clips.length; i++) {
+        const prevEnd = clips[i - 1].startTime + clips[i - 1].duration;
+        if (clips[i].startTime < prevEnd) {
+          console.log(`[EditAssembly Merge] Fixing overlap: clip (shot ${clips[i].shotIndex}) ${clips[i].startTime.toFixed(2)}s → ${prevEnd.toFixed(2)}s`);
+          clips[i].startTime = prevEnd;
+        }
+      }
+
+      // TIGHT TILING: After overlap-fixing, ensure no gaps by snapping each
+      // clip's start to the previous clip's end. This prevents gaps at source
+      // rather than trying to fill them later with stretched clips.
+      for (let i = 1; i < clips.length; i++) {
+        const prevEnd = clips[i - 1].startTime + clips[i - 1].duration;
+        const gap = clips[i].startTime - prevEnd;
+        if (gap > 0.05) { // >50ms gap — close it
+          console.log(`[EditAssembly Merge] Tight-tiling: closing ${gap.toFixed(2)}s gap before shot ${clips[i].shotIndex}`);
+          clips[i].startTime = prevEnd;
+        }
+      }
+
+      // Diagnostic: warn if timeline exceeds audio duration (but do NOT scale)
+      const lastClip = clips[clips.length - 1];
+      const timelineEnd = lastClip ? lastClip.startTime + lastClip.duration : 0;
+      if (totalAudioDuration > 0 && timelineEnd > totalAudioDuration * 1.05) {
+        console.warn(`[EditAssembly Merge] ⚠️ Timeline (${timelineEnd.toFixed(1)}s) exceeds audio (${totalAudioDuration.toFixed(1)}s) by ${((timelineEnd / totalAudioDuration - 1) * 100).toFixed(1)}% — investigate source of mismatch (do NOT scale)`);
       }
     }
   });
@@ -495,11 +557,20 @@ function mergeAgentEDLChunks(chunks: EditorAgentEDL[], totalAudioDuration: numbe
       if (clip.shotIndex != null) {
         const mainClip = mainClipsByShotIndex.get(clip.shotIndex);
         if (mainClip) {
+          // Sync to matching main-video clip
           if (clip.startTime !== mainClip.startTime || clip.duration !== mainClip.duration) {
             console.log(`[EditAssembly Merge] Syncing overlay clip (shot ${clip.shotIndex}) on ${trackId}: ${clip.startTime.toFixed(2)}s → ${mainClip.startTime.toFixed(2)}s, dur ${clip.duration.toFixed(2)}s → ${mainClip.duration.toFixed(2)}s`);
           }
           clip.startTime = mainClip.startTime;
           clip.duration = mainClip.duration;
+        } else {
+          // Orphaned overlay: no matching main-video clip — use shot timing fallback
+          const shotData = shotTimingMap.get(clip.shotIndex);
+          if (shotData) {
+            console.log(`[EditAssembly Merge] Orphaned overlay (shot ${clip.shotIndex}) on ${trackId}: rebased to shot timing ${shotData.start_seconds.toFixed(2)}s`);
+            clip.startTime = shotData.start_seconds;
+            clip.duration = Math.min(clip.duration, shotData.duration_seconds);
+          }
         }
       }
     }
@@ -514,14 +585,18 @@ function mergeAgentEDLChunks(chunks: EditorAgentEDL[], totalAudioDuration: numbe
     return true;
   });
 
-  // Deduplicate audio fades
-  const seenFades = new Set<string>();
-  merged.audioFades = merged.audioFades.filter(f => {
-    const key = `${f.target}-${f.type}-${f.startTime}`;
-    if (seenFades.has(key)) return false;
-    seenFades.add(key);
-    return true;
-  });
+  // Replace accumulated per-batch audio fades with correct absolute fades.
+  // Each batch generates its own fadeIn/fadeOut, which after merge creates
+  // multiple fadeOuts mid-video that cut off narration audio.
+  const finalMainClips = clipsByTrack.get('main-video') || [];
+  const computedEnd = finalMainClips.length > 0
+    ? finalMainClips[finalMainClips.length - 1].startTime + finalMainClips[finalMainClips.length - 1].duration
+    : 0;
+  const finalEndTime = totalAudioDuration > 0 ? totalAudioDuration : computedEnd;
+  merged.audioFades = [
+    { target: 'main' as const, type: 'fadeIn' as const, startTime: 0, duration: 1 },
+    { target: 'main' as const, type: 'fadeOut' as const, startTime: Math.max(0, finalEndTime - 2), duration: 2 },
+  ];
 
   return merged;
 }

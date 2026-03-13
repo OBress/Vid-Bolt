@@ -43,6 +43,8 @@ export interface VideoGenJobData {
   previousFeedback?: string;
   /** Optional LoRA name to apply for video keyframe generation */
   loraName?: string;
+  /** Optional LoRA trigger words to prepend to keyframe prompts */
+  loraTriggerWords?: string;
 }
 
 // ============================================================================
@@ -54,7 +56,7 @@ const LOG_PREFIX = '[VideoGen]';
 export const videoGenProcessor: Processor<VideoGenJobData> = async (
   job: Job<VideoGenJobData>
 ) => {
-  const { taskId, userId, videoId, aspectRatio = '16:9', loraName } = job.data;
+  const { taskId, userId, videoId, aspectRatio = '16:9', loraName, loraTriggerWords } = job.data;
   // Video-gen is always dispatched from the orchestrator with names like 'video-shot-1'.
   // Skip task-level progress updates to avoid overwriting the orchestrator's progress.
   const isClosedLoop = true;
@@ -198,6 +200,7 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           onProgress,
           onItemComplete,
           loraName,
+          loraTriggerWords,
         );
       }, lockTtlMs);
 

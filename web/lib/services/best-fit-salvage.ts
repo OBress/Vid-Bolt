@@ -37,6 +37,8 @@ export interface SalvageDecision {
   selectedAttempt: number;
   /** Human-readable reason for the selection */
   reason: string;
+  /** True if the best attempt is below quality floor and needs replacement */
+  needsReplacement?: boolean;
   /** Structured flag for user review */
   flag: {
     shotIndex: number;
@@ -102,6 +104,8 @@ function scoreResult(result: VerifierResult): number {
 
 /**
  * Select the best attempt from multiple failed verification results.
+ * Enforces a quality floor — if the best attempt is truly terrible,
+ * it's flagged as needing replacement rather than silently accepted.
  */
 export function selectBestFitSalvage(
   shotIndex: number,
@@ -110,6 +114,9 @@ export function selectBestFitSalvage(
   if (attempts.length === 0) {
     throw new Error('No attempts to salvage from');
   }
+
+  // Quality floor: below this score, media is flagged for replacement
+  const QUALITY_FLOOR = 3.0;
 
   // Score and rank all attempts
   const ranked = attempts
@@ -120,6 +127,11 @@ export function selectBestFitSalvage(
     .sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
+  const belowFloor = best.score < QUALITY_FLOOR;
+
+  if (belowFloor) {
+    console.warn(`[BestFitSalvage] Shot ${shotIndex}: best score ${best.score.toFixed(1)} is below quality floor (${QUALITY_FLOOR}) — flagging for replacement`);
+  }
 
   // Build human-readable reason
   const passingDimensions = DIMENSION_KEYS.filter((key) => {
@@ -127,7 +139,7 @@ export function selectBestFitSalvage(
     return !feedback.includes('fail') && !feedback.includes('mismatch') && !feedback.includes('wrong');
   });
 
-  const reason = `Selected attempt ${best.attemptNumber} (score: ${best.score.toFixed(1)}). ` +
+  const reason = `Selected attempt ${best.attemptNumber} (score: ${best.score.toFixed(1)}${belowFloor ? ' ⚠️ BELOW QUALITY FLOOR' : ''}). ` +
     `${passingDimensions.length}/${DIMENSION_KEYS.length} dimensions acceptable. ` +
     `Failure type: ${best.verifierResult.failure_type || 'unknown'}.`;
 
@@ -141,11 +153,12 @@ export function selectBestFitSalvage(
     bestResult: best.verifierResult,
     selectedAttempt: best.attemptNumber,
     reason,
+    needsReplacement: belowFloor, // M7: quality floor flag
     flag: {
       shotIndex,
       issue: `Shot ${shotIndex + 1} failed verification ${attempts.length}x. ` +
-        `Best attempt accepted with ${passingDimensions.length}/${DIMENSION_KEYS.length} passing dimensions. ` +
-        `Review recommended.`,
+        `Best attempt accepted with ${passingDimensions.length}/${DIMENSION_KEYS.length} passing dimensions.` +
+        (belowFloor ? ` ⚠️ BELOW QUALITY FLOOR — needs replacement.` : ` Review recommended.`),
       suggestions: allSuggestions,
       allAttemptUrls: attempts.map((a) => a.mediaUrl),
     },

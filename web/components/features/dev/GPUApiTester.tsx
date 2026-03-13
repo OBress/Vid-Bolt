@@ -33,6 +33,7 @@ import {
   Activity,
   Settings2,
   Sparkles,
+  Wand2,
   RefreshCw,
   Upload,
   Plus,
@@ -286,6 +287,12 @@ export function GPUApiTester({
   const [sfxStatus, setSfxStatus] = useState<TestStatus>("idle");
   const [sfxResult, setSfxResult] = useState<TestResult | null>(null);
   const [sfxDebugExpanded, setSfxDebugExpanded] = useState(false);
+
+  // Prompt Enhancement State
+  const [imageEnhancing, setImageEnhancing] = useState(false);
+  const [editEnhancing, setEditEnhancing] = useState(false);
+  const [videoEnhancing, setVideoEnhancing] = useState(false);
+
   // QUEUE & BATCH STATE
   // =========================================================================
   const [trackedJobs, setTrackedJobs] = useState<Map<string, TrackedJob>>(
@@ -1324,6 +1331,50 @@ export function GPUApiTester({
       );
     } finally {
       setClearingStorage(false);
+    }
+  };
+
+  // =========================================================================
+  // PROMPT ENHANCEMENT HANDLER
+  // =========================================================================
+
+  const handleEnhancePrompt = async (
+    type: 'image' | 'image-edit' | 'video',
+    prompt: string,
+    setPrompt: (s: string) => void,
+    setEnhancing: (b: boolean) => void,
+  ) => {
+    if (!prompt.trim()) return;
+    setEnhancing(true);
+    try {
+      const response = await fetch('/api/gpu-api/enhance-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          generationType: type,
+          ...(type === 'video' && {
+            durationSeconds: videoDuration,
+            aspectRatio: videoAspectRatio,
+            hasStartFrame: !!videoStartFrameUrl,
+            hasEndFrame: !!videoEndFrameUrl,
+          }),
+          ...(type === 'image' && {
+            aspectRatio: imageAspectRatio,
+          }),
+          ...(type === 'image-edit' && {
+            aspectRatio: editAspectRatio,
+          }),
+        }),
+      });
+      const data = await response.json();
+      if (data.enhancedPrompt) {
+        setPrompt(data.enhancedPrompt);
+      }
+    } catch (err) {
+      console.error('[GPUApiTester] Prompt enhancement failed:', err);
+    } finally {
+      setEnhancing(false);
     }
   };
 
@@ -2630,12 +2681,29 @@ export function GPUApiTester({
             {activeTab === "image" && (
               <div className="space-y-6">
                 <div>
-                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                    Prompt{" "}
-                    <span className="text-neutral-600">
-                      (required, max 2000 chars)
-                    </span>
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium text-neutral-400">
+                      Prompt{" "}
+                      <span className="text-neutral-600">
+                        (required, max 2000 chars)
+                      </span>
+                    </label>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-purple-400 hover:text-purple-300 hover:bg-purple-400/10"
+                      disabled={!imagePrompt.trim() || imageEnhancing || imageStatus === "loading"}
+                      onClick={() => handleEnhancePrompt('image', imagePrompt, setImagePrompt, setImageEnhancing)}
+                      title="Enhance prompt with AI"
+                    >
+                      {imageEnhancing ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />
+                      ) : (
+                        <Wand2 className="w-3.5 h-3.5 mr-1" />
+                      )}
+                      <span className="text-xs">{imageEnhancing ? 'Enhancing...' : 'Enhance'}</span>
+                    </Button>
+                  </div>
                   <Textarea
                     value={imagePrompt}
                     onChange={(e) => setImagePrompt(e.target.value)}
@@ -2870,12 +2938,29 @@ export function GPUApiTester({
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                    Edit Prompt{" "}
-                    <span className="text-neutral-600">
-                      (required, max 2000 chars)
-                    </span>
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium text-neutral-400">
+                      Edit Prompt{" "}
+                      <span className="text-neutral-600">
+                        (required, max 2000 chars)
+                      </span>
+                    </label>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-amber-400 hover:text-amber-300 hover:bg-amber-400/10"
+                      disabled={!editPrompt.trim() || editEnhancing || editStatus === "loading"}
+                      onClick={() => handleEnhancePrompt('image-edit', editPrompt, setEditPrompt, setEditEnhancing)}
+                      title="Enhance prompt with AI"
+                    >
+                      {editEnhancing ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />
+                      ) : (
+                        <Wand2 className="w-3.5 h-3.5 mr-1" />
+                      )}
+                      <span className="text-xs">{editEnhancing ? 'Enhancing...' : 'Enhance'}</span>
+                    </Button>
+                  </div>
                   <Textarea
                     value={editPrompt}
                     onChange={(e) => setEditPrompt(e.target.value)}
@@ -3069,12 +3154,29 @@ export function GPUApiTester({
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium text-neutral-400 mb-2 block">
-                    Motion Prompt{" "}
-                    <span className="text-neutral-600">
-                      (required, max 2000 chars)
-                    </span>
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium text-neutral-400">
+                      Motion Prompt{" "}
+                      <span className="text-neutral-600">
+                        (required, max 2000 chars)
+                      </span>
+                    </label>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-teal-400 hover:text-teal-300 hover:bg-teal-400/10"
+                      disabled={!videoPrompt.trim() || videoEnhancing || videoStatus === "loading"}
+                      onClick={() => handleEnhancePrompt('video', videoPrompt, setVideoPrompt, setVideoEnhancing)}
+                      title="Enhance prompt with AI (LTX 2.3 optimized)"
+                    >
+                      {videoEnhancing ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />
+                      ) : (
+                        <Wand2 className="w-3.5 h-3.5 mr-1" />
+                      )}
+                      <span className="text-xs">{videoEnhancing ? 'Enhancing...' : 'Enhance'}</span>
+                    </Button>
+                  </div>
                   <Textarea
                     value={videoPrompt}
                     onChange={(e) => setVideoPrompt(e.target.value)}

@@ -349,7 +349,7 @@ Severity guidelines: "major" = fundamental plan errors that would produce unwatc
         },
       ],
       temperature: 0.1,
-      max_tokens: 1024,
+      max_tokens: 2048,
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -685,9 +685,21 @@ async function executeProductionPhase(
     segment_index: number;
     media_type: string;
     content_type: string;
-    description?: string;
+    text: string;
+    summary: string;
+    visual_description?: string;
+    visual_elements?: string[];
+    start_seconds: number;
+    end_seconds: number;
     duration_seconds: number;
     entity_refs?: string[];
+  }>;
+
+  // Global word timestamps for millisecond-precision MG animation timing
+  const allWordTimestamps = (metadata.word_timestamps || []) as Array<{
+    word: string;
+    start_seconds: number;
+    end_seconds: number;
   }>;
 
   // Build entity references once for all verification calls
@@ -702,6 +714,7 @@ async function executeProductionPhase(
   let videosFailed = 0;
   let mgCompleted = 0;
   let mgFailed = 0;
+  const mgSwitchedToVideo = new Set<number>(); // MG shots that failed → will be generated as AI video
 
   // Separate shot types
   // Only stock shots with confirmed scraped URLs stay as images; AI "image" shots → video pipeline
@@ -731,28 +744,135 @@ async function executeProductionPhase(
     const apiKey = await getOpenRouterApiKey(jobData.userId);
     const mgResults = new Map<number, string>();
 
+    // Build style context from creative manifest for MG visual consistency
+    // NOTE: LoRA is NOT included here — LoRA is for GPU image diffusion, not Remotion code gen
+    const mgConfig = jobData.creativeManifest.motion_graphics;
+    const styleContext = [
+      jobData.creativeManifest.style.visual_style
+        ? `Visual Style: ${jobData.creativeManifest.style.visual_style}` : '',
+      jobData.creativeManifest.style.lighting_mood
+        ? `Mood/Lighting: ${jobData.creativeManifest.style.lighting_mood}` : '',
+      mgConfig?.theme ? `MG Theme: ${mgConfig.theme}` : '',
+      mgConfig?.color_palette?.length ? `Color Palette: ${mgConfig.color_palette.join(', ')}` : '',
+      mgConfig?.animation_style ? `Animation Style: ${mgConfig.animation_style}` : '',
+      mgConfig?.font_family ? `Font: ${mgConfig.font_family}` : '',
+      jobData.creativeManifest.master_creative_prompt
+        ? `Creative Direction: ${jobData.creativeManifest.master_creative_prompt}` : '',
+    ].filter(Boolean).join('\n');
+
     for (const shot of mgShots) {
+      // Slice word timestamps for this shot's time window (millisecond precision)
+      const shotWordTimestamps = allWordTimestamps.filter(
+        w => w.start_seconds >= shot.start_seconds && w.start_seconds < shot.end_seconds
+      );
+
+      // Format word timestamps as timing context for MG animations
+      const timingContext = shotWordTimestamps.length > 0
+        ? `\n\nWORD-LEVEL TIMING (use for precise animation sync):\n` +
+          shotWordTimestamps.map(w =>
+            `"${w.word}" @ ${w.start_seconds.toFixed(3)}s–${w.end_seconds.toFixed(3)}s`
+          ).join('\n')
+        : '';
+
+      // Build a rich prompt from actual shot data (summary, narration, visual description)
+      const mgPrompt = [
+        shot.visual_description || shot.summary || '',
+        shot.text ? `\nNarration during this shot: "${shot.text}"` : '',
+        timingContext,
+        styleContext ? `\n\nSTYLE REQUIREMENTS:\n${styleContext}` : '',
+      ].filter(Boolean).join('');
+
+      const finalPrompt = mgPrompt || `Motion graphic for shot ${shot.segment_index}`;
+      const placeholders = buildPlaceholderAssets(shot.segment_index, 2);
+
+      // Attempt 1: Full generation with rich prompt
+      let success = false;
+      let lastError = '';
       try {
-        const placeholders = buildPlaceholderAssets(shot.segment_index, 2);
         const result = await generateMotionGraphic({
-          prompt: shot.description || `Motion graphic for shot ${shot.segment_index}`,
+          prompt: finalPrompt,
           duration: shot.duration_seconds,
           shotIndex: shot.segment_index,
           videoId,
           apiKey,
           model: 'google/gemini-3-flash-preview',
           imageAssets: placeholders,
-          narrationText: shot.description,
+          narrationText: shot.text || shot.summary,
+          routingTags: (shot.visual_elements || []) as import('@/types/video').RoutingTag[],
         });
 
         if (result.success && result.remotionCode) {
           mgResults.set(shot.segment_index, result.remotionCode);
           mgCompleted++;
+          success = true;
         } else {
-          mgFailed++;
+          lastError = result.error || 'Unknown failure';
         }
       } catch (err) {
-        console.error(`${LOG_PREFIX} MG Pass 1 failed for shot ${shot.segment_index}:`, err);
+        lastError = err instanceof Error ? err.message : 'Unknown error';
+        console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index} attempt 1 failed:`, err);
+      }
+
+      // Attempt 2: QC-feedback retry (pass attempt 1's error for targeted fix)
+      if (!success) {
+        console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index}: retrying with QC feedback`);
+        try {
+          const retryResult = await generateMotionGraphic({
+            prompt: finalPrompt,
+            duration: shot.duration_seconds,
+            shotIndex: shot.segment_index,
+            videoId,
+            apiKey,
+            model: 'google/gemini-3-flash-preview',
+            imageAssets: placeholders,
+            narrationText: shot.text || shot.summary,
+            routingTags: (shot.visual_elements || []) as import('@/types/video').RoutingTag[],
+            previousQCFeedback: lastError,
+          });
+
+          if (retryResult.success && retryResult.remotionCode) {
+            mgResults.set(shot.segment_index, retryResult.remotionCode);
+            mgCompleted++;
+            success = true;
+          } else {
+            lastError = retryResult.error || 'QC retry failed';
+          }
+        } catch (retryErr) {
+          lastError = retryErr instanceof Error ? retryErr.message : 'Unknown error';
+          console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index} QC-feedback retry failed:`, retryErr);
+        }
+      }
+
+      // Attempt 3: Simplified prompt (clean animated text, less likely to produce invalid code)
+      if (!success) {
+        console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index}: retrying with simplified prompt`);
+        try {
+          const retryResult = await generateMotionGraphic({
+            prompt: finalPrompt,
+            duration: shot.duration_seconds,
+            shotIndex: shot.segment_index,
+            videoId,
+            apiKey,
+            model: 'google/gemini-3-flash-preview',
+            imageAssets: placeholders,
+            simplifiedRetry: true,
+          });
+
+          if (retryResult.success && retryResult.remotionCode) {
+            mgResults.set(shot.segment_index, retryResult.remotionCode);
+            mgCompleted++;
+            success = true;
+          }
+        } catch (retryErr) {
+          console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index} simplified retry failed:`, retryErr);
+        }
+      }
+
+      // Attempt 4 REMOVED: Static fallback (getStaticRemotionFallback) has been
+      // removed — a bad MG is worse than no MG. Instead, switch to AI video.
+      if (!success) {
+        mgSwitchedToVideo.add(shot.segment_index);
+        console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index}: all 3 attempts failed — switching to AI video`);
         mgFailed++;
       }
     }
@@ -790,9 +910,10 @@ async function executeProductionPhase(
             shotIndex: shot.segment_index,
             aspectRatio: jobData.creativeManifest.style.aspect_ratio,
             loraName: jobData.creativeManifest.lora?.name,
+            loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
           },
           mediaType: 'image',
-          shotDescription: shot.description || `Shot ${shot.segment_index}`,
+          shotDescription: shot.summary || `Shot ${shot.segment_index}`,
           timeout: IMAGE_GEN_TIMEOUT_MS,
         },
         { userId: jobData.userId, videoId, taskId, entityReferences: entityRefs, styleGuide, entityIds: shot.entity_refs },
@@ -847,6 +968,7 @@ async function executeProductionPhase(
         videoId,
         aspectRatio: jobData.creativeManifest.style.aspect_ratio,
         loraName: jobData.creativeManifest.lora?.name,
+        loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
       });
 
       console.log(`${LOG_PREFIX} Dispatched single video-gen batch job ${genJob.id}`);
@@ -865,6 +987,7 @@ async function executeProductionPhase(
 
       // 3. Verify each shot individually
       const { verifierQueue } = await import('@/lib/queues/queues');
+      let previousVideoShotUrl: string | undefined; // M3: Track for temporal continuity
 
       for (const shot of videoShots) {
         const shotKey = `shot-${shot.segment_index}`;
@@ -884,10 +1007,11 @@ async function executeProductionPhase(
             videoId,
             mediaType: 'video',
             mediaUrl,
-            shotDescription: shot.description || `Shot ${shot.segment_index}`,
+            shotDescription: shot.summary || `Shot ${shot.segment_index}`,
             shotIndex: shot.segment_index,
             entityReferences: entityRefs,
             styleGuide,
+            previousShotUrl: previousVideoShotUrl, // M3: temporal continuity
           });
 
           const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, 60_000);
@@ -917,6 +1041,7 @@ async function executeProductionPhase(
                   previousFeedback: verdict.suggested_corrections?.join('. '),
                   aspectRatio: jobData.creativeManifest.style.aspect_ratio,
                   loraName: jobData.creativeManifest.lora?.name,
+                  loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
                 });
 
                 const totalVideoDurationForRetry = shot.duration_seconds || 5;
@@ -953,6 +1078,7 @@ async function executeProductionPhase(
 
         // Count as completed and map for MG Pass 2 asset swap
         videosCompleted++;
+        previousVideoShotUrl = mediaUrl; // M3: track for next shot's continuity check
         generatedAssets.set(
           `placeholder://shot-${shot.segment_index}/asset-0`,
           mediaUrl
@@ -989,6 +1115,56 @@ async function executeProductionPhase(
     });
 
     console.log(`${LOG_PREFIX} MG Pass 1: persisted ${mgPass1Results.size} Remotion compositions`);
+  }
+
+  // -----------------------------------------------------------------------
+  // M1: Generate AI video for MG shots that failed all attempts
+  // -----------------------------------------------------------------------
+  if (mgSwitchedToVideo.size > 0) {
+    console.log(`${LOG_PREFIX} ${mgSwitchedToVideo.size} MG shots switched to AI video — queueing video generation`);
+    
+    const switchedShots = shots.filter(s => mgSwitchedToVideo.has(s.segment_index));
+    
+    for (const shot of switchedShots) {
+      try {
+        const mgVideoQueue = new Queue('video-gen', { connection: getRedisConnection() });
+        const mgVideoQueueEvents = new QueueEvents('video-gen', { connection: getRedisConnection() });
+        
+        const genJob = await mgVideoQueue.add(`mg-to-video-${shot.segment_index}`, {
+          taskId,
+          userId: jobData.userId,
+          videoId,
+          singleShotIndex: shot.segment_index,
+          aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+          loraName: jobData.creativeManifest.lora?.name,
+          loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
+        });
+
+        const timeout = Math.max(120_000, (shot.duration_seconds || 5) * 20 * 1_000);
+        const result = await genJob.waitUntilFinished(mgVideoQueueEvents, timeout);
+        const videoUrl = result?.mediaUrl || result?.url;
+        
+        if (videoUrl) {
+          // Store in generated_videos metadata
+          const shotKey = `shot-${shot.segment_index}`;
+          await supabase.rpc('merge_video_metadata', {
+            p_video_id: videoId,
+            p_updates: { generated_videos: { [shotKey]: videoUrl } },
+          });
+          generatedAssets.set(`placeholder://shot-${shot.segment_index}/asset-0`, videoUrl);
+          videosCompleted++;
+          console.log(`${LOG_PREFIX} MG→Video shot ${shot.segment_index}: generated successfully`);
+        } else {
+          videosFailed++;
+          console.warn(`${LOG_PREFIX} MG→Video shot ${shot.segment_index}: generation returned no URL`);
+        }
+      } catch (err) {
+        videosFailed++;
+        console.error(`${LOG_PREFIX} MG→Video shot ${shot.segment_index}: generation failed:`, err);
+      }
+    }
+    
+    (state as any).mg_switched_to_video = mgSwitchedToVideo.size;
   }
 
   // -----------------------------------------------------------------------
@@ -1344,8 +1520,9 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     // PHASE II-B: Shot Plan Self-Reflection (for long videos only)
     // =========================================================================
     // Lightweight LLM check catches bad plans before expensive GPU generation.
-    // Only triggers for videos with 15+ shots (short videos rarely have plan errors).
-    if (shotResult.shotCount >= 15) {
+    // P2 Fix: Lowered from 15 to 5 — short videos have proportionally higher
+    // impact per shot, so plan errors are MORE damaging, not less (~$0.001/call).
+    if (shotResult.shotCount >= 5) {
       console.log(`${LOG_PREFIX} Phase II-B: Self-reflection on ${shotResult.shotCount}-shot plan...`);
 
       await appendActivityEvent(taskId, {
@@ -1545,17 +1722,20 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
         const projMeta = (projData?.metadata || {}) as Record<string, unknown>;
         const shotPlanData = (projMeta.shot_plan || {}) as Record<string, unknown>;
         const allShots = (shotPlanData.shots || []) as Array<Record<string, unknown>>;
-        const generatedMedia = (projMeta.generated_media || {}) as Record<string, { url: string; type: string }>;
+        // M6 Fix: Read from generated_videos['shot-{index}'] — the actual key format
+        // written by the video-gen worker. Previously read generated_media[index].url
+        // which was the old av-script format (always empty → zero clips trimmed).
+        const generatedVideoUrls = (projMeta.generated_videos || {}) as Record<string, string>;
 
         // Collect video shots with their generated URLs
         const videoShots = allShots
           .map((shot, i) => ({
             shotIndex: i,
-            mediaUrl: generatedMedia[String(i)]?.url || '',
+            mediaUrl: generatedVideoUrls[`shot-${i}`] || '',
             description: String(shot.description || shot.summary || ''),
             durationSeconds: Number(shot.duration_seconds) || 5,
           }))
-          .filter(s => s.mediaUrl && generatedMedia[String(s.shotIndex)]?.type === 'video');
+          .filter(s => s.mediaUrl); // Already read from generated_videos, so all have video type
 
         if (videoShots.length > 0) {
           await trimAllClips(videoId, videoShots, userId, {
@@ -1604,15 +1784,18 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       let edlClipCount = 0;
       let edlTotalDuration = 0;
       let edlClipsOver10s = 0;
-      if (agentEdl?.tracks) {
-        for (const track of agentEdl.tracks) {
-          if (track.clips) {
-            for (const clip of track.clips) {
-              edlClipCount++;
-              const dur = clip.duration || 0;
-              edlTotalDuration += dur;
-              if (dur > 10) edlClipsOver10s++;
-            }
+      // agentEdl stores clips in a flat array (agentEdl.clips[]),
+      // NOT nested under tracks. Use max end-time of main-video clips
+      // for duration to avoid double-counting overlay tracks.
+      if (agentEdl?.clips && Array.isArray(agentEdl.clips)) {
+        for (const clip of agentEdl.clips) {
+          edlClipCount++;
+          const dur = clip.duration || 0;
+          if (dur > 10) edlClipsOver10s++;
+          // Track timeline end only for main-video clips
+          if (clip.trackId === 'main-video') {
+            const clipEnd = (clip.startTime || 0) + dur;
+            if (clipEnd > edlTotalDuration) edlTotalDuration = clipEnd;
           }
         }
       }

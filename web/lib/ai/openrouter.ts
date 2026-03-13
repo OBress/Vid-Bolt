@@ -61,6 +61,8 @@ export interface OpenRouterConfig {
 export interface OpenRouterResponse {
   content: string;
   model: string;
+  /** The finish reason from the API: 'stop' (normal), 'length' (truncated), etc. */
+  finishReason: string;
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -273,9 +275,22 @@ export async function callOpenRouter(
         });
       }
 
+      // Detect and warn on truncation
+      const finishReason = choice.finish_reason || 'stop';
+      if (finishReason === 'length') {
+        console.warn(
+          `[OpenRouter] ⚠️ Response TRUNCATED (finish_reason=length). ` +
+          `Model: ${data.model || mergedConfig.model}, ` +
+          `completion_tokens: ${data.usage?.completion_tokens || '?'}, ` +
+          `max_tokens: ${mergedConfig.maxTokens}. ` +
+          `Consider increasing maxTokens.`
+        );
+      }
+
       return {
         content: choice.message.content,
         model: data.model || mergedConfig.model!,
+        finishReason,
         usage: {
           promptTokens: data.usage?.prompt_tokens || 0,
           completionTokens: data.usage?.completion_tokens || 0,
@@ -343,6 +358,15 @@ export async function generateJSON<T = unknown>(
       ],
       { ...config, temperature: config.temperature ?? 0.3 }
     );
+
+    // Structured outputs with truncation are still broken JSON — throw early
+    if (response.finishReason === 'length') {
+      throw new Error(
+        `Structured output truncated (finish_reason=length). ` +
+        `completion_tokens=${response.usage.completionTokens}, ` +
+        `model=${response.model}. Increase maxTokens.`
+      );
+    }
 
     // Structured outputs guarantee valid JSON — direct parse
     try {

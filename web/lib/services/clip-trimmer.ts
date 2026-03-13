@@ -3,7 +3,7 @@
  * ============================================================================
  * Post-generation step that reviews each AI-generated video clip to find
  * optimal in/out points, removing dead frames and startup artifacts from
- * LTX-2 output.
+ * LTX-2.3 output.
  *
  * Flow:
  *   1. Sample evenly-spaced frames from each generated clip

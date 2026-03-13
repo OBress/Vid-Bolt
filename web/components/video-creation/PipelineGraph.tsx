@@ -80,20 +80,22 @@ function generateEdgePath(
   const entryX = t.x - NODE_HALF_W;
   const entryY = t.y;
 
-  // ── Designing → Creating (loopback wire) ──
+  // ── Designing → Creating (loopback wire: right → down → far-left → enter from left) ──
   if (fromId === "designing" && toId === "creating") {
-    const r = 795;                 // right turn x
-    const cy = f.y + 44;          // corridor y (below row 1 nodes)
-    const l = t.x - NODE_HALF_W;  // left entry x
-    return `M ${exitX} ${exitY} L ${r} ${exitY} L ${r} ${cy} L ${l} ${cy} L ${l} ${entryY}`;
+    const r = 795;                 // right turn x (past Designing)
+    const cy = f.y + 44;          // corridor y (below row 1)
+    const l = 15;
+    const entryLeft = t.x - NODE_HALF_W; // left edge of Creating
+    return `M ${exitX} ${exitY} L ${r} ${exitY} L ${r} ${cy} L ${l} ${cy} L ${l} ${entryY} L ${entryLeft} ${entryY}`;
   }
 
-  // ── Designing → Composing (same loopback, extends further down) ──
+  // ── Designing → Composing (same loopback, enters Composing from left) ──
   if (fromId === "designing" && toId === "composing") {
     const r = 795;
     const cy = f.y + 44;
-    const l = t.x - NODE_HALF_W;
-    return `M ${exitX} ${exitY} L ${r} ${exitY} L ${r} ${cy} L ${l} ${cy} L ${l} ${entryY}`;
+    const l = 15;
+    const entryLeft = t.x - NODE_HALF_W;
+    return `M ${exitX} ${exitY} L ${r} ${exitY} L ${r} ${cy} L ${l} ${cy} L ${l} ${entryY} L ${entryLeft} ${entryY}`;
   }
 
   // ── Same row (horizontal): straight line right-exit → left-entry ──
@@ -306,21 +308,21 @@ export function PipelineGraph({
     [positions]
   );
 
+  // foreignObject dimensions in viewBox units — large enough for any node chip
+  const foWidth = 200;
+  const foHeight = 60;
+
   return (
-    <div className="w-full bg-neutral-900/60 border border-neutral-800 rounded-xl overflow-hidden">
+    <div className="w-full bg-neutral-900/60 border border-neutral-800 rounded-xl">
       <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider px-5 pt-4 pb-2">
         Pipeline
       </h3>
 
-      <div
-        className="relative w-full"
-        style={{ aspectRatio: `${svgWidth} / ${svgHeight}` }}
-      >
-        {/* SVG edge layer — BEHIND nodes (z-index: 1) */}
+      <div className="w-full px-2 pb-2">
         <svg
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-          className="absolute inset-0 w-full h-full"
-          style={{ zIndex: 1 }}
+          className="w-full h-auto block"
+          style={{ overflow: "visible" }}
           preserveAspectRatio="xMidYMid meet"
         >
           <defs>
@@ -332,6 +334,7 @@ export function PipelineGraph({
             `}</style>
           </defs>
 
+          {/* Edge paths */}
           {edgePaths.map((edge, i) => {
             if (!edge.pathData) return null;
             const fromStatus = nodeStatuses[edge.from] || "pending";
@@ -347,36 +350,46 @@ export function PipelineGraph({
               />
             );
           })}
+
+          {/* Node chips via foreignObject — same coordinate system as edges */}
+          {GRAPH_NODES.map((node) => {
+            const pos = positions[node.id];
+            if (!pos) return null;
+
+            const status = nodeStatuses[node.id] || "pending";
+            const subLabel =
+              status === "running"
+                ? getNodeSubLabel(node.id, activityEvents, currentStep)
+                : undefined;
+
+            return (
+              <foreignObject
+                key={node.id}
+                x={pos.x - foWidth / 2}
+                y={pos.y - foHeight / 2}
+                width={foWidth}
+                height={foHeight}
+                style={{ overflow: "visible" }}
+              >
+                <div
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <PipelineGraphNode
+                    node={node}
+                    status={status}
+                    subLabel={subLabel}
+                  />
+                </div>
+              </foreignObject>
+            );
+          })}
         </svg>
-
-        {/* HTML node layer — ON TOP of edges (z-index: 2) */}
-        <div className="absolute inset-0" style={{ zIndex: 2 }}>
-          <div className="relative w-full h-full">
-            {GRAPH_NODES.map((node) => {
-              const pos = positions[node.id];
-              if (!pos) return null;
-
-              const status = nodeStatuses[node.id] || "pending";
-              const subLabel =
-                status === "running"
-                  ? getNodeSubLabel(node.id, activityEvents, currentStep)
-                  : undefined;
-
-              const xPercent = (pos.x / svgWidth) * 100;
-              const yPercent = (pos.y / svgHeight) * 100;
-
-              return (
-                <PipelineGraphNode
-                  key={node.id}
-                  node={node}
-                  status={status}
-                  subLabel={subLabel}
-                  position={{ x: xPercent, y: yPercent }}
-                />
-              );
-            })}
-          </div>
-        </div>
       </div>
 
       {isRunning && (

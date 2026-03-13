@@ -37,8 +37,8 @@ export function getImageDimensions(aspectRatio: AspectRatio): { width: number; h
 }
 
 /**
- * Get video-compatible dimensions for a given aspect ratio (keyframe images for LTX-2).
- * LTX-2 requires dimensions divisible by 32; standard 1080p height (1080) is NOT divisible
+ * Get video-compatible dimensions for a given aspect ratio (keyframe images for LTX-2.3).
+ * LTX-2.3 requires dimensions divisible by 32; standard 1080p height (1080) is NOT divisible
  * by 32, so we round up to 1088.
  */
 export function getVideoDimensions(aspectRatio: AspectRatio): { width: number; height: number } {
@@ -1301,7 +1301,7 @@ export async function callGpuGetJobStatus(jobId: string): Promise<{
 }
 
 // ============================================================================
-// LTX-2 VIDEO GENERATION
+// LTX-2.3 VIDEO GENERATION
 // ============================================================================
 
 /** Request body for POST /api/v1/ltx2/generate */

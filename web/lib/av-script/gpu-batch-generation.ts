@@ -223,6 +223,8 @@ export async function processGpuBatchGeneration(
   onItemComplete?: (event: ItemCompleteEvent) => void,
   /** Optional LoRA name to apply to all image generations */
   loraName?: string,
+  /** Optional LoRA trigger words to prepend to all image prompts */
+  loraTriggerWords?: string,
 ): Promise<BatchGpuGenerationResult> {
   const logPrefix = '[GPU-Batch]';
   const results: GpuGenerationResult[] = [];
@@ -279,12 +281,12 @@ export async function processGpuBatchGeneration(
   const imageModeReady = await ensureMode('image_generation');
   if (!imageModeReady) {
     console.error(`${logPrefix} Failed to switch to image_generation mode`);
-    // Fallback everything to placeholders
+    // Fallback everything to failures — never mask with placeholder URLs
     for (const shot of shots) {
       const isVideo = shot.media_type === 'video';
       results.push({
         shot_index: shot.segment_index,
-        media_url: getPlaceholderUrl(isVideo ? 'video' : 'image', shot.segment_index),
+        media_url: '',
         generation_status: 'failed',
         error_message: 'Failed to switch GPU to image_generation mode',
       });
@@ -314,10 +316,10 @@ export async function processGpuBatchGeneration(
     : undefined;
 
   const standaloneResults = standaloneImageShots.length > 0 
-    ? await processImageBatch(userId, videoId, standaloneImageShots, aspectRatio, 'standalone', imageItemCallback, loraName)
+    ? await processImageBatch(userId, videoId, standaloneImageShots, aspectRatio, 'standalone', imageItemCallback, loraName, loraTriggerWords)
     : [];
   const keyframeResults = videoShots.length > 0
-    ? await processImageBatch(userId, videoId, videoShots, aspectRatio, 'keyframe', imageItemCallback, loraName)
+    ? await processImageBatch(userId, videoId, videoShots, aspectRatio, 'keyframe', imageItemCallback, loraName, loraTriggerWords)
     : [];
   
   // Assemble multi-image shots: group results by shot_index and build media_items
@@ -367,7 +369,7 @@ export async function processGpuBatchGeneration(
       for (const shot of videoShots) {
         results.push({
           shot_index: shot.segment_index,
-          media_url: getPlaceholderUrl('video', shot.segment_index),
+          media_url: '',
           generation_status: 'failed',
           error_message: 'Failed to switch GPU to video_generation mode',
         });
@@ -402,6 +404,8 @@ async function processImageBatch(
   onItemComplete?: (event: ItemCompleteEvent) => void,
   /** Optional LoRA name to apply to all images in this batch */
   loraName?: string,
+  /** Optional LoRA trigger words to prepend to prompts */
+  loraTriggerWords?: string,
 ): Promise<GpuGenerationResult[]> {
   const logPrefix = `[GPU-Batch/Images/${purpose}]`;
   const batchId = `img-${purpose}-${videoId}-${uuidv4().slice(0, 8)}`;
@@ -458,9 +462,14 @@ async function processImageBatch(
       try {
         const { putUrl } = await generatePresignedPutUrl(key, 'image/png');
         
+        // Inject LoRA trigger words into prompt text for style activation
+        const effectivePrompt = loraTriggerWords
+          ? `${loraTriggerWords} ${shot.visual_prompt}`
+          : shot.visual_prompt;
+
         items.push({
           item_id: itemId,
-          prompt: shot.visual_prompt,
+          prompt: effectivePrompt,
           aspect_ratio: aspectRatio,
           width,
           height,
@@ -480,7 +489,7 @@ async function processImageBatch(
   if (items.length === 0) {
     return shots.map(shot => ({
       shot_index: shot.segment_index,
-      media_url: getPlaceholderUrl('image', shot.segment_index),
+      media_url: '',
       generation_status: 'failed' as const,
       error_message: 'Failed to create storage URLs',
     }));
@@ -493,7 +502,7 @@ async function processImageBatch(
     console.error(`${logPrefix} Batch submission failed: ${submitResult.errorMessage}`);
     return shots.map(shot => ({
       shot_index: shot.segment_index,
-      media_url: getPlaceholderUrl('image', shot.segment_index),
+      media_url: '',
       generation_status: 'failed' as const,
       error_message: submitResult.errorMessage || 'Batch submission failed',
     }));
@@ -540,7 +549,7 @@ function assembleMultiImageResults(
       } else {
         assembled.push({
           shot_index: shot.segment_index,
-          media_url: getPlaceholderUrl('image', shot.segment_index),
+          media_url: '',
           generation_status: 'failed',
           error_message: 'No GPU result for shot',
         });
@@ -580,8 +589,7 @@ function assembleMultiImageResults(
     }
     
     // Primary URL is first item (AI-generated takes priority)
-    const primaryUrl = mediaItems.find(m => m.media_url)?.media_url 
-      || getPlaceholderUrl('image', shot.segment_index);
+    const primaryUrl = mediaItems.find(m => m.media_url)?.media_url || '';
     const allCompleted = mediaItems.every(m => m.generation_status === 'completed');
     const anyFailed = mediaItems.some(m => m.generation_status === 'failed');
     
@@ -614,32 +622,38 @@ function assembleMultiImageResults(
  * - Describe the action as a natural beginning-to-end sequence
  * - 4-8 descriptive sentences covering shot, scene, action, camera
  */
-function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number): string {
-  // If the prompt already looks like a flowing cinematic description (long enough,
-  // contains camera/motion language), use it as-is with a style suffix.
+function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number, shotIndex?: number): string {
+  // If already cinematic, add negative prompt suffix only
   const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot)\b/i.test(rawPrompt);
   const isLongEnough = rawPrompt.length > 200;
 
   if (hasMotionLanguage && isLongEnough) {
-    return rawPrompt;
+    return rawPrompt + ' No watermarks, no text overlays, no CGI artifacts.';
   }
 
-  // Otherwise, wrap the raw prompt in LTX-2 best-practice framing.
-  // Add camera motion and cinematic style cues that LTX-2 responds well to.
-  const motionCues = durationSeconds <= 3
-    ? 'The camera holds steady with subtle organic movement.'
+  // Varied cinematic shot types that rotate based on shot index to prevent monotony
+  const cameraStyles = [
+    'Slow dolly push-in revealing fine details, shallow depth of field.',
+    'Smooth tracking shot follows the action laterally, cinematic movement.',
+    'Subtle crane shot rising gently, establishing the scene from above.',
+    'Handheld close-up with natural micro-movements, intimate perspective.',
+    'Wide establishing shot with gentle parallax drift, atmospheric depth.',
+    'Medium shot with slow orbit around the subject, smooth rotation.',
+  ];
+
+  const motionCue = durationSeconds <= 3
+    ? 'Camera locks on subject with minimal organic movement, sharp focus.'
     : durationSeconds <= 5
-    ? 'The camera slowly pushes in, revealing fine details as the scene unfolds.'
-    : 'The camera tracks smoothly through the scene, following the action with cinematic movement.';
+    ? cameraStyles[(shotIndex || 0) % cameraStyles.length]
+    : `${cameraStyles[(shotIndex || 0) % cameraStyles.length]} The movement continues smoothly for the full ${durationSeconds}s duration.`;
 
-  const enriched = [
+  return [
     rawPrompt.trim().replace(/\.$/, ''),
-    motionCues,
-    'Soft, natural lighting with atmospheric depth.',
+    motionCue,
+    'Soft natural lighting with atmospheric depth and volumetric haze.',
     'Cinematic quality, photorealistic rendering, smooth continuous motion throughout the entire shot.',
+    'No watermarks, no text overlays, no stock photo feel, no CGI artifacts.',
   ].join('. ') + '.';
-
-  return enriched;
 }
 
 // ============================================================================
@@ -671,7 +685,7 @@ async function processVideoBatch(
       console.warn(`${logPrefix} Shot ${shot.segment_index} has no start frame, skipping video generation`);
       skippedShots.push({
         shot_index: shot.segment_index,
-        media_url: getPlaceholderUrl('video', shot.segment_index),
+        media_url: '',
         generation_status: 'failed',
         error_message: 'No start frame image for video generation',
       });
@@ -688,7 +702,7 @@ async function processVideoBatch(
       items.push({
         item_id: itemId,
         start_frame_url: shot.start_frame_url,
-        prompt: enrichLtx2Prompt(shot.visual_prompt, shot.duration_seconds || 5),
+        prompt: enrichLtx2Prompt(shot.visual_prompt, shot.duration_seconds || 5, shot.segment_index),
         duration_seconds: Math.min(shot.duration_seconds || 5, 10),
         aspect_ratio: aspectRatio,
         save_url: putUrl,
@@ -700,7 +714,7 @@ async function processVideoBatch(
       console.error(`${logPrefix} Failed to create presigned URL for shot ${shot.segment_index}:`, error);
       skippedShots.push({
         shot_index: shot.segment_index,
-        media_url: getPlaceholderUrl('video', shot.segment_index),
+        media_url: '',
         generation_status: 'failed',
         error_message: 'Failed to create storage URL',
       });
@@ -718,7 +732,7 @@ async function processVideoBatch(
     console.error(`${logPrefix} Batch submission failed: ${submitResult.errorMessage}`);
     const allFailed = shots.map(shot => ({
       shot_index: shot.segment_index,
-      media_url: getPlaceholderUrl('video', shot.segment_index),
+      media_url: '',
       generation_status: 'failed' as const,
       error_message: submitResult.errorMessage || 'Batch submission failed',
     }));
@@ -759,7 +773,7 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
     if (!shot) {
       return {
         shot_index: -1,
-        media_url: getPlaceholderUrl(mediaType, 0),
+        media_url: '',
         generation_status: 'failed' as const,
         error_message: 'Item mapping not found',
       };
@@ -789,7 +803,7 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
         console.warn(`${logPrefix} Shot ${shot.segment_index} failed: ${webhookResult.errorMessage}`);
         return {
           shot_index: shot.segment_index,
-          media_url: getPlaceholderUrl(mediaType, shot.segment_index),
+          media_url: '',
           generation_status: 'failed' as const,
           error_message: webhookResult.errorMessage || 'GPU generation failed',
         };
@@ -798,7 +812,7 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
       console.error(`${logPrefix} Webhook wait failed for shot ${shot.segment_index}:`, error);
       return {
         shot_index: shot.segment_index,
-        media_url: getPlaceholderUrl(mediaType, shot.segment_index),
+        media_url: '',
         generation_status: 'failed' as const,
         error_message: error instanceof Error ? error.message : 'Webhook timeout',
       };
