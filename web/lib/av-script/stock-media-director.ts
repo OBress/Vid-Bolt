@@ -35,6 +35,8 @@ export interface StockMediaDirectorConfig {
   videoTopic?: string;
   /** Main spine beats/sections for understanding story structure */
   spineBeats?: string[];
+  /** Visual style/aesthetic for tone-appropriate matching (Fix 8) */
+  visualStyle?: string;
 }
 
 export interface StockMediaRef {
@@ -1067,6 +1069,8 @@ export async function processWithStockMedia(
     videoTopic?: string;
     /** Main spine beats/sections for understanding story structure */
     spineBeats?: string[];
+    /** Visual style/aesthetic for tone-appropriate matching (Fix 8) */
+    visualStyle?: string;
   }
 ): Promise<ShotWithStockMedia[]> {
   const director = createStockMediaDirector({
@@ -1075,6 +1079,7 @@ export async function processWithStockMedia(
     stockMediaLevel,
     videoTopic: options?.videoTopic,
     spineBeats: options?.spineBeats,
+    visualStyle: options?.visualStyle,
   });
 
   return director.processShots(shots);

@@ -6,7 +6,8 @@
  * for their specific media type.
  */
 
-import { generateJSON } from '@/lib/ai/openrouter';
+import { generateJSON, type OpenRouterConfig } from '@/lib/ai/openrouter';
+import type { WordTimestamp } from '@/types/task';
 
 // ============================================================================
 // TYPES
@@ -24,6 +25,8 @@ export interface ShotData {
   character_refs?: string[];
   location_refs?: string[];
   object_refs?: string[];
+  /** Word-level timestamps for pacing, SFX timing, and visual sync */
+  word_timestamps?: WordTimestamp[];
 }
 
 export interface PreviousShotContext {
@@ -43,6 +46,10 @@ export interface CharacterRef {
   id: string;
   name: string;
   role: string;
+  /** Brief appearance description for visual consistency */
+  appearance?: string;
+  /** Default outfit description */
+  wardrobe?: string;
   referenceImageUrl?: string;
 }
 
@@ -50,6 +57,10 @@ export interface LocationRef {
   id: string;
   name: string;
   essence: string;
+  /** Location type (interior, exterior, etc.) */
+  type?: string;
+  /** Lighting/mood description */
+  lighting?: string;
   referenceImageUrl?: string;
 }
 
@@ -57,6 +68,8 @@ export interface ObjectRef {
   id: string;
   name: string;
   type: string;
+  /** Brief visual description */
+  description?: string;
   referenceImageUrl?: string;
 }
 
@@ -83,6 +96,9 @@ export interface AgentContext {
   // Narrative context
   previousShots: PreviousShotContext[];
   nextShots: UpcomingShotContext[];
+  
+  // Word-level timing for pacing and SFX
+  wordTimestamps?: WordTimestamp[];
   
   // Entity context
   characters: CharacterRef[];
@@ -229,6 +245,7 @@ export function buildAgentContext(
     totalShots: allShots.length,
     previousShots,
     nextShots,
+    wordTimestamps: shot.word_timestamps,
     characters,
     locations,
     objects,
@@ -664,6 +681,7 @@ function formatContextForAgent(context: AgentContext): string {
   // Video context
   parts.push(`## VIDEO CONTEXT
 Title: "${context.videoTitle}"
+Summary: ${context.videoSummary || 'N/A'}
 Style: ${context.visualStyle}
 Aspect Ratio: ${context.aspectRatio}`);
   
@@ -674,12 +692,27 @@ Content Type: ${context.currentShot.content_type}
 Script: "${context.currentShot.text}"
 Summary: "${context.currentShot.summary || 'N/A'}"`);
   
+  // Word-level timing — RELATIVE to shot start (0s = shot begins)
+  // Agents need timing within their shot, not absolute video position
+  if (context.wordTimestamps && context.wordTimestamps.length > 0) {
+    const shotStart = context.currentShot.start_seconds;
+    const timingPairs = context.wordTimestamps.map(w => 
+      `"${w.word}" @${(w.start_seconds - shotStart).toFixed(2)}s`
+    );
+    parts.push(`## WORD TIMING (relative to shot start, 0s = shot begins)
+${timingPairs.join(', ')}`);
+  }
+  
   // Previous shots
   if (context.previousShots.length > 0) {
     parts.push(`## PREVIOUS SHOTS (for continuity)
-${context.previousShots.map(s => 
-  `Shot ${s.segment_index + 1} [${s.media_type}]: "${s.summary}"`
-).join('\n')}`);
+${context.previousShots.map(s => {
+  let line = `Shot ${s.segment_index + 1} [${s.media_type}]: "${s.summary}"`;
+  if (s.visual_prompt) {
+    line += `\n  → Visual prompt used: "${s.visual_prompt.substring(0, 200)}..."`;
+  }
+  return line;
+}).join('\n')}`);
   }
   
   // Upcoming shots
@@ -690,17 +723,31 @@ ${context.nextShots.map(s =>
 ).join('\n')}`);
   }
   
-  // Entities
+  // Entities (Fix 7: include descriptions for visual consistency)
   if (context.characters.length > 0 || context.locations.length > 0 || context.objects.length > 0) {
     const entityLines: string[] = [];
     if (context.characters.length > 0) {
-      entityLines.push(`Characters: ${context.characters.map(c => `${c.name} (${c.role})`).join(', ')}`);
+      entityLines.push(`Characters:\n${context.characters.map(c => {
+        let desc = `  - ${c.name} (${c.role})`;
+        if (c.appearance) desc += `\n    Appearance: ${c.appearance}`;
+        if (c.wardrobe) desc += `\n    Wardrobe: ${c.wardrobe}`;
+        return desc;
+      }).join('\n')}`);
     }
     if (context.locations.length > 0) {
-      entityLines.push(`Locations: ${context.locations.map(l => `${l.name}`).join(', ')}`);
+      entityLines.push(`Locations:\n${context.locations.map(l => {
+        let desc = `  - ${l.name}: ${l.essence}`;
+        if (l.type) desc += ` (${l.type})`;
+        if (l.lighting) desc += `\n    Lighting: ${l.lighting}`;
+        return desc;
+      }).join('\n')}`);
     }
     if (context.objects.length > 0) {
-      entityLines.push(`Objects: ${context.objects.map(o => `${o.name}`).join(', ')}`);
+      entityLines.push(`Objects:\n${context.objects.map(o => {
+        let desc = `  - ${o.name} (${o.type})`;
+        if (o.description) desc += `: ${o.description}`;
+        return desc;
+      }).join('\n')}`);
     }
     parts.push(`## ENTITIES IN THIS SHOT
 ${entityLines.join('\n')}`);
@@ -769,7 +816,8 @@ async function invokeImageGenerationAgent(
   const result = await generateJSON<ImageGenerationOutput>(
     userId,
     IMAGE_GENERATION_SYSTEM_PROMPT,
-    `Generate an image prompt for this shot:\n\n${formattedContext}`
+    `Generate an image prompt for this shot:\n\n${formattedContext}`,
+    { maxTokens: 2048 }
   );
   
   return result;
@@ -785,7 +833,8 @@ async function invokeImageEditingAgent(
   const result = await generateJSON<ImageEditOutput>(
     userId,
     IMAGE_EDITING_SYSTEM_PROMPT,
-    `Edit this image: ${inputImageUrl}\n\nContext:\n${formattedContext}`
+    `Edit this image: ${inputImageUrl}\n\nContext:\n${formattedContext}`,
+    { maxTokens: 2048 }
   );
   
   return result;
@@ -801,7 +850,8 @@ async function invokeVideoCreationAgent(
   const result = await generateJSON<VideoCreationOutput>(
     userId,
     VIDEO_CREATION_SYSTEM_PROMPT,
-    `Create motion for this keyframe: ${inputImageUrl}\n\nContext:\n${formattedContext}`
+    `Create motion for this keyframe: ${inputImageUrl}\n\nContext:\n${formattedContext}`,
+    { maxTokens: 2048 }
   );
   
   return result;
@@ -816,7 +866,8 @@ async function invokeMotionGraphicPromptAgent(
   const result = await generateJSON<MotionGraphicPromptOutput>(
     userId,
     MOTION_GRAPHIC_PROMPT_SYSTEM_PROMPT,
-    `Design a motion graphic composition:\n\n${formattedContext}`
+    `Design a motion graphic composition:\n\n${formattedContext}`,
+    { maxTokens: 4096 }
   );
   
   return result;
@@ -833,7 +884,8 @@ async function invokeRemotionCodeAgent(
   const result = await generateJSON<RemotionCodeOutput>(
     userId,
     REMOTION_CODE_SYSTEM_PROMPT,
-    `Convert this composition spec to Remotion code:\n\n${JSON.stringify(compositionSpec, null, 2)}`
+    `Convert this composition spec to Remotion code:\n\n${JSON.stringify(compositionSpec, null, 2)}`,
+    { maxTokens: 16384 }
   );
   
   // Log the generated code for debugging

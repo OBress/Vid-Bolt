@@ -187,7 +187,13 @@ export async function processInChunks(
   segments: ShotEvent[],
   outlineAssets?: OutlineAssets,
   config: ChunkConfig = DEFAULT_CHUNK_CONFIG,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  /** Video-level context for informed creative decisions (Fix 6) */
+  projectContext?: {
+    videoTitle?: string;
+    videoSummary?: string;
+    visualStyle?: string;
+  }
 ): Promise<ChunkShotResult[]> {
   const totalSegments = segments.length;
   const totalChunks = Math.ceil(totalSegments / config.batchSize);
@@ -233,7 +239,8 @@ export async function processInChunks(
       userId,
       context,
       outlineAssets,
-      config.maxRetries
+      config.maxRetries,
+      projectContext
     );
     
     // Add shots to accumulator
@@ -317,13 +324,18 @@ async function processChunkWithRetries(
   userId: string,
   context: ChunkContext,
   outlineAssets: OutlineAssets | undefined,
-  maxRetries: number
+  maxRetries: number,
+  projectContext?: {
+    videoTitle?: string;
+    videoSummary?: string;
+    visualStyle?: string;
+  }
 ): Promise<ChunkProcessingResult> {
   let lastError: Error | null = null;
   
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const shots = await generateChunkShots(userId, context, outlineAssets);
+      const shots = await generateChunkShots(userId, context, outlineAssets, projectContext);
       return {
         shots,
         chunkIndex: context.chunkIndex,
@@ -368,7 +380,12 @@ async function processChunkWithRetries(
 async function generateChunkShots(
   userId: string,
   context: ChunkContext,
-  outlineAssets?: OutlineAssets
+  outlineAssets?: OutlineAssets,
+  projectContext?: {
+    videoTitle?: string;
+    videoSummary?: string;
+    visualStyle?: string;
+  }
 ): Promise<ChunkShotResult[]> {
   const { generateJSON } = await import('@/lib/ai/openrouter');
   
@@ -378,7 +395,7 @@ async function generateChunkShots(
   const objectNames = outlineAssets?.objects?.map(o => ({ id: o.id, name: o.name.toLowerCase() })) || [];
   
   // Build the context-aware prompt
-  const systemPrompt = buildSystemPrompt(context, outlineAssets);
+  const systemPrompt = buildSystemPrompt(context, outlineAssets, projectContext);
   const userPrompt = buildUserPrompt(context);
   
   // Call AI
@@ -393,7 +410,7 @@ async function generateChunkShots(
       visual_elements?: import('@/types/video').RoutingTag[];
       sound_effects?: import('@/types/video').SoundEffect[];
     }>;
-  }>(userId, systemPrompt, userPrompt);
+  }>(userId, systemPrompt, userPrompt, { maxTokens: 16384 });
   
   // Merge AI responses with segment data
   const shots: ChunkShotResult[] = context.currentSegments.map((segment, i) => {
@@ -440,9 +457,27 @@ async function generateChunkShots(
 /**
  * Build the system prompt with context sections.
  */
-function buildSystemPrompt(context: ChunkContext, outlineAssets?: OutlineAssets): string {
+function buildSystemPrompt(
+  context: ChunkContext,
+  outlineAssets?: OutlineAssets,
+  projectContext?: {
+    videoTitle?: string;
+    videoSummary?: string;
+    visualStyle?: string;
+  }
+): string {
   const parts: string[] = [];
   
+  // Video-level context (Fix 6: so the Visual Director knows the overall video)
+  if (projectContext?.videoTitle || projectContext?.videoSummary) {
+    parts.push(`## VIDEO CONTEXT
+Title: "${projectContext.videoTitle || 'Untitled'}"
+Summary: ${projectContext.videoSummary || 'N/A'}
+Visual Style: ${projectContext.visualStyle || 'cinematic, documentary'}
+
+Keep all visual decisions aligned with this overall topic and style.`);
+  }
+
   // Base instructions - Visual Philosophy (principle-based, not prescriptive)
   parts.push(`You are a premium documentary director creating Netflix-quality visuals.
 Ask yourself: "What makes this moment MOST powerful?"
@@ -570,7 +605,7 @@ Include sound effects that **enhance** the video without distracting from it.
 When adding SFX to a shot:
 - "type": 1-2 word label for display (e.g., "door slam", "crowd gasp")
 - "description": Single sentence describing the actual sound (for audio search/generation)
-- "trigger_at_seconds": Use word_timestamps to anchor precisely
+- "trigger_at_seconds": RELATIVE to shot start (0s = shot begins). Use word_timestamps "at" values directly.
 - "anchor_word": Which spoken word triggers this effect
 
 Good SFX: Enhances reveal moments, emphasizes impacts, builds tension
@@ -619,11 +654,11 @@ function buildUserPrompt(context: ChunkContext): string {
     text: s.text.substring(0, 200), // Truncate for token efficiency
     duration: s.duration_seconds,
     start_seconds: s.start_seconds,
-    // Include word timestamps for SFX anchoring
-    word_timestamps: s.word_timestamps?.slice(0, 15).map(w => ({
+    // Word timestamps as RELATIVE offsets within this segment (0s = segment start)
+    // Only word + relative start needed — keeps token usage lean
+    word_timestamps: s.word_timestamps?.map(w => ({
       word: w.word,
-      start: w.start_seconds,
-      end: w.end_seconds
+      at: +(w.start_seconds - s.start_seconds).toFixed(2),
     }))
   }));
 

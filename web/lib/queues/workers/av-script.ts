@@ -210,13 +210,26 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
         });
       } : undefined;
       
+      // Fetch video-level context for the Visual Director agent (Fix 6)
+      let videoTitle = '';
+      let videoSummary = '';
+      try {
+        const { data: videoInfo } = await supabase.from('video_projects').select('name, idea, metadata').eq('id', videoId).single();
+        videoTitle = videoInfo?.name || videoInfo?.idea || '';
+        const meta = videoInfo?.metadata as Record<string, unknown> | null;
+        videoSummary = (meta?.script_summary as string) || videoInfo?.idea || '';
+      } catch (_e) {
+        console.warn(`${logPrefix} Could not fetch video context for chunked processor`);
+      }
+
       // Process segments in chunks with context windows
       const chunkedShots = await processInChunks(
         userId,
         segments,
         outlineAssets,
         undefined, // Use default config
-        onProgress
+        onProgress,
+        { videoTitle, videoSummary, visualStyle: 'cinematic, documentary' }
       );
       
       // Convert to ShotPart1 format
@@ -544,11 +557,18 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
       
       const batchPromises = batchShots.map(async (shot, batchIdx) => {
         const globalIdx = batchStart + batchIdx;
+        // Fix 3: Pass accumulated prompts as generatedMedia so agents
+        // can see what visual prompts were used for previous shots
+        const generatedMediaSoFar = detailedPrompts.map(p => ({
+          shot_index: p.index,
+          visual_prompt: p.prompt,
+        }));
         const context = buildAgentContext(
           shot,
           shots,
           projectMetadata,
-          outlineAssets || {}
+          outlineAssets || {},
+          generatedMediaSoFar
         );
         
         try {

@@ -623,15 +623,28 @@ function assembleMultiImageResults(
  * - 4-8 descriptive sentences covering shot, scene, action, camera
  */
 function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number, shotIndex?: number): string {
-  // If already cinematic, add negative prompt suffix only
-  const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot)\b/i.test(rawPrompt);
-  const isLongEnough = rawPrompt.length > 200;
+  // Check if agent already specified detailed camera motion
+  const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot|orbit|sweep|glide)\b/i.test(rawPrompt);
 
-  if (hasMotionLanguage && isLongEnough) {
-    return rawPrompt + ' No watermarks, no text overlays, no CGI artifacts.';
+  // If the agent already provided camera motion, DON'T override it —
+  // only add quality constraints and duration-aware pacing guidance
+  if (hasMotionLanguage) {
+    // Duration-aware pacing hint (Fix 4: calibrate motion to clip length)
+    const pacingHint = durationSeconds <= 3
+      ? 'Execute camera movement quickly and decisively within the short duration.'
+      : durationSeconds <= 5
+      ? 'Smooth, measured camera movement filling the full duration.'
+      : `Extended, graceful camera movement maintaining visual interest across the full ${durationSeconds}s.`;
+    
+    return [
+      rawPrompt.trim().replace(/\.$/, ''),
+      pacingHint,
+      'Cinematic quality, photorealistic rendering.',
+      'No watermarks, no text overlays, no CGI artifacts.',
+    ].join('. ') + '.';
   }
 
-  // Varied cinematic shot types that rotate based on shot index to prevent monotony
+  // No camera motion specified by agent — add duration-calibrated motion
   const cameraStyles = [
     'Slow dolly push-in revealing fine details, shallow depth of field.',
     'Smooth tracking shot follows the action laterally, cinematic movement.',
@@ -641,6 +654,7 @@ function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number, shotIndex?
     'Medium shot with slow orbit around the subject, smooth rotation.',
   ];
 
+  // Fix 4: Duration-calibrated motion intensity
   const motionCue = durationSeconds <= 3
     ? 'Camera locks on subject with minimal organic movement, sharp focus.'
     : durationSeconds <= 5
