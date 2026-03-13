@@ -284,6 +284,9 @@ else
     cd "$REPO_DIR"
     report_status "checking_updates" "Checking for repository updates..."
 
+    # GCP startup runner doesn't set HOME; git --global needs it
+    export HOME=/root
+
     # Allow git operations on this directory (since script runs as root but dir owned by ubuntu)
     git config --global --add safe.directory "$REPO_DIR"
     
