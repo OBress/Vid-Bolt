@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { verifyInternalSecret } from "@/lib/utils/internal-auth";
 
 export async function POST(req: NextRequest) {
+  // 0. Verify internal caller (VM startup script includes X-Internal-Secret header)
+  const authError = verifyInternalSecret(req);
+  if (authError) return authError;
+
   // 1. Parse Request
   const body = await req.json();
   const { ip, user_id, status, message } = body;

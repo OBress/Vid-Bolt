@@ -7,6 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 
 /**
  * Verify that a request carries a valid internal API secret.
@@ -30,7 +31,11 @@ export function verifyInternalSecret(
     );
   }
 
-  if (secret !== expectedSecret) {
+  if (
+    !secret ||
+    secret.length !== expectedSecret.length ||
+    !crypto.timingSafeEqual(Buffer.from(secret), Buffer.from(expectedSecret))
+  ) {
     console.warn("[InternalAuth] Unauthorized request - invalid or missing secret");
     return NextResponse.json(
       { error: "Unauthorized" },

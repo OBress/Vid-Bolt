@@ -89,15 +89,31 @@ export async function POST(request: NextRequest) {
 // GET /api/tasks - List user's tasks
 export async function GET(request: NextRequest) {
   try {
+    // Authenticate caller
+    const cookieStore = await cookies();
+    const supabaseAuth = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+        },
+      }
+    );
+
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
+    const userId = user.id; // Always use authenticated user's ID (ignore query param)
     const status = searchParams.get("status");
     const limit = parseInt(searchParams.get("limit") || "10", 10);
     const includeSteps = searchParams.get("includeSteps") === "true";
-
-    if (!userId) {
-      return NextResponse.json({ error: "userId is required" }, { status: 400 });
-    }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

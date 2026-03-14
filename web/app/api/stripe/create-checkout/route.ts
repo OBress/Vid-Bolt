@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     const totalAmount = unitAmount * hours;
 
     // Determine success/cancel URLs
-    const origin = request.headers.get("origin") || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const origin = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const successUrl = `${origin}/command-center/settings/general?tab=account&checkout=success`;
     const cancelUrl = `${origin}/command-center/settings/general?tab=account&checkout=cancelled`;
 
