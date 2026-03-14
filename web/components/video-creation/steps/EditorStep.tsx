@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Loader2, CheckCircle2 } from "lucide-react";
 import { useGCPVM } from "@/providers/GCPVMProvider";
@@ -187,10 +187,10 @@ export function EditorStep({
   generatedMedia,
   edl,
   agentEdl,
-  onContinue,
-  onBack,
+  onContinue: _onContinue,
+  onBack: _onBack,
   isLocked,
-  lockedMessage,
+  lockedMessage: _lockedMessage,
   isResuming = false,
 }: EditorStepProps) {
   // When resuming, skip animation entirely (synchronous — no API call, no flash)

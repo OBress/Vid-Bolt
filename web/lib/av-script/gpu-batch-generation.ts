@@ -193,7 +193,7 @@ async function ensureMode(targetMode: 'image_generation' | 'image_editing' | 'vi
 /**
  * Generate placeholder URL for fallback
  */
-function getPlaceholderUrl(mediaType: string, index: number): string {
+function _getPlaceholderUrl(mediaType: string, index: number): string {
   const timestamp = Date.now();
   if (mediaType === 'video') {
     return `https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4?t=${timestamp}_${index}`;

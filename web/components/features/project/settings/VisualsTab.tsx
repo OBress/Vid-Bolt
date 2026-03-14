@@ -38,7 +38,6 @@ import {
 import {
   getModelsByCategory,
   getModelById,
-  type ModelDefinition,
 } from "@/lib/constants/model-registry";
 import type {
   CreativeDirectionDefaults,
@@ -187,7 +186,7 @@ function ModelSelectDropdown({
 export function VisualsTab({ projectId }: { projectId?: string }) {
   const { settings, loading, saveStatus, updateSettings } =
     useProjectSettings(projectId);
-  const { availability: apiKeyAvailability, loading: apiKeysLoading } = useApiKeys();
+  const { availability: apiKeyAvailability, loading: _apiKeysLoading } = useApiKeys();
   const hasReplicateKey = apiKeyAvailability.replicate_key;
 
   if (loading) {

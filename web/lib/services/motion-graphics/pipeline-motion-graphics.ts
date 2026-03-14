@@ -196,7 +196,7 @@ export function getStaticRemotionFallback(
   narrationText: string,
   duration: number,
   shotIndex: number,
-  isOverlay: boolean = false,
+  _isOverlay: boolean = false,
 ): PipelineGenerationResult {
   // Extract first ~60 chars of narration for visual display
   const displayText = narrationText

@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useCallback } from 'react';
-import { Upload, X, FileCheck, Loader2, AlertCircle, Pencil, Trash2, Tag } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import { Upload, FileCheck, Loader2, AlertCircle, Pencil, Trash2, Tag } from 'lucide-react';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';

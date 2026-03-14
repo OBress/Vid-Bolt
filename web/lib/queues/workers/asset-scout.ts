@@ -44,7 +44,7 @@ const LOG_PREFIX = '[AssetScout]';
 export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
   job: Job<AssetScoutJobData>
 ) => {
-  const { taskId, userId, videoId, aspectRatio } = job.data;
+  const { taskId, userId, videoId, aspectRatio: _aspectRatio } = job.data;
   const isClosedLoop = job.name.startsWith('closed-loop-');
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}${isClosedLoop ? ' (closed-loop)' : ''}`);
@@ -174,7 +174,7 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
 
       const entries: AssetEntry[] = [];
       let stockCount = 0;
-      let aiImageCount = 0;
+      const aiImageCount = 0;
       let aiVideoCount = 0;
       let mgCount = 0;
       let sfxCount = 0;

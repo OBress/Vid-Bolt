@@ -17,7 +17,6 @@
  */
 
 import { Job, Processor } from 'bullmq';
-import { getSupabaseServiceClient } from '@/lib/queues/shared';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
 // Static video detection removed — VLM verifier catches bad media directly
 
@@ -96,7 +95,7 @@ const META_REVIEW_CONFIDENCE_MAX = 0.7;
  * Number of keyframes to sample from a video for verification.
  * Always includes first + last frame.
  */
-const VIDEO_KEYFRAME_COUNT = 5;
+const _VIDEO_KEYFRAME_COUNT = 5;
 
 // ============================================================================
 // SYSTEM PROMPT
@@ -468,7 +467,7 @@ function parseVerifierResponse(rawResponse: string): VerifierResult {
       recommended_action: parsed.recommended_action || 'accept',
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
     };
-  } catch (parseError) {
+  } catch (_parseError) {
     console.error(`${LOG_PREFIX} Failed to parse verifier response:`, cleaned.substring(0, 200));
 
     // Fallback: if we can't parse, default to FAIL — malformed verification
@@ -499,7 +498,7 @@ function parseVerifierResponse(rawResponse: string): VerifierResult {
 export const verifierProcessor: Processor<VerifierJobData> = async (
   job: Job<VerifierJobData>
 ) => {
-  const { taskId, userId, videoId, mediaType, mediaUrl, shotIndex } = job.data;
+  const { taskId: _taskId, userId, videoId, mediaType, mediaUrl: _mediaUrl, shotIndex } = job.data;
 
   console.log(`${LOG_PREFIX} Verifying shot ${shotIndex} (${mediaType}) for video ${videoId}`);
 

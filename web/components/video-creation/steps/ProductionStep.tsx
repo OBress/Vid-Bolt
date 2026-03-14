@@ -61,7 +61,7 @@ export function ProductionStep({
   const completedRef = useRef(false);
 
   // GPU VM status
-  const { displayStatus: vmStatus, startVM, isLoading: isVmLoading } = useGCPVM();
+  const { displayStatus: vmStatus, startVM, isLoading: _isVmLoading } = useGCPVM();
 
   // Project settings — check if any local models need the GPU
   const { settings } = useProjectSettings(projectId);

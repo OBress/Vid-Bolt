@@ -891,7 +891,7 @@ async function executeProductionPhase(
       (10_000 + 15_000) * MAX_VERIFY_ATTEMPTS + 15_000  // gen + edit per attempt + buffer
     );
     // Video gen: 1:10 ratio (seconds of content → seconds of timeout) × retry attempts
-    const computeVideoTimeoutMs = (durationSeconds: number) =>
+    const _computeVideoTimeoutMs = (durationSeconds: number) =>
       Math.max(60_000, durationSeconds * 10 * 1_000 * MAX_VERIFY_ATTEMPTS);
 
     console.log(`${LOG_PREFIX} Timeouts: image=${IMAGE_GEN_TIMEOUT_MS}ms, video=computed per-shot (1:10 ratio × ${MAX_VERIFY_ATTEMPTS} attempts)`);
@@ -1315,7 +1315,7 @@ async function executeAssemblyPhase(
 export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
   job: Job<OrchestratorJobData>
 ) => {
-  const { taskId, userId, videoId, creativeManifest, userSystemPrompt, scriptContent, entities } = job.data;
+  const { taskId, userId, videoId, creativeManifest, userSystemPrompt, scriptContent: _scriptContent, entities } = job.data;
 
   console.log(`${LOG_PREFIX} Starting closed-loop pipeline for video ${videoId}`);
 

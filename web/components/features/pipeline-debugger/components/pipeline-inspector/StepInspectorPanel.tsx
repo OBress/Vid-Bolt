@@ -7,7 +7,6 @@
  * for a selected pipeline step. Core inspection interface.
  */
 
-import { useMemo } from "react";
 import type { StepData, StepMedia } from "../../types/pipeline-debugger";
 import { getStepConfig } from "../../utils/step-config";
 import { JsonTreeViewer } from "../shared/JsonTreeViewer";

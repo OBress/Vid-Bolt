@@ -46,7 +46,7 @@ function getDaysAgo(days: number): string {
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-interface SyncContext {
+interface _SyncContext {
   userId: string;
   channelDbId: string;
   channelYtId: string;
@@ -124,7 +124,7 @@ async function getConnectionToken(
 /**
  * Log a sync operation to analytics_sync_log.
  */
-async function logSync(
+async function _logSync(
   supabase: ReturnType<typeof getServiceSupabase>,
   userId: string,
   channelId: string | null,
@@ -167,7 +167,7 @@ async function logSync(
 /**
  * Update a sync log entry with completion status.
  */
-async function updateSyncLog(
+async function _updateSyncLog(
   supabase: ReturnType<typeof getServiceSupabase>,
   logId: string,
   status: 'completed' | 'failed',
@@ -289,7 +289,7 @@ export const channelStatsSyncProcessor: Processor = async (job: Job) => {
 async function syncDailySnapshots(): Promise<{ usersProcessed: number; snapshotsCreated: number }> {
   const supabase = getServiceSupabase();
   const users = await getUserChannels(supabase);
-  const today = formatDate(new Date());
+  const _today = formatDate(new Date());
   const yesterday = getDaysAgo(1);
   let snapshotsCreated = 0;
 
@@ -326,7 +326,7 @@ async function syncDailySnapshots(): Promise<{ usersProcessed: number; snapshots
           );
 
           // Get revenue if available
-          let revenueByDate: Record<string, number> = {};
+          const revenueByDate: Record<string, number> = {};
           try {
             const revenueReport = await analyticsApi.getRevenue(startDate, endDate);
             for (const row of revenueReport.rows) {

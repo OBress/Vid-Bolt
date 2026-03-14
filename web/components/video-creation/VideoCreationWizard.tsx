@@ -197,7 +197,7 @@ export function VideoCreationWizard({
   }, [setCurrentVideoName]);
 
   // Admin status
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [_isAdmin, setIsAdmin] = useState(false);
   const supabase = createClient();
 
   useEffect(() => {

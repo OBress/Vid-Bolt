@@ -17,7 +17,6 @@ import {
   Database,
   Settings2,
   Bug,
-  GripVertical,
 } from "lucide-react";
 import { usePipelineDebuggerStore } from "./stores/pipeline-debugger-store";
 import { VideoProjectSelector } from "./components/shared/VideoProjectSelector";
@@ -467,7 +466,7 @@ function JsonSection({ label, data }: { label: string; data: unknown }) {
 // PLACEHOLDER
 // ============================================================================
 
-function ComingSoonPlaceholder({
+function _ComingSoonPlaceholder({
   mode,
   description,
 }: {

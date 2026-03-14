@@ -22,7 +22,6 @@ import { STEP_CONFIGS } from "../../utils/step-config";
 import type {
   PipelineStep,
   PipelineAnnotation,
-  AnnotationTarget,
   PipelineRun,
 } from "../../types/pipeline-debugger";
 

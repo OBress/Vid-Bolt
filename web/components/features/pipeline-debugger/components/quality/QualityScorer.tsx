@@ -8,7 +8,7 @@
  */
 
 import { useState, useMemo } from "react";
-import { Star, BarChart3, TrendingDown, TrendingUp, Minus } from "lucide-react";
+import { Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StepIcon } from "../shared/StepIcon";
 import { STEP_CONFIGS, ALL_STEPS } from "../../utils/step-config";

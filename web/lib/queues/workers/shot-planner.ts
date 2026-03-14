@@ -22,7 +22,6 @@ import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
 import { analyzeContentStructure, segmentTimeline } from '@/lib/av-script';
 import { processInChunks } from '@/lib/av-script/chunked-processor';
-import type { ShotListInput } from '@/lib/av-script/types';
 import type { WordTimestamp } from '@/types/task';
 import type { PlannedShot, ShotPlan } from '@/lib/types/closed-loop';
 import { CostTracker } from '@/lib/queues/cost-tracker';

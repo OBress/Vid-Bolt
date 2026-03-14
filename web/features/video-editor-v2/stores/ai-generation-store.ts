@@ -49,12 +49,36 @@ export interface VideoGenState {
 }
 
 export interface GenerationResult {
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'audio';
   url: string;
   mimeType: string;
   prompt: string;
   modelId: string;
   timestamp: number;
+}
+
+export interface SfxSearchState {
+  /** Freesound search query (e.g. "whoosh", "door slam") */
+  query: string;
+  /** Max duration filter in seconds */
+  maxDuration: number;
+  /** Sort order for results */
+  sort: 'score' | 'downloads_desc' | 'rating_desc';
+}
+
+export interface AudioGenState {
+  /** Comma-separated ACE-Step caption tags: genre, instruments, mood, tempo */
+  prompt: string;
+  /** Optional structured lyrics field (section tags for energy dynamics) */
+  lyrics: string;
+  /** Duration in seconds (30-180 optimal for ACE-Step) */
+  durationSeconds: number;
+  /** Seed for reproducibility (null = random) */
+  seed: number | null;
+  /** Beats per minute (60-160) */
+  bpm: number;
+  /** Musical key/scale (e.g. 'C Major', 'Am', 'D Minor') */
+  keyScale: string;
 }
 
 export interface AIGenerationState {
@@ -65,6 +89,8 @@ export interface AIGenerationState {
   imageGen: ImageGenState;
   imageEdit: ImageEditState;
   videoGen: VideoGenState;
+  sfxSearch: SfxSearchState;
+  audioGen: AudioGenState;
 
   /** Generation lifecycle */
   isGenerating: boolean;
@@ -77,6 +103,8 @@ export interface AIGenerationState {
   updateImageGen: (partial: Partial<ImageGenState>) => void;
   updateImageEdit: (partial: Partial<ImageEditState>) => void;
   updateVideoGen: (partial: Partial<VideoGenState>) => void;
+  updateSfxSearch: (partial: Partial<SfxSearchState>) => void;
+  updateAudioGen: (partial: Partial<AudioGenState>) => void;
   setGenerating: (isGenerating: boolean, progress?: string | null) => void;
   setResult: (result: GenerationResult | null) => void;
   setError: (error: string | null) => void;
@@ -118,6 +146,21 @@ const DEFAULT_VIDEO_GEN: VideoGenState = {
   seed: null,
 };
 
+const DEFAULT_SFX_SEARCH: SfxSearchState = {
+  query: '',
+  maxDuration: 30,
+  sort: 'score',
+};
+
+const DEFAULT_AUDIO_GEN: AudioGenState = {
+  prompt: '',
+  lyrics: '[Instrumental]',
+  durationSeconds: 60,
+  seed: null,
+  bpm: 100,
+  keyScale: 'C Major',
+};
+
 // ============================================================================
 // STORE
 // ============================================================================
@@ -129,6 +172,8 @@ export const useAIGenerationStore = create<AIGenerationState>()(
       imageGen: { ...DEFAULT_IMAGE_GEN },
       imageEdit: { ...DEFAULT_IMAGE_EDIT },
       videoGen: { ...DEFAULT_VIDEO_GEN },
+      sfxSearch: { ...DEFAULT_SFX_SEARCH },
+      audioGen: { ...DEFAULT_AUDIO_GEN },
 
       isGenerating: false,
       generationProgress: null,
@@ -146,6 +191,12 @@ export const useAIGenerationStore = create<AIGenerationState>()(
       updateVideoGen: (partial) =>
         set((state) => ({ videoGen: { ...state.videoGen, ...partial } })),
 
+      updateSfxSearch: (partial) =>
+        set((state) => ({ sfxSearch: { ...state.sfxSearch, ...partial } })),
+
+      updateAudioGen: (partial) =>
+        set((state) => ({ audioGen: { ...state.audioGen, ...partial } })),
+
       setGenerating: (isGenerating, progress = null) =>
         set({ isGenerating, generationProgress: progress, error: null }),
 
@@ -161,6 +212,8 @@ export const useAIGenerationStore = create<AIGenerationState>()(
           imageGen: { ...DEFAULT_IMAGE_GEN },
           imageEdit: { ...DEFAULT_IMAGE_EDIT },
           videoGen: { ...DEFAULT_VIDEO_GEN },
+          sfxSearch: { ...DEFAULT_SFX_SEARCH },
+          audioGen: { ...DEFAULT_AUDIO_GEN },
           isGenerating: false,
           generationProgress: null,
           lastResult: null,
@@ -175,6 +228,8 @@ export const useAIGenerationStore = create<AIGenerationState>()(
         imageGen: state.imageGen,
         imageEdit: state.imageEdit,
         videoGen: state.videoGen,
+        sfxSearch: state.sfxSearch,
+        audioGen: state.audioGen,
         // Don't persist transient generation state
       }),
     }

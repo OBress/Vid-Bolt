@@ -9,14 +9,7 @@ import { create } from 'zustand';
 import type {
   PipelineDebuggerState,
   PipelineDebuggerActions,
-  PipelineRun,
-  PipelineStep,
   DebuggerMode,
-  Breakpoint,
-  BreakpointCondition,
-  PipelineSnapshot,
-  QualityScore,
-  PipelineAnnotation,
 } from '../types/pipeline-debugger';
 import { extractPipelineRun } from '../utils/pipeline-data-extractor';
 

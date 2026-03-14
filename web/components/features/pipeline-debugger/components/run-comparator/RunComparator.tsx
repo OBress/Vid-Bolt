@@ -11,11 +11,9 @@ import { useState, useMemo, useCallback } from "react";
 import {
   GitCompare,
   ChevronRight,
-  ArrowUpDown,
   TrendingUp,
   TrendingDown,
   Minus,
-  AlertTriangle,
   CheckCircle2,
   Database,
 } from "lucide-react";
@@ -23,8 +21,7 @@ import { Button } from "@/components/ui/button";
 import { VideoProjectSelector } from "../shared/VideoProjectSelector";
 import { StepIcon } from "../shared/StepIcon";
 import { JsonTreeViewer } from "../shared/JsonTreeViewer";
-import { PipelineStatusBadge } from "../shared/PipelineStatusBadge";
-import { STEP_CONFIGS, ALL_STEPS } from "../../utils/step-config";
+import { STEP_CONFIGS } from "../../utils/step-config";
 import {
   generateRunComparison,
   summarizeDiff,
@@ -48,7 +45,7 @@ interface RunComparatorProps {
   className?: string;
 }
 
-export function RunComparator({ store, className = "" }: RunComparatorProps) {
+export function RunComparator({ store: _store, className = "" }: RunComparatorProps) {
   const [videoIdA, setVideoIdA] = useState<string | null>(null);
   const [videoIdB, setVideoIdB] = useState<string | null>(null);
   const [runA, setRunA] = useState<PipelineRun | null>(null);
@@ -303,7 +300,7 @@ function StepDiffRow({
   isSelected: boolean;
   onClick: () => void;
 }) {
-  const config = STEP_CONFIGS[diff.step as PipelineStep];
+  const _config = STEP_CONFIGS[diff.step as PipelineStep];
   const hasInputChanges = hasDifferences(diff.inputDiff);
   const hasOutputChanges = hasDifferences(diff.outputDiff);
   const hasConfigChanges = hasDifferences(diff.configDiff);

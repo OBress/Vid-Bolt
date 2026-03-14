@@ -6,7 +6,7 @@
  * for their specific media type.
  */
 
-import { generateJSON, type OpenRouterConfig } from '@/lib/ai/openrouter';
+import { generateJSON } from '@/lib/ai/openrouter';
 import type { WordTimestamp } from '@/types/task';
 
 // ============================================================================

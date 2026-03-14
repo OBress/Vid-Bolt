@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
     }));
 
     // 5. Optionally include generated project media from video_projects.metadata
-    let generatedMedia: any[] = [];
+    const generatedMedia: any[] = [];
     if (includeGenerated && projectId) {
       const { data: project } = await serviceClient
         .from('video_projects')
