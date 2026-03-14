@@ -36,6 +36,7 @@ import {
   AlertCircle,
   Bot,
   Lock,
+  Cpu,
 } from 'lucide-react';
 import { cn } from '../../../utils/general/utils';
 import { Button } from '../../ui/button';
@@ -65,6 +66,8 @@ import {
   type ModelDefinition,
 } from '@/lib/constants/model-registry';
 import { startMediaDrag, endDrag } from '../../../stores/video-editor-store';
+import { useGCPVM } from '@/providers/GCPVMProvider';
+import { useVramMode } from '@/hooks/use-vram-mode';
 
 // Lazy-load the MotionGraphicsTab (heavy: ~57KB)
 const MotionGraphicsTab = React.lazy(() => import('./motion-graphics-tab').then(m => ({ default: m.MotionGraphicsTab })));
@@ -1095,6 +1098,12 @@ export function AIGenerationTab() {
 
   const hasReplicateKey = availability.replicate_key;
 
+  // ── VM & VRAM mode state for GPU-dependent features ──
+  const { displayStatus, apiReady } = useGCPVM();
+  const { currentMode, isSwitching, switchToAll, isGpuReady } = useVramMode(apiReady);
+  const vmIsOn = displayStatus === "ON";
+  const showGpuOverlay = !isGpuReady;
+
   // Get LoRA info from project creative direction
   const projectLoras = useMemo(
     () => settings?.visuals?.creativeDirection?.loras || [],
@@ -1193,7 +1202,54 @@ export function AIGenerationTab() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-3 pb-4 scrollbar-hide">
+      <div className="flex-1 overflow-y-auto px-3 pb-4 scrollbar-hide relative">
+        {/* GPU not-ready overlay */}
+        {showGpuOverlay && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center
+            bg-background/70 backdrop-blur-[2px] rounded-md">
+            <div className="flex flex-col items-center gap-3 px-6 py-5 text-center max-w-[260px]">
+              <div className="w-10 h-10 rounded-full bg-neutral-800/80 flex items-center justify-center">
+                <Cpu className="h-5 w-5 text-neutral-400" />
+              </div>
+              {!vmIsOn ? (
+                <>
+                  <p className="text-xs font-medium text-neutral-300">GPU is offline</p>
+                  <p className="text-[10px] text-neutral-500 leading-relaxed">
+                    Start your VM to use AI generation features.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs font-medium text-neutral-300">
+                    VRAM mode: <span className="font-mono text-amber-400">{currentMode || '...'}</span>
+                  </p>
+                  <p className="text-[10px] text-neutral-500 leading-relaxed">
+                    Switch to <span className="font-semibold text-neutral-400">All Models</span> to use AI generation.
+                  </p>
+                  <button
+                    onClick={() => switchToAll()}
+                    disabled={isSwitching}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md
+                      bg-primary text-primary-foreground text-[11px] font-semibold
+                      hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {isSwitching ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Switching…
+                      </>
+                    ) : (
+                      'Switch to All Models'
+                    )}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Actual content (grayed out when overlay is showing) */}
+        <div className={showGpuOverlay ? 'opacity-40 pointer-events-none select-none' : ''}>
         {(keysLoading || settingsLoading) ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
@@ -1228,6 +1284,7 @@ export function AIGenerationTab() {
         ) : (
           <PlaceholderForm mode={activeMode as 'sfx' | 'audio'} />
         )}
+        </div>
       </div>
     </div>
   );

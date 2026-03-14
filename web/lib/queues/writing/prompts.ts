@@ -534,6 +534,10 @@ Every single sentence must earn its place. Apply these tests:
    - AVOID 3+ consecutive sentences describing the same scene from the same perspective
    - Include specific sensory details (sounds, textures, movement) that the visual and audio layer can enhance
    - Think: "What would a viewer SEE during this sentence?" — if the answer is the same for 3 sentences, rewrite
+   - **SCENE CHANGE BUDGET**: For every ~150 words, introduce at least 2 distinct visual scene changes.
+     A scene change means the camera would cut to a DIFFERENT subject, location, scale, or perspective.
+     Abstract philosophizing or internal monologue with no concrete visual anchor is a DEAD ZONE — rewrite it
+     to include a specific person, place, object, or action the viewer can see on screen.
 
 ## SECTION CONTEXT
 You are writing SECTION {beatIndex} of {totalBeats}.

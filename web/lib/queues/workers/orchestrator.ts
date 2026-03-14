@@ -1596,7 +1596,79 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       message: 'Phase III: Finding stock media and crafting AI image prompts',
     });
 
-    const assetResult = await executeAssetRetrievalPhase(videoId, job.data, taskId, workerPrompts);
+    // Run asset retrieval and music generation in parallel.
+    // Music generation uses the GPU (audio_creation mode) which is idle during
+    // stock scraping — this is the earliest point where TTS + shot plan are available.
+    const musicContext = await (async () => {
+      try {
+        const { data: musicMeta } = await supabase
+          .from('video_projects')
+          .select('metadata')
+          .eq('id', videoId)
+          .single();
+        const musicMetadata = (musicMeta?.metadata || {}) as Record<string, unknown>;
+        const musicWordTimestamps = (musicMetadata.word_timestamps || []) as Array<{ end_seconds: number }>;
+        const musicTotalDuration = musicWordTimestamps.length > 0
+          ? musicWordTimestamps[musicWordTimestamps.length - 1].end_seconds
+          : 60;
+        const musicShotPlan = (musicMetadata.shot_plan || {}) as Record<string, unknown>;
+        const musicShots = (musicShotPlan.shots || []) as Array<{
+          segment_index: number;
+          start_seconds: number;
+          end_seconds: number;
+          summary?: string;
+          text?: string;
+        }>;
+        return {
+          userId: job.data.userId,
+          videoId,
+          totalDurationSeconds: musicTotalDuration,
+          scriptContent: job.data.scriptContent,
+          mood: job.data.creativeManifest.style.lighting_mood,
+          genre: job.data.creativeManifest.style.visual_style,
+          visualStyle: job.data.creativeManifest.style.visual_style,
+          shots: musicShots,
+        };
+      } catch (err) {
+        console.warn(`${LOG_PREFIX} Failed to build music context:`, err);
+        return null;
+      }
+    })();
+
+    const musicPromise = musicContext
+      ? (async () => {
+          try {
+            const { generateBackgroundMusic } = await import('@/lib/services/music-generation-service');
+            const result = await generateBackgroundMusic(musicContext);
+            console.log(`${LOG_PREFIX} Music generation complete: ${result.segments.length} segments`);
+            return result;
+          } catch (err) {
+            console.error(`${LOG_PREFIX} Music generation failed (non-blocking):`, err);
+            return null;
+          }
+        })()
+      : Promise.resolve(null);
+
+    const [assetResult, musicResult] = await Promise.all([
+      executeAssetRetrievalPhase(videoId, job.data, taskId, workerPrompts),
+      musicPromise,
+    ]);
+
+    // Persist music results immediately
+    if (musicResult && musicResult.segments.length > 0) {
+      await supabase.rpc('merge_video_metadata', {
+        p_video_id: videoId,
+        p_updates: {
+          generated_music: {
+            segments: musicResult.segments,
+            style_summary: musicResult.style_summary,
+            total_duration_seconds: musicResult.total_duration_seconds,
+            generation_time_seconds: musicResult.generation_time_seconds,
+          },
+        },
+      });
+      console.log(`${LOG_PREFIX} Music: persisted ${musicResult.segments.length} segments (${musicResult.style_summary})`);
+    }
 
     state.phase_data.asset_retrieval = {
       completed: true,
@@ -1604,12 +1676,12 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       prompts_generated: assetResult.promptsGenerated,
     };
     await persistState(videoId, state);
-    console.log(`${LOG_PREFIX} Phase III complete: ${assetResult.promptsGenerated} prompts generated`);
+    console.log(`${LOG_PREFIX} Phase III complete: ${assetResult.promptsGenerated} prompts generated${musicResult ? `, ${musicResult.segments.length} music segments` : ''}`);
 
     await appendActivityEvent(taskId, {
       phase: 'asset_retrieval',
       type: 'phase_complete',
-      message: `Phase III complete — ${assetResult.stockMatched} stock matched, ${assetResult.promptsGenerated} AI prompts crafted`,
+      message: `Phase III complete — ${assetResult.stockMatched} stock matched, ${assetResult.promptsGenerated} AI prompts crafted${musicResult ? `, ${musicResult.segments.length} music segments generated` : ''}`,
     });
 
     // =========================================================================

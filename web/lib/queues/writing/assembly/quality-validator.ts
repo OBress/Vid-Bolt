@@ -48,12 +48,14 @@ export async function validateQuality(
     engagementResult, 
     completenessResult,
     antiFillerResult,
+    visualAnimatabilityResult,
   ] = await Promise.all([
     dossier ? validateFactualAccuracy(script, dossier) : Promise.resolve({ passed: true, issues: [] }),
     validateConsistency(script, assetRegistry, expandedBeats),
     validateEngagement(script, spine, expandedBeats),
     validateCompleteness(expandedBeats, spine, dossier),
     validateAntiFiller(script, genre),
+    Promise.resolve(validateVisualAnimatability(script)),
   ]);
 
   // Overall pass if all critical checks pass
@@ -69,6 +71,7 @@ export async function validateQuality(
     engagement: engagementResult,
     completeness: completenessResult,
     antiFillerCheck: antiFillerResult,
+    visualAnimatability: visualAnimatabilityResult,
   };
 }
 
@@ -311,5 +314,160 @@ async function validateAntiFiller(
   return {
     passed: flaggedSections.length <= 3,
     flaggedSections,
+  };
+}
+
+// ============================================================================
+// VISUAL ANIMATABILITY (Dead Zone Detection)
+// ============================================================================
+
+/**
+ * Concrete/sensory word lists for visual animatability detection.
+ * Sentences containing these are considered "visualizable."
+ */
+const SENSORY_VERBS = new Set([
+  'walk', 'walks', 'walked', 'walking',
+  'run', 'runs', 'ran', 'running',
+  'stand', 'stands', 'stood', 'standing',
+  'sit', 'sits', 'sat', 'sitting',
+  'look', 'looks', 'looked', 'looking',
+  'watch', 'watches', 'watched', 'watching',
+  'hold', 'holds', 'held', 'holding',
+  'open', 'opens', 'opened', 'opening',
+  'close', 'closes', 'closed', 'closing',
+  'drive', 'drives', 'drove', 'driving',
+  'fly', 'flies', 'flew', 'flying',
+  'build', 'builds', 'built', 'building',
+  'break', 'breaks', 'broke', 'breaking',
+  'fall', 'falls', 'fell', 'falling',
+  'rise', 'rises', 'rose', 'rising',
+  'crash', 'crashes', 'crashed', 'crashing',
+  'point', 'points', 'pointed', 'pointing',
+  'grab', 'grabs', 'grabbed', 'grabbing',
+  'push', 'pushes', 'pushed', 'pushing',
+  'pull', 'pulls', 'pulled', 'pulling',
+  'throw', 'throws', 'threw', 'throwing',
+  'catch', 'catches', 'caught', 'catching',
+  'wear', 'wears', 'wore', 'wearing',
+  'show', 'shows', 'showed', 'showing',
+  'sign', 'signs', 'signed', 'signing',
+  'write', 'writes', 'wrote', 'writing',
+  'read', 'reads', 'reading',
+  'see', 'sees', 'saw', 'seeing',
+  'hear', 'hears', 'heard', 'hearing',
+  'touch', 'touches', 'touched', 'touching',
+  'burn', 'burns', 'burned', 'burning',
+  'glow', 'glows', 'glowed', 'glowing',
+  'shine', 'shines', 'shone', 'shining',
+  'flash', 'flashes', 'flashed', 'flashing',
+]);
+
+const CONCRETE_NOUN_INDICATORS = new Set([
+  'building', 'house', 'office', 'room', 'car', 'street', 'road', 'door',
+  'window', 'wall', 'floor', 'desk', 'table', 'chair', 'phone', 'screen',
+  'camera', 'crowd', 'city', 'town', 'courtroom', 'prison', 'hospital',
+  'school', 'church', 'bridge', 'river', 'mountain', 'forest', 'ocean',
+  'face', 'hand', 'hands', 'eyes', 'body', 'blood', 'gun', 'knife',
+  'money', 'cash', 'document', 'paper', 'letter', 'photo', 'photograph',
+  'video', 'uniform', 'suit', 'badge', 'flag', 'sign', 'stage', 'podium',
+]);
+
+/**
+ * Check if a sentence contains enough concrete visual anchors.
+ * Returns true if the sentence is "visualizable" — it contains
+ * proper nouns, sensory verbs, concrete nouns, numbers, or quotations.
+ */
+function isSentenceVisualizable(sentence: string): boolean {
+  const trimmed = sentence.trim();
+  if (trimmed.length < 15) return true; // Very short sentences get a pass
+  
+  const words = trimmed.split(/\s+/);
+  
+  // Check for proper nouns (capitalized words not at sentence start)
+  const hasProperNoun = words.slice(1).some(w => /^[A-Z][a-z]/.test(w));
+  if (hasProperNoun) return true;
+  
+  // Check for quoted text (implies dialogue/source — always visual)
+  if (/"[^"]{3,}"/.test(trimmed)) return true;
+  
+  // Check for numbers/statistics (data is visualizable via MG)
+  if (/\d{2,}/.test(trimmed) || /\$[\d,]+/.test(trimmed) || /\d+%/.test(trimmed)) return true;
+  
+  const lowerWords = words.map(w => w.toLowerCase().replace(/[^a-z]/g, ''));
+  
+  // Check for sensory verbs
+  if (lowerWords.some(w => SENSORY_VERBS.has(w))) return true;
+  
+  // Check for concrete nouns
+  if (lowerWords.some(w => CONCRETE_NOUN_INDICATORS.has(w))) return true;
+  
+  return false;
+}
+
+/**
+ * Validate visual animatability — detect "visual dead zones."
+ * Flags consecutive sentence clusters (3+) where a visual director
+ * would struggle to find something to show on screen.
+ * 
+ * This is a deterministic scan — no LLM call needed.
+ */
+function validateVisualAnimatability(
+  script: string
+): { passed: boolean; deadZones: Array<{ sentenceIndex: number; sentenceCount: number; preview: string }> } {
+  const sentences = script.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 10);
+  const deadZones: Array<{ sentenceIndex: number; sentenceCount: number; preview: string }> = [];
+  
+  let abstractRunStart = -1;
+  let abstractRunCount = 0;
+  
+  for (let i = 0; i < sentences.length; i++) {
+    if (!isSentenceVisualizable(sentences[i])) {
+      if (abstractRunStart === -1) {
+        abstractRunStart = i;
+        abstractRunCount = 1;
+      } else {
+        abstractRunCount++;
+      }
+    } else {
+      // End of abstract run — check if it was long enough to flag
+      if (abstractRunCount >= 3) {
+        const preview = sentences
+          .slice(abstractRunStart, abstractRunStart + Math.min(abstractRunCount, 3))
+          .join(' ')
+          .substring(0, 150) + '...';
+        deadZones.push({
+          sentenceIndex: abstractRunStart,
+          sentenceCount: abstractRunCount,
+          preview,
+        });
+      }
+      abstractRunStart = -1;
+      abstractRunCount = 0;
+    }
+  }
+  
+  // Handle trailing abstract run
+  if (abstractRunCount >= 3) {
+    const preview = sentences
+      .slice(abstractRunStart, abstractRunStart + Math.min(abstractRunCount, 3))
+      .join(' ')
+      .substring(0, 150) + '...';
+    deadZones.push({
+      sentenceIndex: abstractRunStart,
+      sentenceCount: abstractRunCount,
+      preview,
+    });
+  }
+  
+  if (deadZones.length > 0) {
+    console.log(`[QualityValidator] Found ${deadZones.length} visual dead zone(s) in script`);
+    for (const dz of deadZones) {
+      console.log(`  → Sentences ${dz.sentenceIndex + 1}-${dz.sentenceIndex + dz.sentenceCount}: "${dz.preview}"`);
+    }
+  }
+  
+  return {
+    passed: deadZones.length === 0,
+    deadZones,
   };
 }

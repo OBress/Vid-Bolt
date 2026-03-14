@@ -889,6 +889,18 @@ export interface QualityValidation {
     passed: boolean;
     flaggedSections: string[];
   };
+  /** Visual animatability check (dead zone detection) */
+  visualAnimatability?: {
+    passed: boolean;
+    deadZones: Array<{
+      /** Starting sentence index in the full script */
+      sentenceIndex: number;
+      /** Number of consecutive abstract sentences */
+      sentenceCount: number;
+      /** Preview of the flagged text */
+      preview: string;
+    }>;
+  };
 }
 
 /**

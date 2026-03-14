@@ -110,8 +110,15 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         videoShots = videoShots.filter(
           (s: Record<string, unknown>) => (s.segment_index as number) === singleShotIndex
         );
+        // Fallback: MG-to-video conversions still have media_type 'motion_graphics'
+        // in the DB, so also search allShots when the shot isn't in the video-only list.
         if (videoShots.length === 0) {
-          throw new Error(`Shot ${singleShotIndex} not found in video shots`);
+          videoShots = allShots.filter(
+            (s: Record<string, unknown>) => (s.segment_index as number) === singleShotIndex
+          );
+        }
+        if (videoShots.length === 0) {
+          throw new Error(`Shot ${singleShotIndex} not found in video shots or allShots`);
         }
         console.log(`${LOG_PREFIX} Single-shot retry: regenerating only shot ${singleShotIndex}`);
       }
