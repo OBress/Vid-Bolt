@@ -54,6 +54,12 @@ export async function GET(request: Request) {
   const searchParams = new URL(request.url).searchParams
   const origin = getPublicOrigin(request)
 
+  // DIAGNOSTIC: trace the resolved origin (remove after fixing redirect issue)
+  console.log('[Auth Callback] request.url:', request.url)
+  console.log('[Auth Callback] getPublicOrigin resolved to:', origin)
+  console.log('[Auth Callback] x-forwarded-host:', request.headers.get('x-forwarded-host'))
+  console.log('[Auth Callback] NEXT_PUBLIC_APP_URL available:', !!process.env['NEXT_PUBLIC_APP_URL'])
+
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? '/command-center'
 
