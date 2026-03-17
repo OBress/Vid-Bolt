@@ -59,7 +59,7 @@ jobs:
           file: ./web/Dockerfile.prod
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
+          no-cache: true
           cache-to: type=gha,mode=max
           build-args: |
             NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
