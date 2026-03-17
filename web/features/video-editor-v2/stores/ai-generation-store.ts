@@ -15,7 +15,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 // TYPES
 // ============================================================================
 
-export type AIGenerationMode = 'image-gen' | 'image-edit' | 'video-gen' | 'motion' | 'sfx' | 'audio';
+export type AIGenerationMode = 'image-gen' | 'image-edit' | 'video-gen' | 'motion' | 'sfx' | 'audio' | 'tts';
 
 export interface ImageGenState {
   prompt: string;
@@ -81,6 +81,21 @@ export interface AudioGenState {
   keyScale: string;
 }
 
+export interface TtsFormState {
+  /** Text to convert to speech */
+  text: string;
+  /** TTS provider: 'inworld', 'elevenlabs', 'genai' */
+  provider: 'inworld' | 'elevenlabs' | 'genai';
+  /** Voice ID for the selected provider */
+  voiceId: string;
+  /** Model ID */
+  modelId: string;
+  /** Speaking rate multiplier (0.5 - 2.0) */
+  speakingRate: number;
+  /** Temperature (0.1 - 2.0) */
+  temperature: number;
+}
+
 export interface AIGenerationState {
   /** Active sub-tab */
   activeMode: AIGenerationMode;
@@ -91,6 +106,7 @@ export interface AIGenerationState {
   videoGen: VideoGenState;
   sfxSearch: SfxSearchState;
   audioGen: AudioGenState;
+  ttsForm: TtsFormState;
 
   /** Generation lifecycle */
   isGenerating: boolean;
@@ -105,6 +121,7 @@ export interface AIGenerationState {
   updateVideoGen: (partial: Partial<VideoGenState>) => void;
   updateSfxSearch: (partial: Partial<SfxSearchState>) => void;
   updateAudioGen: (partial: Partial<AudioGenState>) => void;
+  updateTtsForm: (partial: Partial<TtsFormState>) => void;
   setGenerating: (isGenerating: boolean, progress?: string | null) => void;
   setResult: (result: GenerationResult | null) => void;
   setError: (error: string | null) => void;
@@ -161,6 +178,15 @@ const DEFAULT_AUDIO_GEN: AudioGenState = {
   keyScale: 'C Major',
 };
 
+const DEFAULT_TTS_FORM: TtsFormState = {
+  text: '',
+  provider: 'inworld',
+  voiceId: 'Hades',
+  modelId: 'inworld-tts-1.5-max',
+  speakingRate: 1.0,
+  temperature: 1.0,
+};
+
 // ============================================================================
 // STORE
 // ============================================================================
@@ -174,6 +200,7 @@ export const useAIGenerationStore = create<AIGenerationState>()(
       videoGen: { ...DEFAULT_VIDEO_GEN },
       sfxSearch: { ...DEFAULT_SFX_SEARCH },
       audioGen: { ...DEFAULT_AUDIO_GEN },
+      ttsForm: { ...DEFAULT_TTS_FORM },
 
       isGenerating: false,
       generationProgress: null,
@@ -197,6 +224,9 @@ export const useAIGenerationStore = create<AIGenerationState>()(
       updateAudioGen: (partial) =>
         set((state) => ({ audioGen: { ...state.audioGen, ...partial } })),
 
+      updateTtsForm: (partial) =>
+        set((state) => ({ ttsForm: { ...state.ttsForm, ...partial } })),
+
       setGenerating: (isGenerating, progress = null) =>
         set({ isGenerating, generationProgress: progress, error: null }),
 
@@ -214,6 +244,7 @@ export const useAIGenerationStore = create<AIGenerationState>()(
           videoGen: { ...DEFAULT_VIDEO_GEN },
           sfxSearch: { ...DEFAULT_SFX_SEARCH },
           audioGen: { ...DEFAULT_AUDIO_GEN },
+          ttsForm: { ...DEFAULT_TTS_FORM },
           isGenerating: false,
           generationProgress: null,
           lastResult: null,
@@ -230,6 +261,7 @@ export const useAIGenerationStore = create<AIGenerationState>()(
         videoGen: state.videoGen,
         sfxSearch: state.sfxSearch,
         audioGen: state.audioGen,
+        ttsForm: state.ttsForm,
         // Don't persist transient generation state
       }),
     }

@@ -17,6 +17,9 @@ import { generateEmbedding } from '@/lib/ai/embedding';
 import { getSupabaseServiceClient } from '@/lib/queues/shared';
 import { validateStockImage } from '@/lib/classification/media-classifier';
 import { searchAndStoreImages, searchAndStoreFirstMatch, deleteStockMediaAsset } from '@/lib/av-script/stock-media-utils';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('StockMediaDirector');
 
 // Helper function to escape special regex characters
 function _escapeRegex(str: string): string {
@@ -104,6 +107,7 @@ export class StockMediaDirector {
   private usedStockIds: Set<string> = new Set(); // Track already-used stock media
   private deletedStockIds: Set<string> = new Set(); // Track deleted stock media to prevent race conditions
   private pendingDeletions: Map<string, string> = new Map(); // Deferred deletions: id -> r2_key
+  private deadR2Keys: Set<string> = new Set(); // R2 keys confirmed gone (NoSuchKey) - prevents repeated fetch attempts
 
   constructor(config: StockMediaDirectorConfig) {
     this.config = config;
@@ -127,14 +131,14 @@ export class StockMediaDirector {
       });
 
       if (error || !data || data.length === 0) {
-        console.log(`${this.logPrefix} No existing stock media for entity: ${entityName}`);
+        log.debug(`No existing stock media for entity: ${entityName}`);
         return null;
       }
 
       const row = data[0];
       const m = row.metadata || {};
       
-      console.log(`${this.logPrefix} Found existing stock media for entity: ${entityName}`);
+      log.debug(`Found existing stock media for entity: ${entityName}`);
       
       return {
         id: row.id,
@@ -150,7 +154,7 @@ export class StockMediaDirector {
         metadata: m,
       };
     } catch (err) {
-      console.warn(`${this.logPrefix} Entity lookup failed for ${entityName}:`, err);
+      log.warn(`Entity lookup failed for ${entityName}:`, err instanceof Error ? err.message : err);
       return null;
     }
   }
@@ -168,12 +172,12 @@ export class StockMediaDirector {
         .eq('id', stockMediaId);
 
       if (error) {
-        console.warn(`${this.logPrefix} Failed to tag entity ${entityName}:`, error);
+        log.warn(`Failed to tag entity ${entityName}:`, error.message);
       } else {
-        console.log(`${this.logPrefix} Tagged stock media ${stockMediaId} as entity: ${entityName}`);
+        log.debug(`Tagged stock media ${stockMediaId} as entity: ${entityName}`);
       }
     } catch (err) {
-      console.warn(`${this.logPrefix} Entity tagging failed:`, err);
+      log.warn('Entity tagging failed:', err instanceof Error ? err.message : err);
     }
   }
 
@@ -193,7 +197,7 @@ export class StockMediaDirector {
     for (const [id, r2Key] of this.pendingDeletions) {
       // Check if this image was claimed by any shot during processing
       if (this.usedStockIds.has(id)) {
-        console.log(`${this.logPrefix} Keeping ${id} (used by a shot)`);
+        log.debug(`Keeping ${id} (used by a shot)`);
         keptCount++;
         continue;
       }
@@ -204,11 +208,11 @@ export class StockMediaDirector {
         this.deletedStockIds.add(id);
         deletedCount++;
       } catch (err) {
-        console.warn(`${this.logPrefix} Failed to delete ${id}:`, err);
+        log.warn(`Failed to delete ${id}:`, err instanceof Error ? err.message : err);
       }
     }
 
-    console.log(`${this.logPrefix} Cleanup: ${deletedCount} deleted, ${keptCount} kept (used by shots)`);
+    log.info(`Cleanup: ${deletedCount} deleted, ${keptCount} kept (used by shots)`);
   }
 
   /**
@@ -218,12 +222,12 @@ export class StockMediaDirector {
    * OPTIMIZATION: Only processes shots marked as stock_worthy (famous people/landmarks).
    */
   async processShots(shots: ShotPart1[]): Promise<ShotWithStockMedia[]> {
-    console.log(`${this.logPrefix} Starting parallel processing for ${shots.length} shots`);
-    console.log(`${this.logPrefix} Config: stockMediaLevel=${this.config.stockMediaLevel}, threshold=${SIMILARITY_THRESHOLD}`);
+    log.info(`Starting parallel processing for ${shots.length} shots`);
+    log.debug(`Config: stockMediaLevel=${this.config.stockMediaLevel}, threshold=${SIMILARITY_THRESHOLD}`);
 
     // If stock media is disabled, assign fallback types directly
     if (this.config.stockMediaLevel === 'none') {
-      console.log(`${this.logPrefix} Stock media disabled, assigning fallback types only`);
+      log.info('Stock media disabled, assigning fallback types only');
       return this.processShotsWithoutStockMedia(shots);
     }
 
@@ -235,11 +239,11 @@ export class StockMediaDirector {
       }
     });
 
-    console.log(`${this.logPrefix} ${stockWorthyIndices.length}/${shots.length} shots marked as stock-worthy`);
+    log.info(`${stockWorthyIndices.length}/${shots.length} shots marked as stock-worthy`);
 
     // If no stock-worthy shots, skip vector search entirely
     if (stockWorthyIndices.length === 0) {
-      console.log(`${this.logPrefix} No stock-worthy shots, assigning fallback types only`);
+      log.info('No stock-worthy shots, assigning fallback types only');
       return this.processShotsWithoutStockMedia(shots);
     }
 
@@ -256,7 +260,7 @@ export class StockMediaDirector {
       allCandidates[originalIdx] = stockWorthyCandidates[swIdx] || [];
     });
     
-    console.log(`${this.logPrefix} Vector DB returned candidates for ${Object.keys(allCandidates).filter(k => allCandidates[parseInt(k)]?.length > 0).length} shots`);
+    log.debug(`Vector DB returned candidates for ${Object.keys(allCandidates).filter(k => allCandidates[parseInt(k)]?.length > 0).length} shots`);
 
     // Step 3: Throttled evaluation with timeout protection (only stock-worthy shots)
     // Use semaphore pattern to limit concurrent OpenRouter API calls
@@ -309,7 +313,7 @@ export class StockMediaDirector {
     // Step 5: Log summary
     const matched = results.filter((r: ShotWithStockMedia) => r.stock_media_ref).length;
     const fallbacks = results.filter((r: ShotWithStockMedia) => r.fallback_type).length;
-    console.log(`${this.logPrefix} Complete: ${matched} shots matched, ${fallbacks} fallbacks assigned`);
+    log.info(`Complete: ${matched} shots matched, ${fallbacks} fallbacks assigned`);
 
     return results;
   }
@@ -397,11 +401,11 @@ export class StockMediaDirector {
       try {
         // Build search query from shot summary + character/location refs
         const searchQuery = this.buildSearchQuery(shot);
-        console.log(`${this.logPrefix} Shot ${index} search query: "${searchQuery.substring(0, 100)}..."`);
+        log.debug(`Shot ${index} search query: "${searchQuery.substring(0, 100)}..."`);
         
         // Generate embedding directly via Cloudflare API (not HTTP route)
         const embedding = await generateEmbedding(searchQuery);
-        console.log(`${this.logPrefix} Shot ${index} embedding generated: ${embedding.length} dimensions`);
+        log.debug(`Shot ${index} embedding generated: ${embedding.length} dimensions`);
         
         // Query Supabase vector DB directly using the new filtered function
         const { data, error } = await supabase.rpc('match_stock_media_for_video', {
@@ -412,10 +416,10 @@ export class StockMediaDirector {
           p_video_id: this.config.videoId,
         });
         
-        console.log(`${this.logPrefix} Shot ${index} RPC result: ${data?.length || 0} candidates, error: ${error?.message || 'none'}`);
+        log.debug(`Shot ${index} RPC result: ${data?.length || 0} candidates, error: ${error?.message || 'none'}`);
 
         if (error) {
-          console.warn(`${this.logPrefix} Vector search RPC failed for shot ${index}:`, error);
+          log.warn(`Vector search RPC failed for shot ${index}:`, error.message);
           results[index] = [];
           return;
         }
@@ -438,7 +442,7 @@ export class StockMediaDirector {
           };
         });
       } catch (error) {
-        console.warn(`${this.logPrefix} Vector search failed for shot ${index}:`, error);
+        log.warn(`Vector search failed for shot ${index}:`, error instanceof Error ? error.message : error);
         results[index] = [];
       }
     });
@@ -508,16 +512,20 @@ export class StockMediaDirector {
 RULES:
 1. Extract ONLY concrete subjects (real people, real places, real objects)
 2. Remove ALL production language (cinematic, motiongraphic, aerial, close-up, etc.)
-3. Remove abstract concepts and metaphors
-4. Keep the query under 8 words
-5. Add "photo" at the end for better image results
-6. Return ONLY the search query, nothing else
+3. Remove ALL overlay/composition language (overlay, lower-third, nameplate, location tag, family tree, split-screen, annotation, infographic, data HUD, etc.) — these are post-production graphics, not stock photo subjects
+4. Remove abstract concepts and metaphors
+5. Keep the query under 8 words
+6. Add "photo" at the end for better image results
+7. Return ONLY the search query, nothing else
 
 EXAMPLES:
 - "@(Donald Trump) speaking at rally podium" → "Donald Trump campaign rally speech photo"
 - "Crime board with evidence connecting suspects" → "crime investigation evidence board photo"
 - "Aerial view of New York skyline at sunset" → "New York skyline photo"
-- "Motiongraphic showing stock market crash visualization" → "stock market trading floor photo"`;
+- "Motiongraphic showing stock market crash visualization" → "stock market trading floor photo"
+- "Marble bust of Brutus with family tree overlay" → "marble bust Lucius Junius Brutus photo"
+- "Interior of Curia of Pompey with location tag overlay" → "interior Curia of Pompey ancient Rome photo"
+- "Senator profile with nameplate overlay" → "Roman senator portrait photo"`;
 
     const userPrompt = `Convert this visual description into an image search query:
 
@@ -538,13 +546,13 @@ Return ONLY the search query:`;
         .replace(/^["']|["']$/g, '') // Remove quotes if present
         .replace(/\n.*/g, ''); // Take only first line
       
-      console.log(`${this.logPrefix} AI-generated Serper query: "${query}" (from: "${cleanSummary.substring(0, 50)}...")`);
+      log.debug(`AI-generated Serper query: "${query}" (from: "${cleanSummary.substring(0, 50)}...")`);
       return query;
     } catch (error) {
       // Fallback to simple cleaning if AI fails
-      console.warn(`${this.logPrefix} AI query generation failed, using fallback:`, error);
+      log.warn('AI query generation failed, using fallback:', error instanceof Error ? error.message : error);
       const fallbackQuery = cleanSummary.substring(0, 50) + ' photo';
-      console.log(`${this.logPrefix} Fallback Serper query: "${fallbackQuery}"`);
+      log.debug(`Fallback Serper query: "${fallbackQuery}"`);
       return fallbackQuery;
     }
   }
@@ -576,7 +584,7 @@ Return ONLY the search query:`;
     const timeoutPromise = new Promise<ShotWithStockMedia>((resolve) => {
       setTimeout(() => {
         if (!completed) {
-          console.warn(`${this.logPrefix} Shot ${context.index} evaluation timed out, using fallback`);
+          log.warn(`Shot ${context.index} evaluation timed out, using fallback`);
           resolve({
             ...context.shot,
             media_type: 'motiongraphic',
@@ -615,25 +623,25 @@ Return ONLY the search query:`;
     // STEP 1: ENTITY REUSE CHECK (deterministic, no vector search)
     // =========================================================================
     if (shot.reuse_entity && !isRetry) {
-      console.log(`${this.logPrefix} Shot ${index}: Checking entity reuse for "${shot.reuse_entity}"`);
+      log.debug(`Shot ${index}: Checking entity reuse for "${shot.reuse_entity}"`);
       
       const existingMedia = await this.getStockMediaByEntity(shot.reuse_entity);
       
       if (existingMedia) {
-        console.log(`${this.logPrefix} Shot ${index}: Reusing existing stock media for ${shot.reuse_entity}`);
+        log.info(`Shot ${index}: Reusing existing stock media for ${shot.reuse_entity}`);
         this.usedStockIds.add(existingMedia.id);
         return this.buildMatchedShot(shot, existingMedia);
       }
       
       // Entity not found yet - will be tagged after fresh scrape below
-      console.log(`${this.logPrefix} Shot ${index}: No existing media for ${shot.reuse_entity}, will scrape fresh`);
+      log.debug(`Shot ${index}: No existing media for ${shot.reuse_entity}, will scrape fresh`);
     }
 
     // =========================================================================
     // STEP 2: FRESH SCRAPE (skip vector search, scrape directly)
     // =========================================================================
     if (!isRetry) {
-      console.log(`${this.logPrefix} Shot ${index}: Fresh scrape (skipping vector pool)`);
+      log.debug(`Shot ${index}: Fresh scrape (skipping vector pool)`);
       
       // Build focused search query for Serper (concrete subjects + "photo" suffix)
       const searchQuery = await this.buildSerperQuery(shot);
@@ -654,7 +662,7 @@ Return ONLY the search query:`;
         );
         
         if (match) {
-          console.log(`${this.logPrefix} Shot ${index}: First-match found, using directly`);
+          log.info(`Shot ${index}: First-match found, using directly`);
           
           // Tag with entity for future reuse if specified
           if (shot.reuse_entity) {
@@ -681,7 +689,7 @@ Return ONLY the search query:`;
         }
         
         // No match found, fall through to fallback
-        console.log(`${this.logPrefix} Shot ${index}: First-match search returned no valid images`);
+        log.info(`Shot ${index}: First-match search returned no valid images`);
       } else {
         // Multi-image shots: Use batch storage (need multiple images)
         const maxImages = imageCount * 2; // Extra buffer for validation failures
@@ -693,7 +701,7 @@ Return ONLY the search query:`;
         );
 
         if (result.stored.length > 0) {
-          console.log(`${this.logPrefix} Shot ${index}: Stored ${result.stored.length} new images, retrying vector search`);
+          log.debug(`Shot ${index}: Stored ${result.stored.length} new images, retrying vector search`);
           
           // Re-query vector DB for this shot (more candidates for multi-image)
           const newCandidates = await this.searchVectorDBForShot(shot, index, imageCount * 3);
@@ -702,7 +710,7 @@ Return ONLY the search query:`;
           return this.evaluateShot(context, newCandidates, true);
         }
         
-        console.log(`${this.logPrefix} Shot ${index}: Serper search returned no valid images`);
+        log.info(`Shot ${index}: Serper search returned no valid images`);
       }
     }
 
@@ -734,6 +742,16 @@ Return ONLY the search query:`;
         continue;
       }
 
+      // Skip if queued for deletion by another shot (prevents re-validation of rejected candidates)
+      if (this.pendingDeletions.has(candidate.id)) {
+        continue;
+      }
+
+      // Skip if R2 key is confirmed gone (prevents NoSuchKey errors from parallel shots)
+      if (this.deadR2Keys.has(candidate.r2_key)) {
+        continue;
+      }
+
       // Skip if already used (unless multi-image which may need duplicates across shots)
       if (this.usedStockIds.has(candidate.id) && imageCount === 1) {
         continue;
@@ -741,18 +759,29 @@ Return ONLY the search query:`;
 
       // Skip if below threshold
       if (candidate.similarity < HIGH_CONFIDENCE_THRESHOLD) {
-        console.log(`${this.logPrefix} Shot ${index}: Candidate ${candidate.id} below threshold (${candidate.similarity.toFixed(2)})`);
+        log.debug(`Shot ${index}: Candidate ${candidate.id} below threshold (${candidate.similarity.toFixed(2)})`);
         break; // Sorted by similarity, so remaining candidates will also be below threshold
       }
 
-      console.log(`${this.logPrefix} Shot ${index}: Validating candidate ${candidate.id} (similarity=${candidate.similarity.toFixed(2)})`);
+      log.debug(`Shot ${index}: Validating candidate ${candidate.id} (similarity=${candidate.similarity.toFixed(2)})`);
 
       // Validate the image before returning
       try {
+        // Strip overlay/composition language from shot description for validation
+        // The stock image is a RAW ASSET — overlays are added by the MG system
+        const rawDescription = (shot.summary || shot.text || '')
+          .replace(/with\s+(\w+\s+)*overlay/gi, '')
+          .replace(/with\s+(location|name|info)\s*tag/gi, '')
+          .replace(/with\s+lower[- ]third/gi, '')
+          .replace(/with\s+nameplate/gi, '')
+          .replace(/split[- ]screen/gi, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+
         const validation = await validateStockImage(
           candidate.url, 
           this.config.userId,
-          shot.summary || shot.text, // Pass shot description for relevance checking
+          rawDescription + ' (Note: overlays and graphics are added separately by motion graphics — evaluate this as a raw base asset only)',
           candidate.r2_key, // Pass r2_key for direct R2 fetching (bypasses CDN delays)
           { // Pass video context for holistic relevance decisions
             videoTopic: this.config.videoTopic,
@@ -761,15 +790,22 @@ Return ONLY the search query:`;
         );
 
         if (!validation.isValid) {
-          console.log(`${this.logPrefix} Shot ${index}: Candidate ${candidate.id} invalid (${validation.failureReason}): ${validation.details}`);
+          log.debug(`Shot ${index}: Candidate ${candidate.id} invalid (${validation.failureReason}): ${validation.details}`);
           
           // DEFERRED DELETION: Queue for deletion instead of immediate delete
           // This prevents race conditions where parallel shots haven't had a chance
           // to add their images to usedStockIds yet
           const isCorruptedFile = validation.details?.includes('Corrupted image');
+          const isDeadR2Key = validation.details?.includes('no longer exists in storage');
+          
+          // Track dead R2 keys so parallel shots skip them immediately
+          if (isDeadR2Key) {
+            this.deadR2Keys.add(candidate.r2_key);
+          }
+          
           if (validation.failureReason !== 'error' || isCorruptedFile) {
             this.pendingDeletions.set(candidate.id, candidate.r2_key);
-            console.log(`${this.logPrefix} Shot ${index}: Candidate ${candidate.id} queued for deletion`);
+            log.debug(`Shot ${index}: Candidate ${candidate.id} queued for deletion`);
           }
           
           // Continue to next candidate
@@ -787,14 +823,14 @@ Return ONLY the search query:`;
         
         validRefs.push(ref);
         this.usedStockIds.add(candidate.id);
-        console.log(`${this.logPrefix} Shot ${index}: Validated match ${validRefs.length}/${imageCount} with ${candidate.id}`);
+        log.debug(`Shot ${index}: Validated match ${validRefs.length}/${imageCount} with ${candidate.id}`);
         
         // Stop if we have enough images
         if (validRefs.length >= imageCount) {
           break;
         }
       } catch (validationError) {
-        console.error(`${this.logPrefix} Shot ${index}: Validation failed for ${candidate.id}:`, validationError);
+        log.error(`Shot ${index}: Validation failed for ${candidate.id}:`, validationError instanceof Error ? validationError.message : validationError);
         // On validation error, skip this candidate and try next
         continue;
       }
@@ -807,14 +843,14 @@ Return ONLY the search query:`;
       // Check for partial match on multi-image shot
       if (imageCount > 1 && validRefs.length < imageCount) {
         // PARTIAL MATCH: Ask AI to reconsider the shot strategy
-        console.log(`${this.logPrefix} Shot ${index}: Partial match (${validRefs.length}/${imageCount}), asking AI to reconsider`);
+        log.info(`Shot ${index}: Partial match (${validRefs.length}/${imageCount}), asking AI to reconsider`);
         return this.reconsiderShotStrategy(shot, validRefs, imageCount);
       }
       
       // Full match
       if (imageCount > 1) {
         // Multi-image shot with all images found
-        console.log(`${this.logPrefix} Shot ${index}: Matched ${validRefs.length} images for multi-image shot`);
+        log.debug(`Shot ${index}: Matched ${validRefs.length} images for multi-image shot`);
         return this.buildMultiImageShot(shot, validRefs);
       } else {
         // Single image shot
@@ -823,7 +859,7 @@ Return ONLY the search query:`;
     }
 
     // No valid candidates found
-    console.log(`${this.logPrefix} Shot ${index}: No valid candidates after validation, using fallback`);
+    log.info(`Shot ${index}: No valid candidates after validation, using fallback`);
     const mediaType = shot.media_type || this.getFallbackFromContentType(shot.content_type);
     
     return {
@@ -885,7 +921,7 @@ What's your decision? Return JSON:
 }`
       );
 
-      console.log(`${this.logPrefix} AI reconsideration: ${response.decision} - ${response.reasoning}`);
+      log.info(`AI reconsideration: ${response.decision} - ${response.reasoning}`);
 
       switch (response.decision) {
         case 'use_partial':
@@ -925,7 +961,7 @@ What's your decision? Return JSON:
           };
       }
     } catch (error) {
-      console.error(`${this.logPrefix} AI reconsideration failed, defaulting to AI video:`, error);
+      log.error('AI reconsideration failed, defaulting to AI video:', error instanceof Error ? error.message : error);
       // Safe fallback: AI video
       return {
         ...shot,
@@ -979,7 +1015,7 @@ What's your decision? Return JSON:
       });
 
       if (error) {
-        console.warn(`${this.logPrefix} Vector search retry failed for shot ${index}:`, error);
+        log.warn(`Vector search retry failed for shot ${index}:`, error.message);
         return [];
       }
 
@@ -1000,7 +1036,7 @@ What's your decision? Return JSON:
         };
       });
     } catch (error) {
-      console.warn(`${this.logPrefix} Vector search retry failed for shot ${index}:`, error);
+      log.warn(`Vector search retry failed for shot ${index}:`, error instanceof Error ? error.message : error);
       return [];
     }
   }

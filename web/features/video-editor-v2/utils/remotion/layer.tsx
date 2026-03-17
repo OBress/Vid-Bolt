@@ -10,6 +10,68 @@ import { TrackMatteLayer, getTrackMatte, isTrackMatteSource } from "./components
 import { useVideoEditorStore } from "../../stores/video-editor-store";
 
 // ============================================================
+// LAYER ERROR BOUNDARY
+// ============================================================
+
+/**
+ * Catches runtime errors thrown by any child of a Layer (image load, video decode, etc.)
+ * and shows a styled fallback instead of crashing the entire Remotion Player.
+ */
+class LayerErrorBoundary extends React.Component<
+  { children: React.ReactNode; overlayId: number; overlaySrc?: string },
+  { error: string | null }
+> {
+  state: { error: string | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error: error.message };
+  }
+
+  componentDidCatch(error: Error) {
+    console.warn(
+      `[LayerErrorBoundary] Overlay ${this.props.overlayId} error caught:`,
+      error.message,
+    );
+  }
+
+  componentDidUpdate(prevProps: { overlayId: number; overlaySrc?: string }) {
+    // Reset when the source changes (e.g. user picks a new image)
+    if (
+      this.state.error &&
+      (prevProps.overlayId !== this.props.overlayId ||
+        prevProps.overlaySrc !== this.props.overlaySrc)
+    ) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            backgroundColor: '#1a1a2e',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            color: '#888',
+            fontFamily: 'Inter, system-ui, sans-serif',
+          }}
+        >
+          <span style={{ fontSize: 24, opacity: 0.5 }}>⚠️</span>
+          <span style={{ fontSize: 11, opacity: 0.4 }}>Media unavailable</span>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ============================================================
 // SHALLOW COMPARISON HELPERS (for areLayerPropsEqual)
 // ============================================================
 
@@ -584,7 +646,9 @@ export const Layer: React.FC<{
    */
   const renderedContent = useMemo(() => {
     const content = (
-      <LayerContent overlay={overlay} isEditing={isEditing} {...(baseUrl && { baseUrl })} {...(fontInfos && { fontInfos })} />
+      <LayerErrorBoundary overlayId={overlay.id} overlaySrc={(overlay as any).src}>
+        <LayerContent overlay={overlay} isEditing={isEditing} {...(baseUrl && { baseUrl })} {...(fontInfos && { fontInfos })} />
+      </LayerErrorBoundary>
     );
 
     // If we have a valid track matte, wrap content in TrackMatteLayer

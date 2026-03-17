@@ -655,7 +655,12 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
         segment_index: shot.segment_index,
         media_type: shot.media_type, // 'video' | 'motiongraphic' from ShotPart1
         visual_prompt: detailedPrompts.find(p => p.index === i)?.prompt || shot.summary,
-        duration_seconds: shot.duration_seconds || 5,
+        duration_seconds: (() => {
+          if (!shot.duration_seconds || shot.duration_seconds <= 0) {
+            throw new Error(`[AVScript] Shot ${shot.segment_index} has no valid duration_seconds — shot plan timing is incomplete.`);
+          }
+          return shot.duration_seconds;
+        })(),
         image_count: shot.image_count,
         stock_media_refs: shot.stock_media_refs,
         visual_elements: shot.visual_elements,
@@ -787,7 +792,12 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
               try {
                 const result = await generateMotionGraphic({
                   prompt: detailedPrompt,
-                  duration: shot.duration_seconds || 5,
+                  duration: (() => {
+                    if (!shot.duration_seconds || shot.duration_seconds <= 0) {
+                      throw new Error(`[AVScript] Shot ${shot.segment_index} has no valid duration_seconds for MG generation — shot plan timing is incomplete.`);
+                    }
+                    return shot.duration_seconds;
+                  })(),
                   shotIndex,
                   videoId,
                   apiKey: openrouterKey,

@@ -9,6 +9,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Maximize, Minimize, AlertTriangle, Loader2 } from "lucide-react";
 import { useGCPVM } from "@/providers/GCPVMProvider";
 import { useVramMode } from "@/hooks/use-vram-mode";
+import { MediaIssuesPopover } from "../panels/media-issues-panel";
 
 export interface EditorHeaderProps {
   /** Project title to display in the header */
@@ -184,6 +185,9 @@ export function EditorHeader({
           </button>
         </div>
       )}
+
+      {/* Media Issues Warning Button + Panel (portal-based) */}
+      <MediaIssuesPopover />
 
       {/* Fullscreen toggle */}
       <button

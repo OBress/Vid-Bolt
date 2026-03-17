@@ -164,11 +164,29 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         }
       }
 
+      // Validate that all shots have timing — the segmenter always produces these from word timestamps.
+      // If any are missing, the chunked processor has a bug that must be fixed upstream.
+      for (const shot of shotSummaries) {
+        if (shot.start_seconds == null || shot.end_seconds == null || shot.duration_seconds == null) {
+          throw new Error(
+            `[ShotPlanner] Shot ${shot.segment_index} is missing timing data ` +
+            `(start=${shot.start_seconds}, end=${shot.end_seconds}, dur=${shot.duration_seconds}). ` +
+            `The segmenter must always produce valid timing from word timestamps.`
+          );
+        }
+        if (shot.duration_seconds <= 0) {
+          throw new Error(
+            `[ShotPlanner] Shot ${shot.segment_index} has invalid duration: ${shot.duration_seconds}s. ` +
+            `Duration must be positive.`
+          );
+        }
+      }
+
       const plannedShots: PlannedShot[] = shotSummaries.map((shot, idx) => ({
         segment_index: shot.segment_index ?? idx,
-        start_seconds: shot.start_seconds ?? 0,
-        end_seconds: shot.end_seconds ?? 0,
-        duration_seconds: shot.duration_seconds ?? 0,
+        start_seconds: shot.start_seconds,
+        end_seconds: shot.end_seconds,
+        duration_seconds: shot.duration_seconds,
         text: shot.text || '',
         summary: shot.summary || '',
         content_type: shot.content_type || 'concept',

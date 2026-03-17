@@ -27,6 +27,9 @@ import {
   getKeyFromUrl,
 } from '@/lib/services/r2-storage';
 import { v4 as uuidv4 } from 'uuid';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('StockMediaUtils');
 
 // ==========================================================================
 // Types
@@ -67,7 +70,7 @@ async function safeGenerateEmbedding(text: string): Promise<number[] | null> {
   try {
     return await generateEmbedding(text);
   } catch (error) {
-    console.error('[StockMediaUtils] Embedding generation failed:', error);
+    log.error('Embedding generation failed:', error instanceof Error ? error.message : error);
     return null;
   }
 }
@@ -98,7 +101,7 @@ export async function searchAndStoreImages(
   const stored: StoredStockImage[] = [];
   let failed = 0;
 
-  console.log(`[StockMediaUtils] Searching Serper for: "${query}" (max: ${maxImages})`);
+  log.debug(`Searching Serper for: "${query}" (max: ${maxImages})`);
 
   try {
     // Search Serper - try large images first for better quality
@@ -109,7 +112,7 @@ export async function searchAndStoreImages(
 
     // Fallback to medium if insufficient large results
     if (images.length < maxImages) {
-      console.log(`[StockMediaUtils] Only ${images.length}/${maxImages} large images, trying medium`);
+      log.debug(`Only ${images.length}/${maxImages} large images, trying medium`);
       const mediumImages = await searchSerperImages(query, {
         maxResults: maxImages + 5 - images.length,
         size: 'medium',
@@ -117,7 +120,7 @@ export async function searchAndStoreImages(
       images = [...images, ...mediumImages];
     }
 
-    console.log(`[StockMediaUtils] Found ${images.length} images from Serper (large+medium)`);
+    log.debug(`Found ${images.length} images from Serper (large+medium)`);
 
     for (const img of images) {
       if (stored.length >= maxImages) break;
@@ -142,7 +145,7 @@ export async function searchAndStoreImages(
         // NOT supported for AI analysis: GIF, SVG, BMP, TIFF
         const SUPPORTED_IMAGE_FORMATS = ['jpg', 'jpeg', 'png', 'webp'];
         if (!SUPPORTED_IMAGE_FORMATS.includes(extension.toLowerCase())) {
-          console.log(`[StockMediaUtils] Skipping unsupported format: ${extension}`);
+          log.debug(`Skipping unsupported format: ${extension}`);
           continue;
         }
         
@@ -152,11 +155,11 @@ export async function searchAndStoreImages(
         // INTEGRITY CHECK: Validate buffer size before API call
         // Corrupted downloads are typically < 5KB, oversized files > 10MB
         if (imageBuffer.length < 5000) {
-          console.log(`[StockMediaUtils] Skipping corrupted image (${Math.round(imageBuffer.length / 1024)}KB < 5KB)`);
+          log.debug(`Skipping corrupted image (${Math.round(imageBuffer.length / 1024)}KB < 5KB)`);
           continue;
         }
         if (imageBuffer.length > 10 * 1024 * 1024) {
-          console.log(`[StockMediaUtils] Skipping oversized image (${Math.round(imageBuffer.length / 1024 / 1024)}MB > 10MB)`);
+          log.debug(`Skipping oversized image (${Math.round(imageBuffer.length / 1024 / 1024)}MB > 10MB)`);
           continue;
         }
 
@@ -177,12 +180,12 @@ export async function searchAndStoreImages(
           
           // If rejected, skip - no R2 upload needed
           if (!classification.isValid) {
-            console.log(`[StockMediaUtils] Rejected: ${classification.rejectionReason} - ${classification.rejectionDetails}`);
+            log.debug(`Rejected: ${classification.rejectionReason} - ${classification.rejectionDetails}`);
             failed++;
             continue;
           }
         } catch (classError) {
-          console.error(`[StockMediaUtils] Classification error:`, classError);
+          log.error('Classification error:', classError instanceof Error ? (classError as Error).message : classError);
           // On classification error, still store with basic metadata
           classification = null;
         }
@@ -233,7 +236,7 @@ export async function searchAndStoreImages(
           .single();
 
         if (insertError) {
-          console.error(`[StockMediaUtils] DB insert failed:`, insertError.message);
+          log.error('DB insert failed:', insertError.message);
           // Try to clean up R2 file
           try {
             await deleteFile(r2Key);
@@ -250,17 +253,17 @@ export async function searchAndStoreImages(
           query,
         });
 
-        console.log(`[StockMediaUtils] Stored image: ${imageId} (${classification?.namedEntities?.length || 0} entities)`);
+        log.debug(`Stored image: ${imageId} (${classification?.namedEntities?.length || 0} entities)`);
       } catch (_err) {
         failed++;
         // Continue to next image on any error
       }
     }
   } catch (err) {
-    console.error(`[StockMediaUtils] Serper search error:`, err);
+    log.error('Serper search error:', err instanceof Error ? err.message : err);
   }
 
-  console.log(`[StockMediaUtils] Complete: ${stored.length} stored, ${failed} failed`);
+  log.info(`Complete: ${stored.length} stored, ${failed} failed`);
   return { stored, failed };
 }
 
@@ -294,7 +297,7 @@ export async function searchAndStoreFirstMatch(
 ): Promise<StoredStockImage | null> {
   const supabase = getSupabaseClient();
 
-  console.log(`[StockMediaUtils] First-match search for: "${query.substring(0, 50)}..."`);
+  log.debug(`First-match search for: "${query.substring(0, 50)}..."`);
 
   try {
     // Search Serper - fetch 10 candidates
@@ -312,7 +315,7 @@ export async function searchAndStoreFirstMatch(
       images = [...images, ...mediumImages];
     }
 
-    console.log(`[StockMediaUtils] Found ${images.length} candidates, validating sequentially`);
+    log.debug(`Found ${images.length} candidates, validating sequentially`);
 
     for (const img of images) {
       // Skip known problematic URLs (FB/IG CDNs block external access)
@@ -358,7 +361,7 @@ export async function searchAndStoreFirstMatch(
           );
           
           if (!classification.isValid) {
-            console.log(`[StockMediaUtils] First-match rejected (quality): ${classification.rejectionReason}`);
+            log.debug(`First-match rejected (quality): ${classification.rejectionReason}`);
             continue;
           }
         } catch {
@@ -376,11 +379,11 @@ export async function searchAndStoreFirstMatch(
           );
 
           if (!validation.isValid) {
-            console.log(`[StockMediaUtils] First-match rejected (relevance): ${validation.failureReason}`);
+            log.debug(`First-match rejected (relevance): ${validation.failureReason}`);
             continue;
           }
           
-          console.log(`[StockMediaUtils] First-match found! Relevance: ${validation.relevanceScore}/10`);
+          log.info(`First-match found! Relevance: ${validation.relevanceScore}/10`);
         } catch {
           continue;
         }
@@ -434,7 +437,7 @@ export async function searchAndStoreFirstMatch(
         }
 
         // SUCCESS! Return immediately
-        console.log(`[StockMediaUtils] First-match stored: ${imageId}`);
+        log.info(`First-match stored: ${imageId}`);
         return {
           id: data.id,
           r2Key,
@@ -447,10 +450,10 @@ export async function searchAndStoreFirstMatch(
       }
     }
   } catch (err) {
-    console.error(`[StockMediaUtils] First-match search error:`, err);
+    log.error('First-match search error:', err instanceof Error ? err.message : err);
   }
 
-  console.log(`[StockMediaUtils] First-match: No valid image found`);
+  log.info('First-match: No valid image found');
   return null;
 }
 
@@ -490,20 +493,20 @@ export async function deleteStockMediaAsset(
       .eq('id', stockMediaId);
 
     if (dbError) {
-      console.error(`[StockMediaUtils] Failed to delete from DB:`, dbError.message);
+      log.error('Failed to delete from DB:', dbError.message);
     }
 
     // Delete from R2
     if (r2Key) {
       try {
         await deleteFile(r2Key);
-        console.log(`[StockMediaUtils] Deleted from R2: ${r2Key}`);
+        log.debug(`Deleted from R2: ${r2Key}`);
       } catch (r2Error) {
-        console.error(`[StockMediaUtils] Failed to delete from R2:`, r2Error);
+        log.error('Failed to delete from R2:', r2Error instanceof Error ? r2Error.message : r2Error);
       }
     }
   } catch (err) {
-    console.error(`[StockMediaUtils] Delete asset error:`, err);
+    log.error('Delete asset error:', err instanceof Error ? err.message : err);
   }
 }
 

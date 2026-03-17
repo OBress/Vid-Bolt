@@ -388,7 +388,7 @@ export const ClosedLoopState = z.object({
   /** Current phase */
   phase: ClosedLoopPhase,
   /** Phase-level status */
-  status: z.enum(['pending', 'running', 'completed', 'failed']),
+  status: z.enum(['pending', 'running', 'completed', 'failed', 'cancelled']),
   /** Phase start time */
   started_at: z.string().datetime().optional(),
   /** Phase completion time */

@@ -2,7 +2,7 @@
 
 import { useRef, useCallback, useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { forceCollide } from "d3-force";
+import { forceCollide, forceX, forceY } from "d3-force";
 
 // Dynamically import to avoid SSR issues with canvas
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
@@ -53,6 +53,8 @@ interface GraphNode {
   isUserChannel: boolean;
   similarity: number;
   thumbnailUrl: string | null;
+  clusterTargetX: number; // target X for cluster sector positioning
+  clusterTargetY: number; // target Y for cluster sector positioning
   x?: number;
   y?: number;
   fx?: number;
@@ -63,6 +65,7 @@ interface GraphLink {
   source: string;
   target: string;
   weight: number;
+  isStar?: boolean; // edge connecting to user's center channel
 }
 
 interface NicheNetworkGraphProps {
@@ -85,6 +88,54 @@ const CLUSTER_COLORS = [
 ];
 
 const USER_CHANNEL_COLOR = "#c084fc"; // Bright purple for user's channel
+
+// ---------------------------------------------------------------------------
+// Edge thinning: build a Maximum Spanning Tree per cluster using Kruskal's
+// algorithm so that intra-cluster cliques become sparse trees.
+// ---------------------------------------------------------------------------
+function buildClusterMSTs(links: GraphLink[], nodeClusterMap: Map<string, number>): GraphLink[] {
+  // Group edges by cluster (both endpoints must share a cluster)
+  const clusterEdges = new Map<number, GraphLink[]>();
+  const crossClusterEdges: GraphLink[] = [];
+
+  for (const link of links) {
+    const cA = nodeClusterMap.get(link.source);
+    const cB = nodeClusterMap.get(link.target);
+    if (cA !== undefined && cB !== undefined && cA === cB && cA !== -1) {
+      const existing = clusterEdges.get(cA) || [];
+      existing.push(link);
+      clusterEdges.set(cA, existing);
+    } else {
+      crossClusterEdges.push(link);
+    }
+  }
+
+  // Kruskal's MST per cluster (maximum spanning tree → sort descending by weight)
+  const mstEdges: GraphLink[] = [];
+  for (const [, edges] of clusterEdges) {
+    const sorted = [...edges].sort((a, b) => b.weight - a.weight);
+    // Union-Find
+    const parent = new Map<string, string>();
+    const find = (x: string): string => {
+      if (!parent.has(x)) parent.set(x, x);
+      if (parent.get(x) !== x) parent.set(x, find(parent.get(x)!));
+      return parent.get(x)!;
+    };
+    const union = (a: string, b: string): boolean => {
+      const ra = find(a), rb = find(b);
+      if (ra === rb) return false;
+      parent.set(ra, rb);
+      return true;
+    };
+    for (const edge of sorted) {
+      if (union(edge.source, edge.target)) {
+        mstEdges.push(edge);
+      }
+    }
+  }
+
+  return [...mstEdges, ...crossClusterEdges];
+}
 
 export default function NicheNetworkGraph({
   nodes,
@@ -135,44 +186,94 @@ export default function NicheNetworkGraph({
   // resetting the force simulation.
   const memoizedGraphData = useMemo(() => {
     const nodeIdSet = new Set(nodes.map((n) => n.channel_id));
+    let userChannelId: string | null = null;
 
-    const graphNodes: GraphNode[] = nodes.map((n, i) => {
+    // Step 1: Assign each cluster a base angle so same-cluster nodes
+    // are angularly grouped, but distance is purely by similarity
+    const clusterIds = new Set<number>();
+    for (const n of nodes) {
+      const isUser = n.graph_cluster === -1 || n.similarity_score === 1.0;
+      if (!isUser) clusterIds.add(n.graph_cluster ?? 0);
+    }
+    const clusterArray = Array.from(clusterIds).sort((a, b) => a - b);
+    const clusterAngleMap = new Map<number, number>();
+    clusterArray.forEach((cId, i) => {
+      clusterAngleMap.set(cId, (i / clusterArray.length) * 2 * Math.PI);
+    });
+
+    // Track how many nodes per cluster to spread them within the sector
+    const clusterNodeIndex = new Map<number, number>();
+
+    const graphNodes: GraphNode[] = nodes.map((n) => {
       const isUserChannel = n.graph_cluster === -1 || n.similarity_score === 1.0;
+      if (isUserChannel) userChannelId = n.channel_id;
+
       // Size: user's channel = largest, others scaled by similarity
       const baseSize = isUserChannel
         ? 12
         : Math.max(4, n.similarity_score * 10);
 
-      // Spread nodes in a circle as initial positions so force layout
-      // starts from a reasonable arrangement instead of all at (0,0)
-      const angle = (i / nodes.length) * 2 * Math.PI;
-      const radius = isUserChannel ? 0 : 150 + (1 - n.similarity_score) * 200;
+      // Radial distance: higher similarity → closer to center
+      // Range: ~80 (sim=1.0) to ~350 (sim=0.0)
+      const distance = isUserChannel
+        ? 0
+        : 80 + (1 - n.similarity_score) * 270;
+
+      // Angular position: base cluster angle + small offset per node
+      // so nodes within a cluster fan out slightly
+      const cId = n.graph_cluster ?? 0;
+      const baseAngle = clusterAngleMap.get(cId) ?? 0;
+      const nodeIdx = clusterNodeIndex.get(cId) ?? 0;
+      clusterNodeIndex.set(cId, nodeIdx + 1);
+      // Spread within sector: ±0.3 radians per node
+      const sectorSpread = (nodeIdx - 3) * 0.15;
+      const angle = baseAngle + sectorSpread;
+
+      const targetX = isUserChannel ? 0 : Math.cos(angle) * distance;
+      const targetY = isUserChannel ? 0 : Math.sin(angle) * distance;
+
+      // Initial position: near target with small scatter
+      const scatter = 30;
+      const initX = targetX + (Math.random() - 0.5) * scatter;
+      const initY = targetY + (Math.random() - 0.5) * scatter;
 
       return {
         id: n.channel_id,
         label: n.channel_title,
         val: baseSize,
-        cluster: n.graph_cluster ?? 0,
+        cluster: cId,
         isEmerging: n.is_emerging,
         isUserChannel,
         similarity: n.similarity_score,
         thumbnailUrl: n.thumbnail_url,
-        x: Math.cos(angle) * radius,
-        y: Math.sin(angle) * radius,
+        clusterTargetX: targetX,
+        clusterTargetY: targetY,
+        // Pin the user's channel at center
+        ...(isUserChannel
+          ? { x: 0, y: 0, fx: 0, fy: 0 }
+          : { x: initX, y: initY }),
       };
     });
 
-    const graphLinks: GraphLink[] = edges
+    // Step 2: Include ALL edges — forceX/forceY prevents layout collapse
+    // so we can safely show every relationship
+    const allLinks: GraphLink[] = edges
       .filter(
         (e) => nodeIdSet.has(e.source_channel) && nodeIdSet.has(e.target_channel)
       )
-      .map((e) => ({
-        source: e.source_channel,
-        target: e.target_channel,
-        weight: e.weight,
-      }));
+      .map((e) => {
+        const isStar = userChannelId
+          ? e.source_channel === userChannelId || e.target_channel === userChannelId
+          : false;
+        return {
+          source: e.source_channel,
+          target: e.target_channel,
+          weight: e.weight,
+          isStar,
+        };
+      });
 
-    return { nodes: graphNodes, links: graphLinks };
+    return { nodes: graphNodes, links: allLinks };
   }, [nodes, edges]);
 
   // Custom node rendering
@@ -338,24 +439,50 @@ export default function NicheNetworkGraph({
   useEffect(() => {
     if (!graphRef.current) return;
     const fg = graphRef.current;
-    // Strong charge repulsion to spread nodes apart
-    fg.d3Force('charge')?.strength(-300).distanceMax(500);
-    // Link distance: higher similarity = shorter link
+
+    // 1. Similarity-based positioning forces — PRIMARY layout mechanism
+    // Pulls each node to its target (distance from center = similarity)
+    fg.d3Force('clusterX',
+      forceX()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .x((node: any) => node.clusterTargetX ?? 0)
+        .strength(0.2)
+    );
+    fg.d3Force('clusterY',
+      forceY()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .y((node: any) => node.clusterTargetY ?? 0)
+        .strength(0.2)
+    );
+
+    // 2. Charge repulsion — pushes all nodes apart globally
+    fg.d3Force('charge')?.strength(-200).distanceMax(400);
+
+    // 3. Link force — VERY weak, only for visual structure
+    // All ~170 edges shown, so must be weak to not override positioning
     fg.d3Force('link')
       ?.distance((link: any) => {
         const w = link.weight ?? 0.3;
-        return 80 + (1 - w) * 200;
+        if (link.isStar) return 80 + (1 - w) * 120;
+        return 50 + (1 - w) * 100;
       })
       .strength((link: any) => {
-        return Math.max(0.1, (link.weight ?? 0.3) * 0.5);
+        const w = link.weight ?? 0.3;
+        if (link.isStar) return Math.max(0.005, w * 0.02); // star: minimal
+        return Math.max(0.01, w * 0.05);                   // peer: very light
       });
-    // Collision force to prevent node overlap
+
+    // 4. Collision force — prevents node/label overlap
     fg.d3Force('collide', forceCollide()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .radius((node: any) => (node.val as number) * 2 + 4)
-      .strength(0.7)
-      .iterations(2)
+      .radius((node: any) => (node.val as number) * 2 + 10)
+      .strength(0.8)
+      .iterations(3)
     );
+
+    // Remove the default center force — our cluster positioning handles this
+    fg.d3Force('center', null);
+
     // Reheat to apply new forces
     fg.d3ReheatSimulation();
   }, [nodes.length, edges.length]);
@@ -397,13 +524,19 @@ export default function NicheNetworkGraph({
         }}
         linkColor={(link) => {
           const l = link as unknown as GraphLink;
-          // Brighter edges with opacity scaled by weight
-          const alpha = Math.max(0.15, Math.min(0.6, l.weight));
-          return `rgba(100, 180, 255, ${alpha})`;
+          // Brighter, more visible edges
+          const alpha = l.isStar
+            ? Math.max(0.2, Math.min(0.5, l.weight * 0.8))
+            : Math.max(0.25, Math.min(0.7, l.weight));
+          return l.isStar
+            ? `rgba(192, 132, 252, ${alpha})`  // purple for center connections
+            : `rgba(100, 180, 255, ${alpha})`; // blue for peer connections
         }}
         linkWidth={(link) => {
           const l = link as unknown as GraphLink;
-          return Math.max(1, l.weight * 4);
+          return l.isStar
+            ? Math.max(0.5, l.weight * 2)   // thinner for star edges
+            : Math.max(1, l.weight * 3);    // thicker for peer edges
         }}
         linkDirectionalParticles={(link) => {
           const l = link as unknown as GraphLink;
@@ -413,10 +546,10 @@ export default function NicheNetworkGraph({
         linkDirectionalParticleSpeed={0.005}
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
-        cooldownTicks={60}
-        d3AlphaDecay={0.05}
-        d3VelocityDecay={0.4}
-        warmupTicks={30}
+        cooldownTicks={150}
+        d3AlphaDecay={0.02}
+        d3VelocityDecay={0.3}
+        warmupTicks={80}
         onEngineStop={() => setLayoutStable(true)}
       />
 

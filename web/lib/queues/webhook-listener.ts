@@ -2,14 +2,16 @@
  * Webhook Listener Helper
  * ============================================================================
  * Provides a helper to wait for GPU webhook results via Redis pub/sub.
- * Used by workers to avoid polling the GPU API directly.
+ * Uses a SINGLETON shared subscriber to avoid creating N Redis connections
+ * for N-item batches. This eliminates the race condition where a subscriber
+ * connects after the webhook was already published.
  * 
  * Architecture:
  * 1. Worker submits job to GPU API with webhook_url and item_id=taskId
  * 2. Worker calls waitForWebhookResult(taskId) 
  * 3. GPU API completes job and POSTs to webhook callback
  * 4. Callback publishes to Redis "gpu-webhook-results" channel
- * 5. This listener receives the message and resolves the promise
+ * 5. Shared subscriber receives the message and resolves the matching promise
  */
 
 import Redis from 'ioredis';
@@ -33,6 +35,24 @@ export interface WebhookResult {
   errorCode?: string;
   receivedAt: number;
 }
+
+// ============================================================================
+// SINGLETON SHARED SUBSCRIBER
+// ============================================================================
+
+interface PendingListener {
+  resolve: (result: WebhookResult) => void;
+  reject: (error: Error) => void;
+  timeoutId: NodeJS.Timeout;
+}
+
+/** In-memory map of taskId → pending promise callbacks */
+const pendingListeners = new Map<string, PendingListener>();
+
+/** Singleton Redis subscriber connection */
+let sharedSubscriber: Redis | null = null;
+let subscriberReady = false;
+let subscriberInitPromise: Promise<void> | null = null;
 
 /**
  * Get Redis config for subscriber connection.
@@ -64,10 +84,81 @@ function getRedisConfig() {
 }
 
 /**
+ * Initialize the shared subscriber if not already running.
+ * Uses a promise guard to prevent multiple concurrent initializations.
+ */
+async function ensureSharedSubscriber(): Promise<void> {
+  if (subscriberReady && sharedSubscriber) return;
+  
+  if (subscriberInitPromise) {
+    await subscriberInitPromise;
+    return;
+  }
+  
+  subscriberInitPromise = (async () => {
+    try {
+      sharedSubscriber = new Redis(getRedisConfig());
+      
+      // Handle incoming messages — route to the correct pending listener
+      sharedSubscriber.on('message', (channel, message) => {
+        if (channel !== WEBHOOK_CHANNEL) return;
+        
+        try {
+          const result: WebhookResult = JSON.parse(message);
+          const listener = pendingListeners.get(result.itemId);
+          
+          if (listener) {
+            clearTimeout(listener.timeoutId);
+            pendingListeners.delete(result.itemId);
+            console.log(`[WebhookListener] Received webhook result for task ${result.itemId}: ${result.status}`);
+            listener.resolve(result);
+          }
+          // If no listener found, the message is for a different worker or already timed out — ignore
+        } catch (error) {
+          console.error('[WebhookListener] Failed to parse message:', error);
+        }
+      });
+      
+      // Handle connection errors
+      sharedSubscriber.on('error', (error) => {
+        console.error('[WebhookListener] Shared subscriber error:', error);
+        // Reject all pending listeners
+        for (const [taskId, listener] of pendingListeners) {
+          clearTimeout(listener.timeoutId);
+          listener.reject(new Error(`Redis subscription error: ${error.message}`));
+          pendingListeners.delete(taskId);
+        }
+        // Reset so next call reinitializes
+        subscriberReady = false;
+        sharedSubscriber = null;
+        subscriberInitPromise = null;
+      });
+      
+      // Subscribe to the channel
+      await sharedSubscriber.subscribe(WEBHOOK_CHANNEL);
+      subscriberReady = true;
+      console.log(`[WebhookListener] Shared subscriber connected to ${WEBHOOK_CHANNEL} (1 connection for all items)`);
+    } catch (err) {
+      subscriberReady = false;
+      sharedSubscriber = null;
+      subscriberInitPromise = null;
+      throw err;
+    }
+  })();
+  
+  await subscriberInitPromise;
+}
+
+// ============================================================================
+// PUBLIC API
+// ============================================================================
+
+/**
  * Wait for a webhook result for a specific task.
  * 
- * Creates a dedicated Redis subscriber connection, subscribes to the
- * webhook results channel, and waits for a message matching the taskId.
+ * Uses a shared Redis subscriber connection. Multiple concurrent calls
+ * all share the same connection, eliminating the per-item connection overhead
+ * and the race condition where a late subscriber misses an early webhook.
  * 
  * @param taskId - The task ID to wait for (matches item_id in webhook payload)
  * @param timeoutMs - Maximum time to wait (default: 5 minutes)
@@ -78,68 +169,32 @@ export async function waitForWebhookResult(
   taskId: string,
   timeoutMs: number = 300000
 ): Promise<WebhookResult> {
-  // Create dedicated subscriber connection (Redis pub/sub requirement)
-  const subscriber = new Redis(getRedisConfig());
+  // Ensure the shared subscriber is connected before registering the listener.
+  // This guarantees we're subscribed BEFORE the GPU could possibly send the webhook.
+  await ensureSharedSubscriber();
   
   console.log(`[WebhookListener] Waiting for webhook result for task ${taskId}`);
   
   return new Promise<WebhookResult>((resolve, reject) => {
-    // eslint-disable-next-line prefer-const
-    let timeoutId: NodeJS.Timeout;
-    let resolved = false;
-    
-    const cleanup = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      subscriber.unsubscribe(WEBHOOK_CHANNEL);
-      subscriber.quit().catch(() => {}); // Ignore quit errors
-    };
-    
     // Set timeout
-    timeoutId = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        cleanup();
+    const timeoutId = setTimeout(() => {
+      if (pendingListeners.has(taskId)) {
+        pendingListeners.delete(taskId);
         reject(new Error(`Timeout waiting for webhook result after ${timeoutMs}ms`));
       }
     }, timeoutMs);
     
-    // Handle messages
-    subscriber.on('message', (channel, message) => {
-      if (channel !== WEBHOOK_CHANNEL || resolved) return;
-      
-      try {
-        const result: WebhookResult = JSON.parse(message);
-        
-        // Check if this message is for our task
-        if (result.itemId === taskId) {
-          resolved = true;
-          cleanup();
-          console.log(`[WebhookListener] Received webhook result for task ${taskId}: ${result.status}`);
-          resolve(result);
-        }
-      } catch (error) {
-        console.error('[WebhookListener] Failed to parse message:', error);
-      }
-    });
-    
-    // Handle errors
-    subscriber.on('error', (error) => {
-      if (!resolved) {
-        resolved = true;
-        cleanup();
-        reject(new Error(`Redis subscription error: ${error.message}`));
-      }
-    });
-    
-    // Subscribe to channel
-    subscriber.subscribe(WEBHOOK_CHANNEL, (err) => {
-      if (err && !resolved) {
-        resolved = true;
-        cleanup();
-        reject(new Error(`Failed to subscribe to ${WEBHOOK_CHANNEL}: ${err.message}`));
-      }
-    });
+    // Register in the shared map
+    pendingListeners.set(taskId, { resolve, reject, timeoutId });
   });
+}
+
+/**
+ * Get the number of currently pending webhook listeners.
+ * Useful for monitoring and debugging.
+ */
+export function getPendingListenerCount(): number {
+  return pendingListeners.size;
 }
 
 /**
@@ -153,5 +208,32 @@ export async function isWebhookListenerReady(): Promise<boolean> {
     return result === 'PONG';
   } catch {
     return false;
+  }
+}
+
+/**
+ * Gracefully shut down the shared subscriber.
+ * Call this during process shutdown to avoid dangling connections.
+ */
+export async function disposeWebhookListener(): Promise<void> {
+  if (sharedSubscriber) {
+    // Reject all pending listeners
+    for (const [taskId, listener] of pendingListeners) {
+      clearTimeout(listener.timeoutId);
+      listener.reject(new Error('Webhook listener shutting down'));
+      pendingListeners.delete(taskId);
+    }
+    
+    try {
+      await sharedSubscriber.unsubscribe(WEBHOOK_CHANNEL);
+      await sharedSubscriber.quit();
+    } catch {
+      // Ignore quit errors during shutdown
+    }
+    
+    sharedSubscriber = null;
+    subscriberReady = false;
+    subscriberInitPromise = null;
+    console.log('[WebhookListener] Shared subscriber disposed');
   }
 }

@@ -525,6 +525,21 @@ stock_worthy = FALSE (use AI-generated instead) for:
 As a rule: if the narration NAMES a specific person, place, event, or organization,
 real stock footage is almost always the better choice.
 
+** CRITICAL: The "summary" field is used to SEARCH for stock images. **
+It MUST describe the RAW SUBJECT ONLY (person, place, or object).
+Do NOT include overlays, composition, or post-production language in the summary.
+Overlays (location tags, nameplates, family trees, lower-thirds, data badges, etc.)
+are applied SEPARATELY by the motion graphics system.
+
+GOOD summaries (stock-searchable):
+  ✅ "Marble bust of Lucius Junius Brutus"
+  ✅ "Interior of the Curia of Pompey, ancient Roman senate hall"
+  ✅ "Portrait of Julius Caesar in white toga"
+BAD summaries (unsearchable):
+  ❌ "Marble bust of Brutus with family tree overlay"
+  ❌ "Interior of Curia of Pompey with location tag overlay"
+  ❌ "Split-screen comparison between sunny Forum and dark Curia"
+
 reuse_entity: For VISUAL CONSISTENCY when an entity appears AGAIN:
 - If showing @(Donald Trump) and you showed him before → reuse_entity: "Donald Trump"
 - If it's the FIRST time showing someone → leave reuse_entity null (fresh search)

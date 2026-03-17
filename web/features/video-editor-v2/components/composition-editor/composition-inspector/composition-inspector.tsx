@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../../utils/general/utils";
 import { DEFAULT_LAYER_TRANSFORM } from "../../../types/composition";
+import { useHorizontalWheelScroll } from "../../../hooks/use-horizontal-wheel-scroll";
 
 // ==========================================
 // TYPES
@@ -86,6 +87,7 @@ export const CompositionInspector: React.FC<CompositionInspectorProps> = ({
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState("properties");
+  const tabScrollRef = useHorizontalWheelScroll();
   
   // Store state
   const composition = useCompositionEditorStore((state) => state.composition);
@@ -168,15 +170,15 @@ export const CompositionInspector: React.FC<CompositionInspectorProps> = ({
 
       {selectedLayer && (
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
-          <div className="shrink-0 border-b border-border bg-muted/10">
-            <TabsList className="w-full h-9 p-0 bg-transparent rounded-none justify-start">
+          <div ref={tabScrollRef} className="shrink-0 border-b border-border bg-muted/10 overflow-x-auto scrollbar-hide">
+            <TabsList className="h-9 p-0 bg-transparent rounded-none justify-start inline-flex w-max min-w-full">
               <TabsTrigger 
                 value="properties"
                 className={cn(
-                  "flex-1 h-full rounded-none border-b-2 border-transparent",
+                  "shrink-0 h-full rounded-none border-b-2 border-transparent whitespace-nowrap",
                   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
                   "data-[state=active]:shadow-none",
-                  "flex items-center justify-center gap-1.5"
+                  "flex items-center justify-center gap-1.5 px-3"
                 )}
               >
                 <Move className="h-3.5 w-3.5" />
@@ -185,10 +187,10 @@ export const CompositionInspector: React.FC<CompositionInspectorProps> = ({
               <TabsTrigger 
                 value="style"
                 className={cn(
-                  "flex-1 h-full rounded-none border-b-2 border-transparent",
+                  "shrink-0 h-full rounded-none border-b-2 border-transparent whitespace-nowrap",
                   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
                   "data-[state=active]:shadow-none",
-                  "flex items-center justify-center gap-1.5"
+                  "flex items-center justify-center gap-1.5 px-3"
                 )}
               >
                 {getPropertyIcon()}

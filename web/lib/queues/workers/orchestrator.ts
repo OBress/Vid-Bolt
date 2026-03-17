@@ -58,6 +58,36 @@ function toEntityReferences(entities: GCMEntity[]): EntityReference[] {
 const LOG_PREFIX = '[Orchestrator]';
 const MAX_VERIFY_ATTEMPTS = 3;
 
+/**
+ * Custom error for task cancellation — allows clean exit without error logging.
+ */
+class CancellationError extends Error {
+  constructor(taskId: string) {
+    super(`Task ${taskId} was cancelled`);
+    this.name = 'CancellationError';
+  }
+}
+
+/**
+ * Check if the task has been cancelled or failed in Supabase.
+ * Called between orchestrator phases as a defensive layer —
+ * even if the Redis job wasn't fully cleaned, the orchestrator
+ * will self-terminate at the next phase boundary.
+ */
+async function checkCancelled(taskId: string): Promise<void> {
+  const supabase = getSupabaseServiceClient();
+  const { data } = await supabase
+    .from('tasks')
+    .select('status')
+    .eq('id', taskId)
+    .single();
+
+  if (data?.status === 'cancelled' || data?.status === 'failed') {
+    console.log(`${LOG_PREFIX} Task ${taskId} is ${data.status} — aborting pipeline`);
+    throw new CancellationError(taskId);
+  }
+}
+
 // ============================================================================
 // QUEUE EVENTS CACHE
 // ============================================================================
@@ -136,6 +166,26 @@ function createInitialState(): ClosedLoopState {
 // PHASE EXECUTORS
 // ============================================================================
 
+// ============================================================================
+// PROGRESS BAND HELPER
+// ============================================================================
+
+/**
+ * Linearly interpolate within a progress band based on completion count.
+ * Returns a whole-number percentage within [bandStart, bandEnd].
+ * Safe for total=0 (returns bandEnd).
+ */
+function computePhaseProgress(
+  bandStart: number,
+  bandEnd: number,
+  completed: number,
+  total: number
+): number {
+  if (total <= 0) return bandEnd;
+  const ratio = Math.min(completed / total, 1);
+  return Math.round(bandStart + ratio * (bandEnd - bandStart));
+}
+
 /**
  * Phase I: TTS Generation
  * Triggers the existing audio worker and waits for completion.
@@ -150,7 +200,7 @@ async function executeTtsPhase(
   await updateTaskStatus(taskId, {
     status: 'running',
     current_step: 'Phase I: Generating narration audio...',
-    progress_percent: 5,
+    progress_percent: 3, // Band: 3–8
   });
 
   const { audioQueue } = await import('@/lib/queues/queues');
@@ -217,7 +267,7 @@ async function executeShotPlanningPhase(
     current_step: reflectionFeedback
       ? 'Phase II: Re-planning shots with feedback...'
       : 'Phase II: Planning shots aligned to narration...',
-    progress_percent: 15,
+    progress_percent: 8, // Band: 8–15
   });
 
   const { shotPlannerQueue } = await import('@/lib/queues/queues');
@@ -404,7 +454,7 @@ async function executeAssetRetrievalPhase(
   await updateTaskStatus(taskId, {
     status: 'running',
     current_step: 'Phase III: Finding stock media and crafting AI prompts...',
-    progress_percent: 30,
+    progress_percent: 15, // Band: 15–30
   });
 
   const { assetScoutQueue } = await import('@/lib/queues/queues');
@@ -668,7 +718,7 @@ async function executeProductionPhase(
   await updateTaskStatus(taskId, {
     status: 'running',
     current_step: 'Phase IV: Generating and verifying images...',
-    progress_percent: 40,
+    progress_percent: 30, // Band: images 30–50, videos 50–70, MG 70–75
   });
 
   // Fetch shot plan from DB to know what needs generating
@@ -704,9 +754,29 @@ async function executeProductionPhase(
 
   // Build entity references once for all verification calls
   const entityRefs = toEntityReferences(gcmEntities);
-  const styleGuide = jobData.creativeManifest.style.visual_style
-    + (jobData.creativeManifest.style.lighting_mood ? `, ${jobData.creativeManifest.style.lighting_mood}` : '')
-    + (jobData.creativeManifest.master_creative_prompt ? `. Creative direction: ${jobData.creativeManifest.master_creative_prompt}` : '');
+
+  // Build two style guides: one for AI-generated content (includes LoRA) and one for stock
+  const baseStyle = [
+    jobData.creativeManifest.style.visual_style,
+    jobData.creativeManifest.style.lighting_mood,
+    jobData.creativeManifest.master_creative_prompt
+      ? `Creative direction: ${jobData.creativeManifest.master_creative_prompt}` : '',
+  ].filter(Boolean).join('. ');
+
+  // AI style guide: includes LoRA info so the verifier knows what visual style to expect
+  const aiStyleGuide = [
+    baseStyle,
+    jobData.creativeManifest.lora
+      ? `STYLE MODEL (LoRA): "${jobData.creativeManifest.lora.name}" — this LoRA model defines the visual style of all AI-generated content. ` +
+        `The model's trained aesthetic IS the intended look. Accept its output style as correct.`
+      : '',
+    jobData.creativeManifest.lora?.trigger_words
+      ? `LoRA trigger words: ${jobData.creativeManifest.lora.trigger_words}`
+      : '',
+  ].filter(Boolean).join('. ');
+
+  // Stock style guide: no LoRA info — stock images are real footage, not AI-generated
+  const stockStyleGuide = baseStyle;
 
   let imagesCompleted = 0;
   let imagesFailed = 0;
@@ -916,7 +986,7 @@ async function executeProductionPhase(
           shotDescription: shot.summary || `Shot ${shot.segment_index}`,
           timeout: IMAGE_GEN_TIMEOUT_MS,
         },
-        { userId: jobData.userId, videoId, taskId, entityReferences: entityRefs, styleGuide, entityIds: shot.entity_refs },
+        { userId: jobData.userId, videoId, taskId, entityReferences: entityRefs, styleGuide: stockStyleGuide, entityIds: shot.entity_refs },
         state
       );
 
@@ -930,6 +1000,14 @@ async function executeProductionPhase(
       } else {
         imagesFailed++;
       }
+
+      // Granular per-image progress (band: 30–50%)
+      const imgTotal = imageShots.length;
+      const imgDone = imagesCompleted + imagesFailed;
+      await updateTaskStatus(taskId, {
+        current_step: `Phase IV: Images ${imgDone}/${imgTotal}...`,
+        progress_percent: computePhaseProgress(30, 50, imgDone, imgTotal),
+      });
     }
 
     const imageStatusText = imageShots.length > 0
@@ -937,7 +1015,7 @@ async function executeProductionPhase(
       : 'Generating videos...';
     await updateTaskStatus(taskId, {
       current_step: `Phase IV: ${imageStatusText}`,
-      progress_percent: 55,
+      progress_percent: 50, // Entering video band: 50–70
     });
 
     // --- VIDEOS ---
@@ -945,7 +1023,7 @@ async function executeProductionPhase(
     // (keyframe images → mode switch → video generation). Dispatch ONCE, then
     // read per-shot URLs from metadata and verify each individually.
     if (videoShots.length > 0) {
-      const totalVideoDuration = videoShots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0);
+      const totalVideoDuration = videoShots.reduce((sum, s) => sum + (s.duration_seconds || 0), 0);
       // Query queue depth to dynamically scale timeout for multi-video contention
       const videoGenQueue = new Queue('video-gen', { connection: getRedisConnection() });
       const { waiting: waitingJobs, active: activeJobs } = await videoGenQueue.getJobCounts('waiting', 'active');
@@ -955,9 +1033,11 @@ async function executeProductionPhase(
       const { isGpuLockHeld } = await import('@/lib/queues/gpu-lock');
       const lockState = await isGpuLockHeld(jobData.userId);
       const lockWaitBufferMs = lockState.held ? (lockState.ttl * 1_000) + 60_000 : 60_000;
-      // Dynamic timeout: GPU processing + lock wait buffer + 2 mode switches (~3min each)
-      const gpuProcessingMs = Math.max(120_000, totalVideoDuration * 10 * 1_000 * queueMultiplier);
-      const VIDEO_BATCH_TIMEOUT_MS = gpuProcessingMs + lockWaitBufferMs + 360_000;
+      // Dynamic timeout: GPU processing + lock wait buffer + mode switches
+      // Uses 2x leniency so timeouts only fire for genuinely stuck batches.
+      // Mode switch buffer: 9 min total (image→video + possible OOM cleanup between)
+      const gpuProcessingMs = Math.max(300_000, totalVideoDuration * 12 * 1_000 * queueMultiplier * 2);
+      const VIDEO_BATCH_TIMEOUT_MS = gpuProcessingMs + lockWaitBufferMs + 540_000;
       console.log(`${LOG_PREFIX} Video batch timeout: ${Math.round(VIDEO_BATCH_TIMEOUT_MS / 1000)}s for ${totalVideoDuration.toFixed(1)}s of video (${videoShots.length} shots, ${queueDepth} jobs ahead → ${queueMultiplier}x multiplier, lock buffer: ${Math.round(lockWaitBufferMs / 1000)}s)`);
 
       // 1. Dispatch video-gen ONCE for the entire batch
@@ -969,6 +1049,8 @@ async function executeProductionPhase(
         aspectRatio: jobData.creativeManifest.style.aspect_ratio,
         loraName: jobData.creativeManifest.lora?.name,
         loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
+      }, {
+        attempts: 1, // Never silently retry the entire batch — orchestrator handles retries
       });
 
       console.log(`${LOG_PREFIX} Dispatched single video-gen batch job ${genJob.id}`);
@@ -985,9 +1067,17 @@ async function executeProductionPhase(
       const generatedVideos = (updatedMeta.generated_videos || {}) as Record<string, string>;
       console.log(`${LOG_PREFIX} Video batch complete: ${Object.keys(generatedVideos).length} URLs in metadata`);
 
-      // 3. Verify each shot individually
+      // 3. Verify each shot individually, collect fundamental failures for batch retry
       const { verifierQueue } = await import('@/lib/queues/queues');
       let previousVideoShotUrl: string | undefined; // M3: Track for temporal continuity
+
+      // Collect fundamental failures for batch retry instead of per-shot sequential retries
+      const fundamentalFailures: Array<{
+        shot: typeof videoShots[0];
+        shotKey: string;
+        mediaUrl: string;
+        feedback: string;
+      }> = [];
 
       for (const shot of videoShots) {
         const shotKey = `shot-${shot.segment_index}`;
@@ -1010,7 +1100,7 @@ async function executeProductionPhase(
             shotDescription: shot.summary || `Shot ${shot.segment_index}`,
             shotIndex: shot.segment_index,
             entityReferences: entityRefs,
-            styleGuide,
+            styleGuide: aiStyleGuide,
             previousShotUrl: previousVideoShotUrl, // M3: temporal continuity
           });
 
@@ -1027,49 +1117,24 @@ async function executeProductionPhase(
           } else if (verdict) {
             console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} FAILED verification: ${verdict.suggested_corrections?.join('; ')}`);
 
-            // For fundamental failures (wrong scene entirely), try ONE re-generation
-            if (verdict.failure_type === 'fundamental' && !(shot as any)._retried) {
-              console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} FUNDAMENTAL failure — scheduling one retry`);
-              (shot as any)._retried = true;
-
-              try {
-                const retryJob = await videoGenQueue.add('video-retry', {
-                  taskId,
-                  userId: jobData.userId,
-                  videoId,
-                  singleShotIndex: shot.segment_index,
-                  previousFeedback: verdict.suggested_corrections?.join('. '),
-                  aspectRatio: jobData.creativeManifest.style.aspect_ratio,
-                  loraName: jobData.creativeManifest.lora?.name,
-                  loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
-                });
-
-                const totalVideoDurationForRetry = shot.duration_seconds || 5;
-                const retryLockState = await isGpuLockHeld(jobData.userId);
-                const retryLockBufferMs = retryLockState.held ? (retryLockState.ttl * 1_000) + 60_000 : 60_000;
-                const RETRY_TIMEOUT_MS = Math.max(120_000, totalVideoDurationForRetry * 20 * 1_000) + retryLockBufferMs;
-                const retryResult = await retryJob.waitUntilFinished(genQueueEvents, RETRY_TIMEOUT_MS);
-                const retryUrl = retryResult?.mediaUrl || retryResult?.url;
-                if (retryUrl) {
-                  generatedVideos[shotKey] = retryUrl;
-                  generatedAssets.set(`placeholder://shot-${shot.segment_index}/asset-0`, retryUrl);
-                  console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} retry succeeded`);
-                  videosCompleted++;
-                  state.total_retries = (state.total_retries || 0) + 1;
-                  continue; // Skip the flagging below
-                }
-              } catch (retryErr) {
-                console.warn(`${LOG_PREFIX} Video shot ${shot.segment_index} retry failed:`, retryErr);
-              }
+            // Collect fundamental failures for batch retry (instead of per-shot sequential retries)
+            if (verdict.failure_type === 'fundamental') {
+              console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} FUNDAMENTAL failure — queuing for batch retry`);
+              fundamentalFailures.push({
+                shot,
+                shotKey,
+                mediaUrl,
+                feedback: verdict.suggested_corrections?.join('. ') || '',
+              });
+            } else {
+              // Recoverable failure: flag but still use
+              state.flagged_shots.push({
+                shotIndex: shot.segment_index,
+                issue: verdict.suggested_corrections?.join('; ') || 'Failed verification',
+                suggestions: verdict.suggested_corrections || [],
+                allAttemptUrls: [mediaUrl],
+              });
             }
-
-            // Recoverable failure or retry-exhausted: flag but still use
-            state.flagged_shots.push({
-              shotIndex: shot.segment_index,
-              issue: verdict.suggested_corrections?.join('; ') || 'Failed verification',
-              suggestions: verdict.suggested_corrections || [],
-              allAttemptUrls: [mediaUrl],
-            });
           }
         } catch (verifyErr) {
           console.warn(`${LOG_PREFIX} Video shot ${shot.segment_index} verification error:`, verifyErr);
@@ -1083,6 +1148,81 @@ async function executeProductionPhase(
           `placeholder://shot-${shot.segment_index}/asset-0`,
           mediaUrl
         );
+      }
+
+      // 4. Batch retry all fundamental failures in ONE GPU pass
+      if (fundamentalFailures.length > 0) {
+        console.log(`${LOG_PREFIX} Batch retrying ${fundamentalFailures.length} fundamental failures in single GPU pass`);
+
+        // Build per-shot feedback map
+        const retryFeedbackMap: Record<number, string> = {};
+        const retryShotIndices: number[] = [];
+        for (const f of fundamentalFailures) {
+          retryShotIndices.push(f.shot.segment_index);
+          retryFeedbackMap[f.shot.segment_index] = f.feedback;
+        }
+
+        try {
+          const retryJob = await videoGenQueue.add('video-batch-retry', {
+            taskId,
+            userId: jobData.userId,
+            videoId,
+            retryShotIndices,
+            retryFeedbackMap,
+            aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+            loraName: jobData.creativeManifest.lora?.name,
+            loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
+          }, {
+            attempts: 1, // Never silently retry the entire batch — one retry is enough
+          });
+
+          // Calculate timeout based on total retry duration
+          const totalRetryDuration = fundamentalFailures.reduce((sum, f) => sum + (f.shot.duration_seconds || 0), 0);
+          const retryLockState = await isGpuLockHeld(jobData.userId);
+          const retryLockBufferMs = retryLockState.held ? (retryLockState.ttl * 1_000) + 60_000 : 60_000;
+          const BATCH_RETRY_TIMEOUT_MS = Math.max(
+            180_000,
+            totalRetryDuration * 20 * 1_000 + fundamentalFailures.length * 10_000
+          ) + retryLockBufferMs;
+
+          console.log(`${LOG_PREFIX} Dispatched batch retry job ${retryJob.id} for ${retryShotIndices.length} shots (timeout: ${Math.round(BATCH_RETRY_TIMEOUT_MS / 1000)}s)`);
+          const retryResult = await retryJob.waitUntilFinished(genQueueEvents, BATCH_RETRY_TIMEOUT_MS);
+
+          // Process batch retry results
+          const retryResults = (retryResult?.retryResults || {}) as Record<string, string>;
+          let retriesSucceeded = 0;
+
+          for (const f of fundamentalFailures) {
+            const retryUrl = retryResults[`shot-${f.shot.segment_index}`];
+            if (retryUrl) {
+              generatedVideos[f.shotKey] = retryUrl;
+              generatedAssets.set(`placeholder://shot-${f.shot.segment_index}/asset-0`, retryUrl);
+              retriesSucceeded++;
+            } else {
+              // Batch retry failed for this shot: flag but still use original
+              state.flagged_shots.push({
+                shotIndex: f.shot.segment_index,
+                issue: f.feedback || 'Failed verification and retry',
+                suggestions: f.feedback ? f.feedback.split('. ') : [],
+                allAttemptUrls: [f.mediaUrl],
+              });
+            }
+          }
+
+          state.total_retries = (state.total_retries || 0) + retriesSucceeded;
+          console.log(`${LOG_PREFIX} Batch retry complete: ${retriesSucceeded}/${fundamentalFailures.length} succeeded`);
+        } catch (retryErr) {
+          console.warn(`${LOG_PREFIX} Batch retry failed:`, retryErr);
+          // Flag all failed shots with their original URLs
+          for (const f of fundamentalFailures) {
+            state.flagged_shots.push({
+              shotIndex: f.shot.segment_index,
+              issue: f.feedback || 'Failed verification and batch retry',
+              suggestions: f.feedback ? f.feedback.split('. ') : [],
+              allAttemptUrls: [f.mediaUrl],
+            });
+          }
+        }
       }
     }
 
@@ -1140,7 +1280,12 @@ async function executeProductionPhase(
           loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
         });
 
-        const timeout = Math.max(120_000, (shot.duration_seconds || 5) * 20 * 1_000);
+        // Dynamic timeout: video duration × 24x (12x gen ratio × 2x leniency) + mode switch buffer
+        if (!shot.duration_seconds || shot.duration_seconds <= 0) {
+          throw new Error(`[Orchestrator] Shot ${shot.segment_index} has no valid duration_seconds — pipeline timing data is incomplete.`);
+        }
+        const shotDuration = shot.duration_seconds;
+        const timeout = Math.max(300_000, shotDuration * 24 * 1_000 + 180_000);
         const result = await genJob.waitUntilFinished(mgVideoQueueEvents, timeout);
         const videoUrl = result?.mediaUrl || result?.url;
         
@@ -1247,7 +1392,7 @@ async function executeProductionPhase(
 
   await updateTaskStatus(taskId, {
     current_step: `Phase IV: Complete — ${imagesCompleted} images, ${videosCompleted} videos, ${mgCompleted} MG`,
-    progress_percent: 75,
+    progress_percent: 75, // End of production band
   });
 
   return {
@@ -1274,7 +1419,7 @@ async function executeAssemblyPhase(
   await updateTaskStatus(taskId, {
     status: 'running',
     current_step: 'Phase V: Assembling timeline in Video Editor...',
-    progress_percent: 85,
+    progress_percent: 75, // Band: 75–90
   });
 
   const { editAssemblyQueue } = await import('@/lib/queues/queues');
@@ -1299,7 +1444,8 @@ async function executeAssemblyPhase(
     const shots = (meta?.metadata as any)?.av_script_part1?.shots;
     if (Array.isArray(shots)) shotCount = shots.length;
   } catch { /* use fallback */ }
-  const dynamicTimeoutMs = Math.max(180_000, Math.min(900_000, 120_000 + shotCount * 15_000));
+  // Dynamic timeout: generous bounds for large videos (30 min max for hour-long content)
+  const dynamicTimeoutMs = Math.max(180_000, Math.min(1_800_000, 120_000 + shotCount * 20_000));
   console.log(`${LOG_PREFIX} Assembly timeout: ${dynamicTimeoutMs / 1000}s for ${shotCount} shots`);
   const assemblyResult = await assemblyJob.waitUntilFinished(queueEvents, dynamicTimeoutMs);
 
@@ -1488,6 +1634,9 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       message: `Phase I complete — ${ttsResult.timestampsCount} word timestamps generated`,
     });
 
+    // Cancellation check: abort if user stopped the task
+    await checkCancelled(taskId);
+
     // =========================================================================
     // PHASE II: Shot Planning
     // =========================================================================
@@ -1583,6 +1732,9 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
         console.warn(`${LOG_PREFIX} Phase II-B: Self-reflection failed, continuing:`, reflectionError);
       }
     }
+
+    // Cancellation check: abort if user stopped the task
+    await checkCancelled(taskId);
 
     // =========================================================================
     // PHASE III: Asset Retrieval + SFX
@@ -1684,6 +1836,9 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       message: `Phase III complete — ${assetResult.stockMatched} stock matched, ${assetResult.promptsGenerated} AI prompts crafted${musicResult ? `, ${musicResult.segments.length} music segments generated` : ''}`,
     });
 
+    // Cancellation check: abort if user stopped the task
+    await checkCancelled(taskId);
+
     // =========================================================================
     // PHASE IV: Production (GPU + MG)
     // =========================================================================
@@ -1779,7 +1934,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
         await updateTaskStatus(taskId, {
           status: 'running',
           current_step: 'Phase IV-B: Analyzing video clips for optimal trim points...',
-          progress_percent: 72,
+          progress_percent: 73, // Within MG/trim band: 70–75
         });
 
         const { trimAllClips } = await import('@/lib/services/clip-trimmer');
@@ -1805,7 +1960,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
             shotIndex: i,
             mediaUrl: generatedVideoUrls[`shot-${i}`] || '',
             description: String(shot.description || shot.summary || ''),
-            durationSeconds: Number(shot.duration_seconds) || 5,
+            durationSeconds: Number(shot.duration_seconds) || 0, // 0 = skip in trimmer if missing
           }))
           .filter(s => s.mediaUrl); // Already read from generated_videos, so all have video type
 
@@ -1820,6 +1975,9 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
         console.warn(`${LOG_PREFIX} Phase IV-B: Clip trimming failed, continuing:`, trimError);
       }
     }
+
+    // Cancellation check: abort if user stopped the task
+    await checkCancelled(taskId);
 
     // =========================================================================
     // PHASE V: Auto-Assembly
@@ -1913,7 +2071,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       await updateTaskStatus(taskId, {
         status: 'running',
         current_step: 'Phase V-B: Reviewing overall video pacing...',
-        progress_percent: 92,
+        progress_percent: 90, // Band: 90–95
       });
 
       const { reviewTimelinePacing } = await import('@/lib/services/pacing-editor');
@@ -1983,6 +2141,16 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     return { success: true, videoId, summary };
 
   } catch (error) {
+    // Clean exit for cancelled tasks — no error logging or failure state
+    if (error instanceof CancellationError) {
+      console.log(`${LOG_PREFIX} Pipeline cancelled for video ${videoId} — clean exit`);
+      state.status = 'cancelled';
+      try {
+        await persistState(videoId, state);
+      } catch { /* ignore */ }
+      return { success: false, cancelled: true, videoId };
+    }
+
     console.error(`${LOG_PREFIX} ❌ Pipeline failed for video ${videoId}:`, error);
 
     // Persist failure state for recovery

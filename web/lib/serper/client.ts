@@ -16,6 +16,9 @@ import type {
   SerperImageAspectRatio,
   SerperImageLicense,
 } from './types';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('Serper');
 
 const SERPER_API_ENDPOINT = 'https://google.serper.dev/images';
 
@@ -199,7 +202,7 @@ export async function searchSerperImages(
     size: filters.size || 'any',
   };
   
-  console.log(`[Serper] Searching for: "${query}" (limit: ${maxResults}, size: ${enhancedFilters.size})`);
+  log.debug(`Searching for: "${query}" (limit: ${maxResults}, size: ${enhancedFilters.size})`);
 
   const requestBody = buildRequestBody(query, enhancedFilters);
 
@@ -214,14 +217,14 @@ export async function searchSerperImages(
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('[Serper] API error:', response.status, errorText);
+    log.error('API error:', response.status, errorText);
     throw new Error(`Serper API error: ${response.status} ${response.statusText}`);
   }
 
   const data: SerperApiResponse = await response.json();
 
   if (!data.images || data.images.length === 0) {
-    console.log('[Serper] No results found');
+    log.debug('No results found');
     return [];
   }
 
@@ -249,7 +252,7 @@ export async function searchSerperImages(
     if (results.length >= maxResults) break;
   }
 
-  console.log(`[Serper] Found ${results.length} images after filtering`);
+  log.debug(`Found ${results.length} images after filtering`);
   return results;
 }
 
@@ -260,7 +263,7 @@ export async function searchSerperImages(
  * @returns Buffer containing the image data
  */
 export async function downloadSerperImage(url: string): Promise<Buffer> {
-  console.log(`[Serper] Downloading: ${url.substring(0, 80)}...`);
+  log.debug(`Downloading: ${url.substring(0, 80)}...`);
 
   const response = await fetch(url, {
     headers: {

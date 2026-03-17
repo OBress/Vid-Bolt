@@ -19,6 +19,7 @@ import { clearTimelineMarkerPosition } from './utils';
 import { getTotalContentHeight } from './components/canvas-timeline/canvas-timeline-utils';
 import { ZOOM_CONSTRAINTS, TIMELINE_CONSTANTS, TIMELINE_DIMENSIONS_REM, COMPACT_DIMENSIONS_REM } from './constants';
 import { useVideoEditorStore, selectDragType } from '../../stores/video-editor-store';
+import { useMediaIssuesStore } from '../../stores/media-issues-store';
 import type { TrackGroup } from '../../types/timeline-v2';
 
 /**
@@ -617,6 +618,14 @@ export const Timeline = forwardRef<TimelineRef, TimelineProps>(({
     const maxScrollY = Math.max(0, totalTracksHeight - containerHeight + 100);
     setScrollY(maxScrollY);
   }, [setScrollY, tracks.length, trackHeight, containerHeight]);
+
+  // Register scrollToTime in the media issues store so the issues panel
+  // can programmatically scroll the timeline viewport to center on a clip
+  useEffect(() => {
+    const { registerScrollToTime } = useMediaIssuesStore.getState();
+    registerScrollToTime(scrollToTime);
+    return () => registerScrollToTime(null);
+  }, [scrollToTime]);
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({

@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useHorizontalWheelScroll } from "../../hooks/use-horizontal-wheel-scroll";
 import { cn } from "../../utils/general/utils";
 import { SoundOverlay } from "../../types";
 import type { TimelineClip } from "../../types/timeline-v2";
@@ -65,6 +66,9 @@ import {
   Sparkles,
   Link2,
   Info,
+  FileText,
+  Copy,
+  Check,
 } from "lucide-react";
 
 // ==========================================
@@ -1403,22 +1407,25 @@ interface AudioInspectorProps {
 }
 
 export const AudioInspector: React.FC<AudioInspectorProps> = ({ clip }) => {
-  const [activeTab, setActiveTab] = useState<'volume' | 'eq' | 'dynamics' | 'effects'>('volume');
+  const [activeTab, setActiveTab] = useState<'volume' | 'eq' | 'dynamics' | 'effects' | 'transcript'>('volume');
+  const tabScrollRef = useHorizontalWheelScroll();
 
   return (
     <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="h-full flex flex-col bg-gradient-to-b from-black/20 to-transparent">
-      <TabsList className="w-full h-10 bg-black/30 p-1 rounded-none border-b border-white/5 shrink-0 gap-1">
+      <div ref={tabScrollRef} className="overflow-x-auto scrollbar-hide shrink-0">
+      <TabsList className="h-10 bg-black/30 p-1 rounded-none border-b border-white/5 gap-1 inline-flex w-max min-w-full">
         {[
           { value: 'volume', icon: Volume2, label: 'Volume' },
           { value: 'eq', icon: Activity, label: 'EQ' },
           { value: 'dynamics', icon: Gauge, label: 'Dynamics' },
           { value: 'effects', icon: Waves, label: 'FX' },
+          { value: 'transcript', icon: FileText, label: 'Text' },
         ].map(({ value, icon: Icon, label }) => (
           <TabsTrigger
             key={value}
             value={value}
             className={cn(
-              "flex-1 h-full rounded-md text-xs gap-1.5 transition-all",
+              "shrink-0 h-full rounded-md text-xs gap-1.5 px-3 whitespace-nowrap transition-all",
               "data-[state=active]:bg-white/10 data-[state=active]:text-white",
               "data-[state=inactive]:text-white/50 data-[state=inactive]:hover:text-white/70"
             )}
@@ -1428,6 +1435,7 @@ export const AudioInspector: React.FC<AudioInspectorProps> = ({ clip }) => {
           </TabsTrigger>
         ))}
       </TabsList>
+      </div>
 
       <div className="flex-1 overflow-hidden">
         <TabsContent value="volume" className="h-full m-0 p-0 data-[state=inactive]:hidden">
@@ -1442,9 +1450,107 @@ export const AudioInspector: React.FC<AudioInspectorProps> = ({ clip }) => {
         <TabsContent value="effects" className="h-full m-0 p-0 data-[state=inactive]:hidden">
           <ScrollArea className="h-full"><AudioEffectsTab clipId={clip.id} /></ScrollArea>
         </TabsContent>
+        <TabsContent value="transcript" className="h-full m-0 p-0 data-[state=inactive]:hidden">
+          <ScrollArea className="h-full"><TranscriptTab clip={clip} /></ScrollArea>
+        </TabsContent>
       </div>
     </Tabs>
   );
 };
 
 export default AudioInspector;
+
+// ==========================================
+// TRANSCRIPT TAB
+// ==========================================
+
+const TranscriptTab: React.FC<{ clip: TimelineClip }> = ({ clip }) => {
+  const [copied, setCopied] = useState(false);
+  const data = clip.data || {};
+  const transcriptText = data.text as string | undefined;
+
+  const handleCopy = useCallback(async () => {
+    if (!transcriptText) return;
+    try {
+      await navigator.clipboard.writeText(transcriptText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = transcriptText;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [transcriptText]);
+
+  if (!transcriptText) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center px-4">
+        <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3">
+          <FileText className="w-6 h-6 text-white/30" />
+        </div>
+        <h3 className="text-sm font-medium text-white/60 mb-1">No Transcript</h3>
+        <p className="text-xs text-white/40 max-w-[200px] leading-relaxed">
+          This audio clip doesn't have transcript data. Transcripts are available for TTS-generated narration.
+        </p>
+      </div>
+    );
+  }
+
+  const chapterNumber = data.chapterNumber as number | undefined;
+  const duration = clip.duration;
+
+  return (
+    <div className="p-4 space-y-3">
+      {/* Header with copy button */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <FileText className="h-4 w-4 text-primary" />
+          <span className="text-sm font-medium text-white/90">Transcript</span>
+          {chapterNumber != null && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/50">
+              Chunk {chapterNumber + 1}
+            </span>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2.5 text-xs gap-1.5 text-white/60 hover:text-white"
+          onClick={handleCopy}
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3 text-green-400" />
+              Copied!
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              Copy
+            </>
+          )}
+        </Button>
+      </div>
+
+      {/* Transcript text */}
+      <div className="bg-black/20 rounded-xl border border-white/5 p-4">
+        <p className="text-xs text-white/70 leading-relaxed whitespace-pre-wrap">
+          {transcriptText}
+        </p>
+      </div>
+
+      {/* Duration info */}
+      <div className="flex items-center gap-2 text-[10px] text-white/40">
+        <Timer className="h-3 w-3" />
+        <span>Duration: {duration.toFixed(1)}s</span>
+        <span className="text-white/20">•</span>
+        <span>{transcriptText.split(/\s+/).length} words</span>
+      </div>
+    </div>
+  );
+};

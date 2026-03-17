@@ -41,12 +41,28 @@ const getWebhookUrl = () =>
   process.env.WEBHOOK_CALLBACK_URL || 'http://localhost:3000/api/gpu-callback';
 const getWebhookSecret = () => process.env.GPU_WEBHOOK_SECRET;
 
-// Timeout configurations based on benchmarks
-// Images: ~7-15s each with batch overhead, Videos: ~8x duration
-export const TIMEOUT_CONFIG = {
-  image_generation: { baseMs: 60_000, perItemMs: 20_000 },
-  image_editing: { baseMs: 60_000, perItemMs: 20_000 },
-  video_generation: { baseMs: 120_000, perSecondMs: 15_000 },
+// Dynamic timeout configuration — all derived from observed GPU benchmarks
+// with generous leniency to prevent false timeouts during OOM recovery,
+// high queue depths, or long-form video generation.
+//
+// Benchmark observations (A100 80GB):
+//   Normal image gen: ~7-15s/image
+//   OOM recovery (1-at-a-time): ~27s/image (gen + VRAM cleanup)
+//   Video gen (LTX-2): ~8-12x clip duration
+//   Mode switch: 30-90s (model load + warmup)
+const TIMEOUT_BENCHMARKS = {
+  image: {
+    normalPerItemMs: 15_000,      // Normal batch processing
+    oomPerItemMs: 30_000,         // OOM recovery: 1 at a time + cleanup
+    minTotalMs: 300_000,          // 5 min minimum — never timeout faster than this
+  },
+  video: {
+    perSecondOfContentMs: 12_000, // ~12x real-time for LTX-2 generation
+    minTotalMs: 600_000,          // 10 min minimum — even for a single short clip
+  },
+  // Global leniency multiplier: timeouts should only fire for genuinely
+  // excessive waits, not normal slow processing. 2x gives ample headroom.
+  leniencyMultiplier: 2,
 };
 
 // Mode switch timeout (LTX-2 loading can take ~90s+)
@@ -110,18 +126,44 @@ export interface ItemCompleteEvent {
 // ============================================================================
 
 /**
- * Calculate timeout for a batch based on item count and type
+ * Calculate a dynamic timeout for a batch based on item count, type,
+ * and operational context. Returns a value generous enough that only
+ * genuinely stuck batches will timeout.
+ *
+ * @param type - Generation type
+ * @param itemCount - Number of items in the batch
+ * @param options - Contextual hints for more accurate estimation
  */
 export function calculateTimeout(
   type: 'image_generation' | 'image_editing' | 'video_generation',
   itemCount: number,
-  avgDurationSec?: number
-): number {
-  const config = TIMEOUT_CONFIG[type];
-  if (type === 'video_generation') {
-    return config.baseMs + itemCount * (avgDurationSec || 5) * (config as any).perSecondMs;
+  options?: {
+    /** For videos: average clip duration in seconds */
+    avgDurationSec?: number;
+    /** For videos: total seconds of content across all clips */
+    totalVideoDurationSec?: number;
+    /** Number of other jobs queued ahead on the GPU */
+    queueDepthAhead?: number;
   }
-  return config.baseMs + itemCount * (config as any).perItemMs;
+): number {
+  const { leniencyMultiplier } = TIMEOUT_BENCHMARKS;
+  const queueMultiplier = 1 + (options?.queueDepthAhead || 0);
+
+  if (type === 'video_generation') {
+    const totalDuration = options?.totalVideoDurationSec
+      || itemCount * (options?.avgDurationSec || 5);
+    const rawMs = totalDuration * TIMEOUT_BENCHMARKS.video.perSecondOfContentMs * queueMultiplier;
+    const withLeniency = rawMs * leniencyMultiplier;
+    return Math.max(TIMEOUT_BENCHMARKS.video.minTotalMs, withLeniency);
+  }
+
+  // Images and image editing: use OOM-aware per-item timing
+  // In OOM recovery, GPU processes 1 item at a time with ~10s cleanup between each.
+  // We use the OOM rate as baseline since it's the worst case and we want no false timeouts.
+  const perItemMs = TIMEOUT_BENCHMARKS.image.oomPerItemMs;
+  const rawMs = itemCount * perItemMs * queueMultiplier;
+  const withLeniency = rawMs * leniencyMultiplier;
+  return Math.max(TIMEOUT_BENCHMARKS.image.minTotalMs, withLeniency);
 }
 
 /**
@@ -167,15 +209,42 @@ async function ensureMode(targetMode: 'image_generation' | 'image_editing' | 'vi
     return true;
   }
   
-  // Switch mode
+  // Switch mode — may need retries if GPU has active jobs (503)
   console.log(`[GPU-Batch] Switching to ${targetMode} mode...`);
   const switchTarget: 'image' | 'video' | 'audio' =
     targetMode === 'video_generation' ? 'video' :
     targetMode === 'audio_creation' ? 'audio' :
     'image';
-  const switchResult = await callGpuSwitchMode(switchTarget);
   
-  if (!switchResult.success) {
+  // Retry loop: GPU API returns 503 if jobs are still queued/processing.
+  // This is a transient condition — the jobs will finish, then mode switch succeeds.
+  const MAX_SWITCH_RETRIES = 30;    // 30 × 10s = 5 min max wait
+  const SWITCH_RETRY_DELAY_MS = 10_000;
+  
+  for (let attempt = 1; attempt <= MAX_SWITCH_RETRIES; attempt++) {
+    const switchResult = await callGpuSwitchMode(switchTarget);
+    
+    if (switchResult.success) {
+      break; // Mode switch initiated successfully
+    }
+    
+    // Check for 503 (jobs still active) — retry after delay
+    const is503 = switchResult.error?.includes('503') 
+      || switchResult.error?.includes('jobs are queued')
+      || switchResult.error?.includes('jobs are active')
+      || switchResult.error?.includes('Cannot switch')
+      || switchResult.error?.includes('Cannot change');
+    
+    if (is503 && attempt < MAX_SWITCH_RETRIES) {
+      console.log(
+        `[GPU-Batch] Mode switch blocked (jobs still active), ` +
+        `retrying in ${SWITCH_RETRY_DELAY_MS / 1000}s (attempt ${attempt}/${MAX_SWITCH_RETRIES})...`
+      );
+      await new Promise(resolve => setTimeout(resolve, SWITCH_RETRY_DELAY_MS));
+      continue;
+    }
+    
+    // Non-503 error or retries exhausted
     console.error(`[GPU-Batch] Failed to initiate mode switch: ${switchResult.error}`);
     return false;
   }
@@ -362,6 +431,17 @@ export async function processGpuBatchGeneration(
         console.warn(`${logPrefix} Shot ${shot.segment_index}: No keyframe image available, video will be skipped`);
       }
     }
+    // -----------------------------------------------------------------------
+    // MODE SWITCH SAFETY: Confirm all keyframe webhooks settled before switching
+    // -----------------------------------------------------------------------
+    // The GPU API now rejects mode switches while jobs are running, but we still
+    // log an explicit audit trail to catch any regressions.
+    const keyframeCompleted = keyframeResults.filter(r => r.generation_status === 'completed').length;
+    const keyframeFailed = keyframeResults.filter(r => r.generation_status === 'failed').length;
+    console.log(
+      `${logPrefix} All keyframe webhooks settled: ${keyframeCompleted} completed, ${keyframeFailed} failed ` +
+      `(out of ${videoShots.length} video shots). Safe to switch GPU mode.`
+    );
     
     const modeReady = await ensureMode('video_generation');
     if (!modeReady) {
@@ -510,9 +590,9 @@ async function processImageBatch(
 
   console.log(`${logPrefix} Batch ${batchId} submitted (${items.length} items), waiting for webhooks...`);
 
-  // Wait for all webhooks with calculated timeout
+  // Wait for all webhooks with dynamic timeout (OOM-aware: ~30s/item worst case × 2x leniency)
   const timeout = calculateTimeout('image_generation', items.length);
-  console.log(`${logPrefix} Webhook timeout: ${Math.round(timeout / 1000)}s for ${items.length} items`);
+  console.log(`${logPrefix} Webhook timeout: ${Math.round(timeout / 1000)}s for ${items.length} items (dynamic, OOM-aware)`);
 
   // Force-update GPU activity before long webhook wait to prevent VM shutdown
   forceUpdateGpuActivity().catch(() => {});
@@ -755,9 +835,13 @@ async function processVideoBatch(
 
   console.log(`${logPrefix} Batch ${batchId} submitted, waiting for webhooks...`);
 
-  // Calculate timeout based on average duration
-  const avgDuration = shots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0) / shots.length;
-  const timeout = calculateTimeout('video_generation', items.length, avgDuration);
+  // Calculate timeout based on total video content duration (not just count)
+  const totalVideoDuration = shots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0);
+  const avgDuration = totalVideoDuration / shots.length;
+  const timeout = calculateTimeout('video_generation', items.length, {
+    avgDurationSec: avgDuration,
+    totalVideoDurationSec: totalVideoDuration,
+  });
   
   // Force-update GPU activity before long webhook wait to prevent VM shutdown
   forceUpdateGpuActivity().catch(() => {});

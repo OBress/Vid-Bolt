@@ -22,8 +22,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { clipsToOverlays, clipToOverlay, buildTransitionLookup } from "../../utils/clip-to-render-adapter";
 import { OverlayType, Overlay, VideoTransitionType, AudioTransitionType, TransitionEasing } from "../../types";
 import type { TimelineClip } from "../../types/timeline-v2";
+import { useHorizontalWheelScroll } from "../../hooks/use-horizontal-wheel-scroll";
 
-import { PanelRightClose, Layers, Info, Shuffle, Move, Palette, Sparkles, SlidersHorizontal, Clock, Wand2, Scan } from "lucide-react";
+import { PanelRightClose, Layers, Info, Shuffle, Move, Palette, Sparkles, SlidersHorizontal, Clock, Wand2, Scan, Bot } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   Tooltip,
@@ -52,6 +53,7 @@ const VideoSection = React.lazy(() => import("./sections/video-section").then(m 
 const ImageSection = React.lazy(() => import("./sections/image-section").then(m => ({ default: m.ImageSection })));
 const AudioSection = React.lazy(() => import("./sections/audio-section").then(m => ({ default: m.AudioSection })));
 const ColorGradingSection = React.lazy(() => import("./sections/color-grading-section").then(m => ({ default: m.ColorGradingSection })));
+const AiMetadataSection = React.lazy(() => import("./sections/ai-metadata-section").then(m => ({ default: m.AiMetadataSection })));
 const KeyframesSection = React.lazy(() => import("./sections/keyframes-section").then(m => ({ default: m.KeyframesSection })));
 const AudioInspector = React.lazy(() => import("./audio-inspector"));
 const MotionGraphicsSection = React.lazy(() => import("./sections/motion-graphics-section").then(m => ({ default: m.MotionGraphicsSection })));
@@ -348,7 +350,7 @@ export interface InspectorPanelProps {
 // INSPECTOR PANEL COMPONENT
 // ==========================================
 
-type InspectorTab = 'properties' | 'style' | 'effects' | 'color' | 'animation';
+type InspectorTab = 'properties' | 'style' | 'effects' | 'ai' | 'animation';
 
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onClose,
@@ -370,6 +372,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
   // Track active tab
   const [activeTab, setActiveTab] = useState<InspectorTab>('properties');
+  
+  // Horizontal wheel-scroll for tab bar
+  const tabScrollRef = useHorizontalWheelScroll();
   
   // Track which clip is being edited in multi-select
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
@@ -397,7 +402,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             break;
           case '4':
             e.preventDefault();
-            setActiveTab('color');
+            setActiveTab('ai');
             break;
           case '5':
             e.preventDefault();
@@ -763,18 +768,18 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           )}
 
             {/* Tab Headers - For non-audio clips */}
-          <div className={cn(
-            "absolute left-0 right-0 z-10 border-b border-border bg-muted/10",
+          <div ref={tabScrollRef} className={cn(
+            "absolute left-0 right-0 z-10 border-b border-border bg-muted/10 overflow-x-auto scrollbar-hide",
             selectionInfo.type === 'multi' ? "top-[76px]" : "top-10"
           )}>
-            <TabsList className="w-full h-9 bg-transparent p-0 rounded-none justify-start">
+            <TabsList className="h-9 bg-transparent p-0 rounded-none justify-start inline-flex w-max min-w-full">
               <TabsTrigger
                 value="properties"
                 className={cn(
-                  "flex-1 h-full rounded-none border-b-2 border-transparent",
+                  "shrink-0 h-full rounded-none border-b-2 border-transparent whitespace-nowrap",
                   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
                   "data-[state=active]:shadow-none",
-                  "flex items-center justify-center gap-1.5"
+                  "flex items-center justify-center gap-1.5 px-3"
                 )}
               >
                 <Move className="h-3.5 w-3.5" />
@@ -783,10 +788,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <TabsTrigger
                 value="style"
                 className={cn(
-                  "flex-1 h-full rounded-none border-b-2 border-transparent",
+                  "shrink-0 h-full rounded-none border-b-2 border-transparent whitespace-nowrap",
                   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
                   "data-[state=active]:shadow-none",
-                  "flex items-center justify-center gap-1.5"
+                  "flex items-center justify-center gap-1.5 px-3"
                 )}
               >
                 <Palette className="h-3.5 w-3.5" />
@@ -795,34 +800,34 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <TabsTrigger
                 value="effects"
                 className={cn(
-                  "flex-1 h-full rounded-none border-b-2 border-transparent",
+                  "shrink-0 h-full rounded-none border-b-2 border-transparent whitespace-nowrap",
                   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
                   "data-[state=active]:shadow-none",
-                  "flex items-center justify-center gap-1.5"
+                  "flex items-center justify-center gap-1.5 px-3"
                 )}
               >
                 <Sparkles className="h-3.5 w-3.5" />
                 <span className="text-xs">Effects</span>
               </TabsTrigger>
               <TabsTrigger
-                value="color"
+                value="ai"
                 className={cn(
-                  "flex-1 h-full rounded-none border-b-2 border-transparent",
+                  "shrink-0 h-full rounded-none border-b-2 border-transparent whitespace-nowrap",
                   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
                   "data-[state=active]:shadow-none",
-                  "flex items-center justify-center gap-1.5"
+                  "flex items-center justify-center gap-1.5 px-3"
                 )}
               >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                <span className="text-xs">Color</span>
+                <Bot className="h-3.5 w-3.5" />
+                <span className="text-xs">AI</span>
               </TabsTrigger>
               <TabsTrigger
                 value="animation"
                 className={cn(
-                  "flex-1 h-full rounded-none border-b-2 border-transparent",
+                  "shrink-0 h-full rounded-none border-b-2 border-transparent whitespace-nowrap",
                   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
                   "data-[state=active]:shadow-none",
-                  "flex items-center justify-center gap-1.5"
+                  "flex items-center justify-center gap-1.5 px-3"
                 )}
               >
                 <Clock className="h-3.5 w-3.5" />
@@ -855,6 +860,22 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       overlay={activeOverlay as import("../../types").SoundOverlay}
                         onUpdate={(updates) => handleChangeOverlay(activeOverlay.id, (prev) => ({ ...prev, ...updates }))}
                     />
+                  )}
+
+                  {/* Color Grading Section (moved from dedicated Color tab) */}
+                  {activeOverlay && activeOverlay.type !== OverlayType.SOUND && (
+                    <InspectorSection
+                      title="Color Grading"
+                      icon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+                      defaultOpen={false}
+                    >
+                      <div className="-mx-3">
+                        <ColorGradingSection
+                          overlay={activeOverlay}
+                          onUpdate={(updates) => handleChangeOverlay(activeOverlay.id, (prev) => ({ ...prev, ...updates } as any))}
+                        />
+                      </div>
+                    </InspectorSection>
                   )}
                 </div>
                 </React.Suspense>
@@ -1045,27 +1066,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </TabsContent>
             )}
 
-              {/* Color Tab */}
-            {activeTab === 'color' && (
-            <TabsContent value="color" className="h-full m-0 p-0 overflow-hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-right-1 duration-200" forceMount>
+              {/* AI Tab - Generation metadata */}
+            {activeTab === 'ai' && (
+            <TabsContent value="ai" className="h-full m-0 p-0 overflow-hidden data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-right-1 duration-200" forceMount>
               <React.Suspense fallback={<InspectorSkeleton />}>
-              {activeOverlay && activeOverlay.type !== OverlayType.SOUND ? (
-                <ColorGradingSection
-                  overlay={activeOverlay}
-                    onUpdate={(updates) => handleChangeOverlay(activeOverlay.id, (prev) => ({ ...prev, ...updates } as any))}
-                />
-              ) : activeOverlay && activeOverlay.type === OverlayType.SOUND ? (
-                <div className="flex flex-col items-center justify-center py-8 text-center">
-                  <SlidersHorizontal className="h-8 w-8 text-muted-foreground/50 mb-2" />
-                  <p className="text-xs text-muted-foreground">
-                    Color grading is not available for audio clips
-                  </p>
-                </div>
+              {activeClip ? (
+                <AiMetadataSection clip={activeClip} />
               ) : (
                 <div className="flex flex-col items-center justify-center py-8 text-center">
-                  <SlidersHorizontal className="h-8 w-8 text-muted-foreground/50 mb-2" />
+                  <Bot className="h-8 w-8 text-muted-foreground/50 mb-2" />
                   <p className="text-xs text-muted-foreground">
-                    Select a video or image to edit color grading
+                    Select a clip to view AI generation data
                   </p>
                 </div>
               )}

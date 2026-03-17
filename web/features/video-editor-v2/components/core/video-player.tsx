@@ -8,6 +8,42 @@ import { selectOverlays } from "../../stores/memoized-render-selectors";
 import { clipIdToNumeric } from "../../utils/clip-to-render-adapter";
 import { SelectionOverlays } from "./selection-overlays";
 import { setPlayheadFrame } from "../../hooks/playhead-frame-bridge";
+import { useMediaIssuesStore, selectHighlightedClipId } from "../../stores/media-issues-store";
+
+/**
+ * Overlay that renders on the video canvas when a media issue is highlighted.
+ * Isolated in its own component so highlight state changes don't re-render the entire VideoPlayer.
+ */
+const IssueHighlightOverlay: React.FC = React.memo(() => {
+  const highlightedClipId = useMediaIssuesStore(selectHighlightedClipId);
+
+  if (!highlightedClipId) return null;
+
+  return (
+    <div
+      className="absolute inset-0 z-50 pointer-events-none"
+      style={{
+        boxShadow: 'inset 0 0 0 3px rgba(245, 158, 11, 0.8)',
+        animation: 'issueHighlightPulse 1.5s ease-in-out infinite',
+      }}
+    >
+      {/* Issue badge */}
+      <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-amber-500/90 text-black text-xs font-semibold px-2 py-1 rounded shadow-lg">
+        <span>⚠</span>
+        <span>Media Issue</span>
+      </div>
+
+      {/* Inline keyframe animation */}
+      <style>{`
+        @keyframes issueHighlightPulse {
+          0%, 100% { box-shadow: inset 0 0 0 3px rgba(245, 158, 11, 0.8); }
+          50% { box-shadow: inset 0 0 0 3px rgba(245, 158, 11, 0.3); }
+        }
+      `}</style>
+    </div>
+  );
+});
+IssueHighlightOverlay.displayName = 'IssueHighlightOverlay';
 
 /**
  * Props for the VideoPlayer component
@@ -595,11 +631,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 acknowledgeRemotionLicense={true}
                 inputProps={editorInputProps as any}
                 numberOfSharedAudioTags={16}
-                errorFallback={({error}) => (
-                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1a1a1a', color: '#ff6b6b', fontSize: '13px', padding: '16px', textAlign: 'center' }}>
-                    <span>Player error: {error.message}</span>
-                  </div>
-                )}
+                errorFallback={({error}) => {
+                  console.warn('[VideoPlayer] Player error caught by fallback:', error.message);
+                  return (
+                    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1a1a2e', color: '#888', fontSize: '13px', padding: '24px', textAlign: 'center', gap: '8px', fontFamily: 'Inter, system-ui, sans-serif' }}>
+                      <span style={{ fontSize: '24px', opacity: 0.5 }}>⚠️</span>
+                      <span style={{ color: '#aaa' }}>Rendering paused</span>
+                      <span style={{ fontSize: '11px', opacity: 0.5, maxWidth: '80%', wordBreak: 'break-word' }}>{error.message}</span>
+                    </div>
+                  );
+                }}
                 overflowVisible
               />
               
@@ -611,6 +652,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 aspectRatio={aspectRatio}
                 fps={fps}
               />
+
+              {/* Issue highlight overlay — shows when an issue is clicked */}
+              <IssueHighlightOverlay />
             </div>
           </div>
         </div>
@@ -642,11 +686,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               playbackRate={playbackRate}
               inputProps={playerOnlyInputProps as any}
               numberOfSharedAudioTags={16}
-              errorFallback={({error}) => (
-                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1a1a1a', color: '#ff6b6b', fontSize: '13px', padding: '16px', textAlign: 'center' }}>
-                  <span>Player error: {error.message}</span>
-                </div>
-              )}
+              errorFallback={({error}) => {
+                console.warn('[VideoPlayer] Player error caught by fallback:', error.message);
+                return (
+                  <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1a1a2e', color: '#888', fontSize: '13px', padding: '24px', textAlign: 'center', gap: '8px', fontFamily: 'Inter, system-ui, sans-serif' }}>
+                    <span style={{ fontSize: '24px', opacity: 0.5 }}>⚠️</span>
+                    <span style={{ color: '#aaa' }}>Rendering paused</span>
+                    <span style={{ fontSize: '11px', opacity: 0.5, maxWidth: '80%', wordBreak: 'break-word' }}>{error.message}</span>
+                  </div>
+                );
+              }}
               overflowVisible
             />
           </div>

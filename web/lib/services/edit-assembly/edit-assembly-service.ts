@@ -595,7 +595,16 @@ function normalizeAgentEdl(parsed: Record<string, unknown>): EditorAgentEDL {
       shotIndex: c.shotIndex ?? c.shot_index ?? c.shotindex,
       type: normalizeClipType(c.type ?? c.mediaType ?? c.media_type ?? 'image'),
       startTime: parseFiniteNumber(c.startTime ?? c.start_time ?? c.start),
-      duration: parseFiniteNumber(c.duration ?? c.dur) || 3,
+      duration: (() => {
+        const d = parseFiniteNumber(c.duration ?? c.dur);
+        if (!Number.isFinite(d) || d <= 0) {
+          // normalizeAgentEdl runs before validateAndFixV2 which has the shot plan.
+          // Log the issue — validateAndFixV2 will either fix it with shot timing or throw.
+          console.warn(`[EditAssembly] Clip (shot ${c.shotIndex ?? c.shot_index}) has no valid duration (raw=${c.duration}). Will be fixed in validation pass.`);
+          return NaN; // Sentinel — validateAndFixV2 will catch this
+        }
+        return d;
+      })(),
       label: c.label,
     };
 
@@ -620,12 +629,22 @@ function normalizeAgentEdl(parsed: Record<string, unknown>): EditorAgentEDL {
   }));
 
   // Normalize audio fades (AI may use audioFades or audio_fades)
-  const audioFades = (raw.audioFades ?? raw.audio_fades ?? []).map((a: any) => ({
-    target: a.target || 'main',
-    type: a.type,
-    startTime: parseFiniteNumber(a.startTime ?? a.start_time) || 0,
-    duration: parseFiniteNumber(a.duration) || 1,
-  }));
+  const audioFades = (raw.audioFades ?? raw.audio_fades ?? []).map((a: any) => {
+    const st = parseFiniteNumber(a.startTime ?? a.start_time);
+    const dur = parseFiniteNumber(a.duration);
+    if (!Number.isFinite(st)) {
+      console.warn(`[EditAssembly] Audio fade has no valid startTime (raw=${a.startTime ?? a.start_time}) — defaulting to 0s`);
+    }
+    if (!Number.isFinite(dur)) {
+      console.warn(`[EditAssembly] Audio fade has no valid duration (raw=${a.duration}) — defaulting to 1s`);
+    }
+    return {
+      target: a.target || 'main',
+      type: a.type,
+      startTime: Number.isFinite(st) ? st : 0,
+      duration: Number.isFinite(dur) ? dur : 1,
+    };
+  });
 
   // Normalize media issues
   const mediaIssues = (raw.mediaIssues ?? raw.media_issues ?? []).map((m: any) => ({
@@ -691,8 +710,12 @@ function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAg
     // Fix missing duration first
     if (!Number.isFinite(clip.duration) || clip.duration <= 0) {
       const shot = clip.shotIndex != null ? shotByIndex.get(clip.shotIndex) : undefined;
-      clip.duration = shot?.duration_seconds || 3;
-      console.warn(`[EditAssembly] Fix: Clip (shot ${clip.shotIndex}) had invalid duration, set to ${clip.duration}s`);
+      if (shot?.duration_seconds && shot.duration_seconds > 0) {
+        clip.duration = shot.duration_seconds;
+        console.warn(`[EditAssembly] Fix: Clip (shot ${clip.shotIndex}) had invalid duration, using shot plan timing ${clip.duration}s`);
+      } else {
+        throw new Error(`[EditAssembly] Clip (shot ${clip.shotIndex}) has no valid duration and no shot plan fallback. Pipeline timing data is incomplete.`);
+      }
     }
 
     // Fix missing startTime

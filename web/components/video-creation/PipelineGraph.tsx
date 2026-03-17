@@ -33,8 +33,9 @@ const NODE_PHASE_MAP: Record<string, string[]> = {
   narrating: ["tts"],
   scripting: ["shot_planning"],
   designing: ["asset_retrieval"],
-  creating: ["production"],
-  composing: ["production"],
+  scoring: ["asset_retrieval"],
+  animating: ["production"],
+  rendering: ["production"],
   assembling: ["assembly"],
   finalizing: ["assembly", "complete"],
 };
@@ -46,7 +47,7 @@ const NODE_PHASE_MAP: Record<string, string[]> = {
 const DESKTOP_SVG_WIDTH = 820;
 const DESKTOP_SVG_HEIGHT = 240;
 const MOBILE_SVG_WIDTH = 240;
-const MOBILE_SVG_HEIGHT = 520;
+const MOBILE_SVG_HEIGHT = 530;
 
 // ============================================================================
 // EDGE PATH GENERATION
@@ -61,10 +62,8 @@ const NODE_HALF_W = 58;
 
 /**
  * Generate SVG path for an edge.
- * - Row 1 horizontal: straight line from right-exit to left-entry
- * - Designing→Creating/Composing: loopback (right→down→left→down)
- * - Creating/Composing→Assembling: bezier to merge
- * - Assembling→Finalizing: straight horizontal
+ * Handles row-1 horizontals, fan-out from Scripting to Pair 1,
+ * cross-wires between parallel pairs, and merge into Assembling.
  */
 function generateEdgePath(
   fromId: string,
@@ -80,18 +79,18 @@ function generateEdgePath(
   const entryX = t.x - NODE_HALF_W;
   const entryY = t.y;
 
-  // ── Designing → Creating (loopback wire: right → down → far-left → enter from left) ──
-  if (fromId === "designing" && toId === "creating") {
-    const r = 795;                 // right turn x (past Designing)
-    const cy = f.y + 44;          // corridor y (below row 1)
-    const l = 15;
-    const entryLeft = t.x - NODE_HALF_W; // left edge of Creating
+  // ── Scripting → Designing (loopback: right → down → left → enter) ──
+  if (fromId === "scripting" && toId === "designing") {
+    const r = 595;               // right turn past Scripting
+    const cy = f.y + 44;         // corridor below row 1
+    const l = 15;                // far-left corridor
+    const entryLeft = t.x - NODE_HALF_W;
     return `M ${exitX} ${exitY} L ${r} ${exitY} L ${r} ${cy} L ${l} ${cy} L ${l} ${entryY} L ${entryLeft} ${entryY}`;
   }
 
-  // ── Designing → Composing (same loopback, enters Composing from left) ──
-  if (fromId === "designing" && toId === "composing") {
-    const r = 795;
+  // ── Scripting → Scoring (same loopback, enters Scoring from left) ──
+  if (fromId === "scripting" && toId === "scoring") {
+    const r = 595;
     const cy = f.y + 44;
     const l = 15;
     const entryLeft = t.x - NODE_HALF_W;
@@ -103,7 +102,7 @@ function generateEdgePath(
     return `M ${exitX} ${exitY} L ${entryX} ${entryY}`;
   }
 
-  // ── Different row (merge curves): bezier from right-exit to left-entry ──
+  // ── Different row (cross-wires / merge): bezier from right-exit to left-entry ──
   const midX = (exitX + entryX) / 2;
   return `M ${exitX} ${exitY} C ${midX} ${exitY}, ${midX} ${entryY}, ${entryX} ${entryY}`;
 }
@@ -113,29 +112,31 @@ function generateEdgePath(
 // ============================================================================
 
 const ORDERED_NODES = [
-  "preparing", "narrating", "scripting", "designing",
-  "creating", "composing", "assembling", "finalizing",
+  "preparing", "narrating", "scripting",
+  "designing", "scoring",
+  "animating", "rendering",
+  "assembling", "finalizing",
 ] as const;
 
 function detectPhaseFromStep(step: string, progress?: number): number {
   const s = step.toLowerCase();
 
   // Text-based detection
-  if (s.includes("phase v-b") || s.includes("pacing")) return 7; // finalizing
-  if (s.includes("phase v")) return 6; // assembling
-  if (s.includes("edl") || s.includes("compositing") || s.includes("assembly")) return 6; // assembling
-  if (s.includes("phase iv")) return 4; // creating
-  if (s.includes("phase iii")) return 3; // designing
+  if (s.includes("phase v-b") || s.includes("pacing")) return 8; // finalizing
+  if (s.includes("phase v")) return 7; // assembling
+  if (s.includes("edl") || s.includes("compositing") || s.includes("assembly")) return 7; // assembling
+  if (s.includes("phase iv")) return 5; // animating/rendering
+  if (s.includes("phase iii")) return 3; // designing/scoring
   if (s.includes("phase ii")) return 2; // scripting
   if (s.includes("phase i")) return 1; // narrating
   if (s.includes("initializing") || s.includes("init")) return 0; // preparing
 
   // Progress-based fallback when text doesn't match
   if (progress !== undefined) {
-    if (progress >= 92) return 7; // finalizing
-    if (progress >= 75) return 6; // assembling
-    if (progress >= 30) return 4; // creating/composing
-    if (progress >= 20) return 3; // designing
+    if (progress >= 92) return 8; // finalizing
+    if (progress >= 75) return 7; // assembling
+    if (progress >= 30) return 5; // animating/rendering
+    if (progress >= 20) return 3; // designing/scoring
     if (progress >= 12) return 2; // scripting
     if (progress >= 5) return 1;  // narrating
     return 0; // preparing
@@ -171,12 +172,37 @@ function deriveNodeStatuses(
     const hasComplete = (nodeId: string) =>
       (NODE_PHASE_MAP[nodeId] || []).some((p) => phaseState.get(p)?.hasComplete);
 
-    for (const nodeId of ["preparing", "narrating", "scripting", "designing", "assembling"]) {
+    // Sequential nodes
+    for (const nodeId of ["preparing", "narrating", "scripting", "assembling"]) {
       if (hasComplete(nodeId)) statuses[nodeId] = "completed";
       else if (hasStart(nodeId)) statuses[nodeId] = "running";
       else statuses[nodeId] = "pending";
     }
 
+    // Parallel pair 1: Designing + Scoring (both map to asset_retrieval)
+    const assetStarted = phaseState.get("asset_retrieval")?.hasStart ?? false;
+    const assetComplete = phaseState.get("asset_retrieval")?.hasComplete ?? false;
+    // Check for music-related events to determine Scoring status
+    const hasMusicEvent = events.some(
+      (e) =>
+        e.phase === "asset_retrieval" &&
+        (e.message.toLowerCase().includes("music") ||
+          e.message.toLowerCase().includes("scoring") ||
+          e.message.toLowerCase().includes("audio"))
+    );
+
+    if (assetComplete) {
+      statuses.designing = "completed";
+      statuses.scoring = hasMusicEvent ? "completed" : "skipped";
+    } else if (assetStarted) {
+      statuses.designing = "running";
+      statuses.scoring = "running";
+    } else {
+      statuses.designing = "pending";
+      statuses.scoring = "pending";
+    }
+
+    // Parallel pair 2: Animating (MG) + Rendering (video/image)
     const prodStarted = phaseState.get("production")?.hasStart ?? false;
     const prodComplete = phaseState.get("production")?.hasComplete ?? false;
     const hasMg = events.some(
@@ -184,20 +210,22 @@ function deriveNodeStatuses(
         e.phase === "production" &&
         (e.message.toLowerCase().includes("motion graphic") ||
           e.message.toLowerCase().includes("composing") ||
-          e.message.toLowerCase().includes("composition"))
+          e.message.toLowerCase().includes("composition") ||
+          e.message.toLowerCase().includes("mg"))
     );
 
     if (prodComplete) {
-      statuses.creating = "completed";
-      statuses.composing = hasMg ? "completed" : "skipped";
+      statuses.animating = hasMg ? "completed" : "skipped";
+      statuses.rendering = "completed";
     } else if (prodStarted) {
-      statuses.creating = "running";
-      statuses.composing = hasMg ? "running" : "pending";
+      statuses.animating = hasMg ? "running" : "pending";
+      statuses.rendering = "running";
     } else {
-      statuses.creating = "pending";
-      statuses.composing = "pending";
+      statuses.animating = "pending";
+      statuses.rendering = "pending";
     }
 
+    // Finalizing
     const asmComplete = phaseState.get("assembly")?.hasComplete ?? false;
     const doneComplete = phaseState.get("complete")?.hasComplete ?? false;
     if (doneComplete) statuses.finalizing = "completed";
@@ -215,8 +243,11 @@ function deriveNodeStatuses(
         statuses[nodeId] = "completed";
       } else if (i === activeIdx) {
         statuses[nodeId] = "running";
-      } else if (activeIdx === 4 && i === 5) {
-        // Phase IV runs Creating + Composing in parallel — always light both
+      } else if (activeIdx === 3 && i === 4) {
+        // Phase III runs Designing + Scoring in parallel
+        statuses[nodeId] = "running";
+      } else if (activeIdx === 5 && i === 6) {
+        // Phase IV runs Animating + Rendering in parallel
         statuses[nodeId] = "running";
       } else {
         statuses[nodeId] = "pending";

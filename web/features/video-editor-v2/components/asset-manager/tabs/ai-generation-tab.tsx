@@ -28,6 +28,7 @@ import {
   Video,
   Volume2,
   Music,
+  Mic,
   Sparkles,
   Loader2,
   ChevronDown,
@@ -76,6 +77,8 @@ import { useVramMode } from '@/hooks/use-vram-mode';
 
 // Lazy-load the MotionGraphicsTab (heavy: ~57KB)
 const MotionGraphicsTab = React.lazy(() => import('./motion-graphics-tab').then(m => ({ default: m.MotionGraphicsTab })));
+// Lazy-load the TtsGenerationForm
+const TtsGenerationForm = React.lazy(() => import('./tts-generation-form').then(m => ({ default: m.TtsGenerationForm })));
 
 // ============================================================================
 // CONSTANTS
@@ -93,6 +96,7 @@ const SUB_TABS: Array<{
   { id: 'motion', label: 'Motion', icon: Wand2 },
   { id: 'sfx', label: 'SFX', icon: Volume2 },
   { id: 'audio', label: 'Audio', icon: Music },
+  { id: 'tts', label: 'TTS', icon: Mic },
 ];
 
 const ASPECT_RATIOS = [
@@ -1910,6 +1914,14 @@ export function AIGenerationTab() {
           <SfxSearchForm />
         ) : activeMode === 'audio' ? (
           <AudioGenForm />
+        ) : activeMode === 'tts' ? (
+          <React.Suspense fallback={
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
+            </div>
+          }>
+            <TtsGenerationForm />
+          </React.Suspense>
         ) : null}
         </div>
       </div>

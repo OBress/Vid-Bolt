@@ -23,7 +23,7 @@ import { generateJSON } from '@/lib/ai/openrouter';
 import {
   callGpuMusicGenerate,
   callGpuGetMode,
-  callGpuSwitchMode,
+  callGpuSetVramMode,
   type MusicGenerateRequest,
 } from '@/lib/services/gpu-api-service';
 import {
@@ -232,7 +232,7 @@ async function ensureAudioMode(): Promise<boolean> {
   }
 
   console.log(`${LOG_PREFIX} Switching to audio_creation mode...`);
-  const switchResult = await callGpuSwitchMode('audio');
+  const switchResult = await callGpuSetVramMode('audio_creation');
 
   if (!switchResult.success) {
     console.error(`${LOG_PREFIX} Failed to initiate mode switch: ${switchResult.error}`);

@@ -14,6 +14,10 @@ import {
   type ClassificationResult,
   type MediaType,
 } from './types';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('Classification');
+const validationLog = createLogger('StockValidation');
 
 // ==========================================================================
 // Configuration
@@ -271,7 +275,7 @@ function parseJsonResponse<T>(content: string): T {
   try {
     return JSON.parse(cleaned) as T;
   } catch (_error) {
-    console.error('[Classify] JSON parse error. Content preview:', cleaned.substring(0, 500));
+    log.error('JSON parse error. Content preview:', cleaned.substring(0, 500));
     throw new Error(`Failed to parse classification response: ${cleaned.substring(0, 200)}`);
   }
 }
@@ -421,7 +425,7 @@ export async function checkImageForWatermark(
       details: result.details,
     };
   } catch (error) {
-    console.error('[Watermark Check] Error:', error);
+    log.warn('Watermark check error:', error instanceof Error ? error.message : error);
     // On error, assume no watermark but log for debugging
     return {
       hasWatermark: false,
@@ -467,7 +471,7 @@ export async function checkImageRelevance(
       reason: result.reason,
     };
   } catch (error) {
-    console.error('[Relevance Check] Error:', error);
+    log.warn('Relevance check error:', error instanceof Error ? error.message : error);
     // On error, assume relevant to avoid false rejections
     return {
       isRelevant: true,
@@ -610,7 +614,7 @@ export async function checkImageForNSFW(
       details: result.details,
     };
   } catch (error) {
-    console.error('[NSFW Check] Error:', error);
+    log.warn('NSFW check error:', error instanceof Error ? error.message : error);
     // On error, assume safe to avoid false rejections
     return {
       isNSFW: false,
@@ -761,7 +765,7 @@ export async function classifyAndValidateImage(
 ): Promise<PreStorageClassification> {
   // Check if classification is disabled
   if (!STOCK_CLASSIFICATION_CONFIG.enabled) {
-    console.log('[Classification] Skipped - classification disabled');
+    log.debug('Skipped - classification disabled');
     return {
       isValid: true,
       hasWatermark: false,
@@ -790,7 +794,7 @@ export async function classifyAndValidateImage(
 
   // Reject immediately if resolution is too low
   if (resolutionScore < STOCK_CLASSIFICATION_CONFIG.minResolutionScore) {
-    console.log(`[Classification] Rejected - low resolution (score: ${resolutionScore})`);
+    log.debug(`Rejected - low resolution (score: ${resolutionScore})`);
     return {
       isValid: false,
       rejectionReason: 'low_quality',
@@ -853,7 +857,7 @@ export async function classifyAndValidateImage(
 
     // Check for rejection reasons
     if (result.hasWatermark) {
-      console.log(`[Classification] Rejected - watermark detected: ${result.watermarkDetails}`);
+      log.debug(`Rejected - watermark detected: ${result.watermarkDetails}`);
       return {
         isValid: false,
         rejectionReason: 'watermark',
@@ -873,7 +877,7 @@ export async function classifyAndValidateImage(
     }
 
     if (result.isNSFW) {
-      console.log(`[Classification] Rejected - NSFW content: ${result.nsfwDetails}`);
+      log.debug(`Rejected - NSFW content: ${result.nsfwDetails}`);
       return {
         isValid: false,
         rejectionReason: 'nsfw',
@@ -893,7 +897,7 @@ export async function classifyAndValidateImage(
     }
 
     if (qualityScore < STOCK_CLASSIFICATION_CONFIG.minQualityScore) {
-      console.log(`[Classification] Rejected - low quality (score: ${qualityScore})`);
+      log.debug(`Rejected - low quality (score: ${qualityScore})`);
       return {
         isValid: false,
         rejectionReason: 'low_quality',
@@ -913,7 +917,7 @@ export async function classifyAndValidateImage(
     }
 
     if (STOCK_CLASSIFICATION_CONFIG.rejectGenericStockPhotos && result.isGenericStockPhoto) {
-      console.log(`[Classification] Rejected - generic stock photo`);
+      log.debug('Rejected - generic stock photo');
       return {
         isValid: false,
         rejectionReason: 'generic_stock',
@@ -933,7 +937,7 @@ export async function classifyAndValidateImage(
     }
 
     // All checks passed
-    console.log(`[Classification] Accepted - ${result.namedEntities?.length || 0} entities, quality: ${qualityScore}/10`);
+    log.debug(`Accepted - ${result.namedEntities?.length || 0} entities, quality: ${qualityScore}/10`);
     return {
       isValid: true,
       hasWatermark: false,
@@ -950,7 +954,7 @@ export async function classifyAndValidateImage(
     };
 
   } catch (error) {
-    console.error('[Classification] Error:', error);
+    log.error('Classification error:', error instanceof Error ? error.message : error);
     // On error, reject to be safe
     return {
       isValid: false,
@@ -1004,12 +1008,12 @@ export async function validateStockImage(
       const base64SizeKB = Math.round(validationImageUrl.length / 1024);
       const mimeMatch = validationImageUrl.match(/^data:([^;]+);base64,/);
       const mimeType = mimeMatch ? mimeMatch[1] : 'unknown';
-      console.log(`[Stock Validation] Image loaded: ${r2Key} (${mimeType}, ${base64SizeKB}KB base64)`);
+      validationLog.debug(`Image loaded: ${r2Key} (${mimeType}, ${base64SizeKB}KB base64)`);
       
       // Reject corrupted/blocked images that are too small
       // Real images should be at least 5KB base64 (about 3.75KB actual data)
       if (base64SizeKB < 5) {
-        console.log(`[Stock Validation] Rejecting corrupted image ${r2Key} - only ${base64SizeKB}KB (blocked download)`);
+        validationLog.debug(`Rejecting corrupted image ${r2Key} - only ${base64SizeKB}KB (blocked download)`);
         return {
           isValid: false,
           hasWatermark: false,
@@ -1022,12 +1026,15 @@ export async function validateStockImage(
       
       // Warn about very large images
       if (base64SizeKB > 4000) {
-        console.log(`[Stock Validation] Warning: Very large image ${base64SizeKB}KB - may cause issues`);
+        validationLog.warn(`Very large image ${base64SizeKB}KB - may cause issues`);
       }
     } catch (fetchError) {
       // R2 fetch failed - file was likely deleted by another parallel shot's validation
       // Do NOT fall back to CDN URL as this causes 404 errors in OpenRouter
-      console.warn('[Stock Validation] Failed to fetch from R2 (file may have been deleted by another shot):', fetchError);
+      // Log one-liner only, not the full AWS SDK stack trace
+      const errMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
+      const shortErr = errMsg.includes('NoSuchKey') ? 'NoSuchKey' : errMsg.substring(0, 80);
+      validationLog.warn(`R2 fetch failed for ${r2Key} (${shortErr})`);
       return {
         isValid: false,
         hasWatermark: false,
@@ -1133,9 +1140,9 @@ export async function validateStockImage(
     const isNSFW = result.isNSFW;
     const isRelevant = result.isRelevant && result.relevanceScore >= 7; // Require 7+ relevance
 
-    console.log(`[Stock Validation] Image analysis: watermark=${hasWatermark}, nsfw=${isNSFW}, relevant=${isRelevant} (${result.relevanceScore}/10)`);
-    console.log(`[Stock Validation] What image shows: ${result.whatImageShows}`);
-    console.log(`[Stock Validation] Relevance reason: ${result.relevanceReason}`);
+    validationLog.debug(`Image analysis: watermark=${hasWatermark}, nsfw=${isNSFW}, relevant=${isRelevant} (${result.relevanceScore}/10)`);
+    validationLog.debug(`What image shows: ${result.whatImageShows}`);
+    validationLog.debug(`Relevance reason: ${result.relevanceReason}`);
 
     // Priority: watermark > nsfw > relevance
     if (hasWatermark) {
@@ -1183,7 +1190,7 @@ export async function validateStockImage(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('[Stock Validation] Error:', errorMessage);
+    validationLog.warn('Validation error:', errorMessage);
     
     // Check if this is an "invalid image" error from Google - try CDN URL fallback
     const isInvalidImageError = errorMessage.includes('image is not valid') || 
@@ -1192,7 +1199,7 @@ export async function validateStockImage(
     
     // If we used base64 and got invalid image error, try CDN URL as fallback
     if (isInvalidImageError && r2Key && validationImageUrl !== imageUrl) {
-      console.log(`[Stock Validation] Base64 failed, retrying with CDN URL: ${imageUrl}`);
+      validationLog.debug(`Base64 failed, retrying with CDN URL: ${imageUrl}`);
       try {
         // Retry with CDN URL
         const cdnMessages: OpenRouterMessage[] = [
@@ -1229,7 +1236,7 @@ export async function validateStockImage(
         }
         
         // Log the CDN result
-        console.log(`[Stock Validation] CDN fallback success: watermark=${cdnResult.hasWatermark}, nsfw=${cdnResult.isNSFW}, relevant=${cdnResult.isRelevant} (${cdnResult.relevanceScore}/10)`);
+        validationLog.debug(`CDN fallback success: watermark=${cdnResult.hasWatermark}, nsfw=${cdnResult.isNSFW}, relevant=${cdnResult.isRelevant} (${cdnResult.relevanceScore}/10)`);
         
         const hasWatermark = cdnResult.hasWatermark && cdnResult.watermarkConfidence > 0.7;
         const isNSFW = cdnResult.isNSFW;
@@ -1279,7 +1286,7 @@ export async function validateStockImage(
           relevanceScore: cdnResult.relevanceScore,
         };
       } catch (cdnError) {
-        console.error('[Stock Validation] CDN fallback also failed:', cdnError);
+        validationLog.warn('CDN fallback also failed:', cdnError instanceof Error ? cdnError.message : cdnError);
         // Fall through to error return below
       }
     }

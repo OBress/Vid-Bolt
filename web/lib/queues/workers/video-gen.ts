@@ -41,6 +41,10 @@ export interface VideoGenJobData {
   singleShotIndex?: number;
   /** Verifier feedback to incorporate into the retry prompt */
   previousFeedback?: string;
+  /** Batch retry: regenerate multiple shots in a single GPU pass */
+  retryShotIndices?: number[];
+  /** Per-shot verifier feedback for batch retries: { [shotIndex]: feedback } */
+  retryFeedbackMap?: Record<number, string>;
   /** Optional LoRA name to apply for video keyframe generation */
   loraName?: string;
   /** Optional LoRA trigger words to prepend to keyframe prompts */
@@ -103,10 +107,20 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         (s: Record<string, unknown>) => (s.media_type as string) === 'video'
       );
 
-      // If retrying a single shot, filter to just that shot
-      const { singleShotIndex, previousFeedback } = job.data;
+      // Support both single-shot and batch retries
+      const { singleShotIndex, previousFeedback, retryShotIndices, retryFeedbackMap } = job.data;
       const isSingleShotRetry = typeof singleShotIndex === 'number';
-      if (isSingleShotRetry) {
+      const isBatchRetry = Array.isArray(retryShotIndices) && retryShotIndices.length > 0;
+      const isRetry = isSingleShotRetry || isBatchRetry;
+
+      if (isBatchRetry) {
+        // Batch retry: filter to all failed shots at once (one GPU pass instead of N)
+        const retrySet = new Set(retryShotIndices);
+        videoShots = allShots.filter(
+          (s: Record<string, unknown>) => retrySet.has(s.segment_index as number)
+        );
+        console.log(`${LOG_PREFIX} Batch retry: regenerating ${videoShots.length} shots [${retryShotIndices.join(', ')}]`);
+      } else if (isSingleShotRetry) {
         videoShots = videoShots.filter(
           (s: Record<string, unknown>) => (s.segment_index as number) === singleShotIndex
         );
@@ -144,17 +158,26 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         const segmentIndex = s.segment_index as number;
         const keyframeUrl = generatedImages[`shot-${segmentIndex}`];
 
+        // For retries, prepend verifier feedback to help LTX-2 avoid the same issues
+        let feedbackPrefix = '';
+        if (isBatchRetry && retryFeedbackMap?.[segmentIndex]) {
+          feedbackPrefix = `[RETRY GUIDANCE: ${retryFeedbackMap[segmentIndex]}] `;
+        } else if (isSingleShotRetry && previousFeedback) {
+          feedbackPrefix = `[RETRY GUIDANCE: ${previousFeedback}] `;
+        }
+
         return {
           segment_index: segmentIndex,
           media_type: 'video' as const,
           visual_prompt: (
-            // For retries, prepend verifier feedback to help LTX-2 avoid the same issues
-            (isSingleShotRetry && previousFeedback
-              ? `[RETRY GUIDANCE: ${previousFeedback}] `
-              : '') +
+            feedbackPrefix +
             ((s.visual_prompt as string) || (s.summary as string) || `Video for segment ${segmentIndex}`)
           ),
-          duration_seconds: (s.duration_seconds as number) || 5,
+          duration_seconds: (() => {
+            const d = s.duration_seconds as number;
+            if (!d || d <= 0) throw new Error(`[VideoGen] Shot ${segmentIndex} has no valid duration_seconds — shot plan timing is incomplete.`);
+            return d;
+          })(),
           start_frame_url: keyframeUrl, // Will be undefined for T2V shots
           visual_elements: s.visual_elements as import('@/types/video').RoutingTag[] | undefined,
           narration_text: s.text as string | undefined,
@@ -195,8 +218,12 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
 
       // Acquire per-user GPU lock to prevent VRAM mode thrashing
       // when multiple pipelines for the same user run concurrently
-      const avgDuration = gpuShots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0) / gpuShots.length;
-      const lockTtlMs = calculateTimeout('video_generation', gpuShots.length, avgDuration) + MODE_SWITCH_TIMEOUT_MS + 60_000;
+      const totalVideoDuration = gpuShots.reduce((sum, s) => sum + (s.duration_seconds || 0), 0);
+      const avgDuration = totalVideoDuration / gpuShots.length;
+      const lockTtlMs = calculateTimeout('video_generation', gpuShots.length, {
+        avgDurationSec: avgDuration,
+        totalVideoDurationSec: totalVideoDuration,
+      }) + MODE_SWITCH_TIMEOUT_MS + 60_000;
 
       const gpuResult = await withGpuLock(userId, async () => {
         return processGpuBatchGeneration(
@@ -209,7 +236,7 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           loraName,
           loraTriggerWords,
         );
-      }, lockTtlMs);
+      }, lockTtlMs, videoId);
 
       // Track GPU cost (~8s per video on A100)
       costTracker.addGpuTime(gpuResult.stats.videosGenerated * 8);
@@ -226,11 +253,11 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         }
       }
 
-      // For single-shot retries, we need to merge into existing videos.
+      // For retries (single or batch), merge into existing videos.
       // The merge_video_metadata RPC does a shallow JSONB merge (||),
       // so we need to fetch existing videos for the merge if retrying.
       let mergedVideos = videoResults;
-      if (isSingleShotRetry) {
+      if (isRetry) {
         const { data: existingData } = await supabase
           .from('video_projects')
           .select('metadata')
@@ -260,14 +287,14 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
 
       console.log(`${LOG_PREFIX} ✅ Complete: ${gpuResult.stats.videosGenerated} videos`);
 
-      // Bug 6: For single-shot retries, 0 generated means the retry definitively failed.
-      // Throw so the orchestrator knows it can't use this result.
-      if (isSingleShotRetry && gpuResult.stats.videosGenerated === 0) {
-        throw new Error(`Single-shot retry for shot ${singleShotIndex} failed: 0 videos generated`);
+      // For retries, 0 generated means the retry definitively failed.
+      if (isRetry && gpuResult.stats.videosGenerated === 0) {
+        const shotLabel = isBatchRetry ? `batch [${retryShotIndices!.join(', ')}]` : `shot ${singleShotIndex}`;
+        throw new Error(`Retry for ${shotLabel} failed: 0 videos generated`);
       }
 
-      // Bug 2: For single-shot retries, include the generated URL so the orchestrator
-      // can update its asset map (it checks retryResult.mediaUrl).
+      // For single-shot retries, include the generated URL (orchestrator checks retryResult.mediaUrl).
+      // For batch retries, include all generated URLs as a map.
       const retryMediaUrl = isSingleShotRetry
         ? videoResults[`shot-${singleShotIndex}`]
         : undefined;
@@ -276,6 +303,7 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         success: true,
         videoId,
         ...(retryMediaUrl ? { mediaUrl: retryMediaUrl } : {}),
+        ...(isBatchRetry ? { retryResults: videoResults } : {}),
         stats: {
           videosGenerated: gpuResult.stats.videosGenerated,
           videosFailed: gpuResult.stats.videosFailed,

@@ -44,9 +44,10 @@ const nextConfig: NextConfig = {
             value: [
               "default-src 'self'",
               "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "worker-src 'self' blob:",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' https://assets.vidbolt.app https://images.unsplash.com https://images.pexels.com https://lh3.googleusercontent.com https://yt3.ggpht.com https://i.ytimg.com data: blob:",
-              "media-src 'self' https://assets.vidbolt.app blob:",
+              "media-src 'self' https://assets.vidbolt.app https://*.r2.cloudflarestorage.com blob: data:",
               "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://assets.vidbolt.app https://*.r2.cloudflarestorage.com https://api.stripe.com",
               "font-src 'self' https://fonts.gstatic.com",
               "frame-ancestors 'none'",
@@ -54,6 +55,12 @@ const nextConfig: NextConfig = {
               "form-action 'self'",
             ].join('; '),
           },
+        ],
+      },
+      {
+        source: '/r2-media/:path*',
+        headers: [
+          { key: 'Cache-Control', value: 'public, max-age=3600, stale-while-revalidate=86400' },
         ],
       },
       {

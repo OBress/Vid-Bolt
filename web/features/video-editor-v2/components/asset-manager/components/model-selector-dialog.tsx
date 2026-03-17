@@ -13,6 +13,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -381,6 +382,9 @@ export function ModelSelectorDialog({
       <DialogContent className="sm:max-w-[520px] max-h-[80vh] flex flex-col p-0">
         <DialogHeader className="px-6 pt-6 pb-2">
           <DialogTitle className="text-lg">Select AI Model</DialogTitle>
+          <DialogDescription className="sr-only">
+            Choose an AI model for motion graphics generation
+          </DialogDescription>
         </DialogHeader>
 
         {/* Search */}

@@ -155,7 +155,7 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
           loraName,
           loraTriggerWords,
         );
-      }, lockTtlMs);
+      }, lockTtlMs, videoId);
 
       // Track GPU cost (~3s per image on A100)
       costTracker.addGpuTime(gpuResult.stats.imagesGenerated * 3);

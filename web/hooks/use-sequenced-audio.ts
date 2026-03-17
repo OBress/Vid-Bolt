@@ -65,8 +65,16 @@ export function useSequencedAudio(chunks: AudioChunk[]) {
         };
         
         const handleError = () => {
-          console.warn(`Failed to load audio chunk ${index}`);
-          resolve({ index, duration: 5 }); // Fallback duration
+          // Use authoritative duration from TTS backend — never fall back to an arbitrary value.
+          // chunk.duration_seconds is always set by the audio worker; if it's missing, that's a pipeline bug.
+          const backendDuration = chunk.duration_seconds;
+          if (backendDuration && backendDuration > 0) {
+            console.warn(`[useSequencedAudio] Audio chunk ${index} failed to load in browser — using backend duration ${backendDuration.toFixed(2)}s`);
+            resolve({ index, duration: backendDuration });
+          } else {
+            console.error(`[useSequencedAudio] Audio chunk ${index} failed to load AND has no backend duration — this is a pipeline bug`);
+            resolve({ index, duration: 0 }); // 0 = skip, prevents silent misalignment
+          }
         };
         
         audio.addEventListener('loadedmetadata', handleLoaded, { once: true });

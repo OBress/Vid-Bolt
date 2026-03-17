@@ -10,6 +10,7 @@ import {
   Puzzle,
   Star,
   Mic,
+  Music,
   CheckCircle2,
   AlertCircle,
   Loader2,
@@ -50,8 +51,9 @@ export const GRAPH_NODES: GraphNodeDef[] = [
   { id: "narrating", label: "Narrating", icon: <Mic className="w-3.5 h-3.5" /> },
   { id: "scripting", label: "Scripting", icon: <PenTool className="w-3.5 h-3.5" /> },
   { id: "designing", label: "Designing", icon: <Palette className="w-3.5 h-3.5" /> },
-  { id: "creating", label: "Creating", icon: <Wand2 className="w-3.5 h-3.5" /> },
-  { id: "composing", label: "Composing", icon: <Layers className="w-3.5 h-3.5" /> },
+  { id: "scoring", label: "Scoring", icon: <Music className="w-3.5 h-3.5" /> },
+  { id: "animating", label: "Animating", icon: <Layers className="w-3.5 h-3.5" /> },
+  { id: "rendering", label: "Rendering", icon: <Wand2 className="w-3.5 h-3.5" /> },
   { id: "assembling", label: "Assembling", icon: <Puzzle className="w-3.5 h-3.5" /> },
   { id: "finalizing", label: "Finalizing", icon: <Star className="w-3.5 h-3.5" /> },
 ];
@@ -63,11 +65,17 @@ export const GRAPH_NODES: GraphNodeDef[] = [
 export const GRAPH_EDGES: Array<{ from: string; to: string }> = [
   { from: "preparing", to: "narrating" },
   { from: "narrating", to: "scripting" },
+  // Parallel pair 1: Scripting fans out to Designing + Scoring
   { from: "scripting", to: "designing" },
-  { from: "designing", to: "creating" },
-  { from: "designing", to: "composing" },
-  { from: "creating", to: "assembling" },
-  { from: "composing", to: "assembling" },
+  { from: "scripting", to: "scoring" },
+  // Cross-wires: Pair 1 → Pair 2
+  { from: "designing", to: "animating" },
+  { from: "designing", to: "rendering" },
+  { from: "scoring", to: "animating" },
+  { from: "scoring", to: "rendering" },
+  // Parallel pair 2 merges into Assembling
+  { from: "animating", to: "assembling" },
+  { from: "rendering", to: "assembling" },
   { from: "assembling", to: "finalizing" },
 ];
 
@@ -75,18 +83,19 @@ export const GRAPH_EDGES: Array<{ from: string; to: string }> = [
 // LAYOUT — SVG viewbox positions (820 × 240)
 // ============================================================================
 
-/** Desktop layout (≥640px): 2-row conveyor belt */
+/** Desktop layout (≥640px): 2-row conveyor belt with dual parallel pairs */
 export const DESKTOP_POSITIONS: Record<string, { x: number; y: number }> = {
-  // Row 1 (y=58): 4 nodes evenly spaced, centered at x=410
+  // Row 1 (y=58): 3 sequential nodes
   preparing:  { x: 110, y: 58  },
   narrating:  { x: 310, y: 58  },
   scripting:  { x: 510, y: 58  },
-  designing:  { x: 710, y: 58  },
-  // Row 2: Creating+Composing stacked left, Assembling center, Finalizing right
-  creating:   { x: 110, y: 148 },
-  composing:  { x: 110, y: 198 },
-  assembling: { x: 410, y: 173 },
-  finalizing: { x: 710, y: 173 },
+  // Row 2: Pair 1 (stacked left), Pair 2 (stacked center), Assembling, Finalizing
+  designing:  { x: 110, y: 148 },
+  scoring:    { x: 110, y: 198 },
+  animating:  { x: 360, y: 148 },
+  rendering:  { x: 360, y: 198 },
+  assembling: { x: 580, y: 173 },
+  finalizing: { x: 760, y: 173 },
 };
 
 /** Mobile layout (<640px): vertical flow */
@@ -94,11 +103,12 @@ export const MOBILE_POSITIONS: Record<string, { x: number; y: number }> = {
   preparing:  { x: 120, y: 40  },
   narrating:  { x: 120, y: 105 },
   scripting:  { x: 120, y: 170 },
-  designing:  { x: 120, y: 235 },
-  creating:   { x: 65,  y: 310 },
-  composing:  { x: 175, y: 310 },
-  assembling: { x: 120, y: 385 },
-  finalizing: { x: 120, y: 450 },
+  designing:  { x: 65,  y: 245 },
+  scoring:    { x: 175, y: 245 },
+  animating:  { x: 65,  y: 320 },
+  rendering:  { x: 175, y: 320 },
+  assembling: { x: 120, y: 395 },
+  finalizing: { x: 120, y: 460 },
 };
 
 // ============================================================================
