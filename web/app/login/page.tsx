@@ -21,6 +21,10 @@ const ERROR_MESSAGES: Record<string, { title: string; message: string }> = {
     title: "AUTHENTICATION FAILED",
     message: "Something went wrong during sign in. Please try again.",
   },
+  email_not_verified: {
+    title: "EMAIL NOT VERIFIED",
+    message: "Your Discord account email must be verified before you can sign up. Please verify your email in Discord Settings → My Account, then try again.",
+  },
 };
 
 function LoginPageContent() {

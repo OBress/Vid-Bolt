@@ -104,6 +104,23 @@ export async function GET(request: Request) {
         console.error('[Auth Callback] Error checking banned identity:', banCheckErr);
       }
 
+      // =====================================================
+      // EMAIL VERIFICATION CHECK
+      // =====================================================
+      // Discord's API returns 'verified' (NOT 'email_verified') in the user object
+      // Supabase passes it through as 'verified' in user_metadata
+      const emailVerified =
+        user.user_metadata?.verified ??
+        user.user_metadata?.email_verified ??
+        user.email_confirmed_at != null;
+
+      if (!emailVerified) {
+        console.log(`[Auth Callback] Rejected unverified email: ${user.email}, discord_id=${discordId}`);
+        // Sign out — don't create a profile for unverified accounts
+        await supabase.auth.signOut();
+        return NextResponse.redirect(`${origin}/login?error=email_not_verified`);
+      }
+
       // Check VidBolt Discord server membership
       let inVidBoltServer = false;
       const guildId = process.env.DISCORD_VIDBOLT_GUILD_ID;
