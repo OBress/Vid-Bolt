@@ -6,14 +6,19 @@
  *   2. x-forwarded-host    — used in dev behind a proxy.
  *   3. Raw request origin  — local dev fallback.
  *
- * NEXT_PUBLIC_APP_URL is checked first because, inside Docker,
- * x-forwarded-host can resolve to the container's internal address
- * (e.g. `0.0.0.0:3000`) depending on the reverse-proxy configuration.
+ * NOTE: We read NEXT_PUBLIC_APP_URL via dynamic bracket notation so
+ * that Next.js's webpack DefinePlugin does NOT statically replace it
+ * at build time. This ensures the value is read from the container's
+ * runtime environment, not inlined (potentially as `undefined`) during
+ * `next build`.
  */
 export function getPublicOrigin(request: Request): string {
-  // 1. Explicit app URL — most reliable in production
-  if (process.env.NEXT_PUBLIC_APP_URL) {
-    return process.env.NEXT_PUBLIC_APP_URL
+  // 1. Explicit app URL — read at RUNTIME (dynamic key bypasses webpack inlining)
+  const appUrlKey = 'NEXT_PUBLIC_APP_URL'
+  const appUrl = process.env[appUrlKey]
+
+  if (appUrl) {
+    return appUrl
   }
 
   // 2. Forwarded headers from reverse proxy (dev / staging)
@@ -29,3 +34,4 @@ export function getPublicOrigin(request: Request): string {
   console.warn('[getPublicOrigin] Using raw request origin fallback:', fallback)
   return fallback
 }
+
