@@ -151,6 +151,7 @@ export async function GET(
     let linkedTasks: Array<Record<string, unknown>> = [];
     try {
       const taskIds = [
+        video.outline_task_id,
         video.script_task_id,
         video.audio_task_id,
         video.video_task_id,
