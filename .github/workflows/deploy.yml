@@ -82,20 +82,22 @@ jobs:
         env:
           REGISTRY: ghcr.io
           IMAGE_NAME: ${{ github.repository_owner }}/vibbo-web
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
+          GHCR_USER: obress
         with:
           host: ${{ secrets.HETZNER_HOST }}
           username: deploy
           key: ${{ secrets.HETZNER_SSH_KEY }}
           envs: REGISTRY,IMAGE_NAME,GHCR_TOKEN,GHCR_USER
           script: |
+            set -e
+
             cd /home/deploy/vibbo
 
             # Authenticate with GitHub Container Registry
             echo "${GHCR_TOKEN}" | docker login ${REGISTRY} -u ${GHCR_USER} --password-stdin
 
-            # Pull latest image
+            # Pull latest image (fails deploy if denied)
             docker pull ${REGISTRY}/${IMAGE_NAME}:latest
 
             # Deploy (or recreate) app + workers
@@ -105,6 +107,7 @@ jobs:
             docker image prune -a --filter "until=72h" -f
 
             echo "✅ Deployment complete at $(date)"
+
 
       - name: Verify deployment
         uses: appleboy/ssh-action@v1
