@@ -7,8 +7,6 @@ on:
       - "web/**"
       - "docker-compose.prod.yml"
       - ".github/workflows/**"
-  pull_request:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
