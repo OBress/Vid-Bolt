@@ -81,7 +81,7 @@ jobs:
         uses: appleboy/ssh-action@v1
         env:
           REGISTRY: ghcr.io
-          IMAGE_NAME: ${{ github.repository_owner }}/vibbo-web
+          IMAGE_NAME: obress/vibbo-web
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
           GHCR_USER: obress
         with:
