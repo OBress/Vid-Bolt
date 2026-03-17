@@ -87,6 +87,99 @@ CREATE TYPE "public"."payment_status" AS ENUM (
 ALTER TYPE "public"."payment_status" OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."admin_ban_user"("target_user_id" "uuid", "p_reason" "text" DEFAULT NULL::"text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  caller_id UUID;
+  v_email TEXT;
+  v_discord_id TEXT;
+  v_username TEXT;
+  v_ban_id UUID;
+  r2_prefixes TEXT[] := ARRAY[]::TEXT[];
+  video_record RECORD;
+  statement_record RECORD;
+  media_record RECORD;
+BEGIN
+  caller_id := auth.uid();
+
+  IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = caller_id AND u.is_admin = true) THEN
+    RAISE EXCEPTION 'Access denied: Admin privileges required';
+  END IF;
+
+  IF target_user_id = caller_id THEN
+    RAISE EXCEPTION 'Cannot ban your own account';
+  END IF;
+
+  -- Get user identifiers before deletion
+  SELECT u.email, u.discord_id, u.username
+  INTO v_email, v_discord_id, v_username
+  FROM public.users u WHERE u.id = target_user_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'User not found: %', target_user_id;
+  END IF;
+
+  -- Insert into banned_identities
+  INSERT INTO public.banned_identities (email, discord_id, banned_by, reason)
+  VALUES (v_email, v_discord_id, caller_id, p_reason)
+  RETURNING id INTO v_ban_id;
+
+  -- Collect R2 prefixes for cleanup (same logic as admin_delete_user)
+  FOR video_record IN
+    SELECT id FROM public.video_projects WHERE user_id = target_user_id
+  LOOP
+    r2_prefixes := array_append(r2_prefixes, 'audio/' || target_user_id::TEXT || '/' || video_record.id::TEXT || '/');
+  END LOOP;
+
+  r2_prefixes := array_append(r2_prefixes, 'gpu-api-test/' || target_user_id::TEXT || '/');
+
+  FOR statement_record IN
+    SELECT payment_proof_url, revenue_proof_url
+    FROM public.monthly_statements
+    WHERE user_id = target_user_id
+      AND (payment_proof_url IS NOT NULL OR revenue_proof_url IS NOT NULL)
+  LOOP
+    IF statement_record.payment_proof_url IS NOT NULL THEN
+      r2_prefixes := array_append(r2_prefixes, statement_record.payment_proof_url);
+    END IF;
+    IF statement_record.revenue_proof_url IS NOT NULL THEN
+      r2_prefixes := array_append(r2_prefixes, statement_record.revenue_proof_url);
+    END IF;
+  END LOOP;
+
+  FOR media_record IN
+    SELECT picture_url FROM public.media_projects
+    WHERE user_id = target_user_id AND picture_url IS NOT NULL
+  LOOP
+    r2_prefixes := array_append(r2_prefixes, media_record.picture_url);
+  END LOOP;
+
+  -- Delete user from public.users (cascades to child tables)
+  DELETE FROM public.users WHERE id = target_user_id;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'user_id', target_user_id,
+    'username', v_username,
+    'email', v_email,
+    'discord_id', v_discord_id,
+    'ban_id', v_ban_id,
+    'r2_prefixes', to_jsonb(r2_prefixes),
+    'note', 'Caller must also delete from auth.users via Supabase Admin API'
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."admin_ban_user"("target_user_id" "uuid", "p_reason" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."admin_ban_user"("target_user_id" "uuid", "p_reason" "text") IS 'Bans a user by persisting their email + discord_id in banned_identities, then deletes from public.users. Caller must also delete from auth.users.';
+
+
+
 CREATE OR REPLACE FUNCTION "public"."admin_delete_user"("target_user_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -219,6 +312,31 @@ ALTER FUNCTION "public"."admin_get_user_for_deletion"("target_user_id" "uuid") O
 
 
 COMMENT ON FUNCTION "public"."admin_get_user_for_deletion"("target_user_id" "uuid") IS 'Admin function to get user details and data counts for the deletion confirmation dialog.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."admin_unban_identity"("p_banned_id" "uuid") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
+    RAISE EXCEPTION 'Access denied: Admin privileges required';
+  END IF;
+
+  DELETE FROM public.banned_identities WHERE id = p_banned_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Banned identity not found: %', p_banned_id;
+  END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."admin_unban_identity"("p_banned_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."admin_unban_identity"("p_banned_id" "uuid") IS 'Removes an identity from the ban list, allowing the user to re-register.';
 
 
 
@@ -371,6 +489,29 @@ $$;
 ALTER FUNCTION "public"."auto_approve_admin"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."check_banned_identity"("p_email" "text" DEFAULT NULL::"text", "p_discord_id" "text" DEFAULT NULL::"text") RETURNS boolean
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.banned_identities bi
+    WHERE
+      (p_email IS NOT NULL AND bi.email = p_email)
+      OR
+      (p_discord_id IS NOT NULL AND bi.discord_id = p_discord_id)
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."check_banned_identity"("p_email" "text", "p_discord_id" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."check_banned_identity"("p_email" "text", "p_discord_id" "text") IS 'Returns true if the given email or discord_id is in the ban list. Called from the auth callback on every login.';
+
+
+
 CREATE OR REPLACE FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") RETURNS integer
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
@@ -510,6 +651,40 @@ $$;
 
 
 ALTER FUNCTION "public"."get_admin_analytics"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_banned_identities"("page" integer DEFAULT 1, "per_page" integer DEFAULT 20) RETURNS TABLE("id" "uuid", "email" "text", "discord_id" "text", "banned_by_name" "text", "reason" "text", "created_at" timestamp with time zone, "total_count" bigint)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.is_admin = true) THEN
+    RAISE EXCEPTION 'Access denied: Admin privileges required';
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    bi.id,
+    bi.email,
+    bi.discord_id,
+    COALESCE(u.name, u.username, u.email) AS banned_by_name,
+    bi.reason,
+    bi.created_at,
+    (SELECT count(*) FROM public.banned_identities)::BIGINT AS total_count
+  FROM public.banned_identities bi
+  LEFT JOIN public.users u ON u.id = bi.banned_by
+  ORDER BY bi.created_at DESC
+  LIMIT per_page
+  OFFSET (page - 1) * per_page;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_banned_identities"("page" integer, "per_page" integer) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."get_banned_identities"("page" integer, "per_page" integer) IS 'Paginated list of banned identities for the admin panel.';
+
 
 
 CREATE OR REPLACE FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") RETURNS TABLE("id" "uuid", "name" "text", "status" "text", "current_stage" "text", "current_step" "text", "progress_percent" integer, "updated_at" timestamp with time zone)
@@ -1355,6 +1530,23 @@ CREATE TABLE IF NOT EXISTS "public"."analytics_sync_log" (
 ALTER TABLE "public"."analytics_sync_log" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."banned_identities" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "email" "text",
+    "discord_id" "text",
+    "banned_by" "uuid",
+    "reason" "text",
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."banned_identities" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."banned_identities" IS 'Persistent ban list that survives account deletion. Checked on every Discord OAuth login.';
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."competitor_channel_snapshots" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "competitor_id" "uuid" NOT NULL,
@@ -2119,6 +2311,11 @@ ALTER TABLE ONLY "public"."analytics_sync_log"
 
 
 
+ALTER TABLE ONLY "public"."banned_identities"
+    ADD CONSTRAINT "banned_identities_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."competitor_channel_snapshots"
     ADD CONSTRAINT "competitor_channel_snapshots_competitor_id_snapshot_date_key" UNIQUE ("competitor_id", "snapshot_date");
 
@@ -2355,6 +2552,14 @@ ALTER TABLE ONLY "public"."youtube_video_analytics"
 
 
 CREATE INDEX "idx_audience_demo_channel_date" ON "public"."youtube_audience_demographics" USING "btree" ("channel_id", "snapshot_date" DESC);
+
+
+
+CREATE INDEX "idx_banned_identities_discord_id" ON "public"."banned_identities" USING "btree" ("discord_id");
+
+
+
+CREATE INDEX "idx_banned_identities_email" ON "public"."banned_identities" USING "btree" ("email");
 
 
 
@@ -2668,6 +2873,11 @@ ALTER TABLE ONLY "public"."analytics_sync_log"
 
 
 
+ALTER TABLE ONLY "public"."banned_identities"
+    ADD CONSTRAINT "banned_identities_banned_by_fkey" FOREIGN KEY ("banned_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
+
+
+
 ALTER TABLE ONLY "public"."competitor_channel_snapshots"
     ADD CONSTRAINT "competitor_channel_snapshots_competitor_id_fkey" FOREIGN KEY ("competitor_id") REFERENCES "public"."competitor_channels"("id") ON DELETE CASCADE;
 
@@ -2864,6 +3074,10 @@ CREATE POLICY "Authenticated users can view stock media" ON "public"."stock_medi
 
 
 CREATE POLICY "Service role can manage stock media" ON "public"."stock_media" TO "service_role" USING (true) WITH CHECK (true);
+
+
+
+CREATE POLICY "Service role full access on banned_identities" ON "public"."banned_identities" USING (("public"."get_request_role"() = 'service_role'::"text")) WITH CHECK (("public"."get_request_role"() = 'service_role'::"text"));
 
 
 
@@ -3176,6 +3390,9 @@ CREATE POLICY "Users view own video analytics" ON "public"."youtube_video_analyt
 
 
 ALTER TABLE "public"."analytics_sync_log" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."banned_identities" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."competitor_channel_snapshots" ENABLE ROW LEVEL SECURITY;
@@ -3781,6 +3998,12 @@ GRANT USAGE ON SCHEMA "public" TO "service_role";
 
 
 
+GRANT ALL ON FUNCTION "public"."admin_ban_user"("target_user_id" "uuid", "p_reason" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."admin_ban_user"("target_user_id" "uuid", "p_reason" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."admin_ban_user"("target_user_id" "uuid", "p_reason" "text") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."admin_delete_user"("target_user_id" "uuid") TO "anon";
 GRANT ALL ON FUNCTION "public"."admin_delete_user"("target_user_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."admin_delete_user"("target_user_id" "uuid") TO "service_role";
@@ -3790,6 +4013,12 @@ GRANT ALL ON FUNCTION "public"."admin_delete_user"("target_user_id" "uuid") TO "
 GRANT ALL ON FUNCTION "public"."admin_get_user_for_deletion"("target_user_id" "uuid") TO "anon";
 GRANT ALL ON FUNCTION "public"."admin_get_user_for_deletion"("target_user_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."admin_get_user_for_deletion"("target_user_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."admin_unban_identity"("p_banned_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."admin_unban_identity"("p_banned_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."admin_unban_identity"("p_banned_id" "uuid") TO "service_role";
 
 
 
@@ -3817,6 +4046,12 @@ GRANT ALL ON FUNCTION "public"."auto_approve_admin"() TO "service_role";
 
 
 
+GRANT ALL ON FUNCTION "public"."check_banned_identity"("p_email" "text", "p_discord_id" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."check_banned_identity"("p_email" "text", "p_discord_id" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."check_banned_identity"("p_email" "text", "p_discord_id" "text") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") TO "anon";
 GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") TO "service_role";
@@ -3832,6 +4067,12 @@ GRANT ALL ON FUNCTION "public"."deduct_gpu_hours"("p_user_id" "uuid", "p_hours" 
 GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "anon";
 GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_banned_identities"("page" integer, "per_page" integer) TO "anon";
+GRANT ALL ON FUNCTION "public"."get_banned_identities"("page" integer, "per_page" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_banned_identities"("page" integer, "per_page" integer) TO "service_role";
 
 
 
@@ -4027,6 +4268,12 @@ GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "
 GRANT ALL ON TABLE "public"."analytics_sync_log" TO "anon";
 GRANT ALL ON TABLE "public"."analytics_sync_log" TO "authenticated";
 GRANT ALL ON TABLE "public"."analytics_sync_log" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."banned_identities" TO "anon";
+GRANT ALL ON TABLE "public"."banned_identities" TO "authenticated";
+GRANT ALL ON TABLE "public"."banned_identities" TO "service_role";
 
 
 

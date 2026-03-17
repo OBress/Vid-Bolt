@@ -1,6 +1,7 @@
 "use client";
 
 import { useUserProfile } from "@/hooks/use-user-profile";
+import { useSessionHeartbeat } from "@/hooks/use-session-heartbeat";
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -15,6 +16,9 @@ export function UserStatusGuard({ children }: UserStatusGuardProps) {
   const router = useRouter();
   const pathname = usePathname();
   const supabase = createClient();
+
+  // Periodic session validation — detects cross-origin/cross-tab logouts
+  useSessionHeartbeat();
 
   // Realtime subscription to kick users immediately
   useEffect(() => {
@@ -60,7 +64,13 @@ export function UserStatusGuard({ children }: UserStatusGuardProps) {
 
   // Standard effective check
   useEffect(() => {
-    if (loading || !profile) return;
+    if (loading) return;
+
+    // No profile after loading = invalid auth session → redirect to login
+    if (!profile) {
+      router.replace("/login");
+      return;
+    }
 
     // Admins always bypass waitlist — never lock out the site owner
     if (profile.is_admin) return;
@@ -85,9 +95,10 @@ export function UserStatusGuard({ children }: UserStatusGuardProps) {
   }
 
   // If we're not active (and not admin), we render nothing while redirect happens
-  if (profile && profile.status !== "active" && !profile.is_admin) {
+  if (!profile || (profile.status !== "active" && !profile.is_admin)) {
     return null;
   }
 
   return <>{children}</>;
 }
+

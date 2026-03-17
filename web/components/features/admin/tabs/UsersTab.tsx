@@ -14,6 +14,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { UserDetailSheet } from "../UserDetailSheet";
 import { DeleteUserDialog, type DeleteMode } from "../DeleteUserDialog";
+import { BanUserDialog } from "../BanUserDialog";
+import { BannedIdentitiesPanel } from "../BannedIdentitiesPanel";
+import { rejectUser } from "@/actions/admin-user-actions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +38,8 @@ import {
   PauseCircle,
   PlayCircle,
   ShieldCheck,
+  ShieldBan,
+  XCircle,
   Users,
   Clock,
 } from "lucide-react";
@@ -89,6 +94,30 @@ export function UsersTab() {
     setDeleteUserId(userId);
     setDeleteMode(mode);
     setDeleteDialogOpen(true);
+  };
+
+  // Ban dialog state
+  const [banDialogOpen, setBanDialogOpen] = useState(false);
+  const [banUser, setBanTargetUser] = useState<{ id: string; name: string | null; email: string } | null>(null);
+
+  const openBanDialog = (user: User) => {
+    setBanTargetUser({ id: user.id, name: user.name, email: user.email });
+    setBanDialogOpen(true);
+  };
+
+  // Reject handler (inline, no dialog needed)
+  const handleRejectUser = async (userId: string) => {
+    try {
+      const result = await rejectUser(userId);
+      toast.success("User Rejected", {
+        description: `${result.username || result.email} has been rejected. They can re-apply.`,
+      });
+      fetchUsers();
+      fetchMetricsData();
+    } catch (err: any) {
+      console.error("Failed to reject user:", err);
+      toast.error(`Failed to reject user: ${err.message || "Unknown error"}`);
+    }
   };
 
   const supabase = createClient();
@@ -430,6 +459,26 @@ export function UsersTab() {
                             </DropdownMenuItem>
                           )}
 
+                          {user.status === "pending" && (
+                            <DropdownMenuItem
+                              className="text-amber-500 focus:bg-amber-500/10 focus:text-amber-400 cursor-pointer rounded-lg py-2"
+                              onClick={(e) => { e.stopPropagation(); handleRejectUser(user.id); }}
+                            >
+                              <XCircle className="w-4 h-4 mr-2" />
+                              Reject (Can Reapply)
+                            </DropdownMenuItem>
+                          )}
+
+                          {user.status === "pending" && !user.is_admin && (
+                            <DropdownMenuItem
+                              className="text-red-500 focus:bg-red-500/10 focus:text-red-400 cursor-pointer font-medium rounded-lg py-2"
+                              onClick={(e) => { e.stopPropagation(); openBanDialog(user); }}
+                            >
+                              <ShieldBan className="w-4 h-4 mr-2" />
+                              Ban (Blacklist)
+                            </DropdownMenuItem>
+                          )}
+
                           {user.status === "active" && (
                             <DropdownMenuItem
                               className="text-orange-500 focus:bg-orange-500/10 focus:text-orange-400 cursor-pointer rounded-lg py-2"
@@ -551,6 +600,28 @@ export function UsersTab() {
             fetchMetricsData();
           }}
         />
+      )}
+
+      {banUser && (
+        <BanUserDialog
+          open={banDialogOpen}
+          onOpenChange={(open) => {
+            setBanDialogOpen(open);
+            if (!open) setBanTargetUser(null);
+          }}
+          userId={banUser.id}
+          userName={banUser.name}
+          userEmail={banUser.email}
+          onSuccess={() => {
+            fetchUsers();
+            fetchMetricsData();
+          }}
+        />
+      )}
+
+      {/* Banned Identities Panel - shown when filtering by banned */}
+      {statusFilter === "banned" && (
+        <BannedIdentitiesPanel />
       )}
     </div>
   );

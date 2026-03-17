@@ -515,7 +515,7 @@ async function executeWithVerification(
     entityIds?: string[];
   },
   state: ClosedLoopState
-): Promise<{ mediaUrl: string; verified: boolean; flag?: ReturnType<typeof selectBestFitSalvage>['flag'] }> {
+): Promise<{ mediaUrl: string; verified: boolean; flag?: ReturnType<typeof selectBestFitSalvage>['flag']; softFailed?: boolean }> {
   const { verifierQueue, imageEditQueue } = await import('@/lib/queues/queues');
   const salvageAttempts: SalvageAttempt[] = [];
 
@@ -612,9 +612,21 @@ async function executeWithVerification(
       continue;
     }
 
-    // PASS → accept, update GCM, and return
-    if (result.verdict === 'PASS') {
-      console.log(`${LOG_PREFIX} Shot ${shotIndex} PASSED on attempt ${attempt}`);
+    // PASS or SOFT_FAIL → accept the media
+    // SOFT_FAIL: usable but has quality concerns — flag issues for the editor
+    if (result.verdict === 'PASS' || result.verdict === 'SOFT_FAIL') {
+      if (result.verdict === 'SOFT_FAIL') {
+        console.log(`${LOG_PREFIX} Shot ${shotIndex} SOFT_FAIL on attempt ${attempt} — accepted with warnings`);
+        // Flag the quality concerns so they appear in the editor's Issues panel
+        state.flagged_shots.push({
+          shotIndex,
+          issue: `Shot ${shotIndex + 1} accepted with quality concerns: ${result.suggested_corrections.join('; ')}`,
+          suggestions: result.suggested_corrections,
+          allAttemptUrls: [currentMediaUrl],
+        });
+      } else {
+        console.log(`${LOG_PREFIX} Shot ${shotIndex} PASSED on attempt ${attempt}`);
+      }
 
       // Increment GCM appearance count for all referenced entities (§5.5)
       if (verificationContext.entityIds?.length) {
@@ -691,6 +703,7 @@ async function executeWithVerification(
     mediaUrl: salvage.bestMediaUrl,
     verified: false,
     flag: salvage.flag,
+    softFailed: true, // Best-Fit Salvage = soft-fail (media exists, quality concerns)
   };
 }
 
@@ -1018,10 +1031,15 @@ async function executeProductionPhase(
       progress_percent: 50, // Entering video band: 50–70
     });
 
-    // --- VIDEOS ---
+
+    // --- VIDEOS (PARALLEL STREAMING VERIFICATION) ---
     // The video-gen worker processes ALL video shots as a single GPU batch
-    // (keyframe images → mode switch → video generation). Dispatch ONCE, then
-    // read per-shot URLs from metadata and verify each individually.
+    // (keyframe images → mode switch → video generation). As each video completes
+    // (webhook resolves), the orchestrator immediately fires a non-blocking verifier
+    // job. All pending verifications are awaited after video-gen finishes.
+    //
+    // This overlaps the ~3.5 min verification phase with the ~20 min generation
+    // phase, eliminating the sequential bottleneck.
     if (videoShots.length > 0) {
       const totalVideoDuration = videoShots.reduce((sum, s) => sum + (s.duration_seconds || 0), 0);
       // Query queue depth to dynamically scale timeout for multi-video contention
@@ -1040,6 +1058,114 @@ async function executeProductionPhase(
       const VIDEO_BATCH_TIMEOUT_MS = gpuProcessingMs + lockWaitBufferMs + 540_000;
       console.log(`${LOG_PREFIX} Video batch timeout: ${Math.round(VIDEO_BATCH_TIMEOUT_MS / 1000)}s for ${totalVideoDuration.toFixed(1)}s of video (${videoShots.length} shots, ${queueDepth} jobs ahead → ${queueMultiplier}x multiplier, lock buffer: ${Math.round(lockWaitBufferMs / 1000)}s)`);
 
+      // -----------------------------------------------------------------------
+      // STREAMING VERIFICATION: Subscribe to per-shot completions BEFORE
+      // dispatching video-gen, so we catch every webhook result.
+      // -----------------------------------------------------------------------
+      const { verifierQueue } = await import('@/lib/queues/queues');
+      const {
+        onVideoItemComplete: subscribeVideoComplete,
+        offVideoItemComplete: unsubscribeVideoComplete,
+      } = await import('@/lib/queues/video-completion-emitter');
+
+      // Collect fundamental failures for batch retry
+      const fundamentalFailures: Array<{
+        shot: typeof videoShots[0];
+        shotKey: string;
+        mediaUrl: string;
+        feedback: string;
+      }> = [];
+
+      // Build a shot lookup by segment_index for O(1) matching in the callback
+      const shotByIndex = new Map(videoShots.map(s => [s.segment_index, s]));
+
+      // Array of pending verification promises — settled after video-gen finishes
+      const pendingVerifications: Promise<void>[] = [];
+
+      // Subscribe: as each video's webhook resolves, fire a non-blocking verifier job
+      subscribeVideoComplete(videoId, (gpuResult) => {
+        const shot = shotByIndex.get(gpuResult.shot_index);
+        if (!shot) return;
+
+        const shotKey = `shot-${gpuResult.shot_index}`;
+        const mediaUrl = gpuResult.media_url;
+
+        if (!mediaUrl || gpuResult.generation_status === 'failed') {
+          videosFailed++;
+          return;
+        }
+
+        // Count as completed and map for MG Pass 2 asset swap (immediately)
+        videosCompleted++;
+        generatedAssets.set(
+          `placeholder://shot-${gpuResult.shot_index}/asset-0`,
+          mediaUrl
+        );
+
+        // Fire a non-blocking verification job for this shot
+        const verifyPromise = (async () => {
+          try {
+            const verifyQueueEvents = await getQueueEvents('verifier');
+            const verifyJob = await verifierQueue.add(`verify-video-${shot.segment_index}`, {
+              taskId,
+              userId: jobData.userId,
+              videoId,
+              mediaType: 'video',
+              mediaUrl,
+              shotDescription: shot.summary || `Shot ${shot.segment_index}`,
+              shotIndex: shot.segment_index,
+              entityReferences: entityRefs,
+              styleGuide: aiStyleGuide,
+              // Temporal continuity skipped for parallel path — shots verify out-of-order
+            });
+
+            const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, 60_000);
+            const verdict = verifyResult?.result;
+
+            // Track verification skips in state
+            if (verifyResult?.verificationSkipped) {
+              state.verification_skipped = (state.verification_skipped || 0) + 1;
+            }
+
+            if (verdict?.verdict === 'PASS') {
+              console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} PASSED verification`);
+            } else if (verdict?.verdict === 'SOFT_FAIL') {
+              console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} SOFT_FAIL: ${verdict.suggested_corrections?.join('; ')}`);
+              state.flagged_shots.push({
+                shotIndex: shot.segment_index,
+                issue: `Quality concerns: ${verdict.suggested_corrections?.join('; ') || 'Minor quality issues'}`,
+                suggestions: verdict.suggested_corrections || [],
+                allAttemptUrls: [mediaUrl],
+              });
+            } else if (verdict) {
+              console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} FAILED verification: ${verdict.suggested_corrections?.join('; ')}`);
+
+              if (verdict.failure_type === 'fundamental') {
+                console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} FUNDAMENTAL failure — queuing for batch retry`);
+                fundamentalFailures.push({
+                  shot,
+                  shotKey,
+                  mediaUrl,
+                  feedback: verdict.suggested_corrections?.join('. ') || '',
+                });
+              } else {
+                state.flagged_shots.push({
+                  shotIndex: shot.segment_index,
+                  issue: verdict.suggested_corrections?.join('; ') || 'Failed verification',
+                  suggestions: verdict.suggested_corrections || [],
+                  allAttemptUrls: [mediaUrl],
+                });
+              }
+            }
+          } catch (verifyErr) {
+            console.warn(`${LOG_PREFIX} Video shot ${shot.segment_index} verification error:`, verifyErr);
+            // Still use the video even if verification fails
+          }
+        })();
+
+        pendingVerifications.push(verifyPromise);
+      });
+
       // 1. Dispatch video-gen ONCE for the entire batch
       const genQueueEvents = await getQueueEvents('video-gen');
       const genJob = await videoGenQueue.add('video-batch', {
@@ -1050,13 +1176,17 @@ async function executeProductionPhase(
         loraName: jobData.creativeManifest.lora?.name,
         loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
       }, {
-        attempts: 1, // Never silently retry the entire batch — orchestrator handles retries
+        attempts: 1,
       });
 
-      console.log(`${LOG_PREFIX} Dispatched single video-gen batch job ${genJob.id}`);
+      console.log(`${LOG_PREFIX} Dispatched single video-gen batch job ${genJob.id} (with parallel streaming verification)`);
       await genJob.waitUntilFinished(genQueueEvents, VIDEO_BATCH_TIMEOUT_MS);
 
-      // 2. Read per-shot URLs from metadata (video-gen saves to generated_videos)
+      // 2. Unsubscribe from events (video-gen is done, no more webhooks)
+      unsubscribeVideoComplete(videoId);
+
+      // 3. Read generated_videos from metadata for the batch retry path
+      //    (the EventEmitter callback already counted completed/failed)
       const { data: updatedProject } = await supabase
         .from('video_projects')
         .select('metadata')
@@ -1067,90 +1197,15 @@ async function executeProductionPhase(
       const generatedVideos = (updatedMeta.generated_videos || {}) as Record<string, string>;
       console.log(`${LOG_PREFIX} Video batch complete: ${Object.keys(generatedVideos).length} URLs in metadata`);
 
-      // 3. Verify each shot individually, collect fundamental failures for batch retry
-      const { verifierQueue } = await import('@/lib/queues/queues');
-      let previousVideoShotUrl: string | undefined; // M3: Track for temporal continuity
-
-      // Collect fundamental failures for batch retry instead of per-shot sequential retries
-      const fundamentalFailures: Array<{
-        shot: typeof videoShots[0];
-        shotKey: string;
-        mediaUrl: string;
-        feedback: string;
-      }> = [];
-
-      for (const shot of videoShots) {
-        const shotKey = `shot-${shot.segment_index}`;
-        const mediaUrl = generatedVideos[shotKey];
-
-        if (!mediaUrl) {
-          videosFailed++;
-          continue;
-        }
-
-        // Run verifier on this shot's video
-        try {
-          const verifyQueueEvents = await getQueueEvents('verifier');
-          const verifyJob = await verifierQueue.add(`verify-video-${shot.segment_index}`, {
-            taskId,
-            userId: jobData.userId,
-            videoId,
-            mediaType: 'video',
-            mediaUrl,
-            shotDescription: shot.summary || `Shot ${shot.segment_index}`,
-            shotIndex: shot.segment_index,
-            entityReferences: entityRefs,
-            styleGuide: aiStyleGuide,
-            previousShotUrl: previousVideoShotUrl, // M3: temporal continuity
-          });
-
-          const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, 60_000);
-          const verdict = verifyResult?.result;
-
-          // Track verification skips in state
-          if (verifyResult?.verificationSkipped) {
-            state.verification_skipped = (state.verification_skipped || 0) + 1;
-          }
-
-          if (verdict?.verdict === 'PASS') {
-            console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} PASSED verification`);
-          } else if (verdict) {
-            console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} FAILED verification: ${verdict.suggested_corrections?.join('; ')}`);
-
-            // Collect fundamental failures for batch retry (instead of per-shot sequential retries)
-            if (verdict.failure_type === 'fundamental') {
-              console.log(`${LOG_PREFIX} Video shot ${shot.segment_index} FUNDAMENTAL failure — queuing for batch retry`);
-              fundamentalFailures.push({
-                shot,
-                shotKey,
-                mediaUrl,
-                feedback: verdict.suggested_corrections?.join('. ') || '',
-              });
-            } else {
-              // Recoverable failure: flag but still use
-              state.flagged_shots.push({
-                shotIndex: shot.segment_index,
-                issue: verdict.suggested_corrections?.join('; ') || 'Failed verification',
-                suggestions: verdict.suggested_corrections || [],
-                allAttemptUrls: [mediaUrl],
-              });
-            }
-          }
-        } catch (verifyErr) {
-          console.warn(`${LOG_PREFIX} Video shot ${shot.segment_index} verification error:`, verifyErr);
-          // Still use the video even if verification fails
-        }
-
-        // Count as completed and map for MG Pass 2 asset swap
-        videosCompleted++;
-        previousVideoShotUrl = mediaUrl; // M3: track for next shot's continuity check
-        generatedAssets.set(
-          `placeholder://shot-${shot.segment_index}/asset-0`,
-          mediaUrl
-        );
+      // 4. Await all pending verifications (most should already be done,
+      //    since they ran in parallel with generation)
+      if (pendingVerifications.length > 0) {
+        console.log(`${LOG_PREFIX} Awaiting ${pendingVerifications.length} pending verifications...`);
+        await Promise.allSettled(pendingVerifications);
+        console.log(`${LOG_PREFIX} All parallel verifications settled`);
       }
 
-      // 4. Batch retry all fundamental failures in ONE GPU pass
+      // 5. Batch retry all fundamental failures in ONE GPU pass
       if (fundamentalFailures.length > 0) {
         console.log(`${LOG_PREFIX} Batch retrying ${fundamentalFailures.length} fundamental failures in single GPU pass`);
 
@@ -1173,7 +1228,7 @@ async function executeProductionPhase(
             loraName: jobData.creativeManifest.lora?.name,
             loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
           }, {
-            attempts: 1, // Never silently retry the entire batch — one retry is enough
+            attempts: 1,
           });
 
           // Calculate timeout based on total retry duration
@@ -1912,6 +1967,24 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
         },
       });
       console.log(`${LOG_PREFIX} Pipeline diagnostics persisted to metadata`);
+
+      // Also persist flagged shots as verifier_issues for the edit-assembly worker
+      // These become `mediaIssues` in the editor's Issues panel
+      if (state.flagged_shots.length > 0) {
+        const verifierIssues = state.flagged_shots.map(flag => ({
+          shotIndex: flag.shotIndex,
+          severity: 'warning' as const,
+          type: 'quality_concern',
+          title: `Shot ${flag.shotIndex + 1}: Quality concerns`,
+          description: flag.suggestions?.join('; ') || flag.issue || 'Verification flagged quality issues',
+        }));
+
+        await supabase.rpc('merge_video_metadata', {
+          p_video_id: videoId,
+          p_updates: { verifier_issues: verifierIssues },
+        });
+        console.log(`${LOG_PREFIX} Persisted ${verifierIssues.length} verifier issues for editor`);
+      }
     } catch (diagErr) {
       console.warn(`${LOG_PREFIX} Failed to persist pipeline diagnostics:`, diagErr);
     }

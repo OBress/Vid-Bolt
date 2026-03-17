@@ -325,6 +325,34 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
 
     console.log(`[EditAssembly Worker] Merged Agent EDL: ${totalTracks} tracks, ${totalClips} clips, ${totalTextClips} text clips, ${totalKeyframedClips} keyframed clips`);
 
+    // Inject verifier quality warnings into mediaIssues (from orchestrator's flagged_shots)
+    const verifierIssues = (metadata.verifier_issues || []) as Array<{
+      shotIndex: number;
+      severity: string;
+      type: string;
+      title: string;
+      description: string;
+    }>;
+    if (verifierIssues.length > 0) {
+      console.log(`[EditAssembly Worker] Injecting ${verifierIssues.length} verifier issues into EDL`);
+      for (const issue of verifierIssues) {
+        mergedAgentEDL.mediaIssues.push({
+          shotIndex: issue.shotIndex,
+          severity: (issue.severity as 'error' | 'warning' | 'info') || 'warning',
+          type: issue.type || 'quality_concern',
+          title: issue.title,
+          description: issue.description,
+        });
+        mergedLegacyEDL.mediaIssues.push({
+          shotIndex: issue.shotIndex,
+          severity: (issue.severity as 'error' | 'warning') || 'warning',
+          type: issue.type as any || 'quality_concern',
+          title: issue.title,
+          description: issue.description,
+        });
+      }
+    }
+
     await completeStep(taskId, reconStepId);
 
     // =====================================================================
@@ -522,15 +550,14 @@ function mergeAgentEDLChunks(
         }
       }
 
-      // TIGHT TILING: After overlap-fixing, ensure no gaps by snapping each
-      // clip's start to the previous clip's end. This prevents gaps at source
-      // rather than trying to fill them later with stretched clips.
+      // GAP DIAGNOSTIC: Log gaps for visibility but do NOT close them.
+      // Gaps are expected when shots fail — closing them destroys audio sync
+      // by shifting all subsequent clips earlier than their narration positions.
       for (let i = 1; i < clips.length; i++) {
         const prevEnd = clips[i - 1].startTime + clips[i - 1].duration;
         const gap = clips[i].startTime - prevEnd;
-        if (gap > 0.05) { // >50ms gap — close it
-          console.log(`[EditAssembly Merge] Tight-tiling: closing ${gap.toFixed(2)}s gap before shot ${clips[i].shotIndex}`);
-          clips[i].startTime = prevEnd;
+        if (gap > 0.05) { // >50ms gap — log but preserve
+          console.log(`[EditAssembly Merge] Gap: ${gap.toFixed(2)}s before shot ${clips[i].shotIndex} (preserving audio sync)`);
         }
       }
 

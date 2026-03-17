@@ -775,18 +775,16 @@ function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAg
         }
       }
 
-      // 2. TIGHT TILING: Close gaps by sliding clips forward.
-      //    Gap-filling via clip extension (2x duration) has been REMOVED
-      //    because it produces frozen frames. Instead, we ensure each clip
-      //    starts exactly where the previous one ends.
+      // GAP DIAGNOSTIC: Log gaps for visibility but do NOT close them.
+      // Gaps from failed/skipped shots are expected — closing them shifts
+      // all subsequent clips and destroys narration audio alignment.
       for (let i = 1; i < clips.length; i++) {
         const prev = clips[i - 1];
         const curr = clips[i];
         const prevEnd = prev.startTime + prev.duration;
         const gap = curr.startTime - prevEnd;
-        if (gap > 0.05) { // >50ms gap — close it
-          console.log(`[EditAssembly] Tight-tiling: closing ${gap.toFixed(2)}s gap before shot ${curr.shotIndex}`);
-          curr.startTime = prevEnd;
+        if (gap > 0.05) { // >50ms gap — log but preserve
+          console.log(`[EditAssembly] Gap: ${gap.toFixed(2)}s before shot ${curr.shotIndex} (preserving audio sync)`);
         }
       }
     }

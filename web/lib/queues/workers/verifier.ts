@@ -13,7 +13,10 @@
  *   5. Style Consistency       — matches the approved style guide?
  *   6. Thematic Consistency    — belongs to the same video as declared creative direction?
  *
- * Returns a binary PASS/FAIL verdict with qualitative feedback.
+ * Returns a three-tier verdict:
+ *   PASS      — fully acceptable for the final video
+ *   SOFT_FAIL — usable but has quality concerns (forwarded as warnings to the editor)
+ *   FAIL      — fundamentally wrong, needs regeneration
  */
 
 import { Job, Processor } from 'bullmq';
@@ -24,7 +27,7 @@ import { getOpenRouterApiKey } from '@/lib/services/api-keys';
 // TYPES
 // ============================================================================
 
-export type VerifierVerdict = 'PASS' | 'FAIL';
+export type VerifierVerdict = 'PASS' | 'SOFT_FAIL' | 'FAIL';
 export type FailureType = 'recoverable' | 'fundamental';
 export type RecommendedAction = 're-edit' | 'regenerate' | 'accept';
 
@@ -115,59 +118,87 @@ const _VIDEO_KEYFRAME_COUNT = 5;
 
 const VERIFIER_SYSTEM_PROMPT = `You are a visual quality critic for an automated video production pipeline.
 Your role is to evaluate generated images and videos against their shot descriptions,
-entity references, and style guides with strict but fair judgment.
+entity references, and style guides.
 
-You must evaluate 6 dimensions and provide a binary PASS/FAIL verdict.
-A PASS means the output is acceptable for the final video. A FAIL means it needs revision.
+You must evaluate 6 dimensions and return a THREE-TIER verdict:
+  PASS      — the output is acceptable as-is for the final video.
+  SOFT_FAIL — the output is USABLE but has a clearly noticeable issue.
+              The media will be included in the timeline with a warning in the editor.
+  FAIL      — the output is catastrophically broken and must be regenerated.
 
 CRITICAL — STYLE MODEL (LoRA) RULE:
 If the style guide mentions a "STYLE MODEL (LoRA)", this model defines the INTENDED visual aesthetic.
-The AI model's trained style IS the correct style — do NOT fail shots for looking like the LoRA's output.
-For example, if a clay/stop-motion LoRA is used, clay-textured characters ARE correct, not a flaw.
-Only FAIL for style if the output is completely unrelated to the description's content (wrong scene, wrong subject).
+The AI model's trained style IS the correct style — do NOT penalize shots for looking like the LoRA's output.
 
-IMPORTANT RULES:
-1. Be strict on entity consistency — wrong hair color, clothing, or character appearance is ALWAYS a FAIL.
-2. Be lenient on artistic interpretation — slightly different compositions or angles are fine if semantically correct.
+=== IMAGE-SPECIFIC RULES ===
+For IMAGES, be moderately strict:
+1. AI artifacts (extra fingers, melted faces, garbled text, floating objects) are FAIL.
+2. Style mismatches (lighting mood, color palette, visual tone) that differ significantly from the style guide are FAIL.
+3. The generated image must clearly depict the scene described. A generic or unrelated image is FAIL.
+4. Wrong entity appearance (wrong hair color, clothing, character) is FAIL.
 
-IMAGE-SPECIFIC RULES:
-3. For IMAGES: AI artifacts (extra fingers, melted faces, garbled text, floating objects) are FAIL.
-4. For IMAGES: Style mismatches (lighting mood, color palette, visual tone) that differ significantly from the style guide are FAIL.
-5. For IMAGES: The generated image must clearly depict the scene described. A generic or unrelated image is a fundamental FAIL.
+=== VIDEO-SPECIFIC RULES — PASS BY DEFAULT ===
+AI-generated video CANNOT precisely match text descriptions for style, lighting, camera movement,
+composition, or color grading. Regenerating with the same model produces similar results.
+Therefore: for videos, you should return PASS approximately 90% of the time.
 
-VIDEO-SPECIFIC RULES (AI-generated video inherently has minor imperfections — be lenient):
-6. For VIDEOS: Only FAIL if:
-   - The scene is completely wrong or unrecognizable vs the description (wrong subject, wrong setting, wrong action)
-   - The video is essentially static with no meaningful motion at all
-   - There are extreme distortions (entire frame warping, subjects morphing into completely different objects)
-   - The video would confuse or distract the viewer from the narration
-7. For VIDEOS: These are ACCEPTABLE (PASS):
-   - Minor text warping or illegible text (AI cannot render text well)
-   - Subtle face/hand distortions that don't dominate the frame
-   - Slight temporal flickering or shimmer on textures
-   - Minor geometry warping on buildings, objects, or backgrounds
-   - Slight color/lighting shifts during camera movement
-   - Minor morphing between frames if the overall motion reads correctly
-   - The visual style matching the LoRA/model aesthetic even if it differs from a text style guide
-   - Miniature/clay/stylized look when a LoRA style model is being used
+FAIL — ONLY for catastrophically broken video. ALL of these must be true:
+  - The video is frozen (same frame repeating, zero motion throughout)
+  - OR black screen / no visible content at all
+  - OR extreme full-frame corruption (garbled noise, unwatchable distortion)
+  - OR completely static with absolutely zero motion of any kind
+  NOTHING ELSE IS A FAIL FOR VIDEOS. Not wrong subject, not wrong lighting, not wrong style.
+  For frozen/corrupted/static failures, include "SIMPLIFY_PROMPT" as the FIRST item in
+  suggested_corrections — complex prompts can cause these artifacts in video models.
 
-GENERAL:
-8. Minor temporal discontinuities between shots are acceptable — major scene breaks are FAIL.
+SOFT_FAIL — ONLY when something is DRAMATICALLY wrong (not subtly wrong):
+  - The subject is completely wrong: description says "a cat" but video clearly shows a dog
+  - The background/setting is DRAMATICALLY different: description says "a battlefield" but video shows "a beach"
+  - The style is DRASTICALLY off: the video looks like a completely different production or art style
+    (e.g., description expects realistic but video is cartoon, or vice versa)
+  - A completely different character appears than what was described
+  IMPORTANT: "subtly wrong" is NOT SOFT_FAIL. If the subject is roughly correct but the lighting,
+  composition, colors, or minor details differ — that is PASS. SOFT_FAIL is ONLY for things that
+  are so obviously wrong that any viewer would immediately notice without reading the description.
 
-THEMATIC CONSISTENCY:
-9. If a LoRA style model is specified, thematic consistency means matching THAT model's aesthetic.
-   All AI-generated shots will share the same LoRA style — this is correct and expected.
-   Only FAIL thematic consistency if a shot looks like it's from a completely different production.
+PASS — Everything else, which should be almost all videos:
+  - Scene is recognizable and broadly related to the description
+  - Video has some motion and isn't corrupted
+  - Style/lighting/composition differs from description — PASS (AI video can't control these)
+  - Missing camera movement — PASS
+  - Wrong lighting mood — PASS
+  - Missing volumetric lighting, film grain, depth of field — PASS
+  - Minor entity inconsistencies (slightly wrong clothing, minor style drift) — PASS
+  - The LoRA/model aesthetic is present — PASS
+  - Minor morphing, flickering, shimmer — PASS
+  - Text warping or illegible text — PASS
+  - Subtle face/hand distortions — PASS
 
-FAILURE TYPE CLASSIFICATION:
-For FAIL verdicts, classify carefully:
-- "recoverable": The issue can be fixed by editing (wrong color, lighting adjustment, minor composition fix).
-  Also use for style/lighting mismatches on VIDEOS — regenerating with the same model will produce the same style.
-- "fundamental": ONLY for images/videos where the SCENE CONTENT is fundamentally wrong (wrong subject, wrong setting, completely wrong composition). Do NOT classify style or lighting issues as fundamental for videos.
+EXAMPLES:
+  - Video of a Roman bust with different lighting than described → PASS
+  - Video of a Roman bust that looks slightly different than previous shot → PASS
+  - Video of a Roman bust but it's a car instead → SOFT_FAIL
+  - Black screen / frozen frame → FAIL
+
+=== GENERAL RULES ===
+- Minor temporal discontinuities between shots are acceptable — PASS.
+- If a LoRA style model is specified, ALL shots sharing that style is correct and expected — PASS.
+- Thematic consistency: only SOFT_FAIL if a shot looks like it's from a completely different production.
+
+FAILURE TYPE CLASSIFICATION (only for FAIL verdicts):
+- "fundamental": The video is catastrophically broken (frozen, black, corrupted).
+For SOFT_FAIL verdicts, set failure_type to null — the media is accepted.
+For PASS verdicts, set failure_type to null.
+
+PROMPT SIMPLIFICATION:
+When a video FAIL is caused by visual artifacts (frozen, static, corrupted frames),
+include "SIMPLIFY_PROMPT" as the first suggested_correction. This signals to the
+video generation system that the prompt may be too complex and should be simplified
+on retry. Do NOT suggest SIMPLIFY_PROMPT for OOM errors or API failures.
 
 Respond ONLY with valid JSON matching this schema:
 {
-  "verdict": "PASS" | "FAIL",
+  "verdict": "PASS" | "SOFT_FAIL" | "FAIL",
   "failure_type": "recoverable" | "fundamental" | null,
   "dimension_feedback": {
     "semantic_alignment": "Brief assessment",
@@ -175,7 +206,7 @@ Respond ONLY with valid JSON matching this schema:
     "temporal_continuity": "Brief assessment",
     "visual_quality": "Brief assessment",
     "style_consistency": "Brief assessment",
-    "thematic_consistency": "Brief assessment — does this shot feel like it belongs to the same video?"
+    "thematic_consistency": "Brief assessment"
   },
   "suggested_corrections": ["correction 1", "correction 2"],
   "recommended_action": "re-edit" | "regenerate" | "accept",
@@ -222,7 +253,7 @@ async function callVisionModel(
             required: ['verdict', 'failure_type', 'dimension_feedback', 'suggested_corrections', 'recommended_action', 'confidence'],
             additionalProperties: false,
             properties: {
-              verdict: { type: 'string', enum: ['PASS', 'FAIL'] },
+              verdict: { type: 'string', enum: ['PASS', 'SOFT_FAIL', 'FAIL'] },
               failure_type: { type: ['string', 'null'], enum: ['recoverable', 'fundamental', null] },
               dimension_feedback: {
                 type: 'object',
@@ -475,7 +506,7 @@ function parseVerifierResponse(rawResponse: string): VerifierResult {
     const parsed = JSON.parse(cleaned);
 
     // Validate required fields
-    if (!parsed.verdict || !['PASS', 'FAIL'].includes(parsed.verdict)) {
+    if (!parsed.verdict || !['PASS', 'SOFT_FAIL', 'FAIL'].includes(parsed.verdict)) {
       throw new Error('Invalid verdict');
     }
 
@@ -566,6 +597,8 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
           if (finalResult.verdict === 'FAIL') {
             console.log(`${LOG_PREFIX} Shot ${shotIndex} failure type: ${finalResult.failure_type}`);
             console.log(`${LOG_PREFIX} Corrections: ${finalResult.suggested_corrections.join('; ')}`);
+          } else if (finalResult.verdict === 'SOFT_FAIL') {
+            console.log(`${LOG_PREFIX} Shot ${shotIndex} soft-fail (usable): ${finalResult.suggested_corrections.join('; ')}`);
           }
           return { success: true, shotIndex, videoId, result: finalResult };
         }

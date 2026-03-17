@@ -6,8 +6,11 @@
  * Server actions for admin user management including:
  * - Wiping user data (keeps account structure)
  * - Full user deletion (removes everything)
+ * - Rejecting pending users (allows re-apply)
+ * - Banning users (blocks email + Discord ID permanently)
+ * - Unbanning identities (allows re-apply)
  * 
- * All actions require admin privileges and username confirmation.
+ * All actions require admin privileges.
  */
 
 import { createClient } from "@/lib/supabase/server";
@@ -51,6 +54,28 @@ export interface DeleteUserResult {
   r2_deleted: number;
   r2_errors: string[];
   auth_deleted: boolean;
+}
+
+export interface BanUserResult {
+  success: boolean;
+  user_id: string;
+  username: string | null;
+  email: string;
+  discord_id: string | null;
+  ban_id: string;
+  r2_deleted: number;
+  r2_errors: string[];
+  auth_deleted: boolean;
+}
+
+export interface BannedIdentity {
+  id: string;
+  email: string | null;
+  discord_id: string | null;
+  banned_by_name: string | null;
+  reason: string | null;
+  created_at: string;
+  total_count: number;
 }
 
 // ============================================================================
@@ -301,4 +326,196 @@ export async function deleteUser(
     r2_errors: r2Result.errors,
     auth_deleted: authDeleted,
   };
+}
+
+/**
+ * Reject a pending user — deletes their account but allows them to re-apply.
+ * This is a lightweight version of deleteUser without the confirmation input requirement.
+ * 
+ * @param userId - The UUID of the pending user to reject
+ */
+export async function rejectUser(userId: string): Promise<DeleteUserResult> {
+  const supabase = await createClient();
+
+  // Verify the user exists and is pending
+  const userInfo = await getUserForDeletion(userId);
+
+  if (userInfo.is_admin) {
+    throw new Error("Cannot reject admin accounts");
+  }
+
+  console.log(`[Admin] Rejecting user: ${userId} (${userInfo.username || userInfo.email})`);
+
+  // Call the database function to delete from public.users and get R2 prefixes
+  const { data, error } = await supabase.rpc("admin_delete_user", {
+    target_user_id: userId,
+  });
+
+  if (error) {
+    console.error("[Admin] Database reject failed:", error);
+    throw new Error(`Failed to reject user: ${error.message}`);
+  }
+
+  const dbResult = data as {
+    success: boolean;
+    user_id: string;
+    username: string;
+    email: string;
+    r2_prefixes: string[];
+  };
+
+  // Clean up R2 files
+  const r2Result = await cleanupR2Files(dbResult.r2_prefixes || []);
+
+  // Delete from auth.users
+  let authDeleted = false;
+  try {
+    const serviceClient = createServiceClient();
+    const { error: authError } = await serviceClient.auth.admin.deleteUser(userId);
+    if (authError) {
+      console.error("[Admin] Failed to delete from auth.users:", authError);
+    } else {
+      authDeleted = true;
+    }
+  } catch (err) {
+    console.error("[Admin] Error deleting from auth.users:", err);
+  }
+
+  console.log(`[Admin] Reject complete for ${userId}`);
+  revalidatePath("/command-center");
+
+  return {
+    success: true,
+    user_id: dbResult.user_id,
+    username: dbResult.username,
+    email: dbResult.email,
+    r2_deleted: r2Result.deleted,
+    r2_errors: r2Result.errors,
+    auth_deleted: authDeleted,
+  };
+}
+
+/**
+ * Ban a user — deletes their account AND adds their email + Discord ID to the
+ * banned_identities table, preventing them from re-registering.
+ * 
+ * @param userId - The UUID of the user to ban
+ * @param reason - Optional reason for the ban
+ */
+export async function banUser(
+  userId: string,
+  reason?: string
+): Promise<BanUserResult> {
+  const supabase = await createClient();
+
+  // Verify the user exists
+  const userInfo = await getUserForDeletion(userId);
+
+  if (userInfo.is_admin) {
+    throw new Error("Cannot ban admin accounts");
+  }
+
+  console.log(`[Admin] Banning user: ${userId} (${userInfo.username || userInfo.email})`);
+
+  // Call the ban RPC — persists identifiers and deletes from public.users
+  const { data, error } = await supabase.rpc("admin_ban_user", {
+    target_user_id: userId,
+    p_reason: reason || null,
+  });
+
+  if (error) {
+    console.error("[Admin] Database ban failed:", error);
+    throw new Error(`Failed to ban user: ${error.message}`);
+  }
+
+  const dbResult = data as {
+    success: boolean;
+    user_id: string;
+    username: string;
+    email: string;
+    discord_id: string | null;
+    ban_id: string;
+    r2_prefixes: string[];
+  };
+
+  // Clean up R2 files
+  const r2Result = await cleanupR2Files(dbResult.r2_prefixes || []);
+
+  // Delete from auth.users
+  let authDeleted = false;
+  try {
+    const serviceClient = createServiceClient();
+    const { error: authError } = await serviceClient.auth.admin.deleteUser(userId);
+    if (authError) {
+      console.error("[Admin] Failed to delete from auth.users:", authError);
+    } else {
+      authDeleted = true;
+      console.log(`[Admin] Deleted banned user from auth.users: ${userId}`);
+    }
+  } catch (err) {
+    console.error("[Admin] Error deleting from auth.users:", err);
+  }
+
+  console.log(`[Admin] Ban complete for ${userId}:`, {
+    ban_id: dbResult.ban_id,
+    r2_deleted: r2Result.deleted,
+    auth_deleted: authDeleted,
+  });
+
+  revalidatePath("/command-center");
+
+  return {
+    success: true,
+    user_id: dbResult.user_id,
+    username: dbResult.username,
+    email: dbResult.email,
+    discord_id: dbResult.discord_id,
+    ban_id: dbResult.ban_id,
+    r2_deleted: r2Result.deleted,
+    r2_errors: r2Result.errors,
+    auth_deleted: authDeleted,
+  };
+}
+
+/**
+ * Unban an identity — removes from banned_identities so the user can re-register.
+ * 
+ * @param bannedId - The UUID of the banned_identities row to remove
+ */
+export async function unbanIdentity(bannedId: string): Promise<void> {
+  const supabase = await createClient();
+
+  const { error } = await supabase.rpc("admin_unban_identity", {
+    p_banned_id: bannedId,
+  });
+
+  if (error) {
+    console.error("[Admin] Unban failed:", error);
+    throw new Error(`Failed to unban identity: ${error.message}`);
+  }
+
+  console.log(`[Admin] Unbanned identity: ${bannedId}`);
+  revalidatePath("/command-center");
+}
+
+/**
+ * Get paginated list of banned identities for the admin panel.
+ */
+export async function getBannedIdentities(
+  page: number = 1,
+  perPage: number = 20
+): Promise<BannedIdentity[]> {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase.rpc("get_banned_identities", {
+    page,
+    per_page: perPage,
+  });
+
+  if (error) {
+    console.error("[Admin] Failed to get banned identities:", error);
+    throw new Error(`Failed to fetch banned identities: ${error.message}`);
+  }
+
+  return (data || []) as BannedIdentity[];
 }
