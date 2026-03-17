@@ -116,9 +116,9 @@ const WORKER_CATALOG: Array<{
   {
     type: 'music_gen',
     label: 'Music Generation',
-    inputs: 'Audio duration, mood/genre from manifest',
-    outputs: 'Background music URL',
-    description: 'Generates or selects background music.',
+    inputs: 'Audio duration, script text, creative manifest mood/genre, shot plan boundaries',
+    outputs: 'Multi-segment background music URLs with transition metadata (crossfade durations, volume)',
+    description: 'AI music director plans segmented instrumental background music via ACE-Step 1.5. Generates instrument-only tracks with shared seed/BPM/key for timbral consistency, crossfaded transitions aligned to narrative arc (build-up → climax → resolution).',
   },
   {
     type: 'sfx_gen',

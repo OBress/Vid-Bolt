@@ -18,6 +18,7 @@
 import React, { useState } from "react";
 import { cn } from "../../utils/general/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../ui/tabs";
+import { useHorizontalWheelScroll } from "../../hooks/use-horizontal-wheel-scroll";
 import { Button } from "../ui/button";
 import {
   Tooltip,
@@ -100,6 +101,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({
   className,
 }) => {
   const [activeTab, setActiveTab] = useState<AssetManagerTab>(defaultTab);
+  const tabScrollRef = useHorizontalWheelScroll();
 
   const handleTabChange = (value: string) => {
     const newTab = value as AssetManagerTab;
@@ -147,17 +149,17 @@ export const AssetManager: React.FC<AssetManagerProps> = ({
         
         {/* Tab Headers - below title */}
         {/* Tab Headers - horizontally scrollable on narrow viewports */}
-        <div className="absolute top-10 left-0 right-0 z-10 border-b border-border bg-muted/10 overflow-x-auto scrollbar-hide">
-          <TabsList className="h-9 bg-transparent p-0 rounded-none justify-start inline-flex min-w-full">
+        <div ref={tabScrollRef} className="absolute top-10 left-0 right-0 z-10 border-b border-border bg-muted/10 overflow-x-auto scrollbar-hide">
+          <TabsList className="h-9 bg-transparent p-0 rounded-none justify-start inline-flex w-max min-w-full">
             {TABS_CONFIG.map(({ id, label, icon: Icon }) => (
               <TabsTrigger
                 key={id}
                 value={id}
                 className={cn(
-                  "flex-1 min-w-0 h-full rounded-none border-b-2 border-transparent",
+                  "shrink-0 h-full rounded-none border-b-2 border-transparent",
                   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
                   "data-[state=active]:shadow-none",
-                  "flex items-center justify-center gap-1 px-2 whitespace-nowrap"
+                  "flex items-center justify-center gap-1 px-3 whitespace-nowrap"
                 )}
               >
                 {React.createElement(Icon, { className: "h-3.5 w-3.5 shrink-0" })}

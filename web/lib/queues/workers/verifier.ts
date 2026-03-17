@@ -17,9 +17,8 @@
  */
 
 import { Job, Processor } from 'bullmq';
-import { getSupabaseServiceClient } from '@/lib/queues/shared';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
-import { checkStaticVideo } from '@/lib/services/frame-extraction';
+// Static video detection removed — VLM verifier catches bad media directly
 
 // ============================================================================
 // TYPES
@@ -92,11 +91,23 @@ const META_REVIEW_MODEL = 'google/gemini-3.1-pro-preview';
 const META_REVIEW_CONFIDENCE_MIN = 0.4;
 const META_REVIEW_CONFIDENCE_MAX = 0.7;
 
+/** Check if a URL points to a video file (not an image). */
+function isVideoUrl(url: string): boolean {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    return /\.(mp4|webm|mov|avi|mkv)$/.test(pathname);
+  } catch {
+    return url.toLowerCase().includes('.mp4') ||
+           url.toLowerCase().includes('.webm') ||
+           url.toLowerCase().includes('.mov');
+  }
+}
+
 /**
  * Number of keyframes to sample from a video for verification.
  * Always includes first + last frame.
  */
-const VIDEO_KEYFRAME_COUNT = 5;
+const _VIDEO_KEYFRAME_COUNT = 5;
 
 // ============================================================================
 // SYSTEM PROMPT
@@ -109,6 +120,12 @@ entity references, and style guides with strict but fair judgment.
 You must evaluate 6 dimensions and provide a binary PASS/FAIL verdict.
 A PASS means the output is acceptable for the final video. A FAIL means it needs revision.
 
+CRITICAL — STYLE MODEL (LoRA) RULE:
+If the style guide mentions a "STYLE MODEL (LoRA)", this model defines the INTENDED visual aesthetic.
+The AI model's trained style IS the correct style — do NOT fail shots for looking like the LoRA's output.
+For example, if a clay/stop-motion LoRA is used, clay-textured characters ARE correct, not a flaw.
+Only FAIL for style if the output is completely unrelated to the description's content (wrong scene, wrong subject).
+
 IMPORTANT RULES:
 1. Be strict on entity consistency — wrong hair color, clothing, or character appearance is ALWAYS a FAIL.
 2. Be lenient on artistic interpretation — slightly different compositions or angles are fine if semantically correct.
@@ -118,32 +135,35 @@ IMAGE-SPECIFIC RULES:
 4. For IMAGES: Style mismatches (lighting mood, color palette, visual tone) that differ significantly from the style guide are FAIL.
 5. For IMAGES: The generated image must clearly depict the scene described. A generic or unrelated image is a fundamental FAIL.
 
-VIDEO-SPECIFIC RULES (AI-generated video inherently has minor imperfections):
-5. For VIDEOS: Only FAIL if:
-   - The scene is completely wrong or unrecognizable vs the description
-   - The video is essentially static with no meaningful motion
-   - There are extreme distortions (entire frame warping, subjects morphing into different objects)
+VIDEO-SPECIFIC RULES (AI-generated video inherently has minor imperfections — be lenient):
+6. For VIDEOS: Only FAIL if:
+   - The scene is completely wrong or unrecognizable vs the description (wrong subject, wrong setting, wrong action)
+   - The video is essentially static with no meaningful motion at all
+   - There are extreme distortions (entire frame warping, subjects morphing into completely different objects)
    - The video would confuse or distract the viewer from the narration
-6. For VIDEOS: These are ACCEPTABLE (PASS):
+7. For VIDEOS: These are ACCEPTABLE (PASS):
    - Minor text warping or illegible text (AI cannot render text well)
    - Subtle face/hand distortions that don't dominate the frame
    - Slight temporal flickering or shimmer on textures
    - Minor geometry warping on buildings, objects, or backgrounds
    - Slight color/lighting shifts during camera movement
    - Minor morphing between frames if the overall motion reads correctly
+   - The visual style matching the LoRA/model aesthetic even if it differs from a text style guide
+   - Miniature/clay/stylized look when a LoRA style model is being used
 
 GENERAL:
-7. Minor temporal discontinuities between shots are acceptable — major scene breaks are FAIL.
+8. Minor temporal discontinuities between shots are acceptable — major scene breaks are FAIL.
 
 THEMATIC CONSISTENCY:
-8. Every shot must feel like it belongs to the SAME VIDEO. Compare against the style guide (creative direction).
-   - If the style guide says "warm cinematic" but the shot looks like cold industrial footage, that's a thematic mismatch.
-   - If the creative direction mentions a specific aesthetic and the shot completely ignores it, FAIL.
-   - Be lenient here: the shot doesn't need to perfectly match, but it shouldn't feel like it's from a different video.
+9. If a LoRA style model is specified, thematic consistency means matching THAT model's aesthetic.
+   All AI-generated shots will share the same LoRA style — this is correct and expected.
+   Only FAIL thematic consistency if a shot looks like it's from a completely different production.
 
-For FAIL verdicts, classify as:
-- "recoverable": The issue can be fixed by editing (wrong color, lighting adjustment, style mismatch)
-- "fundamental": The base image/video is wrong and must be regenerated (wrong scene, wrong entity, wrong composition)
+FAILURE TYPE CLASSIFICATION:
+For FAIL verdicts, classify carefully:
+- "recoverable": The issue can be fixed by editing (wrong color, lighting adjustment, minor composition fix).
+  Also use for style/lighting mismatches on VIDEOS — regenerating with the same model will produce the same style.
+- "fundamental": ONLY for images/videos where the SCENE CONTENT is fundamentally wrong (wrong subject, wrong setting, completely wrong composition). Do NOT classify style or lighting issues as fundamental for videos.
 
 Respond ONLY with valid JSON matching this schema:
 {
@@ -297,9 +317,11 @@ function buildVerificationPrompt(jobData: VerifierJobData): Array<{ type: 'text'
   }
 
   // Entity reference images for comparison
+  // Skip video URLs — Gemini only accepts image formats for image_url parts.
+  // Text descriptions (included above) suffice for entity consistency checks.
   if (jobData.entityReferences) {
     for (const entity of jobData.entityReferences) {
-      if (entity.referenceUrl) {
+      if (entity.referenceUrl && !isVideoUrl(entity.referenceUrl)) {
         content.push({ type: 'text', text: `**Reference for ${entity.name}:**` });
         content.push({ type: 'image_url', image_url: { url: entity.referenceUrl } });
       }
@@ -309,7 +331,11 @@ function buildVerificationPrompt(jobData: VerifierJobData): Array<{ type: 'text'
   // Previous shot for temporal continuity
   if (jobData.previousShotUrl) {
     content.push({ type: 'text', text: '**Previous shot (for temporal continuity check):**' });
-    content.push({ type: 'image_url', image_url: { url: jobData.previousShotUrl } });
+    if (isVideoUrl(jobData.previousShotUrl)) {
+      content.push({ type: 'video_url', video_url: { url: jobData.previousShotUrl } } as any);
+    } else {
+      content.push({ type: 'image_url', image_url: { url: jobData.previousShotUrl } });
+    }
   }
 
   content.push({ type: 'text', text: '\nPlease evaluate this generated output and respond with the JSON verdict.' });
@@ -468,25 +494,26 @@ function parseVerifierResponse(rawResponse: string): VerifierResult {
       recommended_action: parsed.recommended_action || 'accept',
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
     };
-  } catch (parseError) {
+  } catch (_parseError) {
     console.error(`${LOG_PREFIX} Failed to parse verifier response:`, cleaned.substring(0, 200));
 
-    // Fallback: if we can't parse, default to PASS with low confidence
-    // This prevents the pipeline from blocking on a malformed response
+    // Fallback: if we can't parse, default to FAIL — malformed verification
+    // should NOT auto-approve media. The orchestrator's Best-Fit Salvage
+    // already handles FAILed shots gracefully.
     return {
-      verdict: 'PASS',
-      failure_type: undefined,
+      verdict: 'FAIL',
+      failure_type: 'fundamental' as FailureType,
       dimension_feedback: {
-        semantic_alignment: 'Parse error — defaulting to PASS',
-        entity_consistency: 'Parse error — defaulting to PASS',
-        temporal_continuity: 'Parse error — defaulting to PASS',
-        visual_quality: 'Parse error — defaulting to PASS',
-        style_consistency: 'Parse error — defaulting to PASS',
-        thematic_consistency: 'Parse error — defaulting to PASS',
+        semantic_alignment: 'Parse error — verification result unusable',
+        entity_consistency: 'Parse error — verification result unusable',
+        temporal_continuity: 'Parse error — verification result unusable',
+        visual_quality: 'Parse error — verification result unusable',
+        style_consistency: 'Parse error — verification result unusable',
+        thematic_consistency: 'Parse error — verification result unusable',
       },
-      suggested_corrections: [],
-      recommended_action: 'accept',
-      confidence: 0.3,
+      suggested_corrections: ['Verification response could not be parsed — regenerate media'],
+      recommended_action: 'regenerate' as RecommendedAction,
+      confidence: 0.0,
     };
   }
 }
@@ -498,7 +525,7 @@ function parseVerifierResponse(rawResponse: string): VerifierResult {
 export const verifierProcessor: Processor<VerifierJobData> = async (
   job: Job<VerifierJobData>
 ) => {
-  const { taskId, userId, videoId, mediaType, mediaUrl, shotIndex } = job.data;
+  const { taskId: _taskId, userId, videoId, mediaType, mediaUrl: _mediaUrl, shotIndex } = job.data;
 
   console.log(`${LOG_PREFIX} Verifying shot ${shotIndex} (${mediaType}) for video ${videoId}`);
 
@@ -509,42 +536,7 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
     const apiKey = await getOpenRouterApiKey(userId);
     const userContent = buildVerificationPrompt(job.data);
 
-    // =====================================================================
-    // SSIM Pre-Check: Catch static videos before wasting a VLM call
-    // =====================================================================
-    if (mediaType === 'video') {
-      const staticCheck = await checkStaticVideo(mediaUrl, videoId, shotIndex);
-
-      if (staticCheck.isStatic) {
-        console.warn(`${LOG_PREFIX} Shot ${shotIndex}: Auto-FAIL — static video (SSIM=${staticCheck.ssim.toFixed(4)})`);
-
-        return {
-          success: true,
-          shotIndex,
-          videoId,
-          result: {
-            verdict: 'FAIL' as VerifierVerdict,
-            failure_type: 'fundamental' as FailureType,
-            dimension_feedback: {
-              semantic_alignment: 'Unable to assess — video has no meaningful motion',
-              entity_consistency: 'Unable to assess — video has no meaningful motion',
-              temporal_continuity: 'FAIL — video is essentially a still image',
-              visual_quality: `FAIL — static video detected (SSIM=${staticCheck.ssim.toFixed(4)})`,
-              style_consistency: 'Unable to assess — video has no meaningful motion',
-              thematic_consistency: 'Unable to assess — video has no meaningful motion',
-            },
-            suggested_corrections: [
-              'Video is essentially static with no meaningful motion.',
-              'Regenerate with a more action-oriented prompt.',
-              'Add motion keywords: "camera slowly pans", "wind blowing", "walking", "gesturing".',
-            ],
-            recommended_action: 'regenerate' as RecommendedAction,
-            confidence: 0.99,
-          } satisfies VerifierResult,
-          staticVideoDetected: true,
-        };
-      }
-    }
+    // SSIM pre-check removed (C1) — VLM verifier catches static/bad media directly
 
     for (let attempt = 1; attempt <= MAX_VERIFIER_RETRIES; attempt++) {
       try {
@@ -603,25 +595,27 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
     console.error(`${LOG_PREFIX} Verification setup failed for shot ${shotIndex}:`, lastError);
   }
 
-  // All retries exhausted — return PASS with verificationSkipped flag
-  console.warn(`${LOG_PREFIX} Shot ${shotIndex}: all ${MAX_VERIFIER_RETRIES} verification attempts failed — defaulting to PASS with verificationSkipped`);
+  // All retries exhausted — return FAIL so bad media doesn't silently pass.
+  // The orchestrator's Best-Fit Salvage will handle this gracefully.
+  console.warn(`${LOG_PREFIX} Shot ${shotIndex}: all ${MAX_VERIFIER_RETRIES} verification attempts failed — defaulting to FAIL`);
   return {
     success: false,
     shotIndex,
     videoId,
     verificationSkipped: true,
     result: {
-      verdict: 'PASS' as VerifierVerdict,
+      verdict: 'FAIL' as VerifierVerdict,
+      failure_type: 'fundamental' as FailureType,
       dimension_feedback: {
-        semantic_alignment: 'Verification failed after retries — defaulting to PASS',
-        entity_consistency: 'Verification failed after retries — defaulting to PASS',
-        temporal_continuity: 'Verification failed after retries — defaulting to PASS',
-        visual_quality: 'Verification failed after retries — defaulting to PASS',
-        style_consistency: 'Verification failed after retries — defaulting to PASS',
-        thematic_consistency: 'Verification failed after retries — defaulting to PASS',
+        semantic_alignment: 'Verification failed after all retries',
+        entity_consistency: 'Verification failed after all retries',
+        temporal_continuity: 'Verification failed after all retries',
+        visual_quality: 'Verification failed after all retries',
+        style_consistency: 'Verification failed after all retries',
+        thematic_consistency: 'Verification failed after all retries',
       },
-      suggested_corrections: [],
-      recommended_action: 'accept' as RecommendedAction,
+      suggested_corrections: ['All verification attempts failed — regenerate media'],
+      recommended_action: 'regenerate' as RecommendedAction,
       confidence: 0.0,
     } satisfies VerifierResult,
     error: lastError?.message || 'Max retries exhausted',

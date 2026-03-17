@@ -17,16 +17,12 @@ import {
   Play,
   Pause,
   SkipForward,
-  RotateCcw,
   Circle,
   AlertCircle,
-  Settings2,
   Copy,
-  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StepIcon } from "../shared/StepIcon";
-import { PipelineStatusBadge } from "../shared/PipelineStatusBadge";
 import { JsonTreeViewer } from "../shared/JsonTreeViewer";
 import { STEP_CONFIGS, ALL_STEPS } from "../../utils/step-config";
 import type {

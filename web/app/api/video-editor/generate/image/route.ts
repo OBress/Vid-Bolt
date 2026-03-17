@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
       model: modelId,
       aspectRatio,
       loraName,
-      loraStrength,
+      loraStrength: _loraStrength,
       seed,
       steps,
     } = body as {

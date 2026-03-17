@@ -575,6 +575,10 @@ export function importWizardDataToStore(options: WizardData): boolean {
     console.log(`[WizardDataImport] Built ${sortedChunks.length} audio clips`);
   }
 
+  // Shot index offset (0-based → 1-based) — declared at function scope
+  // so media issues import can also use it
+  let edlShotIndexOffset = 0;
+
   // ─── Phase 2: Visual Clips ─────────────────────────────────────
   if (hasShots) {
     // Transparent 1x1 PNG fallback
@@ -669,16 +673,16 @@ export function importWizardDataToStore(options: WizardData): boolean {
         return si === 0;
       });
       const hasMatchForZero = shotList.some(s => s.segment_index === 0);
-      const shotIndexOffset = (hasZeroIndexClip && !hasMatchForZero && minShotSegment >= 1) ? 1 : 0;
-      if (shotIndexOffset > 0) {
-        console.log(`[WizardDataImport] 🔧 Detected 0-based shot indices in agent EDL — applying +${shotIndexOffset} offset`);
+      edlShotIndexOffset = (hasZeroIndexClip && !hasMatchForZero && minShotSegment >= 1) ? 1 : 0;
+      if (edlShotIndexOffset > 0) {
+        console.log(`[WizardDataImport] 🔧 Detected 0-based shot indices in agent EDL — applying +${edlShotIndexOffset} offset`);
       }
 
       for (const agentClip of agentEdl.clips) {
         // Normalize field names — handle snake_case from AI or stale DB data
         const trackId = (agentClip as any).trackId ?? (agentClip as any).track_id ?? (agentClip as any).track ?? 'main-video';
         const shotIdxRaw: number | undefined = (agentClip as any).shotIndex ?? (agentClip as any).shot_index;
-        const shotIdx: number | undefined = shotIdxRaw != null ? shotIdxRaw + shotIndexOffset : undefined;
+        const shotIdx: number | undefined = shotIdxRaw != null ? shotIdxRaw + edlShotIndexOffset : undefined;
         const rawStartTime: number | undefined = (agentClip as any).startTime ?? (agentClip as any).start_time;
         const rawDuration: number | undefined = (agentClip as any).duration;
         const clipTypeRaw: string = agentClip.type ?? (agentClip as any).mediaType ?? (agentClip as any).media_type ?? 'image';
@@ -723,8 +727,21 @@ export function importWizardDataToStore(options: WizardData): boolean {
           console.log(`[WizardDataImport] 🎬 Creating clip: type=${clipType} | track=${trackId} | shotIndex=${shotIdx} | src=${src.substring(0, 60)}... | hasMG=${clipType === 'motion-graphics'} | hasRemotionCode=${!!resolvedMedia?.remotionCode}`);
 
           // Guard against undefined/NaN timing from agent EDL
-          // Priority: 1) agent EDL timing, 2) shot timing, 3) sequential placement
-          let visualDur = Number.isFinite(rawDuration) ? rawDuration! : (shot?.duration_seconds || 3);
+          // Shot timing is the authoritative source — it's always set by the segmenter.
+          let visualDur: number;
+          if (Number.isFinite(rawDuration) && rawDuration! > 0) {
+            visualDur = rawDuration!;
+          } else if (shot?.duration_seconds && shot.duration_seconds > 0) {
+            visualDur = shot.duration_seconds;
+            console.warn(`[WizardDataImport] Visual clip (shot ${shotIdx}) had NaN duration from EDL, using shot plan timing ${visualDur}s`);
+          } else {
+            throw new Error(
+              `[WizardDataImport] Visual clip (shot ${shotIdx}) has no valid duration ` +
+              `(rawDuration=${rawDuration}, shot.duration_seconds=${shot?.duration_seconds}). ` +
+              `Pipeline timing data is incomplete — aborting import.`
+            );
+          }
+
           let visualStart: number;
           if (Number.isFinite(rawStartTime)) {
             visualStart = rawStartTime!;
@@ -732,9 +749,10 @@ export function importWizardDataToStore(options: WizardData): boolean {
             visualStart = shot.start_seconds;
             console.warn(`[WizardDataImport] Visual clip (shot ${shotIdx}) had NaN startTime, using shot timing ${visualStart}s`);
           } else {
-            // Sequential fallback — place after last clip on this track
-            visualStart = trackRunningTime.get(internalTrackId) || 0;
-            console.warn(`[WizardDataImport] Visual clip (shot ${shotIdx}) had NaN startTime, placing sequentially at ${visualStart}s`);
+            throw new Error(
+              `[WizardDataImport] Visual clip (shot ${shotIdx}) has no valid startTime ` +
+              `and no shot data available. Pipeline timing data is incomplete — aborting import.`
+            );
           }
 
           // Update running time for this track
@@ -826,6 +844,20 @@ export function importWizardDataToStore(options: WizardData): boolean {
 
           if (shotIdx != null) {
             clipIdByShotIndex.set(shotIdx, clipId);
+          }
+
+          // Track placeholder fallbacks as warnings for the media issues panel
+          // (non-MG clips using the transparent PNG because no real media was found)
+          if (src === transparentPng && clipType !== 'motion-graphics') {
+            useMediaIssuesStore.getState().addIssue({
+              shotIndex: shotIdx ?? -1,
+              clipId,
+              severity: 'warning',
+              type: 'substituted_media',
+              title: `Placeholder: Shot ${(shotIdx ?? 0) + 1}`,
+              description: `No media was found for this shot. A transparent placeholder is being used. Consider regenerating or replacing this media.`,
+              availableActions: ['dismiss', 'remove'],
+            });
           }
         }
       }
@@ -1285,6 +1317,11 @@ export function importWizardDataToStore(options: WizardData): boolean {
         if (isPureMG && existingClipId && clipsToAdd[existingClipId]) {
           // Pure MG: Convert the existing clip to motion-graphics type (stays on video track)
           const clip = clipsToAdd[existingClipId];
+          // Skip if Phase 2 (agent EDL) already set this clip as motion-graphics
+          if (clip.type === 'motion-graphics' && clip.properties?.template) {
+            console.log(`[WizardDataImport] Shot ${shotIndex} already typed as motion-graphics by Phase 2 — skipping Phase 3 conversion`);
+            continue;
+          }
           clip.type = 'motion-graphics';
           clip.sourceId = `mg-${shotIndex}`;
           clip.color = '#9333ea'; // Purple for MG clips
@@ -1292,8 +1329,19 @@ export function importWizardDataToStore(options: WizardData): boolean {
             template: mgTemplate,
           };
         } else if (!isPureMG) {
-          // Hybrid: Base media stays on its track; create a NEW MG clip on the overlays track
-          // This prevents the visual duplication of two identical clips on the same track.
+          // Hybrid: Base media stays on its track; create a NEW MG clip on the overlays track.
+          // BUT only if Phase 2 (agent EDL) didn't already create a motion-graphics clip
+          // for this shot — otherwise we'd end up with duplicate clips on the timeline.
+          const alreadyHasOverlay = Object.values(clipsToAdd).some(
+            c => c.data?.shotIndex === shotIndex &&
+                 c.type === 'motion-graphics' &&
+                 c.id !== existingClipId
+          );
+          if (alreadyHasOverlay) {
+            console.log(`[WizardDataImport] Skipping Phase 3 overlay for shot ${shotIndex} — already created by agent EDL`);
+            continue;
+          }
+
           const targetOverlayTrackId = getOrCreateOverlaysTrack();
           if (!targetOverlayTrackId) {
             console.warn(`[WizardDataImport] No overlay track available for hybrid MG clip at shot ${shotIndex}`);

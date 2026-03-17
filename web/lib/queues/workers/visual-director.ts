@@ -111,7 +111,12 @@ function buildGpuShots(shots: ShotPart1[]): ShotForGpuGeneration[] {
     segment_index: shot.segment_index,
     media_type: shot.media_type || 'motiongraphic',
     visual_prompt: shot.visual_prompt || shot.summary || `Visual for segment ${shot.segment_index}`,
-    duration_seconds: shot.duration_seconds || 5,
+    duration_seconds: (() => {
+      if (!shot.duration_seconds || shot.duration_seconds <= 0) {
+        throw new Error(`[VisualDirector] Shot ${shot.segment_index} has no valid duration_seconds — shot plan timing is incomplete.`);
+      }
+      return shot.duration_seconds;
+    })(),
     // Video shots need a keyframe image — these get generated in the image batch first,
     // then the batch pipeline uses them for video generation if start_frame_url is provided.
     // For now, video shots without a pre-existing keyframe will fall back to placeholder.

@@ -77,30 +77,21 @@ export async function GET(
     
     // Check metadata first (new source of truth)
     if (video.metadata && (video.metadata as any).audio_chunks) {
-        console.log("[API DEBUG] Found chunks in metadata:", (video.metadata as any).audio_chunks.length);
         audioChunks = (video.metadata as any).audio_chunks;
-    } else {
-        console.log("[API DEBUG] No chunks in metadata. Metadata keys:", Object.keys(video.metadata || {}));
     }
 
     // Fallback to task output (legacy)
     if ((!audioChunks || audioChunks.length === 0) && video.audio_task_id) {
-      console.log("[API DEBUG] Checking task output for task:", video.audio_task_id);
       const { data: task } = await supabase
         .from("tasks")
         .select("output_data")
         .eq("id", video.audio_task_id)
         .single();
       
-      console.log("[API DEBUG] Task output_data keys:", Object.keys(task?.output_data || {}));
-      
       if (task?.output_data) {
         const outputData = task.output_data as { tts_chunks?: Array<{ chapterNumber: number; url: string; duration_seconds?: number }> };
         if (outputData.tts_chunks && Array.isArray(outputData.tts_chunks)) {
-          console.log("[API DEBUG] Found chunks in task output:", outputData.tts_chunks.length);
           audioChunks = outputData.tts_chunks;
-        } else {
-           console.log("[API DEBUG] No tts_chunks in task output");
         }
       }
     }
@@ -156,6 +147,29 @@ export async function GET(
       // Non-fatal - continue without active task info
     }
 
+    // Fetch linked task records for pipeline debugger (timing, steps, activity events)
+    let linkedTasks: Array<Record<string, unknown>> = [];
+    try {
+      const taskIds = [
+        video.script_task_id,
+        video.audio_task_id,
+        video.video_task_id,
+        video.export_task_id,
+      ].filter(Boolean);
+
+      if (taskIds.length > 0) {
+        const { data: tasks } = await supabase
+          .from("tasks")
+          .select("id, type, status, name, started_at, completed_at, steps, activity_events, retry_count, current_phase, progress_percent, error_message")
+          .in("id", taskIds);
+
+        linkedTasks = (tasks || []) as Array<Record<string, unknown>>;
+      }
+    } catch (err) {
+      console.error("[API] Failed to fetch linked tasks:", err);
+      // Non-fatal - continue without linked task info
+    }
+
     // Sanitize generatedMedia URLs: convert presigned PUT URLs to public URLs
     // This fixes existing data where media_url was stored as a presigned upload URL
     const metadata = video.metadata as any;
@@ -194,7 +208,7 @@ export async function GET(
       }
     }
 
-    return NextResponse.json({ video, audioChunks, activeTasks });
+    return NextResponse.json({ video, audioChunks, activeTasks, linkedTasks });
   } catch (error) {
     console.error("Failed to get video:", error);
     return NextResponse.json(

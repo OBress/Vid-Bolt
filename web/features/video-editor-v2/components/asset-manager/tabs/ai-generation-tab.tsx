@@ -9,8 +9,9 @@
  *  - Image Generation (GPU or Replicate)
  *  - Image Editing     (GPU or Replicate)
  *  - Video Generation  (GPU or Replicate)
- *  - SFX Generation    (placeholder / coming soon)
- *  - Audio Generation  (placeholder / coming soon)
+ *  - SFX Search        (Freesound CC0 library)
+ *  - Audio Generation  (ACE-Step 1.5 via GPU)
+ *
  *
  * Features:
  *  - Per-mode persistent form state (switching modes preserves inputs)
@@ -27,6 +28,7 @@ import {
   Video,
   Volume2,
   Music,
+  Mic,
   Sparkles,
   Loader2,
   ChevronDown,
@@ -36,6 +38,11 @@ import {
   AlertCircle,
   Bot,
   Lock,
+  Cpu,
+  Search,
+  ExternalLink,
+  Play,
+  Pause,
 } from 'lucide-react';
 import { cn } from '../../../utils/general/utils';
 import { Button } from '../../ui/button';
@@ -65,9 +72,13 @@ import {
   type ModelDefinition,
 } from '@/lib/constants/model-registry';
 import { startMediaDrag, endDrag } from '../../../stores/video-editor-store';
+import { useGCPVM } from '@/providers/GCPVMProvider';
+import { useVramMode } from '@/hooks/use-vram-mode';
 
 // Lazy-load the MotionGraphicsTab (heavy: ~57KB)
 const MotionGraphicsTab = React.lazy(() => import('./motion-graphics-tab').then(m => ({ default: m.MotionGraphicsTab })));
+// Lazy-load the TtsGenerationForm
+const TtsGenerationForm = React.lazy(() => import('./tts-generation-form').then(m => ({ default: m.TtsGenerationForm })));
 
 // ============================================================================
 // CONSTANTS
@@ -83,8 +94,9 @@ const SUB_TABS: Array<{
   { id: 'image-edit', label: 'Edit', icon: Pencil },
   { id: 'video-gen', label: 'Video', icon: Video },
   { id: 'motion', label: 'Motion', icon: Wand2 },
-  { id: 'sfx', label: 'SFX', icon: Volume2, comingSoon: true },
-  { id: 'audio', label: 'Audio', icon: Music, comingSoon: true },
+  { id: 'sfx', label: 'SFX', icon: Volume2 },
+  { id: 'audio', label: 'Audio', icon: Music },
+  { id: 'tts', label: 'TTS', icon: Mic },
 ];
 
 const ASPECT_RATIOS = [
@@ -484,29 +496,649 @@ function InlineNumberInput({
 }
 
 // ============================================================================
-// PLACEHOLDER FORM (SFX / Audio)
+// AUDIO GENERATION RESULT (draggable)
 // ============================================================================
 
-function PlaceholderForm({ mode }: { mode: 'sfx' | 'audio' }) {
-  const isSfx = mode === 'sfx';
-  const Icon = isSfx ? Volume2 : Music;
-  const title = isSfx ? 'Sound Effects' : 'Audio Generation';
-  const description = isSfx
-    ? 'Generate custom sound effects using AI. Configure effects, adjust duration, and add them directly to your timeline.'
-    : 'Create AI-generated music and voiceovers. Choose styles, set duration, and integrate seamlessly into your project.';
+function AudioResultPreview({ result }: { result: { url: string; prompt: string } }) {
+  const handleDragStart = useCallback(
+    (e: React.DragEvent) => {
+      const dragData = {
+        isNewItem: true,
+        type: 'audio',
+        label: 'AI Generated Music',
+        duration: 30,
+        data: {
+          src: result.url,
+          isAiGenerated: true,
+        },
+      };
+
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+
+      startMediaDrag('audio', result.url, {
+        duration: 30,
+        name: 'AI Generated Music',
+      });
+    },
+    [result]
+  );
+
+  const handleDragEnd = useCallback(() => {
+    endDrag();
+  }, []);
 
   return (
-    <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
-      <div className="w-12 h-12 rounded-full bg-neutral-800/60 flex items-center justify-center mb-3">
-        <Icon className="h-5 w-5 text-neutral-500" />
+    <div className="mt-3 space-y-1.5">
+      <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+        Generated Audio
+      </label>
+      <div
+        draggable
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        className={cn(
+          'relative group cursor-grab active:cursor-grabbing rounded-lg overflow-hidden',
+          'border border-neutral-800 hover:border-primary/50 transition-colors p-3'
+        )}
+      >
+        <div className="flex items-center gap-2 mb-2">
+          <Music className="h-4 w-4 text-primary" />
+          <span className="text-xs text-neutral-300 font-medium">Background Music</span>
+        </div>
+        <audio
+          src={result.url}
+          controls
+          className="w-full h-8"
+          controlsList="nodownload"
+        />
+        <div className="mt-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-[10px] text-neutral-400">
+          <GripVertical className="h-3 w-3" />
+          Drag to timeline
+        </div>
       </div>
-      <h4 className="text-sm font-medium text-neutral-300">{title}</h4>
-      <span className="text-[9px] bg-orange-500/10 text-orange-400 px-2 py-0.5 rounded-full mt-1.5 font-medium">
-        Coming Soon
-      </span>
-      <p className="text-[10px] text-neutral-600 mt-2 max-w-[200px] leading-relaxed">
-        {description}
+      <p className="text-[9px] text-neutral-600 truncate" title={result.prompt}>
+        {result.prompt}
       </p>
+    </div>
+  );
+}
+
+// ============================================================================
+// SFX SEARCH FORM (Freesound)
+// ============================================================================
+
+const MAX_DURATION_OPTIONS = [
+  { value: 5, label: '≤ 5s' },
+  { value: 10, label: '≤ 10s' },
+  { value: 30, label: '≤ 30s' },
+  { value: 60, label: '≤ 60s' },
+];
+
+const SORT_OPTIONS: Array<{ value: 'score' | 'downloads_desc' | 'rating_desc'; label: string }> = [
+  { value: 'score', label: 'Relevance' },
+  { value: 'downloads_desc', label: 'Most Downloads' },
+  { value: 'rating_desc', label: 'Highest Rated' },
+];
+
+interface SfxSearchResult {
+  id: string;
+  title: string;
+  artist: string;
+  duration: number;
+  file: string;
+  thumbnail?: string;
+  attribution?: {
+    author: string;
+    source: string;
+    license: string;
+    url: string;
+  };
+  _rating?: number;
+  _downloads?: number;
+}
+
+function SfxSearchForm() {
+  const { sfxSearch, updateSfxSearch } = useAIGenerationStore();
+  const [results, setResults] = useState<SfxSearchResult[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Handle search
+  const handleSearch = useCallback(async (page = 1, append = false) => {
+    if (!sfxSearch.query.trim()) return;
+
+    if (page === 1) {
+      setIsSearching(true);
+    } else {
+      setIsLoadingMore(true);
+    }
+    setSearchError(null);
+
+    try {
+      const params = new URLSearchParams({
+        q: sfxSearch.query.trim(),
+        page: String(page),
+        per_page: '20',
+        max_duration: String(sfxSearch.maxDuration),
+        sort: sfxSearch.sort,
+      });
+
+      const res = await fetch(`/api/audio/search?${params.toString()}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Search failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      const newResults: SfxSearchResult[] = data.items || [];
+
+      if (append) {
+        setResults(prev => [...prev, ...newResults]);
+      } else {
+        setResults(newResults);
+      }
+      setTotalCount(data.totalCount || 0);
+      setHasMore(data.hasMore || false);
+      setCurrentPage(page);
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : 'Search failed');
+    } finally {
+      setIsSearching(false);
+      setIsLoadingMore(false);
+    }
+  }, [sfxSearch.query, sfxSearch.maxDuration, sfxSearch.sort]);
+
+  // Handle Enter key in search input
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSearch(1, false);
+    }
+  }, [handleSearch]);
+
+  // Handle Load More
+  const handleLoadMore = useCallback(() => {
+    handleSearch(currentPage + 1, true);
+  }, [handleSearch, currentPage]);
+
+  // Audio preview playback
+  const handleTogglePlay = useCallback((resultId: string, fileUrl: string) => {
+    if (playingId === resultId) {
+      // Stop current
+      audioRef.current?.pause();
+      setPlayingId(null);
+      return;
+    }
+
+    // Play new
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    const audio = new Audio(fileUrl);
+    audio.addEventListener('ended', () => setPlayingId(null));
+    audio.addEventListener('error', () => setPlayingId(null));
+    audio.play().catch(() => setPlayingId(null));
+    audioRef.current = audio;
+    setPlayingId(resultId);
+  }, [playingId]);
+
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+      audioRef.current = null;
+    };
+  }, []);
+
+  // Drag handler for SFX results
+  const handleDragStart = useCallback((e: React.DragEvent, result: SfxSearchResult) => {
+    const dragData = {
+      isNewItem: true,
+      type: 'audio',
+      label: result.title,
+      duration: result.duration,
+      data: {
+        src: result.file,
+        thumbnail: result.thumbnail,
+        isFreesound: true,
+      },
+    };
+
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+
+    startMediaDrag('audio', result.file, {
+      duration: result.duration,
+      name: result.title,
+      thumbnailUrl: result.thumbnail,
+    });
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    endDrag();
+  }, []);
+
+  return (
+    <div className="space-y-3">
+      {/* Search input */}
+      <div className="space-y-1">
+        <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+          Search Freesound
+        </label>
+        <div className="flex gap-1.5">
+          <input
+            type="text"
+            value={sfxSearch.query}
+            onChange={(e) => updateSfxSearch({ query: e.target.value })}
+            onKeyDown={handleKeyDown}
+            placeholder="whoosh, door slam, explosion..."
+            className="flex-1 h-8 bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-primary/50"
+            disabled={isSearching}
+          />
+          <Button
+            className="h-8 px-3 gap-1.5 text-xs"
+            onClick={() => handleSearch(1, false)}
+            disabled={isSearching || !sfxSearch.query.trim()}
+          >
+            {isSearching ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Search className="h-3.5 w-3.5" />
+            )}
+            Search
+          </Button>
+        </div>
+      </div>
+
+      {/* Filters row */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+            Max Duration
+          </label>
+          <Select
+            value={String(sfxSearch.maxDuration)}
+            onValueChange={(v) => updateSfxSearch({ maxDuration: Number(v) })}
+          >
+            <SelectTrigger className="h-7 text-xs bg-neutral-900/60 border-neutral-800">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-neutral-900 border-neutral-800">
+              {MAX_DURATION_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={String(opt.value)} className="text-xs">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+            Sort By
+          </label>
+          <Select
+            value={sfxSearch.sort}
+            onValueChange={(v) => updateSfxSearch({ sort: v as 'score' | 'downloads_desc' | 'rating_desc' })}
+          >
+            <SelectTrigger className="h-7 text-xs bg-neutral-900/60 border-neutral-800">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-neutral-900 border-neutral-800">
+              {SORT_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Error */}
+      {searchError && (
+        <div className="flex items-start gap-1.5 p-2 bg-destructive/10 border border-destructive/20 rounded text-[10px] text-destructive">
+          <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+          {searchError}
+        </div>
+      )}
+
+      {/* Results count */}
+      {results.length > 0 && (
+        <p className="text-[10px] text-neutral-500">
+          Showing {results.length} of {totalCount.toLocaleString()} results
+        </p>
+      )}
+
+      {/* Results list */}
+      {isSearching ? (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
+        </div>
+      ) : results.length > 0 ? (
+        <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1 -mr-1">
+          {results.map((result) => (
+            <div
+              key={result.id}
+              draggable
+              onDragStart={(e) => handleDragStart(e, result)}
+              onDragEnd={handleDragEnd}
+              className={cn(
+                'group relative flex items-center gap-2 p-2 rounded-lg',
+                'border border-neutral-800/60 hover:border-primary/40',
+                'bg-neutral-900/40 hover:bg-neutral-900/70',
+                'cursor-grab active:cursor-grabbing transition-colors'
+              )}
+            >
+              {/* Waveform thumbnail or play button */}
+              <button
+                type="button"
+                onClick={() => handleTogglePlay(result.id, result.file)}
+                className={cn(
+                  'shrink-0 w-9 h-9 rounded-md flex items-center justify-center transition-colors',
+                  playingId === result.id
+                    ? 'bg-emerald-500/20 text-emerald-400'
+                    : 'bg-neutral-800/60 text-neutral-400 hover:text-neutral-200'
+                )}
+              >
+                {playingId === result.id ? (
+                  <Pause className="h-3.5 w-3.5" />
+                ) : (
+                  <Play className="h-3.5 w-3.5 ml-0.5" />
+                )}
+              </button>
+
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] text-neutral-200 font-medium truncate" title={result.title}>
+                  {result.title}
+                </p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-[9px] text-neutral-500 truncate">{result.artist}</span>
+                  <span className="text-[9px] text-neutral-600">·</span>
+                  <span className="text-[9px] text-neutral-500 font-mono">
+                    {result.duration.toFixed(1)}s
+                  </span>
+                  {result._rating != null && result._rating > 0 && (
+                    <>
+                      <span className="text-[9px] text-neutral-600">·</span>
+                      <span className="text-[9px] text-amber-500/80">
+                        ★ {result._rating.toFixed(1)}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Drag hint + Freesound link */}
+              <div className="shrink-0 flex items-center gap-1">
+                {result.attribution?.url && (
+                  <a
+                    href={result.attribution.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-1 text-neutral-600 hover:text-neutral-400 transition-colors"
+                    title="View on Freesound"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                  <GripVertical className="h-3.5 w-3.5 text-neutral-600" />
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* Load More */}
+          {hasMore && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full h-8 text-[10px] text-neutral-400 hover:text-neutral-200 gap-1.5 mt-1"
+              onClick={handleLoadMore}
+              disabled={isLoadingMore}
+            >
+              {isLoadingMore ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <ChevronDown className="h-3 w-3" />
+              )}
+              Load More
+            </Button>
+          )}
+        </div>
+      ) : totalCount === 0 && !isSearching && sfxSearch.query.trim() && results.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-6 text-center">
+          <Volume2 className="h-5 w-5 text-neutral-600 mb-2" />
+          <p className="text-[10px] text-neutral-500">No sounds found</p>
+          <p className="text-[9px] text-neutral-600 mt-0.5">Try different keywords or filters</p>
+        </div>
+      ) : !sfxSearch.query.trim() ? (
+        <div className="flex flex-col items-center justify-center py-6 text-center">
+          <Search className="h-5 w-5 text-neutral-600 mb-2" />
+          <p className="text-[10px] text-neutral-500">Search 500k+ CC0 sound effects</p>
+          <p className="text-[9px] text-neutral-600 mt-0.5">
+            Powered by Freesound.org — free to use
+          </p>
+        </div>
+      ) : null}
+
+      {/* CC0 notice */}
+      {results.length > 0 && (
+        <p className="text-[9px] text-neutral-600 text-center leading-tight">
+          All sounds are CC0 licensed — free for any use, no attribution required
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// AUDIO GENERATION FORM (ACE-Step 1.5)
+// ============================================================================
+
+const KEY_SCALE_OPTIONS = [
+  'C Major', 'D Major', 'E Major', 'F Major', 'G Major', 'A Major', 'B Major',
+  'A Minor', 'B Minor', 'C Minor', 'D Minor', 'E Minor', 'F Minor', 'G Minor',
+];
+
+const DURATION_OPTIONS = [
+  { value: 30, label: '30s' },
+  { value: 60, label: '1 min' },
+  { value: 90, label: '1.5 min' },
+  { value: 120, label: '2 min' },
+  { value: 180, label: '3 min' },
+];
+
+function AudioGenForm() {
+  const { audioGen, updateAudioGen, isGenerating, lastResult, error, setGenerating, setResult, setError } =
+    useAIGenerationStore();
+
+  const handleGenerate = useCallback(async () => {
+    if (!audioGen.prompt.trim()) return;
+
+    setGenerating(true, 'Generating music...');
+    try {
+      const res = await fetch('/api/video-editor/generate/audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: audioGen.prompt,
+          lyrics: audioGen.lyrics || '[Instrumental]',
+          durationSeconds: audioGen.durationSeconds,
+          seed: audioGen.seed,
+          bpm: audioGen.bpm,
+          keyScale: audioGen.keyScale,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Generation failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      setResult({
+        type: 'audio',
+        url: data.url,
+        mimeType: 'audio/wav',
+        prompt: audioGen.prompt,
+        modelId: 'acestep-v15-turbo',
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Audio generation failed');
+    }
+  }, [audioGen, setGenerating, setResult, setError]);
+
+  return (
+    <div className="space-y-3">
+      {/* Caption / Prompt */}
+      <div className="space-y-1">
+        <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+          Style Description
+        </label>
+        <textarea
+          value={audioGen.prompt}
+          onChange={(e) => updateAudioGen({ prompt: e.target.value })}
+          placeholder="dark ambient electronic, deep synthesizer pads, subtle string textures, slow atmospheric drone, melancholic, warm mix"
+          rows={3}
+          className="w-full bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 py-2 text-xs text-neutral-200 placeholder:text-neutral-600 resize-none focus:outline-none focus:ring-1 focus:ring-primary/50"
+          disabled={isGenerating}
+        />
+        <p className="text-[9px] text-neutral-600 leading-tight">
+          Comma-separated tags: genre, instruments, mood, tempo feel, production style
+        </p>
+      </div>
+
+      {/* Lyrics Structure */}
+      <div className="space-y-1">
+        <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+          Energy Structure
+        </label>
+        <textarea
+          value={audioGen.lyrics}
+          onChange={(e) => updateAudioGen({ lyrics: e.target.value })}
+          placeholder={'[Instrumental]\n[Intro]\n[Verse - gentle, atmospheric]\n[Chorus - intense, full]\n[Outro - fading]'}
+          rows={3}
+          className="w-full bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 py-2 text-xs text-neutral-200 placeholder:text-neutral-600 resize-none focus:outline-none focus:ring-1 focus:ring-primary/50 font-mono"
+          disabled={isGenerating}
+        />
+        <p className="text-[9px] text-neutral-600 leading-tight">
+          Section tags control energy dynamics. Use [Intro], [Verse], [Chorus], [Outro] with descriptors.
+        </p>
+      </div>
+
+      {/* Duration & BPM */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+            Duration
+          </label>
+          <Select
+            value={String(audioGen.durationSeconds)}
+            onValueChange={(v) => updateAudioGen({ durationSeconds: Number(v) })}
+          >
+            <SelectTrigger className="h-8 text-xs bg-neutral-900/60 border-neutral-800">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-neutral-900 border-neutral-800">
+              {DURATION_OPTIONS.map((d) => (
+                <SelectItem key={d.value} value={String(d.value)} className="text-xs">
+                  {d.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+            BPM
+          </label>
+          <input
+            type="number"
+            value={audioGen.bpm}
+            onChange={(e) => updateAudioGen({ bpm: Math.max(40, Math.min(200, Number(e.target.value) || 100)) })}
+            min={40}
+            max={200}
+            className="w-full h-8 bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-primary/50"
+            disabled={isGenerating}
+          />
+        </div>
+      </div>
+
+      {/* Key Scale */}
+      <div className="space-y-1">
+        <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+          Key / Scale
+        </label>
+        <Select value={audioGen.keyScale} onValueChange={(v) => updateAudioGen({ keyScale: v })}>
+          <SelectTrigger className="h-8 text-xs bg-neutral-900/60 border-neutral-800">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="bg-neutral-900 border-neutral-800">
+            {KEY_SCALE_OPTIONS.map((ks) => (
+              <SelectItem key={ks} value={ks} className="text-xs">
+                {ks}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[9px] text-neutral-600 leading-tight">
+          Major keys: bright, uplifting · Minor keys: darker, emotional
+        </p>
+      </div>
+
+      {/* Advanced */}
+      <AdvancedSection>
+        <InlineNumberInput
+          label="Seed"
+          value={audioGen.seed}
+          onChange={(v) => updateAudioGen({ seed: v })}
+          placeholder="Random"
+          min={0}
+        />
+      </AdvancedSection>
+
+      {/* Generate Button */}
+      <Button
+        className="w-full h-9 gap-2 text-xs font-medium"
+        onClick={handleGenerate}
+        disabled={isGenerating || !audioGen.prompt.trim()}
+      >
+        {isGenerating ? (
+          <>
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Generating Music...
+          </>
+        ) : (
+          <>
+            <Music className="h-3.5 w-3.5" />
+            Generate Music
+          </>
+        )}
+      </Button>
+
+      {/* Error */}
+      {error && (
+        <div className="flex items-start gap-1.5 p-2 bg-destructive/10 border border-destructive/20 rounded text-[10px] text-destructive">
+          <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {/* Result */}
+      {lastResult && lastResult.type === 'audio' && (
+        <AudioResultPreview result={lastResult} />
+      )}
     </div>
   );
 }
@@ -1095,6 +1727,12 @@ export function AIGenerationTab() {
 
   const hasReplicateKey = availability.replicate_key;
 
+  // ── VM & VRAM mode state for GPU-dependent features ──
+  const { displayStatus, apiReady } = useGCPVM();
+  const { currentMode, isSwitching, switchToAll, isGpuReady } = useVramMode(apiReady);
+  const vmIsOn = displayStatus === "ON";
+  const showGpuOverlay = !isGpuReady;
+
   // Get LoRA info from project creative direction
   const projectLoras = useMemo(
     () => settings?.visuals?.creativeDirection?.loras || [],
@@ -1193,7 +1831,54 @@ export function AIGenerationTab() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-3 pb-4 scrollbar-hide">
+      <div className="flex-1 overflow-y-auto px-3 pb-4 scrollbar-hide relative">
+        {/* GPU not-ready overlay */}
+        {showGpuOverlay && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center
+            bg-background/70 backdrop-blur-[2px] rounded-md">
+            <div className="flex flex-col items-center gap-3 px-6 py-5 text-center max-w-[260px]">
+              <div className="w-10 h-10 rounded-full bg-neutral-800/80 flex items-center justify-center">
+                <Cpu className="h-5 w-5 text-neutral-400" />
+              </div>
+              {!vmIsOn ? (
+                <>
+                  <p className="text-xs font-medium text-neutral-300">GPU is offline</p>
+                  <p className="text-[10px] text-neutral-500 leading-relaxed">
+                    Start your VM to use AI generation features.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs font-medium text-neutral-300">
+                    VRAM mode: <span className="font-mono text-amber-400">{currentMode || '...'}</span>
+                  </p>
+                  <p className="text-[10px] text-neutral-500 leading-relaxed">
+                    Switch to <span className="font-semibold text-neutral-400">All Models</span> to use AI generation.
+                  </p>
+                  <button
+                    onClick={() => switchToAll()}
+                    disabled={isSwitching}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md
+                      bg-primary text-primary-foreground text-[11px] font-semibold
+                      hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {isSwitching ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Switching…
+                      </>
+                    ) : (
+                      'Switch to All Models'
+                    )}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Actual content (grayed out when overlay is showing) */}
+        <div className={showGpuOverlay ? 'opacity-40 pointer-events-none select-none' : ''}>
         {(keysLoading || settingsLoading) ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
@@ -1225,9 +1910,20 @@ export function AIGenerationTab() {
           }>
             <MotionGraphicsTab />
           </React.Suspense>
-        ) : (
-          <PlaceholderForm mode={activeMode as 'sfx' | 'audio'} />
-        )}
+        ) : activeMode === 'sfx' ? (
+          <SfxSearchForm />
+        ) : activeMode === 'audio' ? (
+          <AudioGenForm />
+        ) : activeMode === 'tts' ? (
+          <React.Suspense fallback={
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
+            </div>
+          }>
+            <TtsGenerationForm />
+          </React.Suspense>
+        ) : null}
+        </div>
       </div>
     </div>
   );

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateEmbedding } from '@/lib/ai/embedding';
 import { createClient } from '@/lib/supabase/server';
+import crypto from 'crypto';
 
 /**
  * POST /api/vector/embed
@@ -17,7 +18,12 @@ export async function POST(req: NextRequest) {
     // Dual auth: internal secret OR user auth
     const internalSecret = req.headers.get("X-Internal-Secret");
     const expectedSecret = process.env.INTERNAL_API_SECRET;
-    const isInternalCall = expectedSecret && internalSecret === expectedSecret;
+    const isInternalCall = !!(
+      expectedSecret &&
+      internalSecret &&
+      internalSecret.length === expectedSecret.length &&
+      crypto.timingSafeEqual(Buffer.from(internalSecret), Buffer.from(expectedSecret))
+    );
 
     if (!isInternalCall) {
       // Fall back to user auth

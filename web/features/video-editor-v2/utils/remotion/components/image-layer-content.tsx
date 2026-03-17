@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useEffect, useState } from "react";
+import React, { useRef, useCallback, useEffect, useState, useMemo } from "react";
 import { useCurrentFrame, delayRender, continueRender } from "remotion";
 import { ImageOverlay } from "../../../types";
 import { animationTemplates, getAnimationKey } from "../../../adaptors/default-animation-adaptors";
@@ -76,6 +76,44 @@ const useSafeEditorContext = () => {
  * />
  * ```
  */
+/**
+ * Fallback UI shown when an image fails to load (404, network error, etc.)
+ * Prevents one broken image from crashing the entire Remotion Player.
+ */
+const ImageErrorFallback: React.FC<{ src: string }> = ({ src }) => {
+  const filename = useMemo(() => {
+    try {
+      const url = new URL(src);
+      return url.pathname.split('/').pop() || 'Unknown file';
+    } catch {
+      return src.length > 40 ? `…${src.slice(-40)}` : src;
+    }
+  }, [src]);
+
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#1a1a2e',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        color: '#888',
+        fontFamily: 'Inter, system-ui, sans-serif',
+      }}
+    >
+      <span style={{ fontSize: 28, opacity: 0.6 }}>🖼️</span>
+      <span style={{ fontSize: 12, opacity: 0.5, maxWidth: '80%', textAlign: 'center', wordBreak: 'break-all' }}>
+        {filename}
+      </span>
+      <span style={{ fontSize: 11, opacity: 0.35 }}>Image unavailable</span>
+    </div>
+  );
+};
+
 export const ImageLayerContent: React.FC<ImageLayerContentProps> = ({
   overlay,
   baseUrl,
@@ -86,6 +124,7 @@ export const ImageLayerContent: React.FC<ImageLayerContentProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   // Use prop baseUrl first, then context baseUrl
   const resolvedBaseUrl = baseUrl || contextBaseUrl;
@@ -439,6 +478,15 @@ export const ImageLayerContent: React.FC<ImageLayerContentProps> = ({
   }, [imageLoaded, overlay.greenscreen, overlay.width, overlay.height, processImageWithGreenscreen]);
 
   // If greenscreen removal is enabled, use canvas-based rendering
+  // If image failed to load, show fallback in any rendering mode
+  if (loadError) {
+    return (
+      <div style={containerStyle}>
+        <ImageErrorFallback src={imageSrc} />
+      </div>
+    );
+  }
+
   if (overlay.greenscreen?.enabled) {
     return (
       <div style={containerStyle}>
@@ -454,6 +502,10 @@ export const ImageLayerContent: React.FC<ImageLayerContentProps> = ({
             ref={imageRef}
             src={imageSrc}
             onLoad={() => setImageLoaded(true)}
+            onError={() => {
+              console.warn(`[ImageLayerContent] Failed to load image (greenscreen): ${imageSrc}`);
+              setLoadError(true);
+            }}
             style={{ 
               ...imageStyle,
               position: 'absolute',
@@ -518,7 +570,17 @@ export const ImageLayerContent: React.FC<ImageLayerContentProps> = ({
       {needsSvgMaskForFeather && svgMaskString && (
         <div dangerouslySetInnerHTML={{ __html: svgMaskString }} />
       )}
-      <Img src={imageSrc} style={imageStyle} alt="" />
+      <Img
+        src={imageSrc}
+        style={imageStyle}
+        alt=""
+        onError={(e) => {
+          // Prevent Remotion's default throw — show fallback instead
+          e.preventDefault?.();
+          console.warn(`[ImageLayerContent] Failed to load image: ${imageSrc}`);
+          setLoadError(true);
+        }}
+      />
       {/* Vignette overlay if present */}
       {vignetteEffect && <div style={vignetteToCSS(vignetteEffect)} />}
       {/* Glow overlay if present */}
@@ -605,6 +667,11 @@ const CanvasEffectsImage: React.FC<CanvasEffectsImageProps> = ({
           ref={imageRef}
           src={imageSrc}
           onLoad={() => setImageLoaded(true)}
+          onError={() => {
+            console.warn(`[ImageLayerContent] Failed to load image (canvas effects): ${imageSrc}`);
+            // Unblock Remotion render pipeline
+            continueRender(handle);
+          }}
           style={{ 
             position: 'absolute',
             top: 0,

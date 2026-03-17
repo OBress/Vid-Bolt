@@ -48,7 +48,7 @@ async function loadBabel() {
   babelLoadPromise = new Promise((resolve, reject) => {
     try {
       // Use importScripts for synchronous loading in worker
-      // Using unpkg for reliable CDN delivery
+      // Note: This may fail in Blob URL workers due to null origin restrictions
       importScripts('https://unpkg.com/@babel/standalone@7.23.6/babel.min.js');
       
       if (typeof self.Babel !== 'undefined') {
@@ -60,7 +60,7 @@ async function loadBabel() {
         throw new Error('Babel not found after loading');
       }
     } catch (error) {
-      console.error('[BabelWorker] Failed to load Babel:', error);
+      console.warn('[BabelWorker] Failed to load Babel (will use fallback):', error && error.message || error);
       reject(error);
     }
   });
@@ -140,7 +140,12 @@ self.onmessage = async function(e) {
   }
 };
 
-// Log worker initialization
+// Global error handler for importScripts failures
+self.onerror = function(message, source, lineno, colno, error) {
+  console.warn('[BabelWorker] Global worker error (will use fallback):', message);
+  return true; // Prevent default error logging
+};
+
 console.log('[BabelWorker] Worker initialized, Babel will be loaded on first use');
 `;
 
@@ -191,9 +196,15 @@ class BabelWorkerManager {
           this.handleMessage(e.data);
         };
         
-        this.worker.onerror = (error) => {
-          console.error('[BabelWorker] Worker error:', error);
+        this.worker.onerror = (error: ErrorEvent) => {
+          // ErrorEvent properties (message, filename, lineno) are non-enumerable,
+          // so JSON.stringify / console.log prints '{}'. Extract them explicitly.
+          const details = error?.message || error?.filename 
+            ? `${error.message} (${error.filename}:${error.lineno})`
+            : 'Unknown error (Blob worker may not support importScripts from CDN)';
+          console.warn('[BabelWorker] Worker error (will use main-thread fallback):', details);
           this.isSupported = false;
+          error?.preventDefault?.(); // Suppress duplicate browser error logging
         };
         
         // Test worker with ping

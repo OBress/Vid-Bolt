@@ -13,7 +13,7 @@
  */
 
 import { motionGraphicsService, type GenerationRequest } from './motion-graphics-service';
-import { validateCode, stripMarkdownFences } from './code-validator';
+import { validateCode, transpileCheck, stripMarkdownFences } from './code-validator';
 import type { RoutingTag } from '@/types/video';
 
 // ============================================================
@@ -120,8 +120,10 @@ export function buildEnrichedMGPrompt(
 
   // Video overlay guidance — creative overlay composition on dynamic video
   if (hasVideoManipulation) {
-    parts.push('\n\nVIDEO OVERLAY MODE (your component will be rendered ON TOP of video footage):');
-    parts.push('\n- Your component background MUST be transparent — use background: "transparent" on AbsoluteFill');
+    parts.push('\n\n⚠️ VIDEO OVERLAY MODE (CRITICAL — your component renders ON TOP of video footage):');
+    parts.push('\n⚠️ The <AbsoluteFill> ROOT MUST have style={{ background: "transparent" }}. NO EXCEPTIONS.');
+    parts.push('\n⚠️ Any solid/opaque background on the root element will COMPLETELY BLOCK the video beneath it.');
+    parts.push('\n⚠️ VERIFY: no top-level container has an opaque backgroundColor. Only inner elements (text labels, badges, etc.) may have solid backgrounds.');
     parts.push('\n- Design elements that COMPLEMENT the underlying video, not compete with it');
     parts.push('\n- Use semi-transparent backgrounds behind text for readability (e.g., rgba(0,0,0,0.6))');
     parts.push('\n');
@@ -194,6 +196,7 @@ export function getStaticRemotionFallback(
   narrationText: string,
   duration: number,
   shotIndex: number,
+  _isOverlay: boolean = false,
 ): PipelineGenerationResult {
   // Extract first ~60 chars of narration for visual display
   const displayText = narrationText
@@ -312,7 +315,17 @@ export async function generateMotionGraphic(
   let finalPrompt: string;
 
   if (simplifiedRetry) {
-    finalPrompt = buildSimplifiedPrompt(prompt, duration);
+    // M2 Fix: Simplified retry preserves narrationText and routingTags for content
+    // relevance. Only the visual complexity is reduced, not the context.
+    finalPrompt = buildEnrichedMGPrompt(prompt, routingTags, imageAssets, duration, contextHint, narrationText);
+    finalPrompt += `\n\n⚠️ REDUCED COMPLEXITY MODE: Previous attempts with full visual complexity failed.
+Use ONLY these safe patterns:
+- Simple fade-in/fade-out text with interpolate()
+- Basic spring() animations for scale/position
+- Solid or gradient backgrounds (no images unless provided above)
+- No complex SVG paths or canvas operations
+- Maximum 3-4 animated elements total
+Keep the content relevant to the narration above, but simplify the visual execution.`;
   } else {
     finalPrompt = buildEnrichedMGPrompt(prompt, routingTags, imageAssets, duration, contextHint, narrationText);
   }
@@ -427,6 +440,18 @@ export async function generateMotionGraphic(
       success: false,
       remotionCode: cleanCode, // Return code anyway for debugging
       error: `Code validation failed: ${validation.errors.join('; ')}`,
+    };
+  }
+
+  // Babel syntax check — catches ALL syntax errors the regex check misses.
+  // This is the #1 reason MG generation "succeeds" but fails at render time.
+  const syntaxResult = transpileCheck(validation.fixedCode || cleanCode);
+  if (!syntaxResult.valid) {
+    console.warn(`[PipelineMG] Shot ${request.shotIndex}: ❌ Babel check failed: ${syntaxResult.error}`);
+    return {
+      success: false,
+      remotionCode: validation.fixedCode || cleanCode,
+      error: `Syntax error: ${syntaxResult.error}`,
     };
   }
 

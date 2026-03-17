@@ -18,7 +18,7 @@
 export const TASK_TYPES = [
   'writing', 'writing_workflow', 'audio', 'video', 'export', 'universal_script',
   'outline', 'script_writing', 'av_script_part1', 'av_script_part2',
-  'edit_assembly', 'closed_loop',
+  'edit_assembly', 'closed_loop', 'niche_discovery',
 ] as const;
 export type TaskType = typeof TASK_TYPES[number];
 
@@ -43,13 +43,23 @@ export const TASK_PHASES = [
   // Export phases
   'encoding',
   'uploading',
-  // Universal Scrip phases
+  // Universal Script phases
   'research',
   'scoping', 
   'spine',
   'assets',
   'expansion',
   'assembly',
+  // Niche Discovery phases
+  'channel_profiling',
+  'channel_crawling',
+  'keyword_search',
+  'enrichment',
+  'snowball_expansion',
+  'embedding_similarity',
+  'ai_analysis',
+  'scoring',
+  'storing_results',
 ] as const;
 export type TaskPhase = typeof TASK_PHASES[number];
 

@@ -343,7 +343,7 @@ class MotionGraphicsService {
         { role: 'user', content: prompt },
       ], {
         temperature: 0.7,
-        maxTokens: 800,
+        maxTokens: 2048,
         responseFormat: { type: 'json_object' },
       });
 
@@ -552,7 +552,7 @@ class MotionGraphicsService {
         { role: 'user', content: `Prompt: "${prompt}"` },
       ], {
         temperature: 0.1,
-        maxTokens: 200,
+        maxTokens: 512,
       });
 
       const result = this.parseAIJson<{ skills?: string[] }>(content, { skills: [] });
@@ -790,7 +790,7 @@ class MotionGraphicsService {
         { role: 'user', content: editPrompt },
       ], {
         temperature: 0.3,
-        maxTokens: 8192,
+        maxTokens: 32000,
       });
 
       const result = this.parseAIJson<{
@@ -816,7 +816,7 @@ class MotionGraphicsService {
               { role: 'user', content: fallbackPrompt },
             ], {
               temperature: 0.3,
-              maxTokens: 16384,
+              maxTokens: 32000,
             });
 
             const fallbackResult = this.parseAIJson<{

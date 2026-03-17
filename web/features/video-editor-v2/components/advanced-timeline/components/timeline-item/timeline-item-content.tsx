@@ -1,11 +1,12 @@
 import React, { useRef, useEffect, useState, memo, useCallback } from 'react';
+import { cn } from '@/lib/utils';
 import { TimelineItemContentFactory } from './timeline-item-content-factory';
 import { TimelineItemSkeleton } from './timeline-item-skeleton';
 import { TrackItemType } from '../../types';
 import { useWaveformProcessor } from '../../hooks/use-waveform-processor';
 import { useThumbnailGenerator } from '../../hooks/use-thumbnail-generator';
 import { useScrollState } from '../../contexts/scroll-state-context';
-import { useMediaIssuesStore, selectClipHasIssues } from '../../../../stores/media-issues-store';
+import { useMediaIssuesStore, selectClipHasIssues, selectHighlightedClipId } from '../../../../stores/media-issues-store';
 
 /**
  * Loading phases for multi-tier lazy loading:
@@ -281,10 +282,18 @@ const TimelineItemContentInner: React.FC<TimelineItemContentInnerProps> = memo((
     useCallback((s) => itemId ? selectClipHasIssues(itemId)(s) : false, [itemId])
   );
 
+  // Check if this clip is currently highlighted from the issues panel
+  const isHighlighted = useMediaIssuesStore(
+    useCallback((s) => itemId ? selectHighlightedClipId(s) === itemId : false, [itemId])
+  );
+
   return (
     <div
       ref={containerRef}
-      className="flex-1 min-w-0 h-full relative"
+      className={cn(
+        "flex-1 min-w-0 h-full relative",
+        isHighlighted && "ring-2 ring-amber-400 ring-offset-1 ring-offset-transparent rounded-sm animate-pulse"
+      )}
     >
       {/* Keep content visible during resize to allow visual alignment with thumbnails/waveforms */}
       {dimensions.width > 0 && (

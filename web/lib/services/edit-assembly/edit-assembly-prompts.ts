@@ -204,14 +204,18 @@ Create tracks based on content needs:
 
 1. NEVER create overlapping clips on the SAME track
 2. Every transition duration must be <= min(fromClipDuration, toClipDuration) / 2
-3. For failed shots (listed in failedShots): EXTEND the previous or next successful clip's duration to COVER the gap time range. Also include them as mediaIssues for tracking.
+3. For failed shots (listed in failedShots): SKIP them — do NOT create a clip for them. Include them as mediaIssues for tracking. NEVER extend neighboring clips to fill a gap.
 4. ALL image clips MUST have keyframe animations — static images look dead on video
 5. Always include audio fades: fadeIn on start, fadeOut on end
 6. Do NOT create any "text" clips — all text/titles are handled by motion graphics in a separate pipeline
 7. Hybrid shots (marked ⚡ in the shot list) MUST produce TWO clips: base on "main-video" + overlay on "overlays"
 8. The FIRST clip MUST start at exactly startTime: 0. There must NEVER be a black screen at the beginning.
-9. The timeline MUST have CONTINUOUS visual coverage — NO gaps between clips on the main-video track. Every second from 0 to total duration must be covered.
-10. When a shot has no media, extend the neighboring clip's duration to fill that time range rather than leaving a gap.
+9. Place each clip at its narration-aligned startTime from the shot data. Gaps are acceptable — the renderer handles them gracefully. NEVER sacrifice audio sync for visual coverage.
+10. NEVER stretch or extend any clip beyond its narration segment boundary. Stretched clips create frozen frames — the single worst artifact possible.
+11. Every major section break (sectionBreak=true shots) MUST have a fadeToBlack transition of 0.5–0.7s AND an SFX clip labeled "section-transition" on the sfx track.
+12. Shot 0 MUST have an aggressive Ken Burns push-in keyframe (scale 1.0→1.10 over the shot duration) to hook the viewer from frame one.
+13. Vary Ken Burns patterns — alternate push-in, pull-out, drift-left, drift-right across consecutive image clips. Never use the same animation on two adjacent clips.
+14. For emotional beat shots, use a dissolve transition (0.5s). For high-energy shots, use hard cuts only.
 
 ## REQUIRED JSON FORMAT
 
@@ -268,6 +272,8 @@ export interface EditAssemblyContext {
     durationSeconds: number;
     text?: string;
   }>;
+  /** Optional time window for batch-mode audio chunk filtering */
+  shotTimeRange?: { startSeconds: number; endSeconds: number };
 }
 
 export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): string {
@@ -290,8 +296,9 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
     const energyTag = ` ⚡${energy}`;
 
     lines.push(`  [${shot.index}] ${shot.startSeconds.toFixed(1)}s-${shot.endSeconds.toFixed(1)}s (${shot.durationSeconds.toFixed(1)}s) | ${mediaStatus}${hybridTag}${ctTag}${energyTag}${sectionTag}`);
-    // Include full narration text so the LLM can match pacing to content
-    lines.push(`    Narration: "${shot.text}"`);
+    // Include truncated narration text so the LLM can match pacing to content
+    const narrationPreview = shot.text.length > 150 ? shot.text.substring(0, 147) + '...' : shot.text;
+    lines.push(`    Narration: "${narrationPreview}"`);
   }
   lines.push('');
 
@@ -302,14 +309,40 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
     lines.push('');
   }
 
-  // Audio chunks with timing for sync awareness
-  lines.push('## Audio Timeline');
-  let audioRunning = 0;
-  for (const chunk of context.audioChunks) {
-    const chunkEnd = audioRunning + chunk.durationSeconds;
-    lines.push(`  Chunk ${chunk.index}: ${audioRunning.toFixed(1)}s-${chunkEnd.toFixed(1)}s (${chunk.durationSeconds.toFixed(1)}s)${chunk.text ? ` | "${chunk.text.substring(0, 80)}..."` : ''}`);
-    audioRunning = chunkEnd;
+  // Audio chunks — filter to batch-relevant window if provided
+  const AUDIO_PADDING_S = 5; // include chunks that overlap ±5s of the shot range
+  let relevantAudioChunks = context.audioChunks;
+  if (context.shotTimeRange) {
+    const rangeStart = context.shotTimeRange.startSeconds - AUDIO_PADDING_S;
+    const rangeEnd = context.shotTimeRange.endSeconds + AUDIO_PADDING_S;
+    let chunkStart = 0;
+    relevantAudioChunks = context.audioChunks.filter(chunk => {
+      const chunkEnd = chunkStart + chunk.durationSeconds;
+      const overlaps = chunkEnd > rangeStart && chunkStart < rangeEnd;
+      chunkStart = chunkEnd;
+      return overlaps;
+    });
+    if (relevantAudioChunks.length < context.audioChunks.length) {
+      lines.push(`## Audio Timeline (filtered to batch window ${context.shotTimeRange.startSeconds.toFixed(0)}s-${context.shotTimeRange.endSeconds.toFixed(0)}s)`);
+    } else {
+      lines.push('## Audio Timeline');
+    }
+  } else {
+    lines.push('## Audio Timeline');
   }
+
+  let audioRunning = 0;
+  // Re-compute running offset for ALL chunks to get correct timestamps,
+  // but only print the relevant ones
+  let chunkOffset = 0;
+  for (const chunk of context.audioChunks) {
+    const chunkEnd = chunkOffset + chunk.durationSeconds;
+    if (relevantAudioChunks.includes(chunk)) {
+      lines.push(`  Chunk ${chunk.index}: ${chunkOffset.toFixed(1)}s-${chunkEnd.toFixed(1)}s (${chunk.durationSeconds.toFixed(1)}s)${chunk.text ? ` | "${chunk.text.substring(0, 80)}..."` : ''}`);
+    }
+    chunkOffset = chunkEnd;
+  }
+  audioRunning = chunkOffset; // total audio duration
   lines.push(`  Total audio: ${audioRunning.toFixed(1)}s`);
   lines.push('');
 

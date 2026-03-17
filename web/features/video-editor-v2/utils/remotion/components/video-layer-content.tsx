@@ -431,7 +431,7 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
               left: 0,
               opacity: 0,
             }}
-            volume={overlay.styles.volume ?? 1}
+            volume={() => overlay.styles.volume ?? 1}
             playbackRate={overlay.speed ?? 1}
           />
           {/* Canvas that displays processed video with greenscreen removed */}
@@ -474,7 +474,7 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
         pauseWhenBuffering
         onError={handleVideoError}
         style={videoStyle}
-        volume={overlay.styles.volume ?? 1}
+        volume={() => overlay.styles.volume ?? 1}
         playbackRate={overlay.speed ?? 1}
       />
       {/* Vignette overlay if present */}

@@ -83,8 +83,9 @@ export default function OnboardingPage() {
     }
   };
 
+  const isNameValid = formData.name.trim().length >= 3;
   const isFormValid =
-    formData.name && usernameStatus === "valid" && !validating;
+    isNameValid && usernameStatus === "valid" && !validating;
 
   return (
     <div className="min-h-screen bg-black flex flex-col items-center justify-center p-4 relative overflow-hidden">
@@ -145,9 +146,20 @@ export default function OnboardingPage() {
                       onChange={(e) =>
                         setFormData({ ...formData, name: e.target.value })
                       }
-                      className="bg-black/50 border-neutral-800 pl-10 h-12 text-white placeholder:text-neutral-600 focus:border-orange-500 transition-colors"
+                      className={`bg-black/50 border-neutral-800 pl-10 h-12 text-white placeholder:text-neutral-600 focus:border-orange-500 transition-colors ${
+                        formData.name.length > 0 && formData.name.trim().length < 3
+                          ? "border-red-500/50"
+                          : formData.name.trim().length >= 3
+                          ? "border-green-500/50"
+                          : ""
+                      }`}
                     />
                   </div>
+                  <p className="text-[10px] text-neutral-600 font-mono uppercase tracking-tight">
+                    {formData.name.length > 0 && formData.name.trim().length < 3
+                      ? "Display name must be at least 3 characters"
+                      : "Your public display name across the network."}
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-mono text-neutral-500 uppercase tracking-widest">

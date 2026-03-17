@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import Timeline from '../../advanced-timeline/timeline';
 import { TimelineTrack, TimelineRef } from '../../advanced-timeline/types';
 import { TIMELINE_CONSTANTS } from '../../advanced-timeline/constants';
@@ -19,6 +19,7 @@ import { useCompositionEditorStore } from '../../../stores/composition-editor-st
 import { useShallow } from 'zustand/react/shallow';
 import { createComposition, createTextLayer, createShapeLayer } from '../../../types/composition';
 import type { CompositionDefinition, CompositionLayer } from '../../../types/composition';
+import { useMediaIssuesStore } from '../../../stores/media-issues-store';
 
 interface TimelineSectionProps {
   className?: string;
@@ -48,6 +49,18 @@ const getDefaultColorForType = (type: string): string => {
 export const TimelineSection: React.FC<TimelineSectionProps> = () => {
   // Get configuration from context
   const { playerRef, togglePlayPause } = useEditorContext();
+
+  // Register playerRef.seekTo in the media issues store so the issues
+  // panel can seek the actual Remotion player (not just the store playback time)
+  useEffect(() => {
+    const seekFn = (frame: number) => {
+      if (playerRef?.current) {
+        playerRef.current.seekTo(frame);
+      }
+    };
+    useMediaIssuesStore.getState().registerSeekToFrame(seekFn);
+    return () => useMediaIssuesStore.getState().registerSeekToFrame(null);
+  }, [playerRef]);
 
   // PERF: Split subscriptions — tracks/clips use reselect (stable references),
   // UI state uses useShallow for frequently-changing values.

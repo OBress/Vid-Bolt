@@ -43,6 +43,7 @@ export interface StepData {
   prompts: StepPrompt[];
   timing: StepTiming | null;
   errors: StepError[];
+  logs: StepLog[];
   media: StepMedia[];
 }
 
@@ -82,6 +83,14 @@ export interface StepMedia {
   height?: number;
   durationSeconds?: number;
   generationStatus?: string;
+}
+
+export interface StepLog {
+  timestamp: string;
+  level: 'info' | 'warning' | 'error' | 'debug';
+  phase: string;
+  message: string;
+  detail?: string;
 }
 
 // ============================================================================

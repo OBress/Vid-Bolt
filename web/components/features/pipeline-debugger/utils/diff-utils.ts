@@ -14,7 +14,6 @@ import type {
   MetricDelta,
 } from '../types/pipeline-debugger';
 import { ALL_STEPS, STEP_CONFIGS } from './step-config';
-import type { PipelineStep } from '../types/pipeline-debugger';
 
 // ============================================================================
 // MAIN COMPARISON GENERATOR

@@ -412,6 +412,53 @@ function preprocessCode(code: string): { componentBody: string; wrappedSource: s
 /**
  * Create component from transpiled code by injecting scope
  */
+/**
+ * SafeMediaImg — drop-in replacement for <img> in AI-generated MG code.
+ * 
+ * Handles two failure modes that crash the editor:
+ * 1. Video URLs (.mp4/.webm) passed to <img> tags → renders <video> instead
+ * 2. Broken/CORS-blocked image URLs → shows fallback gradient instead of throwing
+ */
+const SafeMediaImg: React.FC<any> = (props: Record<string, any>) => {
+  const { src, style, alt, ...rest } = props;
+  const [hasError, setHasError] = React.useState(false);
+
+  // Detect video URLs and render <video> element instead
+  const isVideo = src && typeof src === 'string' && /\.(mp4|webm|mov|avi)([?#]|$)/i.test(src);
+
+  if (isVideo) {
+    return React.createElement('video', {
+      src,
+      style: { objectFit: 'cover' as const, width: '100%', height: '100%', ...style },
+      autoPlay: true,
+      muted: true,
+      loop: true,
+      playsInline: true,
+    });
+  }
+
+  if (hasError || !src) {
+    // Graceful fallback: dark gradient placeholder instead of crash
+    return React.createElement('div', {
+      style: {
+        width: '100%',
+        height: '100%',
+        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+        ...style,
+      },
+      'aria-label': alt || 'Image unavailable',
+    });
+  }
+
+  return React.createElement('img', {
+    ...rest,
+    src,
+    alt,
+    style,
+    onError: () => setHasError(true),
+  });
+};
+
 function createComponentFromTranspiled(
   transpiledCode: string, 
   options: CompilationOptions = {}
@@ -440,6 +487,23 @@ function createComponentFromTranspiled(
         options,
       );
     };
+
+    // SafeReact proxy: intercepts createElement("img", ...) calls from
+    // AI-generated code and substitutes SafeMediaImg to handle video URLs
+    // and broken images gracefully instead of crashing the editor.
+    const SafeReact = new Proxy(React, {
+      get(target, prop, receiver) {
+        if (prop === 'createElement') {
+          return (type: any, ...args: any[]) => {
+            if (type === 'img') {
+              return React.createElement(SafeMediaImg, ...args);
+            }
+            return React.createElement(type, ...args);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
 
     // Build the Remotion namespace
     const Remotion = {
@@ -504,7 +568,7 @@ function createComponentFromTranspiled(
 
     // Build parameter values (matching names above)
     const paramValues: any[] = [
-      React,
+      SafeReact,
       Remotion,
       RemotionShapes,
       Lottie,

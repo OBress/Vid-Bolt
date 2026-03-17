@@ -201,7 +201,7 @@ function buildVideoGenPrompt(
   userPrompt: string,
   manifest: CreativeManifest
 ): string {
-  return `You are an expert AI video generation specialist optimized for LTX-2.
+  return `You are an expert AI video generation specialist optimized for LTX-2.3.
 
 USER CREATIVE DIRECTION:
 ${userPrompt || 'No specific direction provided.'}
@@ -211,14 +211,19 @@ VISUAL STYLE: ${manifest.style.visual_style}
 ASPECT RATIO: ${manifest.style.aspect_ratio}
 ${manifest.style.lighting_mood ? `LIGHTING MOOD: ${manifest.style.lighting_mood}` : ''}
 
-VIDEO GENERATION RULES:
+VIDEO GENERATION RULES (LTX-2.3):
+- LTX-2.3 has a 4× larger text encoder — use specific, detailed prompts with multiple subjects, spatial relationships, and stylistic constraints
 - Use T2V mode for first shots or isolated scenes
 - Use FF2V mode for sequential shots continuing the same scene
-- Always describe camera movement explicitly (push in, track left, slow zoom, etc.)
-- Include temporal descriptions (action starts with..., over 3 seconds...)
+- Always use ACTION VERBS for motion — specify who moves, what moves, how they move, and what the camera does
+- Block the scene explicitly — describe spatial positions (left/right, foreground/background, facing toward/away)
+- Describe textures and materials — fabric types, hair texture, surface finish, environmental wear (the rebuilt VAE produces sharper detail)
+- Design audio intentionally — describe environmental sounds, tone, and intensity (the upgraded vocoder produces cleaner output)
 - Match the lighting and color grading from the style guide
-- Generated video must contain meaningful motion — avoid static frames with minor camera drift${getWorkerOverride(manifest, 'video_gen')}`;
+- Generated video MUST contain meaningful motion — if the prompt reads like a still photo, the output will freeze
+- For portrait (9:16) content, compose for vertical intentionally — don't treat as cropped landscape${getWorkerOverride(manifest, 'video_gen')}`;
 }
+
 
 /**
  * Build the Motion Graphics Agent's system prompt.

@@ -210,13 +210,26 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
         });
       } : undefined;
       
+      // Fetch video-level context for the Visual Director agent (Fix 6)
+      let videoTitle = '';
+      let videoSummary = '';
+      try {
+        const { data: videoInfo } = await supabase.from('video_projects').select('name, idea, metadata').eq('id', videoId).single();
+        videoTitle = videoInfo?.name || videoInfo?.idea || '';
+        const meta = videoInfo?.metadata as Record<string, unknown> | null;
+        videoSummary = (meta?.script_summary as string) || videoInfo?.idea || '';
+      } catch (_e) {
+        console.warn(`${logPrefix} Could not fetch video context for chunked processor`);
+      }
+
       // Process segments in chunks with context windows
       const chunkedShots = await processInChunks(
         userId,
         segments,
         outlineAssets,
         undefined, // Use default config
-        onProgress
+        onProgress,
+        { videoTitle, videoSummary, visualStyle: 'cinematic, documentary' }
       );
       
       // Convert to ShotPart1 format
@@ -518,11 +531,17 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
     const { buildAgentContext, routeToAgent } = await import('@/lib/av-script/agent-prompts');
     const { generateJSON: _generateJSON } = await import('@/lib/ai/openrouter');
     
-    // Build project metadata for context
+    // Build project metadata for context — fetch real data from DB
+    const { data: projectData } = await supabase
+      .from('video_projects')
+      .select('name, idea, metadata')
+      .eq('id', videoId)
+      .single();
+
     const projectMetadata = {
-      videoTitle: 'Video Project', // Could be enhanced with actual video title from DB
-      videoSummary: '', // Could be enhanced
-      spineBeats: [],
+      videoTitle: projectData?.name || projectData?.idea || 'Video Project',
+      videoSummary: (projectData?.metadata as Record<string, unknown>)?.script_summary as string || projectData?.idea || '',
+      spineBeats: ((projectData?.metadata as Record<string, unknown>)?.outline as Record<string, unknown>)?.beats as string[] || [],
       visualStyle: 'cinematic, documentary',
       aspectRatio: '16:9' as const,
     };
@@ -538,11 +557,18 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
       
       const batchPromises = batchShots.map(async (shot, batchIdx) => {
         const globalIdx = batchStart + batchIdx;
+        // Fix 3: Pass accumulated prompts as generatedMedia so agents
+        // can see what visual prompts were used for previous shots
+        const generatedMediaSoFar = detailedPrompts.map(p => ({
+          shot_index: p.index,
+          visual_prompt: p.prompt,
+        }));
         const context = buildAgentContext(
           shot,
           shots,
           projectMetadata,
-          outlineAssets || {}
+          outlineAssets || {},
+          generatedMediaSoFar
         );
         
         try {
@@ -629,7 +655,12 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
         segment_index: shot.segment_index,
         media_type: shot.media_type, // 'video' | 'motiongraphic' from ShotPart1
         visual_prompt: detailedPrompts.find(p => p.index === i)?.prompt || shot.summary,
-        duration_seconds: shot.duration_seconds || 5,
+        duration_seconds: (() => {
+          if (!shot.duration_seconds || shot.duration_seconds <= 0) {
+            throw new Error(`[AVScript] Shot ${shot.segment_index} has no valid duration_seconds — shot plan timing is incomplete.`);
+          }
+          return shot.duration_seconds;
+        })(),
         image_count: shot.image_count,
         stock_media_refs: shot.stock_media_refs,
         visual_elements: shot.visual_elements,
@@ -761,7 +792,12 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
               try {
                 const result = await generateMotionGraphic({
                   prompt: detailedPrompt,
-                  duration: shot.duration_seconds || 5,
+                  duration: (() => {
+                    if (!shot.duration_seconds || shot.duration_seconds <= 0) {
+                      throw new Error(`[AVScript] Shot ${shot.segment_index} has no valid duration_seconds for MG generation — shot plan timing is incomplete.`);
+                    }
+                    return shot.duration_seconds;
+                  })(),
                   shotIndex,
                   videoId,
                   apiKey: openrouterKey,
@@ -862,9 +898,19 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
       },
     };
     
+    // Fix 9: Also write MG Remotion code to the `generated_motion_graphics` key
+    // so the edit-assembly worker can find it (it reads from this key, not generatedMedia)
+    const generated_motion_graphics: Record<string, string> = {};
+    for (const m of generatedMedia) {
+      if (m.media_type === 'motiongraphic' && m.remotion_code) {
+        generated_motion_graphics[`shot-${m.shot_index}`] = m.remotion_code;
+      }
+    }
+
     const updatedMetadata = {
       ...existingMetadata,
       generatedMedia,
+      generated_motion_graphics,
       av_script_part2_completed: true,
     };
     

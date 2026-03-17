@@ -32,7 +32,7 @@ export const MAX_REWRITE_ATTEMPTS = 1;
 // ============================================================================
 
 export interface QualityIssue {
-  type: 'originality' | 'engagement' | 'flow' | 'factual' | 'repetition' | 'banned_phrase';
+  type: 'originality' | 'engagement' | 'flow' | 'factual' | 'repetition' | 'banned_phrase' | 'visualizability';
   description: string;
   severity: 'low' | 'medium' | 'high';
   location?: string;
@@ -52,6 +52,8 @@ export interface QualityReviewResult {
   engagement: number;
   flow: number;
   factualGrounding: number;
+  /** Can a visual director easily illustrate every 5-8 seconds? (1-10) */
+  visualizability: number;
   /** Whether beat passes quality bar (score >= 8) */
   passed: boolean;
   /** Specific issues found */
@@ -85,6 +87,10 @@ Score this beat on a 1-10 scale. Be RUTHLESSLY STRICT - only truly exceptional w
 2. ENGAGEMENT: Compelling prose that creates forward momentum - viewer wants to keep watching
 3. FLOW: Natural rhythm, varied sentence structure, smooth transitions
 4. FACTUAL_GROUNDING: Facts attributed properly, no vague claims, research-backed
+5. VISUALIZABILITY: Can a visual director easily find a distinct image or video clip for every 5-8 seconds
+   of narration? Score LOW if there are stretches of abstract philosophizing, internal monologue, or vague
+   generalities with no concrete visual anchor (person, place, object, action). Score HIGH if every sentence
+   suggests something the viewer could SEE on screen.
 
 ## AI-ISM DETECTION (instant -2 points per occurrence):
 Scan for these overused AI words - they MUST be replaced:
@@ -103,6 +109,11 @@ Scan for these overused AI words - they MUST be replaced:
 - Meta-commentary: "In this video...", "Let me tell you...", "As we'll see..."
 - Vague hedging: "Some say...", "Many believe...", "According to some..."
 - Weak transitions: "Moving on...", "Now let's talk about...", "With that said..."
+
+## VISUAL DEAD ZONE DETECTION (flag each):
+- Flag any stretch of 3+ consecutive sentences where a viewer would see NOTHING specific on screen
+- Examples of dead zones: abstract reasoning, philosophical musings, generic statements about "society" or "the world"
+- Good writing gives every sentence a visual: a person, a place, an object, a number, an action
 
 ## DOCUMENTARY-SPECIFIC CHECKS:
 - Are facts properly attributed (not just stated without source)?
@@ -123,6 +134,7 @@ Return ONLY valid JSON (no markdown):
   "engagement": 8,
   "flow": 7,
   "factualGrounding": 6,
+  "visualizability": 7,
   "issues": [
     {"type": "repetition", "description": "...", "severity": "medium", "location": "paragraph 2"}
   ],
@@ -188,7 +200,7 @@ export async function reviewBeatQuality(
           strict: true,
           schema: {
             type: 'object',
-            required: ['score', 'originality', 'engagement', 'flow', 'factualGrounding', 'issues', 'repetitionFlags', 'rewriteNeeded', 'rewriteGuidance'],
+            required: ['score', 'originality', 'engagement', 'flow', 'factualGrounding', 'visualizability', 'issues', 'repetitionFlags', 'rewriteNeeded', 'rewriteGuidance'],
             additionalProperties: false,
             properties: {
               score: { type: 'number' },
@@ -196,6 +208,7 @@ export async function reviewBeatQuality(
               engagement: { type: 'number' },
               flow: { type: 'number' },
               factualGrounding: { type: 'number' },
+              visualizability: { type: 'number' },
               issues: {
                 type: 'array',
                 items: {
@@ -203,7 +216,7 @@ export async function reviewBeatQuality(
                   required: ['type', 'description', 'severity'],
                   additionalProperties: false,
                   properties: {
-                    type: { type: 'string', enum: ['originality', 'engagement', 'flow', 'factual', 'repetition', 'banned_phrase'] },
+                    type: { type: 'string', enum: ['originality', 'engagement', 'flow', 'factual', 'repetition', 'banned_phrase', 'visualizability'] },
                     description: { type: 'string' },
                     severity: { type: 'string', enum: ['low', 'medium', 'high'] },
                     location: { type: ['string', 'null'] },
@@ -259,6 +272,7 @@ export async function reviewBeatQuality(
       engagement: 7,
       flow: 7,
       factualGrounding: 7,
+      visualizability: 7,
       passed: true,
       issues: [],
       repetitionFlags: [],
@@ -540,7 +554,7 @@ Return a scores array with exactly ${beats.length} numbers.`;
     const config: OpenRouterConfig = {
       model: BATCH_RATING_MODEL,
       temperature: 0.1,
-      maxTokens: 256,
+      maxTokens: 512,
       responseFormat: {
         type: 'json_schema',
         json_schema: {

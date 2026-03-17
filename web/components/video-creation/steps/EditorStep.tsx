@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Loader2, CheckCircle2 } from "lucide-react";
+import { useGCPVM } from "@/providers/GCPVMProvider";
+import { useVramMode } from "@/hooks/use-vram-mode";
 import type {
   AudioChunk,
   ShotEvent,
@@ -185,10 +187,10 @@ export function EditorStep({
   generatedMedia,
   edl,
   agentEdl,
-  onContinue,
-  onBack,
+  onContinue: _onContinue,
+  onBack: _onBack,
   isLocked,
-  lockedMessage,
+  lockedMessage: _lockedMessage,
   isResuming = false,
 }: EditorStepProps) {
   // When resuming, skip animation entirely (synchronous — no API call, no flash)
@@ -247,6 +249,27 @@ export function EditorStep({
       setImportStep(IMPORT_STEPS.length - 1);
     }
   }, [clipCount, importProgress]);
+
+  // ── Auto-switch VRAM mode to "all" when editor opens ──
+  const { displayStatus, apiReady } = useGCPVM();
+  const { currentMode, switchToAll, isLoading: vramLoading } = useVramMode(apiReady);
+  const hasAutoSwitchedRef = useRef(false);
+
+  useEffect(() => {
+    if (
+      !hasAutoSwitchedRef.current &&
+      !vramLoading &&
+      displayStatus === "ON" &&
+      currentMode !== null &&
+      currentMode !== "all"
+    ) {
+      hasAutoSwitchedRef.current = true;
+      console.log(`[EditorStep] Auto-switching VRAM mode from '${currentMode}' to 'all'`);
+      switchToAll().catch(() => {
+        console.warn('[EditorStep] Auto-switch to "all" failed — user can switch manually via header banner');
+      });
+    }
+  }, [displayStatus, currentMode, vramLoading, switchToAll]);
 
   console.log("[EditorStep] Props received:", {
     videoId,

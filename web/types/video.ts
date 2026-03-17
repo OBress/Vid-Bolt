@@ -214,6 +214,16 @@ export interface GeneratedMedia {
   remotion_code?: string;
   /** Lucide-react icon names used in the generated Remotion code */
   used_icons?: string[];
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Clip trim data (from VLM-guided clip trimmer)
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  /** Recommended start time in seconds (trim in-point) */
+  trimStart?: number;
+  /** Recommended end time in seconds (trim out-point) */
+  trimEnd?: number;
+  
   /** Timestamps */
   created_at?: string;
   updated_at?: string;

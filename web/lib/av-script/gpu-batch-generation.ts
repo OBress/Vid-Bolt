@@ -41,12 +41,28 @@ const getWebhookUrl = () =>
   process.env.WEBHOOK_CALLBACK_URL || 'http://localhost:3000/api/gpu-callback';
 const getWebhookSecret = () => process.env.GPU_WEBHOOK_SECRET;
 
-// Timeout configurations based on benchmarks
-// Images: ~7-15s each with batch overhead, Videos: ~8x duration
-export const TIMEOUT_CONFIG = {
-  image_generation: { baseMs: 60_000, perItemMs: 20_000 },
-  image_editing: { baseMs: 60_000, perItemMs: 20_000 },
-  video_generation: { baseMs: 120_000, perSecondMs: 15_000 },
+// Dynamic timeout configuration — all derived from observed GPU benchmarks
+// with generous leniency to prevent false timeouts during OOM recovery,
+// high queue depths, or long-form video generation.
+//
+// Benchmark observations (A100 80GB):
+//   Normal image gen: ~7-15s/image
+//   OOM recovery (1-at-a-time): ~27s/image (gen + VRAM cleanup)
+//   Video gen (LTX-2): ~8-12x clip duration
+//   Mode switch: 30-90s (model load + warmup)
+const TIMEOUT_BENCHMARKS = {
+  image: {
+    normalPerItemMs: 15_000,      // Normal batch processing
+    oomPerItemMs: 30_000,         // OOM recovery: 1 at a time + cleanup
+    minTotalMs: 300_000,          // 5 min minimum — never timeout faster than this
+  },
+  video: {
+    perSecondOfContentMs: 12_000, // ~12x real-time for LTX-2 generation
+    minTotalMs: 600_000,          // 10 min minimum — even for a single short clip
+  },
+  // Global leniency multiplier: timeouts should only fire for genuinely
+  // excessive waits, not normal slow processing. 2x gives ample headroom.
+  leniencyMultiplier: 2,
 };
 
 // Mode switch timeout (LTX-2 loading can take ~90s+)
@@ -110,18 +126,44 @@ export interface ItemCompleteEvent {
 // ============================================================================
 
 /**
- * Calculate timeout for a batch based on item count and type
+ * Calculate a dynamic timeout for a batch based on item count, type,
+ * and operational context. Returns a value generous enough that only
+ * genuinely stuck batches will timeout.
+ *
+ * @param type - Generation type
+ * @param itemCount - Number of items in the batch
+ * @param options - Contextual hints for more accurate estimation
  */
 export function calculateTimeout(
   type: 'image_generation' | 'image_editing' | 'video_generation',
   itemCount: number,
-  avgDurationSec?: number
-): number {
-  const config = TIMEOUT_CONFIG[type];
-  if (type === 'video_generation') {
-    return config.baseMs + itemCount * (avgDurationSec || 5) * (config as any).perSecondMs;
+  options?: {
+    /** For videos: average clip duration in seconds */
+    avgDurationSec?: number;
+    /** For videos: total seconds of content across all clips */
+    totalVideoDurationSec?: number;
+    /** Number of other jobs queued ahead on the GPU */
+    queueDepthAhead?: number;
   }
-  return config.baseMs + itemCount * (config as any).perItemMs;
+): number {
+  const { leniencyMultiplier } = TIMEOUT_BENCHMARKS;
+  const queueMultiplier = 1 + (options?.queueDepthAhead || 0);
+
+  if (type === 'video_generation') {
+    const totalDuration = options?.totalVideoDurationSec
+      || itemCount * (options?.avgDurationSec || 5);
+    const rawMs = totalDuration * TIMEOUT_BENCHMARKS.video.perSecondOfContentMs * queueMultiplier;
+    const withLeniency = rawMs * leniencyMultiplier;
+    return Math.max(TIMEOUT_BENCHMARKS.video.minTotalMs, withLeniency);
+  }
+
+  // Images and image editing: use OOM-aware per-item timing
+  // In OOM recovery, GPU processes 1 item at a time with ~10s cleanup between each.
+  // We use the OOM rate as baseline since it's the worst case and we want no false timeouts.
+  const perItemMs = TIMEOUT_BENCHMARKS.image.oomPerItemMs;
+  const rawMs = itemCount * perItemMs * queueMultiplier;
+  const withLeniency = rawMs * leniencyMultiplier;
+  return Math.max(TIMEOUT_BENCHMARKS.image.minTotalMs, withLeniency);
 }
 
 /**
@@ -167,15 +209,42 @@ async function ensureMode(targetMode: 'image_generation' | 'image_editing' | 'vi
     return true;
   }
   
-  // Switch mode
+  // Switch mode — may need retries if GPU has active jobs (503)
   console.log(`[GPU-Batch] Switching to ${targetMode} mode...`);
   const switchTarget: 'image' | 'video' | 'audio' =
     targetMode === 'video_generation' ? 'video' :
     targetMode === 'audio_creation' ? 'audio' :
     'image';
-  const switchResult = await callGpuSwitchMode(switchTarget);
   
-  if (!switchResult.success) {
+  // Retry loop: GPU API returns 503 if jobs are still queued/processing.
+  // This is a transient condition — the jobs will finish, then mode switch succeeds.
+  const MAX_SWITCH_RETRIES = 30;    // 30 × 10s = 5 min max wait
+  const SWITCH_RETRY_DELAY_MS = 10_000;
+  
+  for (let attempt = 1; attempt <= MAX_SWITCH_RETRIES; attempt++) {
+    const switchResult = await callGpuSwitchMode(switchTarget);
+    
+    if (switchResult.success) {
+      break; // Mode switch initiated successfully
+    }
+    
+    // Check for 503 (jobs still active) — retry after delay
+    const is503 = switchResult.error?.includes('503') 
+      || switchResult.error?.includes('jobs are queued')
+      || switchResult.error?.includes('jobs are active')
+      || switchResult.error?.includes('Cannot switch')
+      || switchResult.error?.includes('Cannot change');
+    
+    if (is503 && attempt < MAX_SWITCH_RETRIES) {
+      console.log(
+        `[GPU-Batch] Mode switch blocked (jobs still active), ` +
+        `retrying in ${SWITCH_RETRY_DELAY_MS / 1000}s (attempt ${attempt}/${MAX_SWITCH_RETRIES})...`
+      );
+      await new Promise(resolve => setTimeout(resolve, SWITCH_RETRY_DELAY_MS));
+      continue;
+    }
+    
+    // Non-503 error or retries exhausted
     console.error(`[GPU-Batch] Failed to initiate mode switch: ${switchResult.error}`);
     return false;
   }
@@ -193,7 +262,7 @@ async function ensureMode(targetMode: 'image_generation' | 'image_editing' | 'vi
 /**
  * Generate placeholder URL for fallback
  */
-function getPlaceholderUrl(mediaType: string, index: number): string {
+function _getPlaceholderUrl(mediaType: string, index: number): string {
   const timestamp = Date.now();
   if (mediaType === 'video') {
     return `https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4?t=${timestamp}_${index}`;
@@ -223,6 +292,8 @@ export async function processGpuBatchGeneration(
   onItemComplete?: (event: ItemCompleteEvent) => void,
   /** Optional LoRA name to apply to all image generations */
   loraName?: string,
+  /** Optional LoRA trigger words to prepend to all image prompts */
+  loraTriggerWords?: string,
 ): Promise<BatchGpuGenerationResult> {
   const logPrefix = '[GPU-Batch]';
   const results: GpuGenerationResult[] = [];
@@ -279,12 +350,12 @@ export async function processGpuBatchGeneration(
   const imageModeReady = await ensureMode('image_generation');
   if (!imageModeReady) {
     console.error(`${logPrefix} Failed to switch to image_generation mode`);
-    // Fallback everything to placeholders
+    // Fallback everything to failures — never mask with placeholder URLs
     for (const shot of shots) {
       const isVideo = shot.media_type === 'video';
       results.push({
         shot_index: shot.segment_index,
-        media_url: getPlaceholderUrl(isVideo ? 'video' : 'image', shot.segment_index),
+        media_url: '',
         generation_status: 'failed',
         error_message: 'Failed to switch GPU to image_generation mode',
       });
@@ -314,10 +385,10 @@ export async function processGpuBatchGeneration(
     : undefined;
 
   const standaloneResults = standaloneImageShots.length > 0 
-    ? await processImageBatch(userId, videoId, standaloneImageShots, aspectRatio, 'standalone', imageItemCallback, loraName)
+    ? await processImageBatch(userId, videoId, standaloneImageShots, aspectRatio, 'standalone', imageItemCallback, loraName, loraTriggerWords)
     : [];
   const keyframeResults = videoShots.length > 0
-    ? await processImageBatch(userId, videoId, videoShots, aspectRatio, 'keyframe', imageItemCallback, loraName)
+    ? await processImageBatch(userId, videoId, videoShots, aspectRatio, 'keyframe', imageItemCallback, loraName, loraTriggerWords)
     : [];
   
   // Assemble multi-image shots: group results by shot_index and build media_items
@@ -360,6 +431,17 @@ export async function processGpuBatchGeneration(
         console.warn(`${logPrefix} Shot ${shot.segment_index}: No keyframe image available, video will be skipped`);
       }
     }
+    // -----------------------------------------------------------------------
+    // MODE SWITCH SAFETY: Confirm all keyframe webhooks settled before switching
+    // -----------------------------------------------------------------------
+    // The GPU API now rejects mode switches while jobs are running, but we still
+    // log an explicit audit trail to catch any regressions.
+    const keyframeCompleted = keyframeResults.filter(r => r.generation_status === 'completed').length;
+    const keyframeFailed = keyframeResults.filter(r => r.generation_status === 'failed').length;
+    console.log(
+      `${logPrefix} All keyframe webhooks settled: ${keyframeCompleted} completed, ${keyframeFailed} failed ` +
+      `(out of ${videoShots.length} video shots). Safe to switch GPU mode.`
+    );
     
     const modeReady = await ensureMode('video_generation');
     if (!modeReady) {
@@ -367,7 +449,7 @@ export async function processGpuBatchGeneration(
       for (const shot of videoShots) {
         results.push({
           shot_index: shot.segment_index,
-          media_url: getPlaceholderUrl('video', shot.segment_index),
+          media_url: '',
           generation_status: 'failed',
           error_message: 'Failed to switch GPU to video_generation mode',
         });
@@ -402,6 +484,8 @@ async function processImageBatch(
   onItemComplete?: (event: ItemCompleteEvent) => void,
   /** Optional LoRA name to apply to all images in this batch */
   loraName?: string,
+  /** Optional LoRA trigger words to prepend to prompts */
+  loraTriggerWords?: string,
 ): Promise<GpuGenerationResult[]> {
   const logPrefix = `[GPU-Batch/Images/${purpose}]`;
   const batchId = `img-${purpose}-${videoId}-${uuidv4().slice(0, 8)}`;
@@ -458,9 +542,14 @@ async function processImageBatch(
       try {
         const { putUrl } = await generatePresignedPutUrl(key, 'image/png');
         
+        // Inject LoRA trigger words into prompt text for style activation
+        const effectivePrompt = loraTriggerWords
+          ? `${loraTriggerWords} ${shot.visual_prompt}`
+          : shot.visual_prompt;
+
         items.push({
           item_id: itemId,
-          prompt: shot.visual_prompt,
+          prompt: effectivePrompt,
           aspect_ratio: aspectRatio,
           width,
           height,
@@ -480,7 +569,7 @@ async function processImageBatch(
   if (items.length === 0) {
     return shots.map(shot => ({
       shot_index: shot.segment_index,
-      media_url: getPlaceholderUrl('image', shot.segment_index),
+      media_url: '',
       generation_status: 'failed' as const,
       error_message: 'Failed to create storage URLs',
     }));
@@ -493,7 +582,7 @@ async function processImageBatch(
     console.error(`${logPrefix} Batch submission failed: ${submitResult.errorMessage}`);
     return shots.map(shot => ({
       shot_index: shot.segment_index,
-      media_url: getPlaceholderUrl('image', shot.segment_index),
+      media_url: '',
       generation_status: 'failed' as const,
       error_message: submitResult.errorMessage || 'Batch submission failed',
     }));
@@ -501,9 +590,9 @@ async function processImageBatch(
 
   console.log(`${logPrefix} Batch ${batchId} submitted (${items.length} items), waiting for webhooks...`);
 
-  // Wait for all webhooks with calculated timeout
+  // Wait for all webhooks with dynamic timeout (OOM-aware: ~30s/item worst case × 2x leniency)
   const timeout = calculateTimeout('image_generation', items.length);
-  console.log(`${logPrefix} Webhook timeout: ${Math.round(timeout / 1000)}s for ${items.length} items`);
+  console.log(`${logPrefix} Webhook timeout: ${Math.round(timeout / 1000)}s for ${items.length} items (dynamic, OOM-aware)`);
 
   // Force-update GPU activity before long webhook wait to prevent VM shutdown
   forceUpdateGpuActivity().catch(() => {});
@@ -540,7 +629,7 @@ function assembleMultiImageResults(
       } else {
         assembled.push({
           shot_index: shot.segment_index,
-          media_url: getPlaceholderUrl('image', shot.segment_index),
+          media_url: '',
           generation_status: 'failed',
           error_message: 'No GPU result for shot',
         });
@@ -580,8 +669,7 @@ function assembleMultiImageResults(
     }
     
     // Primary URL is first item (AI-generated takes priority)
-    const primaryUrl = mediaItems.find(m => m.media_url)?.media_url 
-      || getPlaceholderUrl('image', shot.segment_index);
+    const primaryUrl = mediaItems.find(m => m.media_url)?.media_url || '';
     const allCompleted = mediaItems.every(m => m.generation_status === 'completed');
     const anyFailed = mediaItems.some(m => m.generation_status === 'failed');
     
@@ -614,32 +702,52 @@ function assembleMultiImageResults(
  * - Describe the action as a natural beginning-to-end sequence
  * - 4-8 descriptive sentences covering shot, scene, action, camera
  */
-function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number): string {
-  // If the prompt already looks like a flowing cinematic description (long enough,
-  // contains camera/motion language), use it as-is with a style suffix.
-  const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot)\b/i.test(rawPrompt);
-  const isLongEnough = rawPrompt.length > 200;
+function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number, shotIndex?: number): string {
+  // Check if agent already specified detailed camera motion
+  const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot|orbit|sweep|glide)\b/i.test(rawPrompt);
 
-  if (hasMotionLanguage && isLongEnough) {
-    return rawPrompt;
+  // If the agent already provided camera motion, DON'T override it —
+  // only add quality constraints and duration-aware pacing guidance
+  if (hasMotionLanguage) {
+    // Duration-aware pacing hint (Fix 4: calibrate motion to clip length)
+    const pacingHint = durationSeconds <= 3
+      ? 'Execute camera movement quickly and decisively within the short duration.'
+      : durationSeconds <= 5
+      ? 'Smooth, measured camera movement filling the full duration.'
+      : `Extended, graceful camera movement maintaining visual interest across the full ${durationSeconds}s.`;
+    
+    return [
+      rawPrompt.trim().replace(/\.$/, ''),
+      pacingHint,
+      'Cinematic quality, photorealistic rendering.',
+      'No watermarks, no text overlays, no CGI artifacts.',
+    ].join('. ') + '.';
   }
 
-  // Otherwise, wrap the raw prompt in LTX-2 best-practice framing.
-  // Add camera motion and cinematic style cues that LTX-2 responds well to.
-  const motionCues = durationSeconds <= 3
-    ? 'The camera holds steady with subtle organic movement.'
+  // No camera motion specified by agent — add duration-calibrated motion
+  const cameraStyles = [
+    'Slow dolly push-in revealing fine details, shallow depth of field.',
+    'Smooth tracking shot follows the action laterally, cinematic movement.',
+    'Subtle crane shot rising gently, establishing the scene from above.',
+    'Handheld close-up with natural micro-movements, intimate perspective.',
+    'Wide establishing shot with gentle parallax drift, atmospheric depth.',
+    'Medium shot with slow orbit around the subject, smooth rotation.',
+  ];
+
+  // Fix 4: Duration-calibrated motion intensity
+  const motionCue = durationSeconds <= 3
+    ? 'Camera locks on subject with minimal organic movement, sharp focus.'
     : durationSeconds <= 5
-    ? 'The camera slowly pushes in, revealing fine details as the scene unfolds.'
-    : 'The camera tracks smoothly through the scene, following the action with cinematic movement.';
+    ? cameraStyles[(shotIndex || 0) % cameraStyles.length]
+    : `${cameraStyles[(shotIndex || 0) % cameraStyles.length]} The movement continues smoothly for the full ${durationSeconds}s duration.`;
 
-  const enriched = [
+  return [
     rawPrompt.trim().replace(/\.$/, ''),
-    motionCues,
-    'Soft, natural lighting with atmospheric depth.',
+    motionCue,
+    'Soft natural lighting with atmospheric depth and volumetric haze.',
     'Cinematic quality, photorealistic rendering, smooth continuous motion throughout the entire shot.',
+    'No watermarks, no text overlays, no stock photo feel, no CGI artifacts.',
   ].join('. ') + '.';
-
-  return enriched;
 }
 
 // ============================================================================
@@ -671,7 +779,7 @@ async function processVideoBatch(
       console.warn(`${logPrefix} Shot ${shot.segment_index} has no start frame, skipping video generation`);
       skippedShots.push({
         shot_index: shot.segment_index,
-        media_url: getPlaceholderUrl('video', shot.segment_index),
+        media_url: '',
         generation_status: 'failed',
         error_message: 'No start frame image for video generation',
       });
@@ -688,7 +796,7 @@ async function processVideoBatch(
       items.push({
         item_id: itemId,
         start_frame_url: shot.start_frame_url,
-        prompt: enrichLtx2Prompt(shot.visual_prompt, shot.duration_seconds || 5),
+        prompt: enrichLtx2Prompt(shot.visual_prompt, shot.duration_seconds || 5, shot.segment_index),
         duration_seconds: Math.min(shot.duration_seconds || 5, 10),
         aspect_ratio: aspectRatio,
         save_url: putUrl,
@@ -700,7 +808,7 @@ async function processVideoBatch(
       console.error(`${logPrefix} Failed to create presigned URL for shot ${shot.segment_index}:`, error);
       skippedShots.push({
         shot_index: shot.segment_index,
-        media_url: getPlaceholderUrl('video', shot.segment_index),
+        media_url: '',
         generation_status: 'failed',
         error_message: 'Failed to create storage URL',
       });
@@ -718,7 +826,7 @@ async function processVideoBatch(
     console.error(`${logPrefix} Batch submission failed: ${submitResult.errorMessage}`);
     const allFailed = shots.map(shot => ({
       shot_index: shot.segment_index,
-      media_url: getPlaceholderUrl('video', shot.segment_index),
+      media_url: '',
       generation_status: 'failed' as const,
       error_message: submitResult.errorMessage || 'Batch submission failed',
     }));
@@ -727,9 +835,13 @@ async function processVideoBatch(
 
   console.log(`${logPrefix} Batch ${batchId} submitted, waiting for webhooks...`);
 
-  // Calculate timeout based on average duration
-  const avgDuration = shots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0) / shots.length;
-  const timeout = calculateTimeout('video_generation', items.length, avgDuration);
+  // Calculate timeout based on total video content duration (not just count)
+  const totalVideoDuration = shots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0);
+  const avgDuration = totalVideoDuration / shots.length;
+  const timeout = calculateTimeout('video_generation', items.length, {
+    avgDurationSec: avgDuration,
+    totalVideoDurationSec: totalVideoDuration,
+  });
   
   // Force-update GPU activity before long webhook wait to prevent VM shutdown
   forceUpdateGpuActivity().catch(() => {});
@@ -759,7 +871,7 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
     if (!shot) {
       return {
         shot_index: -1,
-        media_url: getPlaceholderUrl(mediaType, 0),
+        media_url: '',
         generation_status: 'failed' as const,
         error_message: 'Item mapping not found',
       };
@@ -789,7 +901,7 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
         console.warn(`${logPrefix} Shot ${shot.segment_index} failed: ${webhookResult.errorMessage}`);
         return {
           shot_index: shot.segment_index,
-          media_url: getPlaceholderUrl(mediaType, shot.segment_index),
+          media_url: '',
           generation_status: 'failed' as const,
           error_message: webhookResult.errorMessage || 'GPU generation failed',
         };
@@ -798,7 +910,7 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
       console.error(`${logPrefix} Webhook wait failed for shot ${shot.segment_index}:`, error);
       return {
         shot_index: shot.segment_index,
-        media_url: getPlaceholderUrl(mediaType, shot.segment_index),
+        media_url: '',
         generation_status: 'failed' as const,
         error_message: error instanceof Error ? error.message : 'Webhook timeout',
       };

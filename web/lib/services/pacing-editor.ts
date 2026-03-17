@@ -132,7 +132,7 @@ For each issue, suggest a specific adjustment. If the pacing is well-crafted wit
         },
       ],
       temperature: 0.1,
-      max_tokens: 2048,
+      max_tokens: 4096,
       response_format: {
         type: 'json_schema',
         json_schema: {

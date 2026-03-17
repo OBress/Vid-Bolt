@@ -61,7 +61,7 @@ export function ProductionStep({
   const completedRef = useRef(false);
 
   // GPU VM status
-  const { displayStatus: vmStatus, startVM, isLoading: isVmLoading } = useGCPVM();
+  const { displayStatus: vmStatus, startVM, isLoading: _isVmLoading } = useGCPVM();
 
   // Project settings — check if any local models need the GPU
   const { settings } = useProjectSettings(projectId);
@@ -209,7 +209,7 @@ export function ProductionStep({
   // =========================================================================
 
   return (
-    <div className="flex flex-col items-center gap-8 w-full max-w-2xl mx-auto py-8">
+    <div className="flex flex-col items-center gap-8 w-full max-w-4xl mx-auto py-8">
       {/* Header */}
       <div className="text-center space-y-3">
         <div className="relative inline-block">

@@ -94,7 +94,7 @@ Rules:
 - Add specific lighting, composition, color, and style details
 - Match the project's established visual language and aesthetic
 - Be concise but descriptive (2-3 sentences max)
-- ${generationType === 'video' ? 'Include camera movement descriptions and temporal flow' : 'Focus on composition, color, and detail'}
+- ${generationType === 'video' ? 'Include specific camera movement, action verbs for motion (who moves, what moves, how), spatial blocking (left/right, foreground/background), texture and material details, and audio descriptions. Write as a rich, detailed paragraph — LTX 2.3 rewards specificity over simplicity' : 'Focus on composition, color, and detail'}
 - Do NOT include any explanation — output ONLY the enhanced prompt text`;
 
     // 6. Call OpenRouter
@@ -105,12 +105,12 @@ Rules:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.0-flash-001',
+        model: 'google/gemini-3-flash-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt },
         ],
-        max_tokens: 300,
+        max_tokens: 1024,
         temperature: 0.7,
       }),
     });

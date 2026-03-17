@@ -49,6 +49,14 @@ export async function completeOnboarding(formData: {
     throw new Error("Unauthorized access. Please session authentication required.");
   }
 
+  // Validate required fields
+  if (!formData.name || formData.name.trim().length < 3) {
+    throw new Error("Display name must be at least 3 characters.");
+  }
+  if (!formData.username || formData.username.length < 3) {
+    throw new Error("Username must be at least 3 characters.");
+  }
+
   // 1. Double check username uniqueness on server
   const { unique } = await checkUsernameUnique(formData.username);
   if (!unique) {

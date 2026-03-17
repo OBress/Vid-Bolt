@@ -36,6 +36,9 @@ export interface WritingContext {
   /** Summary of the next beat (so AI can set it up) */
   nextBeatSummary: string;
   
+  /** Visual descriptions from previous beats (for visual contrast at transitions) */
+  previousBeatVisualDescriptions: string[];
+  
   /** Phrases already used (to avoid repetition) */
   usedPhrases: string[];
   
@@ -66,6 +69,7 @@ export function buildWritingContext(
     currentBeatPosition: buildPositionString(spine, currentBeatIndex, currentBeat),
     previousBeats: buildPreviousBeatsContext(spine, currentBeatIndex, previousExpandedBeats),
     nextBeatSummary: buildNextBeatSummary(spine, currentBeatIndex),
+    previousBeatVisualDescriptions: extractPreviousBeatVisuals(currentBeatIndex, previousExpandedBeats),
     usedPhrases: continuityState.usedPhrases || [],
     usedSentenceOpeners: continuityState.usedOpeners || [],
     usedTransitions: continuityState.usedTransitions || [],
@@ -187,6 +191,30 @@ function extractLastParagraph(narration: string): string {
 /**
  * Get summary of the next beat (so AI can set it up)
  */
+/**
+ * Extract visual callout descriptions from previous beats for visual contrast
+ */
+function extractPreviousBeatVisuals(
+  currentBeatIndex: number,
+  previousExpandedBeats: ExpandedBeat[]
+): string[] {
+  const descriptions: string[] = [];
+  const lookBack = Math.min(2, currentBeatIndex);
+  
+  for (let i = lookBack; i > 0; i--) {
+    const beatIndex = currentBeatIndex - i;
+    const beat = previousExpandedBeats[beatIndex];
+    if (!beat || !beat.visualCallouts || beat.visualCallouts.length === 0) continue;
+    
+    const calloutSummary = beat.visualCallouts
+      .map(c => `[${c.assetId}] ${c.context}`)
+      .join('; ');
+    descriptions.push(`Beat ${beatIndex + 1}: ${calloutSummary}`);
+  }
+  
+  return descriptions;
+}
+
 function buildNextBeatSummary(spine: Spine, currentBeatIndex: number): string {
   const nextIndex = currentBeatIndex + 1;
   
@@ -340,6 +368,16 @@ export function formatContextForPrompt(context: WritingContext): string {
   lines.push('');
   
   // Avoid repetition
+  // Previous visual context (for visual contrast at transitions)
+  if (context.previousBeatVisualDescriptions.length > 0) {
+    lines.push('=== PREVIOUS VISUAL CONTEXT (create visual CONTRAST) ===');
+    lines.push('The following visuals were used in recent beats. Write so the NEXT visual is DIFFERENT in scale, subject, or perspective:');
+    for (const desc of context.previousBeatVisualDescriptions) {
+      lines.push(`  ${desc}`);
+    }
+    lines.push('');
+  }
+  
   if (context.usedPhrases.length > 0) {
     lines.push('=== AVOID REPETITION ===');
     lines.push('DO NOT use these phrases (already used):');

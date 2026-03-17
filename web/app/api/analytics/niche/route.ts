@@ -71,11 +71,44 @@ export async function POST() {
   // we create a sync log and let the repeatable job pick it up,
   // OR we directly call the queue if available.
   try {
+    // Create a task row so the TopBar shows progress
+    const nicheSteps = [
+      { id: 'channel_profiling', name: 'Channel Profiling', phase: 'channel_profiling', order: 1, status: 'pending' },
+      { id: 'channel_crawling', name: 'Crawling Featured Channels', phase: 'channel_crawling', order: 2, status: 'pending' },
+      { id: 'keyword_search', name: 'Keyword Search', phase: 'keyword_search', order: 3, status: 'pending' },
+      { id: 'enrichment', name: 'Enriching Candidates', phase: 'enrichment', order: 4, status: 'pending' },
+      { id: 'snowball_expansion', name: 'Network Expansion', phase: 'snowball_expansion', order: 5, status: 'pending' },
+      { id: 'embedding_similarity', name: 'Computing Embeddings', phase: 'embedding_similarity', order: 6, status: 'pending' },
+      { id: 'ai_analysis', name: 'AI Similarity Analysis', phase: 'ai_analysis', order: 7, status: 'pending' },
+      { id: 'scoring', name: 'Multi-Signal Scoring', phase: 'scoring', order: 8, status: 'pending' },
+      { id: 'storing_results', name: 'Storing Results', phase: 'storing_results', order: 9, status: 'pending' },
+    ];
+
+    const { data: task } = await supabase
+      .from('tasks')
+      .insert({
+        user_id: user.id,
+        type: 'niche_discovery',
+        name: 'Niche Network Scan',
+        status: 'pending',
+        progress_percent: 0,
+        steps: nicheSteps,
+        input_data: {},
+        output_data: {},
+        retry_count: 0,
+        max_retries: 0,
+      })
+      .select('id')
+      .single();
+
     const { nicheDiscoveryQueue } = await import('@/lib/queues/queues');
-    await nicheDiscoveryQueue.add('manual-niche-discovery', {}, {
+    await nicheDiscoveryQueue.add('manual-niche-discovery', {
+      taskId: task?.id,
+      userId: user.id,
+    }, {
       jobId: `niche-manual-${user.id}-${Date.now()}`,
     });
-    return NextResponse.json({ message: 'Niche discovery scan triggered.' });
+    return NextResponse.json({ message: 'Niche discovery scan triggered.', taskId: task?.id });
   } catch (err) {
     console.error('Failed to trigger niche discovery:', err);
     return NextResponse.json({ error: 'Failed to trigger scan' }, { status: 500 });

@@ -9,14 +9,7 @@ import { create } from 'zustand';
 import type {
   PipelineDebuggerState,
   PipelineDebuggerActions,
-  PipelineRun,
-  PipelineStep,
   DebuggerMode,
-  Breakpoint,
-  BreakpointCondition,
-  PipelineSnapshot,
-  QualityScore,
-  PipelineAnnotation,
 } from '../types/pipeline-debugger';
 import { extractPipelineRun } from '../utils/pipeline-data-extractor';
 
@@ -50,7 +43,10 @@ export const usePipelineDebuggerStore = create<DebuggerStore>()((set, get) => ({
       const response = await fetch(`/api/videos/${videoId}`);
       if (!response.ok) throw new Error('Failed to load video');
       const data = await response.json();
-      const run = extractPipelineRun(data.video);
+      const run = extractPipelineRun(data.video, {
+        audioChunks: data.audioChunks,
+        linkedTasks: data.linkedTasks,
+      });
       set({ selectedRun: run, isLoadingRun: false });
     } catch (error) {
       console.error('[PipelineDebugger] Failed to load run:', error);

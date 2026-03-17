@@ -7,7 +7,6 @@
  * for a selected pipeline step. Core inspection interface.
  */
 
-import { useMemo } from "react";
 import type { StepData, StepMedia } from "../../types/pipeline-debugger";
 import { getStepConfig } from "../../utils/step-config";
 import { JsonTreeViewer } from "../shared/JsonTreeViewer";
@@ -122,7 +121,7 @@ export function StepInspectorPanel({
           <PromptTab prompts={step.prompts} />
         )}
         {activeTab === "logs" && (
-          <LogsTab errors={step.errors} />
+          <LogsTab errors={step.errors} logs={step.logs} />
         )}
         {activeTab === "timing" && (
           <TimingTab timing={step.timing} />
@@ -187,38 +186,98 @@ function PromptTab({ prompts }: { prompts: StepData["prompts"] }) {
   );
 }
 
-function LogsTab({ errors }: { errors: StepData["errors"] }) {
-  if (errors.length === 0) {
+function LogsTab({ errors, logs }: { errors: StepData["errors"]; logs: StepData["logs"] }) {
+  const hasLogs = logs.length > 0;
+  const hasErrors = errors.length > 0;
+
+  if (!hasLogs && !hasErrors) {
     return (
       <div className="text-neutral-500 text-sm italic">
-        No errors or logs recorded for this step.
+        No logs or errors recorded for this step.
       </div>
     );
   }
 
+  const levelStyles: Record<string, { bg: string; text: string; label: string }> = {
+    info: { bg: "bg-blue-950/20", text: "text-blue-400", label: "INFO" },
+    warning: { bg: "bg-amber-950/20", text: "text-amber-400", label: "WARN" },
+    error: { bg: "bg-red-950/20", text: "text-red-400", label: "ERR" },
+    debug: { bg: "bg-neutral-900/50", text: "text-neutral-500", label: "DBG" },
+  };
+
   return (
-    <div className="space-y-2">
-      {errors.map((error, i) => (
-        <div
-          key={i}
-          className="p-2 rounded bg-red-950/20 border border-red-900/30 text-sm"
-        >
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="w-3.5 h-3.5 text-red-400 mt-0.5 flex-shrink-0" />
-            <div>
-              <p className="text-red-300">{error.message}</p>
-              {error.code && (
-                <span className="text-[10px] text-red-500">Code: {error.code}</span>
-              )}
-              {error.stack && (
-                <pre className="mt-1 text-[10px] text-red-600 whitespace-pre-wrap max-h-24 overflow-y-auto">
-                  {error.stack}
-                </pre>
-              )}
-            </div>
-          </div>
+    <div className="space-y-3">
+      {/* Activity logs */}
+      {hasLogs && (
+        <div className="space-y-1.5">
+          <h4 className="text-[10px] uppercase text-neutral-500 font-semibold">
+            Activity Log ({logs.length})
+          </h4>
+          {logs.map((log, i) => {
+            const style = levelStyles[log.level] || levelStyles.debug;
+            return (
+              <div
+                key={i}
+                className={`p-2 rounded ${style.bg} border border-neutral-800/50 text-xs`}
+              >
+                <div className="flex items-start gap-2">
+                  <span className={`text-[9px] font-mono font-bold ${style.text} flex-shrink-0 mt-0.5`}>
+                    {style.label}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-neutral-300">{log.message}</span>
+                      <span className="text-[9px] text-neutral-600 flex-shrink-0">
+                        {log.phase}
+                      </span>
+                    </div>
+                    {log.timestamp && (
+                      <span className="text-[9px] text-neutral-600 block mt-0.5">
+                        {new Date(log.timestamp).toLocaleTimeString()}
+                      </span>
+                    )}
+                    {log.detail && (
+                      <pre className="mt-1 text-[10px] text-neutral-500 whitespace-pre-wrap max-h-24 overflow-y-auto">
+                        {log.detail}
+                      </pre>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
-      ))}
+      )}
+
+      {/* Errors */}
+      {hasErrors && (
+        <div className="space-y-1.5">
+          <h4 className="text-[10px] uppercase text-red-500 font-semibold">
+            Errors ({errors.length})
+          </h4>
+          {errors.map((error, i) => (
+            <div
+              key={i}
+              className="p-2 rounded bg-red-950/20 border border-red-900/30 text-sm"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-400 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-red-300">{error.message}</p>
+                  {error.code && (
+                    <span className="text-[10px] text-red-500">Code: {error.code}</span>
+                  )}
+                  {error.stack && (
+                    <pre className="mt-1 text-[10px] text-red-600 whitespace-pre-wrap max-h-24 overflow-y-auto">
+                      {error.stack}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -142,6 +142,15 @@ async function resetStepData(
           } else {
             result.resetFields.push('tasks (closed_loop cancelled)');
           }
+
+          // Release the GPU lock ONLY if it's held by THIS video
+          // (safe for concurrent videos — won't kill another video's lock)
+          const { releaseGpuLockForVideo } = await import('@/lib/queues/gpu-lock');
+          const released = await releaseGpuLockForVideo(userId, videoId);
+          if (released) {
+            console.log('[Reset Step 3] Released GPU lock for cancelled video');
+            result.resetFields.push('gpu_lock (released for this video)');
+          }
         } catch (taskError) {
           console.warn('[Reset Step 3] Task cleanup error:', taskError);
         }

@@ -1472,7 +1472,11 @@ CREATE TABLE IF NOT EXISTS "public"."niche_network_channels" (
     "last_discovered_at" timestamp with time zone DEFAULT "now"(),
     "last_synced_at" timestamp with time zone,
     "created_at" timestamp with time zone DEFAULT "now"(),
-    CONSTRAINT "niche_network_channels_discovery_method_check" CHECK (("discovery_method" = ANY (ARRAY['keyword_search'::"text", 'expansion'::"text", 'topic_match'::"text", 'manual'::"text"])))
+    "embedding_similarity" numeric(5,4),
+    "tag_overlap_score" numeric(5,4),
+    "similarity_reason" "text",
+    "shared_audience" "text",
+    CONSTRAINT "niche_network_channels_discovery_method_check" CHECK (("discovery_method" = ANY (ARRAY['keyword_search'::"text", 'expansion'::"text", 'topic_match'::"text", 'manual'::"text", 'featured_channel'::"text"])))
 );
 
 
@@ -1710,7 +1714,7 @@ CREATE TABLE IF NOT EXISTS "public"."tasks" (
     CONSTRAINT "tasks_current_phase_check" CHECK ((("current_phase" IS NULL) OR ("current_phase" = ANY (ARRAY['preprocessing'::"text", 'writing'::"text", 'postprocessing'::"text", 'audio_generation'::"text", 'audio_processing'::"text", 'image_generation'::"text", 'image_editing'::"text", 'video_generation'::"text", 'compositing'::"text", 'encoding'::"text", 'uploading'::"text", 'research'::"text", 'scoping'::"text", 'spine'::"text", 'assets'::"text", 'expansion'::"text", 'assembly'::"text"])))),
     CONSTRAINT "tasks_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
     CONSTRAINT "tasks_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'running'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"]))),
-    CONSTRAINT "tasks_type_check" CHECK (("type" = ANY (ARRAY['writing'::"text", 'writing_workflow'::"text", 'audio'::"text", 'video'::"text", 'export'::"text", 'outline'::"text", 'script_writing'::"text", 'av_script_part1'::"text", 'av_script_part2'::"text", 'edit_assembly'::"text", 'closed_loop'::"text"])))
+    CONSTRAINT "tasks_type_check" CHECK (("type" = ANY (ARRAY['writing'::"text", 'writing_workflow'::"text", 'audio'::"text", 'video'::"text", 'export'::"text", 'outline'::"text", 'script_writing'::"text", 'av_script_part1'::"text", 'av_script_part2'::"text", 'edit_assembly'::"text", 'closed_loop'::"text", 'niche_discovery'::"text"])))
 );
 
 

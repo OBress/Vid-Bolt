@@ -33,6 +33,8 @@ export type MediaIssueAction =
   | 'remove'
   | 'dismiss';
 
+export type MediaIssueTab = 'all' | 'errors' | 'warnings';
+
 export interface MediaIssue {
   /** Unique issue ID */
   id: string;
@@ -50,8 +52,10 @@ export interface MediaIssue {
   description: string;
   /** When this issue was created */
   createdAt: number;
-  /** Whether the user has dismissed this issue */
+  /** Whether the user has dismissed this issue (hidden entirely) */
   dismissed: boolean;
+  /** Whether the user has resolved this issue (stays visible, dimmed) */
+  resolved: boolean;
   /** Available actions for this issue */
   availableActions: MediaIssueAction[];
 }
@@ -65,17 +69,29 @@ interface MediaIssuesState {
   issues: MediaIssue[];
   /** Whether the panel is open */
   isPanelOpen: boolean;
+  /** Active severity tab filter */
+  activeTab: MediaIssueTab;
+  /** Clip ID currently highlighted in the timeline (for navigate-to-clip) */
+  highlightedClipId: string | null;
+  /** Callback registered by the Timeline component to scroll the viewport */
+  scrollToTimeCallback: ((time: number, center?: boolean) => void) | null;
+  /** Callback registered by TimelineSection to seek the Remotion player */
+  seekToFrameCallback: ((frame: number) => void) | null;
 }
 
 interface MediaIssuesActions {
   /** Add a new issue */
-  addIssue: (issue: Omit<MediaIssue, 'id' | 'createdAt' | 'dismissed'>) => string;
+  addIssue: (issue: Omit<MediaIssue, 'id' | 'createdAt' | 'dismissed' | 'resolved'>) => string;
   /** Add multiple issues at once (from EDL import) */
-  addIssues: (issues: Array<Omit<MediaIssue, 'id' | 'createdAt' | 'dismissed'>>) => void;
+  addIssues: (issues: Array<Omit<MediaIssue, 'id' | 'createdAt' | 'dismissed' | 'resolved'>>) => void;
   /** Remove an issue */
   removeIssue: (id: string) => void;
   /** Dismiss an issue (hides it but keeps record) */
   dismissIssue: (id: string) => void;
+  /** Mark an issue as resolved (stays visible, dimmed with checkmark) */
+  resolveIssue: (id: string) => void;
+  /** Unmark a resolved issue */
+  unresolveIssue: (id: string) => void;
   /** Clear all issues */
   clearAll: () => void;
   /** Set the clip ID for an issue (after timeline import) */
@@ -84,6 +100,14 @@ interface MediaIssuesActions {
   togglePanel: () => void;
   /** Set panel visibility */
   setPanelOpen: (open: boolean) => void;
+  /** Set the active severity tab */
+  setActiveTab: (tab: MediaIssueTab) => void;
+  /** Set highlighted clip ID (for timeline navigation) */
+  setHighlightedClipId: (clipId: string | null) => void;
+  /** Register the timeline's scrollToTime function */
+  registerScrollToTime: (fn: ((time: number, center?: boolean) => void) | null) => void;
+  /** Register the video player seekTo function */
+  registerSeekToFrame: (fn: ((frame: number) => void) | null) => void;
 
   // === DERIVED ===
   /** Get active (non-dismissed) issues */
@@ -112,6 +136,10 @@ export const useMediaIssuesStore = create<MediaIssuesStore>((set, get) => ({
   // State
   issues: [],
   isPanelOpen: false,
+  activeTab: 'all',
+  highlightedClipId: null,
+  scrollToTimeCallback: null,
+  seekToFrameCallback: null,
 
   // Actions
   addIssue: (issue) => {
@@ -121,6 +149,7 @@ export const useMediaIssuesStore = create<MediaIssuesStore>((set, get) => ({
       id,
       createdAt: Date.now(),
       dismissed: false,
+      resolved: false,
     };
     set((state) => ({ issues: [...state.issues, newIssue] }));
     return id;
@@ -132,6 +161,7 @@ export const useMediaIssuesStore = create<MediaIssuesStore>((set, get) => ({
       id: generateIssueId(),
       createdAt: Date.now(),
       dismissed: false,
+      resolved: false,
     }));
     set((state) => ({ issues: [...state.issues, ...newIssues] }));
   },
@@ -144,6 +174,22 @@ export const useMediaIssuesStore = create<MediaIssuesStore>((set, get) => ({
     set((state) => ({
       issues: state.issues.map((i) =>
         i.id === id ? { ...i, dismissed: true } : i
+      ),
+    }));
+  },
+
+  resolveIssue: (id) => {
+    set((state) => ({
+      issues: state.issues.map((i) =>
+        i.id === id ? { ...i, resolved: true } : i
+      ),
+    }));
+  },
+
+  unresolveIssue: (id) => {
+    set((state) => ({
+      issues: state.issues.map((i) =>
+        i.id === id ? { ...i, resolved: false } : i
       ),
     }));
   },
@@ -166,6 +212,22 @@ export const useMediaIssuesStore = create<MediaIssuesStore>((set, get) => ({
 
   setPanelOpen: (open) => {
     set({ isPanelOpen: open });
+  },
+
+  setActiveTab: (tab) => {
+    set({ activeTab: tab });
+  },
+
+  setHighlightedClipId: (clipId) => {
+    set({ highlightedClipId: clipId });
+  },
+
+  registerScrollToTime: (fn) => {
+    set({ scrollToTimeCallback: fn });
+  },
+
+  registerSeekToFrame: (fn) => {
+    set({ seekToFrameCallback: fn });
   },
 
   // Derived
@@ -201,6 +263,18 @@ export const selectActiveIssues = (s: MediaIssuesState) =>
 export const selectActiveCount = (s: MediaIssuesState) =>
   s.issues.filter((i) => !i.dismissed).length;
 
+/** Count of active error-severity issues */
+export const selectErrorCount = (s: MediaIssuesState) =>
+  s.issues.filter((i) => !i.dismissed && i.severity === 'error').length;
+
+/** Count of active warning-severity issues */
+export const selectWarningCount = (s: MediaIssuesState) =>
+  s.issues.filter((i) => !i.dismissed && i.severity === 'warning').length;
+
 /** Whether a specific clip has active issues — primitive return */
 export const selectClipHasIssues = (clipId: string) => (s: MediaIssuesState) =>
   s.issues.some((i) => i.clipId === clipId && !i.dismissed);
+
+/** Currently highlighted clip ID for timeline navigation */
+export const selectHighlightedClipId = (s: MediaIssuesState) =>
+  s.highlightedClipId;

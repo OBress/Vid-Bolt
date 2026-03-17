@@ -3,6 +3,8 @@
 import { generateSpeech } from "@/lib/services/inworld-tts";
 import { uploadAudioBuffer, generateTtsKey } from "@/lib/services/r2-storage";
 import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 
 // Helper to get service role Supabase client (for server actions)
@@ -34,6 +36,24 @@ export async function regenerateAudioClip(
   currentDuration: number
 ): Promise<RegenerateAudioResult> {
   try {
+    // Authenticate the actual caller
+    const cookieStore = await cookies();
+    const supabaseAuth = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+        },
+      }
+    );
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    if (authError || !user || user.id !== userId) {
+      return { success: false, error: "Unauthorized" };
+    }
+
     const supabase = getServiceClient();
 
     // 1. Get Video and linked Task ID

@@ -7,6 +7,7 @@
  */
 
 import { generateJSON } from '@/lib/ai/openrouter';
+import type { WordTimestamp } from '@/types/task';
 
 // ============================================================================
 // TYPES
@@ -24,6 +25,8 @@ export interface ShotData {
   character_refs?: string[];
   location_refs?: string[];
   object_refs?: string[];
+  /** Word-level timestamps for pacing, SFX timing, and visual sync */
+  word_timestamps?: WordTimestamp[];
 }
 
 export interface PreviousShotContext {
@@ -43,6 +46,10 @@ export interface CharacterRef {
   id: string;
   name: string;
   role: string;
+  /** Brief appearance description for visual consistency */
+  appearance?: string;
+  /** Default outfit description */
+  wardrobe?: string;
   referenceImageUrl?: string;
 }
 
@@ -50,6 +57,10 @@ export interface LocationRef {
   id: string;
   name: string;
   essence: string;
+  /** Location type (interior, exterior, etc.) */
+  type?: string;
+  /** Lighting/mood description */
+  lighting?: string;
   referenceImageUrl?: string;
 }
 
@@ -57,6 +68,8 @@ export interface ObjectRef {
   id: string;
   name: string;
   type: string;
+  /** Brief visual description */
+  description?: string;
   referenceImageUrl?: string;
 }
 
@@ -83,6 +96,9 @@ export interface AgentContext {
   // Narrative context
   previousShots: PreviousShotContext[];
   nextShots: UpcomingShotContext[];
+  
+  // Word-level timing for pacing and SFX
+  wordTimestamps?: WordTimestamp[];
   
   // Entity context
   characters: CharacterRef[];
@@ -124,7 +140,9 @@ export interface VideoCreationOutput {
   camera_motion: 'pushes' | 'tracks' | 'pans' | 'static' | 'follows' | 'dollys' | 'handheld' | 'tilts' | 'circles';
   motion_intensity: 'subtle' | 'moderate' | 'dynamic';
   loop_compatible: boolean;
-  audio_description?: string;  // LTX-2 supports audio description
+  audio_description?: string;
+  spatial_blocking?: string;   // Scene blocking: subject positions, facing directions
+  texture_notes?: string;      // Material/texture details emphasized in prompt
 }
 
 export interface MotionGraphicPromptOutput {
@@ -227,6 +245,7 @@ export function buildAgentContext(
     totalShots: allShots.length,
     previousShots,
     nextShots,
+    wordTimestamps: shot.word_timestamps,
     characters,
     locations,
     objects,
@@ -364,22 +383,44 @@ Return valid JSON:
   "mask_description": null
 }`;
 
-const VIDEO_CREATION_SYSTEM_PROMPT = `You are a cinematographer directing AI-generated video sequences for LTX-2.
+const VIDEO_CREATION_SYSTEM_PROMPT = `You are a cinematographer directing AI-generated video sequences for LTX-2.3.
 
-## MODEL CHARACTERISTICS (LTX-2)
-- Story-driven prompts work best - describe action as a natural sequence
-- Write 4-8 descriptive sentences in a single flowing paragraph
-- Use present tense verbs for movement and action
-- Include camera language, character details, and atmosphere
+## MODEL CHARACTERISTICS (LTX-2.3)
+LTX-2.3 has a 4× larger text encoder than previous versions. It interprets complex, layered prompts with high fidelity.
+- **Specificity wins** — detailed prompts with multiple subjects, spatial relationships, and stylistic constraints produce the best results
+- Write rich, detailed paragraphs — longer prompts consistently yield better output, especially for longer clips
+- Use present tense verbs for ALL motion — motion is driven by verbs
+- The model holds structure under complexity: you can layer multiple actions, combine environments with character performance, and direct camera movement alongside subject motion
 
-## KEY ASPECTS TO INCLUDE
+## PROMPT STRUCTURE (Required)
 
-1. **Establish the shot** - Use cinematography terms: close-up, medium shot, wide shot, over-the-shoulder
-2. **Set the scene** - Lighting conditions, color palette, textures, atmosphere
-3. **Describe the action** - Write as natural sequence from beginning to end
-4. **Define characters** (if any) - Age, clothing, emotions through physical cues
-5. **Specify camera movement** - When view shifts and how: "camera slowly pans right", "dolly back"
-6. **Describe ambient audio** - "soft ambient noise", "distant traffic", "wind through trees"
+1. **Establish the shot** — Use cinematography terms: close-up, medium shot, wide shot, over-the-shoulder
+2. **Set the scene** — Lighting conditions, color palette, atmosphere, textures, and environmental wear
+3. **Block the scene** — Be explicit about spatial layout:
+   - Left vs right positioning
+   - Foreground vs background placement
+   - Facing toward vs away from camera
+   - Distance between subjects
+4. **Describe texture and material** — The rebuilt VAE produces sharper detail:
+   - Fabric types (linen, wool, leather, silk)
+   - Hair texture (fine curly strands, slicked-back, wind-blown)
+   - Surface finish (brushed metal, weathered wood, frosted glass)
+   - Environmental wear (rust, cracks, peeling paint, moss)
+   - Edge detail and fine elements visible in backlight
+5. **Describe the action with verbs** — Specify WHO moves, WHAT moves, HOW they move, and what the CAMERA does:
+   - ✗ Avoid: "The scene comes alive"
+   - ✓ Use: "The camera slowly pushes forward as the subject turns their head and begins walking toward the street. Cars pass."
+6. **Specify camera movement** — When view shifts and how: "camera slowly pans right", "dolly back", "tracks left alongside subject"
+7. **Design audio intentionally** — The upgraded vocoder produces cleaner, more aligned audio:
+   - Describe environmental audio (rain on glass, wind through trees, distant traffic)
+   - Specify tone and intensity (low rumbling bass, sharp metallic alarm)
+   - Note dialogue clarity if speech is present
+
+## ANTI-STATIC RULE (CRITICAL)
+If your prompt reads like a still photo description, the output WILL behave like one.
+- ✗ "A dramatic portrait of a man standing" → static, frozen output
+- ✓ "A man stands on a windy rooftop. His coat flaps in the wind. He adjusts his collar and steps forward as the camera tracks right." → dynamic, living output
+Action verbs reduce static outputs. ALWAYS include motion, even if subtle (breathing, wind, light shifting, particles drifting).
 
 ## CAMERA LANGUAGE VOCABULARY
 - Movement: follows, tracks, pans across, circles around, tilts upward, pushes in, pulls back, dollys, cranes, crash zoom, whip pan, rack focus, snap to
@@ -399,39 +440,43 @@ Every video clip must have **clear, intentional camera movement** that serves th
 - Low energy (emotional weight, reflection): SUBTLE — gentle drift, barely perceptible zoom, stillness with atmosphere
 - Default to MODERATE when unsure — it's the most versatile
 
-## TECHNICAL STYLE MARKERS
-- Film characteristics: film grain, lens flares, shallow depth of field
-- Pacing: slow motion, lingering shot, dynamic movement
-- Atmosphere: fog, rain, dust particles, smoke, bokeh
+## NATIVE PORTRAIT SUPPORT
+LTX-2.3 supports native vertical video (up to 1080×1920), trained on vertical data.
+- When generating portrait (9:16) content, compose for vertical INTENTIONALLY
+- Don't treat vertical as cropped landscape — frame subjects, action, and camera movement for the tall frame
+- Vertical framing favors close-ups, vertical movement (tilts), and subjects stacked in foreground/background
+
+## COMPLEX SHOT DESIGN
+LTX-2.3 rewards ambitious, directed scenes. You CAN:
+- Layer multiple actions within a single shot (subject walks while background traffic passes and camera tracks)
+- Combine detailed environments with character performance
+- Introduce precise stylistic constraints (color grade, film stock, lens characteristics)
+- Direct camera movement alongside subject motion simultaneously
+- Maintain spatial logic across complex compositions with multiple subjects
 
 ## THEMATIC CONTINUITY
 - Reference the visual style of previous shots — lighting, color temperature, and mood should carry across shots
 - Motion should serve the narrative, not just look interesting. Every camera movement must have a reason.
 - If the previous shot was warm and golden, don't suddenly switch to cold blue unless the narrative demands it.
 
-## WHAT WORKS WELL
-- Single flowing paragraph describing entire motion sequence
-- Clear beginning → middle → end structure
-- Camera movement described relative to subject
-- Ambient details that add immersion (wind, light shifts, particles)
-
-## WHAT TO AVOID
-- Changing the subject from the input keyframe
-- Sudden jerky movements that break immersion
-- Defaulting to static when there's no reason for stillness
-- Adding new elements not in the starting frame
+## TECHNICAL STYLE MARKERS
+- Film characteristics: film grain, lens flares, shallow depth of field
+- Pacing: slow motion, lingering shot, dynamic movement
+- Atmosphere: fog, rain, dust particles, smoke, bokeh
 
 ## EXAMPLE PROMPT
-"The camera opens on a medium shot of the investigator standing at his desk, papers scattered before him. Soft golden afternoon light streams through venetian blinds, casting striped shadows across his weathered face. He slowly raises his head, eyes narrowing as realization dawns. The camera pushes in gently, framing his face in close-up as dust particles drift through the light beams. His hand reaches deliberately toward a photograph on the desk. Ambient office sounds—distant typing, a clock ticking—fill the silence."
+"A woman in her 30s sits by the window of a small Parisian café. Rain runs down the glass behind her, each droplet catching warm tungsten interior light. She wears a soft cream wool sweater, slightly oversized, with visible knit texture at the cuffs. She slowly stirs her coffee with her right hand while glancing at her phone held in her left. The camera pushes in from a medium shot to a close-up, the background softening into warm bokeh of blurred café patrons and amber pendant lights. Fine strands of her dark hair fall across her forehead. A quiet murmur of café conversation and the gentle clink of porcelain fill the space."
 
 ## OUTPUT FORMAT
 Return valid JSON:
 {
-  "motion_prompt": "4-8 sentences in a single flowing paragraph...",
-  "camera_motion": "pushes" | "tracks" | "pans" | "static" | "follows" | "dollys" | "handheld",
+  "motion_prompt": "Rich, detailed paragraph with specific subjects, spatial blocking, textures, verb-driven action, and camera movement...",
+  "camera_motion": "pushes" | "tracks" | "pans" | "static" | "follows" | "dollys" | "handheld" | "tilts" | "circles",
   "motion_intensity": "subtle" | "moderate" | "dynamic",
   "loop_compatible": false,
-  "audio_description": "soft ambient description of sound"
+  "audio_description": "Specific environmental audio with tone and intensity",
+  "spatial_blocking": "Brief scene blocking: subject positions, facing directions, foreground/background layout",
+  "texture_notes": "Key textures and materials emphasized in the prompt"
 }`;
 
 const MOTION_GRAPHIC_PROMPT_SYSTEM_PROMPT = `You are a motion graphics director designing COMPOSITIONS for documentary visuals.
@@ -636,6 +681,7 @@ function formatContextForAgent(context: AgentContext): string {
   // Video context
   parts.push(`## VIDEO CONTEXT
 Title: "${context.videoTitle}"
+Summary: ${context.videoSummary || 'N/A'}
 Style: ${context.visualStyle}
 Aspect Ratio: ${context.aspectRatio}`);
   
@@ -646,12 +692,27 @@ Content Type: ${context.currentShot.content_type}
 Script: "${context.currentShot.text}"
 Summary: "${context.currentShot.summary || 'N/A'}"`);
   
+  // Word-level timing — RELATIVE to shot start (0s = shot begins)
+  // Agents need timing within their shot, not absolute video position
+  if (context.wordTimestamps && context.wordTimestamps.length > 0) {
+    const shotStart = context.currentShot.start_seconds;
+    const timingPairs = context.wordTimestamps.map(w => 
+      `"${w.word}" @${(w.start_seconds - shotStart).toFixed(2)}s`
+    );
+    parts.push(`## WORD TIMING (relative to shot start, 0s = shot begins)
+${timingPairs.join(', ')}`);
+  }
+  
   // Previous shots
   if (context.previousShots.length > 0) {
     parts.push(`## PREVIOUS SHOTS (for continuity)
-${context.previousShots.map(s => 
-  `Shot ${s.segment_index + 1} [${s.media_type}]: "${s.summary}"`
-).join('\n')}`);
+${context.previousShots.map(s => {
+  let line = `Shot ${s.segment_index + 1} [${s.media_type}]: "${s.summary}"`;
+  if (s.visual_prompt) {
+    line += `\n  → Visual prompt used: "${s.visual_prompt.substring(0, 200)}..."`;
+  }
+  return line;
+}).join('\n')}`);
   }
   
   // Upcoming shots
@@ -662,17 +723,31 @@ ${context.nextShots.map(s =>
 ).join('\n')}`);
   }
   
-  // Entities
+  // Entities (Fix 7: include descriptions for visual consistency)
   if (context.characters.length > 0 || context.locations.length > 0 || context.objects.length > 0) {
     const entityLines: string[] = [];
     if (context.characters.length > 0) {
-      entityLines.push(`Characters: ${context.characters.map(c => `${c.name} (${c.role})`).join(', ')}`);
+      entityLines.push(`Characters:\n${context.characters.map(c => {
+        let desc = `  - ${c.name} (${c.role})`;
+        if (c.appearance) desc += `\n    Appearance: ${c.appearance}`;
+        if (c.wardrobe) desc += `\n    Wardrobe: ${c.wardrobe}`;
+        return desc;
+      }).join('\n')}`);
     }
     if (context.locations.length > 0) {
-      entityLines.push(`Locations: ${context.locations.map(l => `${l.name}`).join(', ')}`);
+      entityLines.push(`Locations:\n${context.locations.map(l => {
+        let desc = `  - ${l.name}: ${l.essence}`;
+        if (l.type) desc += ` (${l.type})`;
+        if (l.lighting) desc += `\n    Lighting: ${l.lighting}`;
+        return desc;
+      }).join('\n')}`);
     }
     if (context.objects.length > 0) {
-      entityLines.push(`Objects: ${context.objects.map(o => `${o.name}`).join(', ')}`);
+      entityLines.push(`Objects:\n${context.objects.map(o => {
+        let desc = `  - ${o.name} (${o.type})`;
+        if (o.description) desc += `: ${o.description}`;
+        return desc;
+      }).join('\n')}`);
     }
     parts.push(`## ENTITIES IN THIS SHOT
 ${entityLines.join('\n')}`);
@@ -741,7 +816,8 @@ async function invokeImageGenerationAgent(
   const result = await generateJSON<ImageGenerationOutput>(
     userId,
     IMAGE_GENERATION_SYSTEM_PROMPT,
-    `Generate an image prompt for this shot:\n\n${formattedContext}`
+    `Generate an image prompt for this shot:\n\n${formattedContext}`,
+    { maxTokens: 2048 }
   );
   
   return result;
@@ -757,7 +833,8 @@ async function invokeImageEditingAgent(
   const result = await generateJSON<ImageEditOutput>(
     userId,
     IMAGE_EDITING_SYSTEM_PROMPT,
-    `Edit this image: ${inputImageUrl}\n\nContext:\n${formattedContext}`
+    `Edit this image: ${inputImageUrl}\n\nContext:\n${formattedContext}`,
+    { maxTokens: 2048 }
   );
   
   return result;
@@ -773,7 +850,8 @@ async function invokeVideoCreationAgent(
   const result = await generateJSON<VideoCreationOutput>(
     userId,
     VIDEO_CREATION_SYSTEM_PROMPT,
-    `Create motion for this keyframe: ${inputImageUrl}\n\nContext:\n${formattedContext}`
+    `Create motion for this keyframe: ${inputImageUrl}\n\nContext:\n${formattedContext}`,
+    { maxTokens: 2048 }
   );
   
   return result;
@@ -788,7 +866,8 @@ async function invokeMotionGraphicPromptAgent(
   const result = await generateJSON<MotionGraphicPromptOutput>(
     userId,
     MOTION_GRAPHIC_PROMPT_SYSTEM_PROMPT,
-    `Design a motion graphic composition:\n\n${formattedContext}`
+    `Design a motion graphic composition:\n\n${formattedContext}`,
+    { maxTokens: 4096 }
   );
   
   return result;
@@ -805,7 +884,8 @@ async function invokeRemotionCodeAgent(
   const result = await generateJSON<RemotionCodeOutput>(
     userId,
     REMOTION_CODE_SYSTEM_PROMPT,
-    `Convert this composition spec to Remotion code:\n\n${JSON.stringify(compositionSpec, null, 2)}`
+    `Convert this composition spec to Remotion code:\n\n${JSON.stringify(compositionSpec, null, 2)}`,
+    { maxTokens: 16384 }
   );
   
   // Log the generated code for debugging

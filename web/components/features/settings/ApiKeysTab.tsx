@@ -74,9 +74,9 @@ export function ApiKeysTab() {
     ip: vmIp,
     isLoading: gcpLoading,
     isConnected,
-    apiReady,
+    apiReady: _apiReady,
     projectId,
-    gcpToken,
+    gcpToken: _gcpToken,
     displayStatus,
     statusColor,
     logs,
@@ -98,7 +98,7 @@ export function ApiKeysTab() {
   const [ytVerified, setYtVerified] = useState(false);
   const [ytConnected, setYtConnected] = useState(false);
   const [ytVerifying, setYtVerifying] = useState(false);
-  const [ytSaving, setYtSaving] = useState(false);
+  const [_ytSaving, setYtSaving] = useState(false);
   const [ytGuideOpen, setYtGuideOpen] = useState(false);
   const [ytVerifyResults, setYtVerifyResults] = useState<{
     credentials: { valid: boolean; error?: string };
@@ -302,7 +302,7 @@ export function ApiKeysTab() {
   };
 
   // Save YouTube OAuth credentials
-  const handleSaveYouTubeCredentials = async () => {
+  const _handleSaveYouTubeCredentials = async () => {
     if (!userId || !ytClientId || !ytClientSecret) {
       toast.error("Please enter both Client ID and Client Secret");
       return;

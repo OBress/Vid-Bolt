@@ -470,10 +470,23 @@ async function startWorkers(): Promise<void> {
       }
     });
     
-    worker.on('failed', (job: { id?: string; attemptsMade?: number; opts?: { attempts?: number } } | undefined, err: Error) => {
+    worker.on('failed', async (job: { id?: string; attemptsMade?: number; opts?: { attempts?: number }; data?: any } | undefined, err: Error) => {
       console.error(`[${config.queue}] Job ${job?.id} failed: ${err.message}`);
       if (job?.attemptsMade !== undefined && job?.opts?.attempts !== undefined) {
         console.error(`[${config.queue}]   -> Attempts: ${job.attemptsMade}/${job.opts.attempts}`);
+      }
+      // Release GPU lock if this is a GPU worker that might hold it
+      // Use releaseGpuLockForVideo to be safe for concurrent videos
+      if (['video-gen', 'image-gen'].includes(config.queue) && job?.data?.userId && job?.data?.videoId) {
+        try {
+          const { releaseGpuLockForVideo } = await import('@/lib/queues/gpu-lock');
+          const released = await releaseGpuLockForVideo(job.data.userId, job.data.videoId);
+          if (released) {
+            console.log(`[${config.queue}] Released GPU lock for failed job's video`);
+          }
+        } catch (lockErr) {
+          console.warn(`[${config.queue}] Failed to release GPU lock:`, lockErr);
+        }
       }
     });
     
@@ -481,8 +494,18 @@ async function startWorkers(): Promise<void> {
       console.error(`[${config.queue}] Worker error:`, err.message);
     });
     
-    worker.on('stalled', (jobId: string) => {
+    worker.on('stalled', async (jobId: string) => {
       console.warn(`[${config.queue}] Job ${jobId} stalled`);
+      // Release GPU lock on stalled GPU jobs to prevent orphaned locks
+      if (['video-gen', 'image-gen'].includes(config.queue)) {
+        try {
+          // We don't have the job data here, but we can log the warning
+          // The lock will be released by the failed handler when the job eventually fails
+          console.warn(`[${config.queue}] GPU worker stalled — lock will be released on failure`);
+        } catch (lockErr) {
+          console.warn(`[${config.queue}] Stalled lock cleanup error:`, lockErr);
+        }
+      }
     });
     
     workers.push(worker);
@@ -547,11 +570,128 @@ process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 
 // ============================================================================
+// STALE TASK CLEANUP
+// ============================================================================
+
+/**
+ * Clean up orphaned tasks that are stuck in 'running' status.
+ * This happens when workers crash/restart — the BullMQ job dies but the
+ * Supabase task row still says status='running'. Without cleanup, the UI
+ * shows ghost tasks forever.
+ * 
+ * Strategy: On startup, mark ALL 'running' tasks as 'failed' in Supabase,
+ * AND drain stale BullMQ jobs from Redis pipeline queues. This is safe
+ * because no workers are processing yet when this runs — any job still
+ * in Redis is definitively orphaned from the previous worker process.
+ */
+
+// Pipeline queues that may contain stale jobs from a crashed orchestrator run.
+// Excludes scheduled/repeatable queues (gpu-shutdown-check, data-retention, analytics, etc.)
+// which should persist across restarts.
+const STALE_CLEANUP_QUEUES = [
+  'orchestrator',
+  'audio-workflow',
+  'shot-planner',
+  'asset-scout',
+  'image-gen',
+  'video-gen',
+  'verifier',
+  'image-edit',
+];
+
+async function cleanupStaleTasks(): Promise<void> {
+  try {
+    const { getSupabaseServiceClient } = await import('./shared');
+    const supabase = getSupabaseServiceClient();
+    
+    // Find ALL tasks stuck in 'running' — on fresh boot, none can be legitimate
+    const { data: staleTasks, error: fetchError } = await supabase
+      .from('tasks')
+      .select('id, current_step, updated_at')
+      .in('status', ['running', 'pending']);
+    
+    if (fetchError) {
+      console.warn('[WorkerBootstrap] Failed to check for stale tasks:', fetchError.message);
+      return;
+    }
+    
+    if (!staleTasks || staleTasks.length === 0) {
+      console.log('[WorkerBootstrap] No stale tasks found');
+    } else {
+      console.log(`[WorkerBootstrap] Found ${staleTasks.length} stale task(s) — marking as failed`);
+    
+      for (const task of staleTasks) {
+        const { error: updateError } = await supabase
+          .from('tasks')
+          .update({
+            status: 'failed',
+            error_message: 'Task was interrupted by a worker restart. Please retry.',
+            current_step: `Failed (was: ${task.current_step || 'unknown'})`,
+          })
+          .eq('id', task.id);
+        
+        if (updateError) {
+          console.warn(`[WorkerBootstrap] Failed to clean up task ${task.id}:`, updateError.message);
+        } else {
+          console.log(`[WorkerBootstrap] Cleaned up stale task ${task.id} (last step: ${task.current_step})`);
+        }
+      }
+    }
+
+    // Drain stale BullMQ jobs from pipeline queues.
+    // On fresh boot, no workers are running, so any active/waiting jobs are orphaned
+    // from the previous worker process and must be removed to prevent resurrection.
+    const { Queue } = await import('bullmq');
+    const connection = getRedisConnection();
+    let totalRemoved = 0;
+
+    for (const queueName of STALE_CLEANUP_QUEUES) {
+      try {
+        const queue = new Queue(queueName, { connection });
+        const staleJobs = await queue.getJobs(['active', 'waiting', 'delayed']);
+        let queueRemoved = 0;
+
+        for (const job of staleJobs) {
+          if (!job) continue;
+          try {
+            await job.remove();
+            queueRemoved++;
+          } catch {
+            // Job already removed or in a state that can't be removed — skip
+          }
+        }
+
+        if (queueRemoved > 0) {
+          console.log(`[WorkerBootstrap] Drained ${queueRemoved} stale job(s) from ${queueName}`);
+          totalRemoved += queueRemoved;
+        }
+
+        await queue.close();
+      } catch (queueErr) {
+        console.warn(`[WorkerBootstrap] Failed to drain queue ${queueName}:`, queueErr);
+      }
+    }
+
+    if (totalRemoved > 0) {
+      console.log(`[WorkerBootstrap] Redis cleanup complete: removed ${totalRemoved} stale job(s) total`);
+    } else {
+      console.log('[WorkerBootstrap] No stale Redis jobs found');
+    }
+  } catch (err) {
+    // Non-blocking: stale task cleanup should never prevent workers from starting
+    console.warn('[WorkerBootstrap] Stale task cleanup error:', err);
+  }
+}
+
+// ============================================================================
 // MAIN ENTRY POINT
 // ============================================================================
 
 async function main(): Promise<void> {
   try {
+    // Clean up any tasks orphaned by previous worker crash/restart
+    await cleanupStaleTasks();
+    
     await startWorkers();
     
     // Keep the process running

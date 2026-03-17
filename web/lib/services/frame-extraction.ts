@@ -2,13 +2,13 @@
  * Frame Extraction Utility
  * ============================================================================
  * Extracts the last frame from a generated video for use as a conditioning
- * anchor in FF2V (First-Frame-to-Video) synthesis mode with LTX-2.
+ * anchor in FF2V (First-Frame-to-Video) synthesis mode with LTX-2.3.
  *
  * Flow:
  *   1. Download video from R2 URL to a temp buffer
  *   2. Use FFmpeg to extract the last frame as JPEG
  *   3. Upload the frame to R2
- *   4. Return the R2 URL for use as `start_frame_url` in LTX-2
+ *   4. Return the R2 URL for use as `start_frame_url` in LTX-2.3
  *
  * This is a prerequisite for sequential shot generation where temporal
  * continuity between shots is needed (FF2V mode).
@@ -114,7 +114,7 @@ export async function extractLastFrame(
     console.error(`${LOG_PREFIX} Frame extraction failed for shot ${shotIndex}:`, error);
 
     // Fallback: return the video URL itself
-    // The LTX-2 API can sometimes accept a video URL as the start_frame reference
+    // The LTX-2.3 API can sometimes accept a video URL as the start_frame reference
     console.warn(`${LOG_PREFIX} Falling back to source video URL for FF2V conditioning`);
     return {
       frameUrl: videoUrl,
@@ -128,99 +128,13 @@ export async function extractLastFrame(
 // ============================================================================
 // STATIC VIDEO DETECTION (SSIM)
 // ============================================================================
+// STATIC VIDEO DETECTION — REMOVED
+// ============================================================================
+// The SSIM-based static video detection system has been removed.
+// The GPU API endpoint (/api/frame-similarity) was never deployed, and
+// the VLM-based verifier already catches genuinely bad/static media.
+// See implementation_plan.md C1 for context.
 
-export interface StaticVideoCheckResult {
-  /** SSIM score between first and last frames (0-1, higher = more similar) */
-  ssim: number;
-  /** Whether the video is considered essentially static */
-  isStatic: boolean;
-  /** URL of the extracted first frame */
-  firstFrameUrl?: string;
-  /** URL of the extracted last frame */
-  lastFrameUrl?: string;
-}
-
-/** SSIM threshold above which a video is considered essentially static */
-const STATIC_SSIM_THRESHOLD = 0.98;
-
-/**
- * Check if a generated video is essentially static by comparing its
- * first and last frames via SSIM.
- *
- * This catches a known LTX-2 failure mode where videos render as still
- * images with no meaningful motion. A programmatic check is more reliable
- * than VLM assessment for this specific issue.
- *
- * @param videoUrl - R2 URL of the generated video
- * @param videoId - Project ID for R2 path organization
- * @param shotIndex - Shot index for naming
- */
-export async function checkStaticVideo(
-  videoUrl: string,
-  videoId: string,
-  shotIndex: number
-): Promise<StaticVideoCheckResult> {
-  const LOG_PREFIX = '[StaticCheck]';
-
-  // DISABLED: The /api/frame-similarity endpoint does not exist on the GPU VM.
-  // Every call was burning ~30s of timeout per shot before returning a 404.
-  // Re-enable once the endpoint is deployed on the GPU server.
-  console.log(`${LOG_PREFIX} Shot ${shotIndex}: SSIM check disabled (endpoint not deployed)`);
-  return { ssim: 0, isStatic: false };
-
-  const gpuApiUrl = await fetchDynamicGpuApiUrl();
-
-  if (!gpuApiUrl || gpuApiUrl === 'http://localhost:8000') {
-    console.warn(`${LOG_PREFIX} No GPU VM available — skipping static video check`);
-    return { ssim: 0, isStatic: false };
-  }
-
-  try {
-    const response = await fetch(`${gpuApiUrl}/api/frame-similarity`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.GPU_API_SECRET || ''}`,
-      },
-      body: JSON.stringify({
-        video_url: videoUrl,
-        output_format: 'jpeg',
-        quality: 85,
-        upload: {
-          bucket: process.env.R2_BUCKET_NAME || 'vid-bolt-media',
-          key_prefix: `projects/${videoId}/ssim/shot-${shotIndex}`,
-        },
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Frame similarity API error: ${response.status} — ${errText.substring(0, 200)}`);
-    }
-
-    const result = await response.json();
-    const ssim = typeof result.ssim === 'number' ? result.ssim : 0;
-    const isStatic = ssim > STATIC_SSIM_THRESHOLD;
-
-    if (isStatic) {
-      console.warn(`${LOG_PREFIX} Shot ${shotIndex}: STATIC VIDEO DETECTED (SSIM=${ssim.toFixed(4)})`);
-    } else {
-      console.log(`${LOG_PREFIX} Shot ${shotIndex}: Motion check passed (SSIM=${ssim.toFixed(4)})`);
-    }
-
-    return {
-      ssim,
-      isStatic,
-      firstFrameUrl: result.first_frame_url,
-      lastFrameUrl: result.last_frame_url,
-    };
-  } catch (error) {
-    // Non-blocking: if SSIM check fails, proceed to VLM verification
-    console.warn(`${LOG_PREFIX} Shot ${shotIndex}: SSIM check failed, skipping:`, error);
-    return { ssim: 0, isStatic: false };
-  }
-}
 
 /**
  * Determine the synthesis mode for a video shot based on its context.

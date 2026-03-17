@@ -22,7 +22,6 @@ import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
 import { analyzeContentStructure, segmentTimeline } from '@/lib/av-script';
 import { processInChunks } from '@/lib/av-script/chunked-processor';
-import type { ShotListInput } from '@/lib/av-script/types';
 import type { WordTimestamp } from '@/types/task';
 import type { PlannedShot, ShotPlan } from '@/lib/types/closed-loop';
 import { CostTracker } from '@/lib/queues/cost-tracker';
@@ -157,20 +156,53 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         });
       }
 
+      // Build a lookup from segment_index → word_timestamps for millisecond-precision timing
+      const segmentWordTimestamps = new Map<number, import('@/types/task').WordTimestamp[]>();
+      for (const seg of segments) {
+        if (seg.word_timestamps && seg.word_timestamps.length > 0) {
+          segmentWordTimestamps.set(seg.segment_index, seg.word_timestamps);
+        }
+      }
+
+      // Validate that all shots have timing — the segmenter always produces these from word timestamps.
+      // If any are missing, the chunked processor has a bug that must be fixed upstream.
+      for (const shot of shotSummaries) {
+        if (shot.start_seconds == null || shot.end_seconds == null || shot.duration_seconds == null) {
+          throw new Error(
+            `[ShotPlanner] Shot ${shot.segment_index} is missing timing data ` +
+            `(start=${shot.start_seconds}, end=${shot.end_seconds}, dur=${shot.duration_seconds}). ` +
+            `The segmenter must always produce valid timing from word timestamps.`
+          );
+        }
+        if (shot.duration_seconds <= 0) {
+          throw new Error(
+            `[ShotPlanner] Shot ${shot.segment_index} has invalid duration: ${shot.duration_seconds}s. ` +
+            `Duration must be positive.`
+          );
+        }
+      }
+
       const plannedShots: PlannedShot[] = shotSummaries.map((shot, idx) => ({
         segment_index: shot.segment_index ?? idx,
-        start_seconds: shot.start_seconds ?? 0,
-        end_seconds: shot.end_seconds ?? 0,
-        duration_seconds: shot.duration_seconds ?? 0,
+        start_seconds: shot.start_seconds,
+        end_seconds: shot.end_seconds,
+        duration_seconds: shot.duration_seconds,
         text: shot.text || '',
         summary: shot.summary || '',
         content_type: shot.content_type || 'concept',
         media_type: (shot.media_type as PlannedShot['media_type']) || 'motiongraphic',
         entity_refs: [],
-        visual_elements: [],
-        sound_effects: [],
-        stock_worthy: false,
-        image_count: 1,
+        // Preserve AI-generated visual decisions (were previously being dropped)
+        visual_elements: (shot.visual_elements || []) as string[],
+        visual_description: shot.visual_description,
+        stock_worthy: shot.stock_worthy ?? false,
+        sound_effects: (shot.sound_effects || []).map(sfx => ({
+          type: sfx.type,
+          description: sfx.description,
+          trigger_at_seconds: sfx.trigger_at_seconds,
+          anchor_word: sfx.anchor_word,
+        })),
+        image_count: shot.image_count ?? 1,
       }));
 
       // Compute media type breakdown

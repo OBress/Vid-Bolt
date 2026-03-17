@@ -16,7 +16,6 @@ import {
   X,
   ExternalLink,
   Maximize2,
-  Download,
 } from "lucide-react";
 
 interface MediaPreviewPanelProps {

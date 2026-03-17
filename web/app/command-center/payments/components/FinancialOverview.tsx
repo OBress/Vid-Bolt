@@ -101,7 +101,7 @@ function StatCard({
 }
 
 /* ─── Status badge helper ─── */
-function StatusDot({ status }: { status: PaymentStatus }) {
+function _StatusDot({ status }: { status: PaymentStatus }) {
   if (status === "paid")
     return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />;
   if (status === "pending_verification")

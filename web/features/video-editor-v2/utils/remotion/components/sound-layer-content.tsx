@@ -182,7 +182,7 @@ export const SoundLayerContent: React.FC<SoundLayerContentProps> = ({
       src={audioSrc}
       startFrom={overlay.startFromSound || 0}
       endAt={overlay.endAtSound}
-      volume={finalVolume}
+      volume={() => finalVolume}
       playbackRate={playbackRate}
       toneFrequency={toneFrequency}
     />

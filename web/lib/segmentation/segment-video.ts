@@ -933,8 +933,10 @@ function parseSceneAnalysisResponse(content: string): Omit<SceneAnalysisResult, 
     const normalizedScenes: DetectedScene[] = rawScenes.map((scene: any) => {
       // Handle various property name formats from Gemini
       // Sometimes it returns "start"/"end" instead of "startTime"/"endTime"
-      const startTime = parseFloat(scene.startTime ?? scene.start ?? scene.startSeconds ?? 0);
-      const endTime = parseFloat(scene.endTime ?? scene.end ?? scene.endSeconds ?? scene.startTime ?? scene.start ?? 0);
+      const rawStart = scene.startTime ?? scene.start ?? scene.startSeconds;
+      const rawEnd = scene.endTime ?? scene.end ?? scene.endSeconds;
+      const startTime = rawStart != null ? parseFloat(rawStart) : NaN;
+      const endTime = rawEnd != null ? parseFloat(rawEnd) : NaN;
       
       // Log if we had to use fallback property names
       if (scene.start !== undefined && scene.startTime === undefined) {
@@ -943,17 +945,26 @@ function parseSceneAnalysisResponse(content: string): Omit<SceneAnalysisResult, 
       if (scene.end !== undefined && scene.endTime === undefined) {
         console.log(`[Segment] Normalized scene: end=${scene.end} -> endTime=${endTime}`);
       }
+
+      // Filter out scenes with missing timing — don't silently default to 0
+      if (isNaN(startTime)) {
+        console.warn(`[Segment] Scene has no valid startTime (raw=${JSON.stringify(scene)}), skipping`);
+        return null;
+      }
+      if (isNaN(endTime)) {
+        console.warn(`[Segment] Scene has no valid endTime (raw=${JSON.stringify(scene)}), using startTime + 10s`);
+      }
       
       return {
-        startTime: isNaN(startTime) ? 0 : startTime,
-        endTime: isNaN(endTime) ? startTime + 10 : endTime, // Default to 10s clip if no endTime
+        startTime,
+        endTime: isNaN(endTime) ? startTime + 10 : endTime,
         sceneType: scene.sceneType || scene.type || 'other',
         description: scene.description || '',
         hasAudio: Boolean(scene.hasAudio ?? scene.audio ?? false),
         subjects: Array.isArray(scene.subjects) ? scene.subjects : [],
         mood: scene.mood || 'neutral',
       } as DetectedScene;
-    });
+    }).filter((scene): scene is DetectedScene => scene !== null);
     
     console.log(`[Segment] Parsed ${normalizedScenes.length} scenes from Gemini response`);
     

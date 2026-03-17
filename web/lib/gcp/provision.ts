@@ -168,6 +168,7 @@ get_metadata() {
 
 USER_ID=$(get_metadata "vidbolt-user-id")
 WEBHOOK_URL=$(get_metadata "vidbolt-webhook-url")
+INTERNAL_SECRET=$(get_metadata "vidbolt-internal-secret")
 GITHUB_TOKEN=$(get_metadata "vidbolt-github-token")
 REPO_URL=$(get_metadata "vidbolt-repo-url")
 [ -z "$REPO_URL" ] && REPO_URL="https://github.com/OBress/Vid-Bolt-GPU-API.git"
@@ -185,7 +186,7 @@ report_status() {
     local message=$2
     log "Reporting status: $status - $message"
     if [ -n "$WEBHOOK_URL" ]; then
-        curl -X POST -H "Content-Type: application/json" \\
+        curl -X POST -H "Content-Type: application/json" -H "X-Internal-Secret: $INTERNAL_SECRET" \\
              -d "{\\"ip\\": \\"$EXTERNAL_IP\\", \\"user_id\\": \\"$USER_ID\\", \\"status\\": \\"$status\\", \\"message\\": \\"$message\\"}" \\
              "$WEBHOOK_URL" || log "Failed to report status"
     fi
@@ -283,6 +284,9 @@ if [ ! -d "$REPO_DIR" ]; then
 else
     cd "$REPO_DIR"
     report_status "checking_updates" "Checking for repository updates..."
+
+    # GCP startup runner doesn't set HOME; git --global needs it
+    export HOME=/root
 
     # Allow git operations on this directory (since script runs as root but dir owned by ubuntu)
     git config --global --add safe.directory "$REPO_DIR"
@@ -404,6 +408,7 @@ fi
         items: [
             { key: 'vidbolt-user-id', value: userId },
             { key: 'vidbolt-webhook-url', value: webhookUrl },
+            { key: 'vidbolt-internal-secret', value: process.env.INTERNAL_API_SECRET || '' },
             { key: 'startup-script', value: startupScript },
             { key: 'enable-osconfig', value: 'TRUE' },
             { key: 'vidbolt-github-token', value: process.env.VIDBOLT_GITHUB_TOKEN || '' },

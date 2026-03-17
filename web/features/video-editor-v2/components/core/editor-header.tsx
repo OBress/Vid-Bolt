@@ -6,7 +6,10 @@ import { useThemeConfig } from "../../contexts/theme-context";
 
 import { useEditorContext } from "../../contexts/editor-context";
 import { useEffect, useState, useCallback } from "react";
-import { Maximize, Minimize } from "lucide-react";
+import { Maximize, Minimize, AlertTriangle, Loader2 } from "lucide-react";
+import { useGCPVM } from "@/providers/GCPVMProvider";
+import { useVramMode } from "@/hooks/use-vram-mode";
+import { MediaIssuesPopover } from "../panels/media-issues-panel";
 
 export interface EditorHeaderProps {
   /** Project title to display in the header */
@@ -70,6 +73,11 @@ export function EditorHeader({
 }: EditorHeaderProps = {}) {
   // Editor context (kept for potential future use)
   useEditorContext();
+
+  // ── VM & VRAM mode state ──
+  const { displayStatus, apiReady } = useGCPVM();
+  const { currentMode, isSwitching, switchToAll } = useVramMode(apiReady);
+  const showVramBanner = displayStatus === "ON" && currentMode !== null && currentMode !== "all";
 
   // Get theme configuration from context if available
   const themeConfig = useThemeConfig();
@@ -151,7 +159,35 @@ export function EditorHeader({
       {/* Spacer to push controls to the right */}
       <div className="grow" />
 
+      {/* VRAM Mode Warning Banner (centered) */}
+      {showVramBanner && (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md
+          bg-amber-500/10 border border-amber-500/30 text-amber-400">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="text-[11px] font-medium whitespace-nowrap">
+            VRAM: <span className="font-mono">{currentMode}</span> — switch to All Models
+          </span>
+          <button
+            onClick={() => switchToAll()}
+            disabled={isSwitching}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded
+              bg-amber-500/20 hover:bg-amber-500/30 text-amber-300
+              text-[10px] font-semibold transition-colors disabled:opacity-50"
+          >
+            {isSwitching ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Switching…
+              </>
+            ) : (
+              "Switch to All"
+            )}
+          </button>
+        </div>
+      )}
 
+      {/* Media Issues Warning Button + Panel (portal-based) */}
+      <MediaIssuesPopover />
 
       {/* Fullscreen toggle */}
       <button

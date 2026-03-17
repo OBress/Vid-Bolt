@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { User, Globe, LogOut, Trash2, CreditCard, Timer, Zap, Loader2 } from "lucide-react";
+import { User, Globe, LogOut, Trash2, Timer, Zap, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

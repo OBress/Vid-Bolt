@@ -37,8 +37,8 @@ export function getImageDimensions(aspectRatio: AspectRatio): { width: number; h
 }
 
 /**
- * Get video-compatible dimensions for a given aspect ratio (keyframe images for LTX-2).
- * LTX-2 requires dimensions divisible by 32; standard 1080p height (1080) is NOT divisible
+ * Get video-compatible dimensions for a given aspect ratio (keyframe images for LTX-2.3).
+ * LTX-2.3 requires dimensions divisible by 32; standard 1080p height (1080) is NOT divisible
  * by 32, so we round up to 1088.
  */
 export function getVideoDimensions(aspectRatio: AspectRatio): { width: number; height: number } {
@@ -114,11 +114,19 @@ export interface VideoGenerateRequest {
 export interface MusicGenerateRequest {
   job_id: string;
   prompt: string;
-  /** Optional lyrics for vocal generation */
+  /** Optional lyrics for vocal generation. Use "[Instrumental]" for instrumental tracks. */
   lyrics?: string;
   /** Duration in seconds (10-600), default 30 */
   duration_seconds?: number;
   seed?: number;
+  /** Beats per minute (30-300). Omit for auto-detection via LM. */
+  bpm?: number;
+  /** Musical key (e.g. "C Major", "Am", "F# minor"). Omit for auto-detection. */
+  key_scale?: string;
+  /** Time signature: "2" (2/4), "3" (3/4), "4" (4/4), "6" (6/8). Omit for auto-detection. */
+  time_signature?: string;
+  /** Language code for vocals (ISO 639-1). Use "unknown" for auto-detection or instrumental. */
+  vocal_language?: string;
   save_url: string;
   webhook_url?: string;
   item_id?: string;
@@ -1301,7 +1309,7 @@ export async function callGpuGetJobStatus(jobId: string): Promise<{
 }
 
 // ============================================================================
-// LTX-2 VIDEO GENERATION
+// LTX-2.3 VIDEO GENERATION
 // ============================================================================
 
 /** Request body for POST /api/v1/ltx2/generate */

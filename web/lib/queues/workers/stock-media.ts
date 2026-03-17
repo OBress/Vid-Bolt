@@ -24,6 +24,9 @@ import {
 } from '@/lib/services/r2-storage';
 import { v4 as uuidv4 } from 'uuid';
 import { CostTracker } from '@/lib/queues/cost-tracker';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('StockMediaWorker');
 
 // ==========================================================================
 // Types
@@ -103,13 +106,13 @@ function isEmbeddingConfigured(): boolean {
 // Safe embedding - returns null if not configured
 async function safeGenerateEmbedding(text: string): Promise<number[] | null> {
   if (!isEmbeddingConfigured()) {
-    console.log('[StockMediaWorker] Embedding skipped - Cloudflare not configured');
+    log.debug('Embedding skipped - Cloudflare not configured');
     return null;
   }
   try {
     return await generateEmbedding(text);
   } catch (err) {
-    console.warn('[StockMediaWorker] Embedding failed:', err);
+    log.warn('Embedding failed:', err instanceof Error ? err.message : err);
     return null;
   }
 }
@@ -147,7 +150,7 @@ async function updateTaskProgress(
     .eq('id', taskId);
   
   if (error) {
-    console.error(`[StockMediaWorker] Failed to update task progress: ${error.message}`, {
+    log.error(`Failed to update task progress: ${error.message}`, {
       taskId,
       progress,
       phase,
@@ -156,7 +159,7 @@ async function updateTaskProgress(
       details: error.details,
     });
   } else {
-    console.log(`[StockMediaWorker] Task progress updated: ${progress}% - ${phase}: ${step}`);
+    log.debug(`Task progress updated: ${progress}% - ${phase}: ${step}`);
   }
 }
 
@@ -189,7 +192,7 @@ export async function stockMediaProcessor(
   const costTracker = new CostTracker(2);
   let serperSearchCount = 0;
   
-  console.log(`[StockMediaWorker] Starting job ${job.id} for video ${videoId} (${level})`);
+  log.info(`Starting job ${job.id} for video ${videoId} (${level})`);
   
   const allMedia: MediaItem[] = [];
   const stats = {
@@ -215,18 +218,18 @@ export async function stockMediaProcessor(
   
   const expectedImages = limits.maxQueriesSearched * limits.maxImagesPerQuery;
   const expectedVideos = limits.maxQueriesSearched * limits.maxVideosPerQuery;
-  console.log(`[StockMediaWorker] Queries: ${queryCount}, Limits: ${limits.maxImagesPerQuery} imgs/query, ${limits.maxVideosPerQuery} vids/query`);
-  console.log(`[StockMediaWorker] Expected max: ~${expectedImages} images, ~${expectedVideos} videos`);
+  log.debug(`Queries: ${queryCount}, Limits: ${limits.maxImagesPerQuery} imgs/query, ${limits.maxVideosPerQuery} vids/query`);
+  log.debug(`Expected max: ~${expectedImages} images, ~${expectedVideos} videos`);
   
   try {
     // ========================================================================
     // PHASE 1: Serper Images (0-30%)
     // ========================================================================
     await updateTaskProgress(supabase, taskId, 5, 'image_generation', 'Searching for images...');
-    console.log('[StockMediaWorker] Phase 1: Serper Images');
+    log.info('Phase 1: Serper Images');
     
     const maxQueries = limits.maxQueriesSearched;
-    console.log(`[StockMediaWorker] Serper: Searching ${maxQueries} queries, checking first ${limits.resultsToCheck} results each`);
+    log.debug(`Serper: Searching ${maxQueries} queries, checking first ${limits.resultsToCheck} results each`);
     
     for (let i = 0; i < maxQueries; i++) {
       const query = searchQueries[i];
@@ -265,7 +268,7 @@ export async function stockMediaProcessor(
             // NOT supported for AI analysis: GIF, SVG, BMP, TIFF
             const SUPPORTED_IMAGE_FORMATS = ['jpg', 'jpeg', 'png', 'webp'];
             if (!SUPPORTED_IMAGE_FORMATS.includes(extension.toLowerCase())) {
-              console.log(`[StockMediaWorker] Skipping unsupported format: ${extension}`);
+              log.debug(`Skipping unsupported format: ${extension}`);
               continue;
             }
             
@@ -280,11 +283,11 @@ export async function stockMediaProcessor(
             // INTEGRITY CHECK: Validate buffer size before API call
             // Corrupted downloads are typically < 5KB, oversized files > 10MB
             if (imageBuffer.length < 5000) {
-              console.log(`[StockMediaWorker] Skipping corrupted image (${Math.round(imageBuffer.length / 1024)}KB < 5KB)`);
+              log.debug(`Skipping corrupted image (${Math.round(imageBuffer.length / 1024)}KB < 5KB)`);
               continue;
             }
             if (imageBuffer.length > 10 * 1024 * 1024) {
-              console.log(`[StockMediaWorker] Skipping oversized image (${Math.round(imageBuffer.length / 1024 / 1024)}MB > 10MB)`);
+              log.debug(`Skipping oversized image (${Math.round(imageBuffer.length / 1024 / 1024)}MB > 10MB)`);
               continue;
             }
             
@@ -305,12 +308,12 @@ export async function stockMediaProcessor(
               
               // If rejected, skip - no R2 upload needed
               if (!classification.isValid) {
-                console.log(`[StockMediaWorker] Rejected: ${classification.rejectionReason} - ${classification.rejectionDetails}`);
+                log.debug(`Rejected: ${classification.rejectionReason} - ${classification.rejectionDetails}`);
                 stats.rejected++;
                 continue;
               }
             } catch (classError) {
-              console.error(`[StockMediaWorker] Classification error:`, classError);
+              log.error('Classification error:', classError instanceof Error ? (classError as Error).message : classError);
               // On classification error, still store with basic metadata
               classification = null;
             }
@@ -322,7 +325,7 @@ export async function stockMediaProcessor(
             try {
               await uploadAudioBuffer(imageBuffer, r2Key, mimeType);
             } catch (e) {
-              console.error(`[StockMediaWorker] R2 upload failed:`, e);
+              log.error('R2 upload failed:', e instanceof Error ? e.message : e);
               continue;
             }
             
@@ -362,7 +365,7 @@ export async function stockMediaProcessor(
             });
             
             if (insertError) {
-              console.error(`[StockMediaWorker] DB insert failed for image:`, insertError.message);
+              log.error('DB insert failed for image:', insertError.message);
               continue;
             }
             
@@ -387,11 +390,11 @@ export async function stockMediaProcessor(
         
         // No hard cap - continue searching queries
       } catch (err) {
-        console.error(`[StockMediaWorker] Serper search error for "${query}":`, err);
+          log.error(`Serper search error for "${query}":`, err instanceof Error ? err.message : err);
       }
     }
     
-    console.log(`[StockMediaWorker] Serper complete: ${stats.serperImages} images`);
+    log.info(`Serper complete: ${stats.serperImages} images`);
     
     // ========================================================================
     // PHASE 2: Pexels Videos - DISABLED
@@ -399,7 +402,7 @@ export async function stockMediaProcessor(
     // doesn't match specific queries like "Jamie Dimon" or "Bear Stearns".
     // Better to leave generic video needs for AI generation/motion graphics.
     // ========================================================================
-    console.log('[StockMediaWorker] Phase 2: Pexels SKIPPED (returns irrelevant generic footage)');
+    log.info('Phase 2: Pexels SKIPPED (returns irrelevant generic footage)');
     
     // NOTE: If you need to re-enable Pexels for truly generic queries like
     // "aerial city drone shot" or "abstract motion graphics", uncomment below:
@@ -518,21 +521,21 @@ export async function stockMediaProcessor(
     // ========================================================================
     if (limits.youtubeClips > 0 && includeVideos) {
       await updateTaskProgress(supabase, taskId, 52, 'video_generation', 'Connecting to YouTube...');
-      console.log('[StockMediaWorker] Phase 3: YouTube Videos');
+      log.info('Phase 3: YouTube Videos');
       
       try {
         // Import and use the proper token refresh utility
         const { getValidGCPToken } = await import('@/lib/gcp/token-refresh');
         
-        console.log(`[StockMediaWorker] YouTube: Getting GCP token for user ${userId}`);
+        log.debug(`YouTube: Getting GCP token for user ${userId}`);
         
         let accessToken: string;
         try {
           accessToken = await getValidGCPToken(userId);
-          console.log(`[StockMediaWorker] ✅ Got valid GCP token: ${accessToken.slice(0, 15)}...`);
+          log.debug(`Got valid GCP token: ${accessToken.slice(0, 15)}...`);
         } catch (tokenError: any) {
-          console.warn(`[StockMediaWorker] ❌ GCP token error: ${tokenError.message}`);
-          console.warn('[StockMediaWorker] User needs to connect GCP account via /settings/integrations');
+          log.warn(`GCP token error: ${tokenError.message}`);
+          log.warn('User needs to connect GCP account via /settings/integrations');
           throw tokenError; // Skip YouTube if no token
         }
         
@@ -548,7 +551,7 @@ export async function stockMediaProcessor(
           videoDefinition: 'high',
         });
         
-        console.log(`[StockMediaWorker] YouTube search: ${searchResult.hits.length} results`);
+        log.debug(`YouTube search: ${searchResult.hits.length} results`);
         
         // Get details for top results
         await updateTaskProgress(supabase, taskId, 60, 'video_generation', 'Getting video details...');
@@ -581,7 +584,7 @@ export async function stockMediaProcessor(
           ? (Array.isArray(selectedResult) ? selectedResult : [selectedResult]).slice(0, 3)
           : [];
         
-        console.log(`[StockMediaWorker] Queueing ${videosToProcess.length} YouTube videos for segmentation`);
+        log.info(`Queueing ${videosToProcess.length} YouTube videos for segmentation`);
         
         // Track segmentation jobs to wait for
         const segmentJobs: { jobId: string; videoTitle: string }[] = [];
@@ -608,7 +611,7 @@ export async function stockMediaProcessor(
           });
           
           segmentJobs.push({ jobId: segmentJob.id!, videoTitle: video.title });
-          console.log(`[StockMediaWorker] Queued segmentation job ${segmentJob.id} for: ${video.title}`);
+          log.debug(`Queued segmentation job ${segmentJob.id} for: ${video.title}`);
           
           // Store reference to the video (clips will be stored by segmentation worker)
           const embedding = await safeGenerateEmbedding(
@@ -636,7 +639,7 @@ export async function stockMediaProcessor(
           });
           
           if (ytInsertError) {
-            console.error(`[StockMediaWorker] DB insert failed for youtube video:`, ytInsertError.message);
+            log.error('DB insert failed for youtube video:', ytInsertError.message);
           }
           
           allMedia.push({
@@ -657,7 +660,7 @@ export async function stockMediaProcessor(
         
         // Wait for all segmentation jobs to complete
         if (segmentJobs.length > 0) {
-          console.log(`[StockMediaWorker] Waiting for ${segmentJobs.length} segmentation jobs to complete...`);
+          log.info(`Waiting for ${segmentJobs.length} segmentation jobs to complete...`);
           await updateTaskProgress(supabase, taskId, 60, 'video_generation', `Processing ${segmentJobs.length} YouTube videos...`);
           
           const { Job } = await import('bullmq');
@@ -676,16 +679,16 @@ export async function stockMediaProcessor(
             while (Date.now() - startWait < MAX_WAIT_MS) {
               const job = await Job.fromId(videoSegmentationQueue, jobId);
               if (!job) {
-                console.warn(`[StockMediaWorker] Job ${jobId} not found, may have been removed`);
+                log.warn(`Job ${jobId} not found, may have been removed`);
                 break;
               }
               
               const state = await job.getState();
               if (state === 'completed') {
-                console.log(`[StockMediaWorker] ✓ Segmentation complete for: ${videoTitle}`);
+                log.info(`Segmentation complete for: ${videoTitle}`);
                 break;
               } else if (state === 'failed') {
-                console.warn(`[StockMediaWorker] ✗ Segmentation failed for: ${videoTitle}`);
+                log.warn(`Segmentation failed for: ${videoTitle}`);
                 break;
               }
               
@@ -694,22 +697,22 @@ export async function stockMediaProcessor(
             }
           }
           
-          console.log(`[StockMediaWorker] All segmentation jobs finished`);
+          log.info('All segmentation jobs finished');
         }
       } catch (err) {
-        console.error('[StockMediaWorker] YouTube error:', err);
+        log.error('YouTube error:', err instanceof Error ? err.message : err);
       }
       
-      console.log(`[StockMediaWorker] YouTube complete: ${stats.youtubeClips} videos processed`);
+      log.info(`YouTube complete: ${stats.youtubeClips} videos processed`);
     } else if (!includeVideos) {
-      console.log('[StockMediaWorker] Phase 3: YouTube SKIPPED (images_only mode)');
+      log.info('Phase 3: YouTube SKIPPED (images_only mode)');
     }
     
     // ========================================================================
     // PHASE 4: Finalize (90-100%)
     // ========================================================================
     await updateTaskProgress(supabase, taskId, 92, 'postprocessing', 'Saving results...');
-    console.log('[StockMediaWorker] Phase 4: Finalizing');
+    log.info('Phase 4: Finalizing');
     
     // Update video_projects with results
     const { data: videoData } = await supabase
@@ -745,20 +748,20 @@ export async function stockMediaProcessor(
       .eq('id', taskId);
     
     if (taskCompleteError) {
-      console.error(`[StockMediaWorker] CRITICAL: Failed to mark task complete: ${taskCompleteError.message}`, {
+      log.error(`CRITICAL: Failed to mark task complete: ${taskCompleteError.message}`, {
         taskId,
         code: taskCompleteError.code,
         details: taskCompleteError.details,
         hint: taskCompleteError.hint,
       });
     } else {
-      console.log(`[StockMediaWorker] Task ${taskId} marked as completed successfully`);
+      log.info(`Task ${taskId} marked as completed successfully`);
     }
     
     const totalTime = Date.now() - startTime;
-    console.log(`[StockMediaWorker] ✓ Job ${job.id} complete in ${totalTime}ms`);
-    console.log(`[StockMediaWorker]   Images: ${stats.serperImages}, Videos: ${stats.pexelsVideos}, YouTube: ${stats.youtubeClips}`);
-    console.log(`[StockMediaWorker]   Classified: ${stats.classified}, Stored: ${stats.stored}, Rejected: ${stats.rejected}`);
+    log.info(`Job ${job.id} complete in ${totalTime}ms`);
+    log.info(`  Images: ${stats.serperImages}, Videos: ${stats.pexelsVideos}, YouTube: ${stats.youtubeClips}`);
+    log.info(`  Classified: ${stats.classified}, Stored: ${stats.stored}, Rejected: ${stats.rejected}`);
     
     // Save cost data (Serper search count)
     costTracker.addSerperSearch(serperSearchCount);
@@ -771,7 +774,7 @@ export async function stockMediaProcessor(
     };
     
   } catch (error) {
-    console.error(`[StockMediaWorker] ✗ Job ${job.id} failed:`, error);
+    log.error(`Job ${job.id} failed:`, error instanceof Error ? error.message : error);
     
     // Still try to save partial cost data
     costTracker.addSerperSearch(serperSearchCount);

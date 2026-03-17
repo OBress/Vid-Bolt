@@ -10,29 +10,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkGpuVmReady } from '@/lib/services/gpu-api-service';
 import { dispatchPendingJobs } from '@/lib/services/gpu-job-orchestrator';
+import { verifyInternalSecret } from '@/lib/utils/internal-auth';
 
 export async function POST(req: NextRequest) {
   const logPrefix = '[DispatchPendingJobs]';
 
-  // Verify internal call
-  const secret = req.headers.get('X-Internal-Secret');
-  const expectedSecret = process.env.INTERNAL_API_SECRET;
-
-  if (!expectedSecret) {
-    console.error(`${logPrefix} INTERNAL_API_SECRET not configured`);
-    return NextResponse.json(
-      { error: 'Server misconfigured' },
-      { status: 500 }
-    );
-  }
-
-  if (secret !== expectedSecret) {
-    console.warn(`${logPrefix} Unauthorized request - invalid secret`);
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    );
-  }
+  // Verify internal call (timing-safe)
+  const authError = verifyInternalSecret(req);
+  if (authError) return authError;
 
   try {
     const body = await req.json();
