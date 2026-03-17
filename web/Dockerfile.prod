@@ -60,6 +60,9 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Copy App Router metadata files (favicon, etc.) not included in standalone output
+COPY --from=builder /app/app/favicon.ico ./app/favicon.ico
+
 # Copy worker files (needed for npm run workers:start)
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/lib ./lib

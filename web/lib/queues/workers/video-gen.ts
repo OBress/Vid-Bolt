@@ -26,6 +26,7 @@ import {
 import type { AspectRatio } from '@/lib/services/gpu-api-service';
 import { CostTracker } from '@/lib/queues/cost-tracker';
 import { withGpuLock } from '@/lib/queues/gpu-lock';
+import { emitVideoItemComplete } from '@/lib/queues/video-completion-emitter';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -158,21 +159,35 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         const segmentIndex = s.segment_index as number;
         const keyframeUrl = generatedImages[`shot-${segmentIndex}`];
 
-        // For retries, prepend verifier feedback to help LTX-2 avoid the same issues
+        // For retries, check if the verifier suggested prompt simplification
+        // (catastrophic failures like frozen/corrupted video are often caused by overly complex prompts)
         let feedbackPrefix = '';
+        let shouldSimplify = false;
         if (isBatchRetry && retryFeedbackMap?.[segmentIndex]) {
-          feedbackPrefix = `[RETRY GUIDANCE: ${retryFeedbackMap[segmentIndex]}] `;
+          const feedback = retryFeedbackMap[segmentIndex];
+          shouldSimplify = feedback.includes('SIMPLIFY_PROMPT');
+          feedbackPrefix = shouldSimplify ? '' : `[RETRY GUIDANCE: ${feedback}] `;
         } else if (isSingleShotRetry && previousFeedback) {
-          feedbackPrefix = `[RETRY GUIDANCE: ${previousFeedback}] `;
+          shouldSimplify = previousFeedback.includes('SIMPLIFY_PROMPT');
+          feedbackPrefix = shouldSimplify ? '' : `[RETRY GUIDANCE: ${previousFeedback}] `;
+        }
+
+        // Build the visual prompt — simplify if verifier flagged prompt complexity as the issue
+        const fullPrompt = (s.visual_prompt as string) || (s.summary as string) || `Video for segment ${segmentIndex}`;
+        let visualPrompt: string;
+        if (shouldSimplify) {
+          // Strip to first sentence only — removes complex lighting/mood/camera details
+          const firstSentence = fullPrompt.split(/[.!?]/)[0]?.trim() || fullPrompt;
+          visualPrompt = firstSentence;
+          console.log(`${LOG_PREFIX} Shot ${segmentIndex}: Simplified prompt for retry (was ${fullPrompt.length} chars → ${visualPrompt.length} chars)`);
+        } else {
+          visualPrompt = feedbackPrefix + fullPrompt;
         }
 
         return {
           segment_index: segmentIndex,
           media_type: 'video' as const,
-          visual_prompt: (
-            feedbackPrefix +
-            ((s.visual_prompt as string) || (s.summary as string) || `Video for segment ${segmentIndex}`)
-          ),
+          visual_prompt: visualPrompt,
           duration_seconds: (() => {
             const d = s.duration_seconds as number;
             if (!d || d <= 0) throw new Error(`[VideoGen] Shot ${segmentIndex} has no valid duration_seconds — shot plan timing is incomplete.`);
@@ -235,6 +250,8 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           onItemComplete,
           loraName,
           loraTriggerWords,
+          // Stream each completed video to the orchestrator via EventEmitter
+          (result) => emitVideoItemComplete(videoId, result),
         );
       }, lockTtlMs, videoId);
 

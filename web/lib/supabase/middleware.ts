@@ -32,8 +32,24 @@ export async function updateSession(request: NextRequest) {
   // being randomly logged out.
 
   const {
-    data: { user: _user },
+    data: { user },
   } = await supabase.auth.getUser()
+
+  // If no valid user and the request is for a protected page, redirect to login
+  const { pathname } = request.nextUrl
+  const isProtectedPage =
+    !pathname.startsWith('/login') &&
+    !pathname.startsWith('/auth') &&
+    !pathname.startsWith('/api') &&
+    !pathname.startsWith('/waitlist') &&
+    !pathname.startsWith('/onboarding') &&
+    pathname !== '/'
+
+  if (!user && isProtectedPage) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    return NextResponse.redirect(url)
+  }
 
   return supabaseResponse
 }

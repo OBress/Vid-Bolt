@@ -3,11 +3,31 @@
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ShieldCheck, Cpu } from "lucide-react";
+import { ShieldCheck, Cpu, AlertTriangle } from "lucide-react";
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 
-export default function LoginPage() {
+const ERROR_MESSAGES: Record<string, { title: string; message: string }> = {
+  banned: {
+    title: "ACCESS DENIED",
+    message: "Your account has been permanently banned. You cannot register with this email or Discord account.",
+  },
+  profile_creation_failed: {
+    title: "REGISTRATION ERROR",
+    message: "Failed to create your profile. Please try again or contact support.",
+  },
+  auth_failed: {
+    title: "AUTHENTICATION FAILED",
+    message: "Something went wrong during sign in. Please try again.",
+  },
+};
+
+function LoginPageContent() {
   const [isLoading, setIsLoading] = useState(false);
+  const searchParams = useSearchParams();
+  const errorType = searchParams.get("error");
+  const errorInfo = errorType ? ERROR_MESSAGES[errorType] : null;
   const supabase = createClient();
 
   const handleDiscordLogin = async () => {
@@ -75,6 +95,20 @@ export default function LoginPage() {
                 </div>
               </div>
 
+              {errorInfo && (
+                <div className="bg-red-950/40 border border-red-500/30 p-4 rounded-lg mb-4 flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-red-400 tracking-wider uppercase">
+                      {errorInfo.title}
+                    </p>
+                    <p className="text-xs text-red-300/80 mt-1">
+                      {errorInfo.message}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <Button
                 onClick={handleDiscordLogin}
                 disabled={isLoading}
@@ -113,5 +147,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-black" />}>
+      <LoginPageContent />
+    </Suspense>
   );
 }

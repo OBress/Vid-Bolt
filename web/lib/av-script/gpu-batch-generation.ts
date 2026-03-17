@@ -294,6 +294,8 @@ export async function processGpuBatchGeneration(
   loraName?: string,
   /** Optional LoRA trigger words to prepend to all image prompts */
   loraTriggerWords?: string,
+  /** Optional streaming callback — fires with full result for each resolved video item */
+  onItemResolved?: (result: GpuGenerationResult) => void,
 ): Promise<BatchGpuGenerationResult> {
   const logPrefix = '[GPU-Batch]';
   const results: GpuGenerationResult[] = [];
@@ -457,7 +459,7 @@ export async function processGpuBatchGeneration(
       }
     } else {
       onProgress?.(`Generating ${videoShots.length} videos...`, 60);
-      const videoResults = await processVideoBatch(userId, videoId, videoShots, aspectRatio, onItemComplete);
+      const videoResults = await processVideoBatch(userId, videoId, videoShots, aspectRatio, onItemComplete, onItemResolved);
       results.push(...videoResults);
       
       stats.videosGenerated = videoResults.filter(r => r.generation_status === 'completed').length;
@@ -759,7 +761,9 @@ async function processVideoBatch(
   videoId: string,
   shots: ShotForGpuGeneration[],
   aspectRatio: AspectRatio,
-  onItemComplete?: (event: ItemCompleteEvent) => void
+  onItemComplete?: (event: ItemCompleteEvent) => void,
+  /** Streaming callback — fires with full result for each resolved video */
+  onItemResolved?: (result: GpuGenerationResult) => void,
 ): Promise<GpuGenerationResult[]> {
   const logPrefix = '[GPU-Batch/Videos]';
   const batchId = `vid-${videoId}-${uuidv4().slice(0, 8)}`;
@@ -846,7 +850,7 @@ async function processVideoBatch(
   // Force-update GPU activity before long webhook wait to prevent VM shutdown
   forceUpdateGpuActivity().catch(() => {});
   
-  const webhookResults = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'video', onItemComplete);
+  const webhookResults = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'video', onItemComplete, onItemResolved);
 
   return [...webhookResults, ...skippedShots];
 }
@@ -860,7 +864,9 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
   itemIdToShot: Map<string, ShotForGpuGeneration>,
   timeoutMs: number,
   mediaType: 'image' | 'video',
-  onItemComplete?: (event: ItemCompleteEvent) => void
+  onItemComplete?: (event: ItemCompleteEvent) => void,
+  /** Streaming callback — fires with full result for each resolved item */
+  onItemResolved?: (result: GpuGenerationResult) => void,
 ): Promise<GpuGenerationResult[]> {
   const logPrefix = `[GPU-Batch/Webhooks]`;
   const results: GpuGenerationResult[] = [];
@@ -898,7 +904,8 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
           generation_status: 'completed' as const,
         };
       } else {
-        console.warn(`${logPrefix} Shot ${shot.segment_index} failed: ${webhookResult.errorMessage}`);
+        const durationInfo = shot.duration_seconds ? ` (duration: ${shot.duration_seconds}s)` : '';
+        console.warn(`${logPrefix} Shot ${shot.segment_index}${durationInfo} failed: ${webhookResult.errorMessage}`);
         return {
           shot_index: shot.segment_index,
           media_url: '',
@@ -923,6 +930,8 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
     const result = await promise;
     completedCount++;
     onItemComplete?.({ completed: completedCount, total: items.length, mediaType });
+    // Stream each resolved item to caller (e.g., orchestrator for parallel verification)
+    onItemResolved?.(result);
     return result;
   });
   const allResults = await Promise.all(trackedPromises);

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { getPublicOrigin } from '@/lib/utils/get-public-origin'
 import { notifyNewWaitlistUser } from '@/lib/discord-webhook'
 
@@ -11,6 +12,7 @@ import { notifyNewWaitlistUser } from '@/lib/discord-webhook'
  * separate custom flow at /api/gcp/oauth/*.
  * 
  * - Exchanges the auth code for a session
+ * - Checks banned identities (email + Discord ID)
  * - Checks Discord guild membership (VidBolt server)
  * - Stores Discord identity metadata in the users table
  * - Sets the is_logged_in cookie for middleware fast-path
@@ -80,6 +82,28 @@ export async function GET(request: Request) {
         || null;
       const discordAvatar = user.user_metadata?.avatar_url || null;
 
+      // =====================================================
+      // BANNED IDENTITY CHECK
+      // =====================================================
+      // Use service client to bypass RLS — banned_identities is admin-only
+      try {
+        const serviceClient = createServiceClient();
+        const { data: isBanned } = await serviceClient.rpc('check_banned_identity', {
+          p_email: user.email || null,
+          p_discord_id: discordId,
+        });
+
+        if (isBanned) {
+          console.log(`[Auth Callback] Blocked banned identity: email=${user.email}, discord_id=${discordId}`);
+          // Sign out and redirect to login with banned error
+          await supabase.auth.signOut();
+          return NextResponse.redirect(`${origin}/login?error=banned`);
+        }
+      } catch (banCheckErr) {
+        // If the check fails (e.g. table doesn't exist yet), log but don't block login
+        console.error('[Auth Callback] Error checking banned identity:', banCheckErr);
+      }
+
       // Check VidBolt Discord server membership
       let inVidBoltServer = false;
       const guildId = process.env.DISCORD_VIDBOLT_GUILD_ID;
@@ -105,7 +129,7 @@ export async function GET(request: Request) {
 
       if (!profile) {
         // Create initial profile with Discord metadata
-        await supabase.from('users').insert({
+        const { error: insertError } = await supabase.from('users').insert({
           id: user.id,
           email: user.email,
           discord_id: discordId,
@@ -113,6 +137,12 @@ export async function GET(request: Request) {
           discord_avatar: discordAvatar,
           in_vidbolt_server: inVidBoltServer,
         })
+
+        if (insertError) {
+          console.error('[Auth Callback] Failed to create user profile:', insertError);
+          // Don't silently continue — redirect to error page
+          return NextResponse.redirect(`${origin}/login?error=profile_creation_failed`);
+        }
 
         // Fire-and-forget: notify Discord channel about new waitlist signup
         notifyNewWaitlistUser({
