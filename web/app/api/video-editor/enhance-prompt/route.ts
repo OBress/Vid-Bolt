@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 
 // Service role client for DB reads
 function getServiceClient() {
@@ -98,35 +99,17 @@ Rules:
 - Do NOT include any explanation — output ONLY the enhanced prompt text`;
 
     // 6. Call OpenRouter
-    const openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${openRouterKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt },
-        ],
-        max_tokens: 1024,
-        temperature: 0.7,
-      }),
+    const result = await callOpenRouterWithKey(openRouterKey, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt },
+    ], {
+      model: 'google/gemini-3-flash-preview',
+      maxTokens: 1024,
+      temperature: 0.7,
+      xTitle: 'Vid-Bolt Enhance Prompt',
     });
 
-    if (!openRouterRes.ok) {
-      const errBody = await openRouterRes.text();
-      console.error('[enhance-prompt] OpenRouter error:', errBody);
-      return NextResponse.json(
-        { error: `AI enhancement failed (${openRouterRes.status})` },
-        { status: 502 }
-      );
-    }
-
-    const openRouterData = await openRouterRes.json();
-    const enhancedPrompt =
-      openRouterData.choices?.[0]?.message?.content?.trim() || prompt;
+    const enhancedPrompt = result.content.trim() || prompt;
 
     return NextResponse.json({ enhancedPrompt });
   } catch (error) {

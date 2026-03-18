@@ -2,11 +2,22 @@
  * Rate Limiter Utility
  * ============================================================================
  * Handles rate limiting for external APIs (OpenRouter, etc.).
- * When a 429 rate limit error is detected, all workers pause before retrying.
+ *
+ * Two layers of protection:
+ *
+ * 1. **Global rate limit state** (in-memory) — when a 429 is detected, all
+ *    workers pause before retrying. This is the original behavior.
+ *
+ * 2. **Per-user concurrency semaphore** (Redis-backed) — limits the number of
+ *    concurrent OpenRouter calls a single user can make. Prevents a user
+ *    running multiple pipelines from overwhelming the API. Coordinates across
+ *    all worker processes via Redis.
  */
 
+import { v4 as uuid } from 'uuid';
+
 // ============================================================================
-// RATE LIMIT STATE
+// RATE LIMIT STATE (in-memory, per-process)
 // ============================================================================
 
 interface RateLimitState {
@@ -147,7 +158,7 @@ export function handleRateLimitError(error: Error, service: string = 'openrouter
 }
 
 // ============================================================================
-// WRAPPER FUNCTION
+// WRAPPER FUNCTION (legacy — global rate limit only)
 // ============================================================================
 
 /**
@@ -199,6 +210,164 @@ export async function withRateLimitHandling<T>(
   }
   
   throw lastError || new Error(`Operation failed after ${maxRetries} retries due to rate limiting`);
+}
+
+// ============================================================================
+// PER-USER CONCURRENCY SEMAPHORE (Redis-backed)
+// ============================================================================
+
+/**
+ * Default max concurrent OpenRouter calls per user.
+ * 15 is very lenient — a single pipeline peaks at ~5-10 concurrent calls.
+ * This only kicks in if a user runs multiple pipelines simultaneously.
+ */
+const DEFAULT_MAX_CONCURRENT = 15;
+
+/**
+ * TTL for each semaphore slot in seconds.
+ * If a process crashes without releasing, slots auto-expire.
+ */
+const SLOT_TTL_SECONDS = 120;
+
+/**
+ * Max time to wait for a slot before giving up (ms).
+ */
+const MAX_SLOT_WAIT_MS = 30_000;
+
+/**
+ * Redis key prefix for per-user semaphore sorted sets.
+ */
+const SEMAPHORE_KEY_PREFIX = 'or:semaphore:';
+
+/**
+ * Get the Redis connection lazily (avoids circular imports).
+ * Returns null if Redis is not available (e.g., in API routes without workers).
+ */
+async function getRedis(): Promise<import('ioredis').default | null> {
+  try {
+    const { getRedisConnection } = await import('@/lib/queues/redis');
+    return getRedisConnection();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Acquire a concurrency slot for a user's OpenRouter calls.
+ * If at capacity, waits with exponential backoff until a slot opens.
+ *
+ * @param userId - The user ID to throttle
+ * @param maxConcurrent - Max concurrent calls (default: 15)
+ * @returns A unique token to pass to `releaseSlot`
+ */
+export async function acquireSlot(
+  userId: string,
+  maxConcurrent: number = DEFAULT_MAX_CONCURRENT
+): Promise<string> {
+  const redis = await getRedis();
+  if (!redis) {
+    // No Redis available — skip throttling (API routes without workers)
+    return 'no-redis';
+  }
+
+  const key = `${SEMAPHORE_KEY_PREFIX}${userId}`;
+  const token = uuid();
+  const now = Date.now();
+  const expireScore = now + SLOT_TTL_SECONDS * 1000;
+
+  // Clean up expired slots first
+  await redis.zremrangebyscore(key, '-inf', now);
+
+  let waitMs = 0;
+  const baseDelay = 200;
+  let attempt = 0;
+
+  while (waitMs < MAX_SLOT_WAIT_MS) {
+    // Check current count
+    const currentCount = await redis.zcard(key);
+
+    if (currentCount < maxConcurrent) {
+      // Add our slot with expiry score
+      await redis.zadd(key, expireScore, token);
+      // Set key TTL as a safety net
+      await redis.expire(key, SLOT_TTL_SECONDS + 30);
+      return token;
+    }
+
+    // At capacity — wait with exponential backoff
+    const delay = Math.min(baseDelay * Math.pow(1.5, attempt), 5000);
+    const jitter = delay * 0.2 * (Math.random() * 2 - 1);
+    const actualDelay = Math.floor(delay + jitter);
+
+    if (attempt === 0) {
+      console.log(
+        `[RateLimiter] User ${userId.substring(0, 8)}... at capacity (${currentCount}/${maxConcurrent}), waiting...`
+      );
+    }
+
+    await new Promise(r => setTimeout(r, actualDelay));
+    waitMs += actualDelay;
+    attempt++;
+
+    // Clean up expired slots on each retry
+    await redis.zremrangebyscore(key, '-inf', Date.now());
+  }
+
+  // Timeout — proceed anyway to avoid blocking the pipeline
+  console.warn(
+    `[RateLimiter] User ${userId.substring(0, 8)}... slot acquisition timed out after ${MAX_SLOT_WAIT_MS}ms — proceeding without throttle`
+  );
+  return 'timeout-bypass';
+}
+
+/**
+ * Release a concurrency slot for a user.
+ *
+ * @param userId - The user ID
+ * @param token - The token returned by `acquireSlot`
+ */
+export async function releaseSlot(userId: string, token: string): Promise<void> {
+  if (token === 'no-redis' || token === 'timeout-bypass') return;
+
+  try {
+    const redis = await getRedis();
+    if (!redis) return;
+
+    const key = `${SEMAPHORE_KEY_PREFIX}${userId}`;
+    await redis.zrem(key, token);
+  } catch (err) {
+    // Non-critical — slot will auto-expire via TTL
+    console.warn(`[RateLimiter] Failed to release slot for user ${userId.substring(0, 8)}...:`, err);
+  }
+}
+
+/**
+ * Execute an async operation within a per-user concurrency slot.
+ * Automatically acquires and releases the slot.
+ *
+ * @param userId - The user ID to throttle
+ * @param fn - The async operation to execute
+ * @param maxConcurrent - Max concurrent calls per user (default: 15)
+ * @returns The result of the operation
+ *
+ * @example
+ * ```ts
+ * const result = await withPerUserThrottle(userId, async () => {
+ *   return callOpenRouter(userId, messages, config);
+ * });
+ * ```
+ */
+export async function withPerUserThrottle<T>(
+  userId: string,
+  fn: () => Promise<T>,
+  maxConcurrent: number = DEFAULT_MAX_CONCURRENT
+): Promise<T> {
+  const token = await acquireSlot(userId, maxConcurrent);
+  try {
+    return await fn();
+  } finally {
+    await releaseSlot(userId, token);
+  }
 }
 
 // ============================================================================

@@ -78,11 +78,56 @@ function countBalanceIgnoringStrings(code: string, open: string, close: string):
 }
 
 /**
+ * Remove duplicate hook declarations that AI models frequently generate.
+ * The system prompt contains 25-35 examples of `const frame = useCurrentFrame()`
+ * across skill docs, causing the AI to redeclare these in the same scope.
+ * This auto-fix keeps the FIRST occurrence and removes all subsequent duplicates.
+ */
+function deduplicateHookDeclarations(code: string): { code: string; fixes: string[] } {
+  const fixes: string[] = [];
+  const lines = code.split('\n');
+
+  // Patterns for hook declarations — matches any destructuring variant
+  const hookPatterns: Array<{ regex: RegExp; label: string }> = [
+    { regex: /^\s*const\s+frame\s*=\s*useCurrentFrame\(\)\s*;?\s*$/, label: 'const frame = useCurrentFrame()' },
+    { regex: /^\s*const\s+\{[^}]*fps[^}]*\}\s*=\s*useVideoConfig\(\)\s*;?\s*$/, label: 'const { ... } = useVideoConfig()' },
+  ];
+
+  for (const { regex, label } of hookPatterns) {
+    let firstFound = false;
+    const indicesToRemove: number[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      if (regex.test(lines[i])) {
+        if (!firstFound) {
+          firstFound = true; // Keep the first occurrence
+        } else {
+          indicesToRemove.push(i);
+        }
+      }
+    }
+
+    if (indicesToRemove.length > 0) {
+      // Remove lines in reverse order to preserve indices
+      for (let j = indicesToRemove.length - 1; j >= 0; j--) {
+        lines.splice(indicesToRemove[j], 1);
+      }
+      fixes.push(`Removed ${indicesToRemove.length} duplicate ${label} declaration(s)`);
+      console.log(`[CodeValidator] Auto-fixed: removed ${indicesToRemove.length} duplicate "${label}" declarations`);
+    }
+  }
+
+  return { code: lines.join('\n'), fixes };
+}
+
+/**
  * Fix common syntax errors in AI-generated code
  */
 function fixSyntaxErrors(code: string): { code: string; fixes: string[] } {
-  let fixed = code;
-  const fixes: string[] = [];
+  // First: remove duplicate hook declarations (most common AI error)
+  const hookDedup = deduplicateHookDeclarations(code);
+  let fixed = hookDedup.code;
+  const fixes: string[] = [...hookDedup.fixes];
 
   const braceBalance = countBalanceIgnoringStrings(fixed, '{', '}');
   const parenBalance = countBalanceIgnoringStrings(fixed, '(', ')');
@@ -344,12 +389,18 @@ export function validateCode(code: string): ValidationResult {
   }
 
   // Detect useState (usually wrong in Remotion — state resets every frame)
-  if (/\buseState\b/.test(fixedCode)) {
+  // Exception: geo/map code legitimately needs useState+useEffect for async data loading
+  const GEO_IDENTIFIERS = ['WorldCountries', 'WorldLand', 'loadCities', 'getCityCoords', 'getCityInfo',
+    'getSubNationalData', 'geoPath', 'geoMercator', 'geoNaturalEarth1', 'geoOrthographic',
+    'loadRivers', 'loadLakes', 'loadOceans', 'loadAirports', 'loadPorts'];
+  const isGeoCode = GEO_IDENTIFIERS.some(id => fixedCode.includes(id));
+
+  if (/\buseState\b/.test(fixedCode) && !isGeoCode) {
     warnings.push('⚠️ useState detected — Remotion components should derive state from useCurrentFrame(), not React state');
   }
 
   // Detect useEffect (side effects are non-deterministic in Remotion)
-  if (/\buseEffect\b/.test(fixedCode)) {
+  if (/\buseEffect\b/.test(fixedCode) && !isGeoCode) {
     warnings.push('⚠️ useEffect detected — side effects are generally wrong in Remotion components');
   }
 
@@ -398,6 +449,37 @@ export function validateCode(code: string): ValidationResult {
   for (const { pattern, label } of DANGEROUS_PATTERNS) {
     if (pattern.test(fixedCode)) {
       errors.push(`🛡️ SECURITY: ${label}`);
+    }
+  }
+
+  // === UNDEFINED IDENTIFIER CHECKS ===
+  // AI models sometimes hallucinate variables that don't exist in the Remotion scope.
+  // These pass Babel syntax checks but crash at runtime → blank/error screens.
+  const FORBIDDEN_IDENTIFIERS: Array<{ pattern: RegExp; label: string; replacement?: string }> = [
+    { pattern: /\bTIMING\b/, label: 'TIMING is not defined in Remotion scope', replacement: 'frame' },
+    { pattern: /\bTimeline\b(?!\s*[.])/, label: 'Timeline is not a Remotion API — use Sequence or interpolate()' },
+    { pattern: /\bgsap\b/, label: 'gsap is not available — use spring()/interpolate() from Remotion' },
+    { pattern: /\banime\b(?!\s*\()/, label: 'anime.js is not available — use spring()/interpolate() from Remotion' },
+    { pattern: /\bTweenMax\b/, label: 'TweenMax (GSAP) is not available — use spring()/interpolate()' },
+    { pattern: /\bTweenLite\b/, label: 'TweenLite (GSAP) is not available — use spring()/interpolate()' },
+    { pattern: /\bMotionValue\b/, label: 'MotionValue (Framer Motion) is not available in Remotion' },
+    { pattern: /\bmotion\.div\b/, label: 'motion.div (Framer Motion) is not available — use AbsoluteFill with interpolate()' },
+    { pattern: /\brequestAnimationFrame\b/, label: 'requestAnimationFrame is forbidden — Remotion manages frame timing' },
+    { pattern: /\bsetInterval\b/, label: 'setInterval is forbidden — use useCurrentFrame() for timing' },
+    { pattern: /\bsetTimeout\b/, label: 'setTimeout is forbidden — use useCurrentFrame() for timing' },
+    { pattern: /\bperformance\.now\b/, label: 'performance.now() is non-deterministic — use useCurrentFrame()' },
+    { pattern: /\bnew Date\b/, label: 'new Date() is non-deterministic — use useCurrentFrame() for timing' },
+  ];
+
+  for (const { pattern, label, replacement } of FORBIDDEN_IDENTIFIERS) {
+    if (pattern.test(fixedCode)) {
+      if (replacement) {
+        fixedCode = fixedCode.replace(pattern, replacement);
+        corrections.push(`Auto-replaced: ${label.split(' ')[0]} → ${replacement}`);
+        hasAutoFixes = true;
+      } else {
+        errors.push(`❌ UNDEFINED: ${label}`);
+      }
     }
   }
 

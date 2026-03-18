@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { getOpenRouterApiKey } from "@/lib/services/api-keys";
+import { callOpenRouterWithKey } from "@/lib/ai/openrouter";
 
 // POST /api/process/script-chat - AI-assisted script rewriting
 export async function POST(request: NextRequest) {
@@ -85,36 +86,17 @@ Rules:
       );
     }
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${openRouterKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-      },
-      body: JSON.stringify({
-        model: writingModel,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: message },
-        ],
-        max_tokens: 2000,
-        temperature: 0.7,
-      }),
+    const response = await callOpenRouterWithKey(openRouterKey, [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: message },
+    ], {
+      model: writingModel,
+      maxTokens: 2000,
+      temperature: 0.7,
+      xTitle: 'Vid-Bolt Script Chat',
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error("OpenRouter error:", response.status, errorData);
-      const errorMessage = errorData?.error?.message || errorData?.message || `OpenRouter returned ${response.status}`;
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 500 }
-      );
-    }
-
-    const data = await response.json();
-    const aiResponse = data.choices?.[0]?.message?.content || "";
+    const aiResponse = response.content;
 
     // Parse the JSON response
     let rewrittenText = "";

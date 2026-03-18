@@ -5,6 +5,8 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { v4 as uuidv4 } from "uuid";
 import { buildCreativeManifest } from "@/lib/services/manifest-builder";
+import { hasAnyLocalModel } from "@/lib/constants/model-registry";
+import { incrementActiveProductions, setShutdownRequested } from "@/lib/services/gpu-production-tracker";
 import type { ProjectSettings } from "@/types/settings";
 
 /**
@@ -49,7 +51,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { videoId, videoCreativeOverrides } = body;
+    const { videoId, videoCreativeOverrides, shutdownWhenDone } = body;
 
     if (!videoId) {
       return NextResponse.json(
@@ -226,6 +228,28 @@ export async function POST(request: NextRequest) {
     );
 
     console.log(`[Closed-Loop API] Started orchestrator for video ${videoId}, task ${taskId}, job ${job.id}`);
+
+    // --- GPU production tracking ---
+    // Check if project uses local GPU models
+    const needsLocalGpu = projectSettings?.visuals
+      ? hasAnyLocalModel(
+          projectSettings.visuals.imageModel,
+          projectSettings.visuals.imageEditModel,
+          projectSettings.visuals.videoModel,
+        )
+      : false;
+
+    if (needsLocalGpu) {
+      try {
+        await incrementActiveProductions(user.id);
+        if (shutdownWhenDone) {
+          await setShutdownRequested(user.id, true);
+        }
+      } catch (trackErr) {
+        // Non-blocking: tracking failure shouldn't prevent production
+        console.warn('[Closed-Loop API] GPU production tracking failed (non-fatal):', trackErr);
+      }
+    }
 
     return NextResponse.json({ success: true, taskId, jobId: job.id });
   } catch (error) {

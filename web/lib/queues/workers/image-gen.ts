@@ -77,9 +77,11 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
 
       const metadata = (video?.metadata || {}) as Record<string, unknown>;
 
-      // Build GPU shots from av_script_part1 or asset_manifest
-      const avScriptPart1 = metadata.av_script_part1 as { shots?: Array<Record<string, unknown>> } | undefined;
-      const shots = avScriptPart1?.shots || [];
+      // Use shot_plan as primary data source (canonical, used by video-gen + asset-scout),
+      // with av_script_part1 as fallback for backward compatibility.
+      const shotPlanData = metadata.shot_plan as { shots?: Array<Record<string, unknown>> } | undefined;
+      const avScriptFallback = metadata.av_script_part1 as { shots?: Array<Record<string, unknown>> } | undefined;
+      const shots = shotPlanData?.shots || avScriptFallback?.shots || [];
 
       if (shots.length === 0) {
         console.warn(`${LOG_PREFIX} No shots found`);

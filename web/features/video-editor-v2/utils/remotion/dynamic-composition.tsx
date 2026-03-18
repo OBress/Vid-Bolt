@@ -118,7 +118,46 @@ class RuntimeErrorBoundary extends React.Component<RuntimeErrorBoundaryProps, Ru
   render() {
     if (this.state.error) {
       if (this.props.showErrorDisplay !== false) {
-        return <CompilationErrorDisplay error={`Runtime Error: ${this.state.error}`} />;
+        // Distinguish media errors from general runtime errors
+        const isMediaError = this.state.error.includes('loading image') || this.state.error.includes('loading video');
+        const label = isMediaError ? 'Media Error' : 'Runtime Error';
+        return (
+          <AbsoluteFill
+            style={{
+              backgroundColor: '#1a1a2e',
+              justifyContent: 'center',
+              alignItems: 'center',
+              padding: 60,
+            }}
+          >
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 12,
+            }}>
+              <span style={{ fontSize: 36, opacity: 0.6 }}>{isMediaError ? '🖼️' : '⚠️'}</span>
+              <div style={{
+                color: isMediaError ? '#f59e0b' : '#ff6b6b',
+                fontSize: 20,
+                fontWeight: 600,
+                fontFamily: 'Inter, system-ui, sans-serif',
+              }}>
+                {label}
+              </div>
+              <div style={{
+                color: '#888',
+                fontSize: 13,
+                fontFamily: 'Inter, system-ui, sans-serif',
+                textAlign: 'center',
+                maxWidth: '80%',
+                wordBreak: 'break-word',
+              }}>
+                {this.state.error}
+              </div>
+            </div>
+          </AbsoluteFill>
+        );
       }
       return null;
     }

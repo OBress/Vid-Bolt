@@ -944,6 +944,70 @@ export function importWizardDataToStore(options: WizardData): boolean {
         console.log(`[WizardDataImport] Built ${videoAudioCount} muted video audio clips`);
       }
 
+      // ─── Background Music: Import music clips from agent EDL ─────
+      // The edit-assembly worker injects music clips on a 'background-music'
+      // track but they get skipped by the audio filter above. Process them here.
+      const bgMusicClips = agentEdl.clips.filter(c => {
+        const tId = (c as any).trackId ?? (c as any).track_id ?? '';
+        return (c.type === 'audio' || (c as any).type === 'audio') && tId === 'background-music';
+      });
+      if (bgMusicClips.length > 0) {
+        const musicTrackId = agentToInternalTrackId.get('background-music') || generateId('track');
+        if (!agentToInternalTrackId.has('background-music')) {
+          // Track wasn't created from agent EDL tracks — create it now
+          tracksToAdd[musicTrackId] = {
+            id: musicTrackId,
+            type: 'audio',
+            name: 'Background Music',
+            order: Object.keys(tracksToAdd).length,
+            group: 'audio',
+            locked: false,
+            visible: true,
+            muted: false,
+            allowOverlap: false,
+            createdAt: now,
+            updatedAt: now,
+          };
+          trackOrderToAdd.push(musicTrackId);
+        }
+
+        let musicImportCount = 0;
+        for (const musicClip of bgMusicClips) {
+          const rawStart = (musicClip as any).startTime ?? (musicClip as any).start_time ?? 0;
+          const rawDur = (musicClip as any).duration ?? 0;
+          // Volume and URL are stored as extended properties by the edit-assembly worker
+          const volume = (musicClip as any).volume ?? 0.20;
+          const musicSrc = rewriteR2Url((musicClip as any).audioUrl || '');
+
+          if (rawDur <= 0) continue;
+
+          const clipId = generateId('clip');
+
+          clipsToAdd[clipId] = {
+            id: clipId,
+            trackId: musicTrackId,
+            startTime: rawStart,
+            duration: rawDur,
+            type: 'audio',
+            sourceId: musicSrc || `music-segment-${musicImportCount}`,
+            label: musicClip.label || `Music ${musicImportCount + 1}`,
+            color: '#a855f7', // Purple — distinguishes music from narration
+            transform: { x: 0, y: 0, width: 0, height: 0, rotation: 0, opacity: 1 },
+            media: {
+              src: musicSrc,
+              speed: 1,
+              volume: volume,
+              mediaStartTime: 0,
+              mediaDuration: rawDur,
+            },
+            createdAt: now,
+            updatedAt: now,
+          };
+          musicImportCount++;
+        }
+        console.log(`[WizardDataImport] 🎵 Built ${musicImportCount} background music clips`);
+      }
+
       // ─── Agent EDL transitions ────────────────────────────────
       if (agentEdl.transitions && agentEdl.transitions.length > 0) {
         for (const transition of agentEdl.transitions) {

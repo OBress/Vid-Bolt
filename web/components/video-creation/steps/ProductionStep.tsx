@@ -2,6 +2,13 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Play,
   Square,
@@ -11,6 +18,7 @@ import {
   RefreshCw,
   Film,
   Zap,
+  Power,
 } from "lucide-react";
 import { useTaskProgress } from "@/hooks/use-task-progress";
 import { useGCPVM } from "@/hooks/use-gcp-vm";
@@ -58,6 +66,7 @@ export function ProductionStep({
   const [taskId, setTaskId] = useState<string | null>(taskIdProp);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasCompleted, setHasCompleted] = useState(false);
+  const [shutdownWhenDone, setShutdownWhenDone] = useState(false);
   const completedRef = useRef(false);
 
   // GPU VM status
@@ -152,7 +161,10 @@ export function ProductionStep({
       const res = await fetch("/api/process/closed-loop", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId }),
+        body: JSON.stringify({
+          videoId,
+          shutdownWhenDone: needsLocalGpu ? shutdownWhenDone : false,
+        }),
       });
 
       const data = await res.json();
@@ -175,7 +187,7 @@ export function ProductionStep({
     } finally {
       setIsStarting(false);
     }
-  }, [videoId, onTaskStarted, onError, vmStatus, startVM, needsLocalGpu]);
+  }, [videoId, onTaskStarted, onError, vmStatus, startVM, needsLocalGpu, shutdownWhenDone]);
 
   const handleStop = useCallback(async () => {
     if (!taskId) return;
@@ -329,61 +341,97 @@ export function ProductionStep({
       )}
 
       {/* Action Buttons */}
-      <div className="flex items-center gap-3 w-full">
-        <Button
-          variant="outline"
-          onClick={onBack}
-          disabled={isRunning}
-          className="px-6"
-        >
-          Back
-        </Button>
-
-        <div className="flex-1" />
-
-        {errorMessage && !isRunning && (
+      <div className="flex flex-col gap-3 w-full">
+        <div className="flex items-center gap-3 w-full">
           <Button
-            onClick={handleRetry}
-            disabled={isStarting}
             variant="outline"
-            className="gap-2 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+            onClick={onBack}
+            disabled={isRunning}
+            className="px-6"
           >
-            <RefreshCw className={`w-4 h-4 ${isStarting ? "animate-spin" : ""}`} />
-            Retry
+            Back
           </Button>
-        )}
 
-        {isRunning ? (
-          <Button
-            onClick={handleStop}
-            disabled={isStopping}
-            variant="outline"
-            className="gap-2 border-red-500/30 text-red-400 hover:bg-red-500/10"
-          >
-            <Square className="w-4 h-4" />
-            {isStopping ? "Stopping..." : "Stop"}
-          </Button>
-        ) : hasCompleted ? (
-          <Button
-            onClick={onComplete}
-            className="gap-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white border-0"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            Continue to Editor
-          </Button>
-        ) : (
-          <Button
-            onClick={handleStart}
-            disabled={isStarting}
-            className="gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white border-0"
-          >
-            {isStarting ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Play className="w-4 h-4" />
-            )}
-            {isStarting ? "Starting..." : "Start Production"}
-          </Button>
+          <div className="flex-1" />
+
+          {errorMessage && !isRunning && (
+            <Button
+              onClick={handleRetry}
+              disabled={isStarting}
+              variant="outline"
+              className="gap-2 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+            >
+              <RefreshCw className={`w-4 h-4 ${isStarting ? "animate-spin" : ""}`} />
+              Retry
+            </Button>
+          )}
+
+          {isRunning ? (
+            <Button
+              onClick={handleStop}
+              disabled={isStopping}
+              variant="outline"
+              className="gap-2 border-red-500/30 text-red-400 hover:bg-red-500/10"
+            >
+              <Square className="w-4 h-4" />
+              {isStopping ? "Stopping..." : "Stop"}
+            </Button>
+          ) : hasCompleted ? (
+            <Button
+              onClick={onComplete}
+              className="gap-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white border-0"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              Continue to Editor
+            </Button>
+          ) : (
+            <Button
+              onClick={handleStart}
+              disabled={isStarting}
+              className="gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white border-0"
+            >
+              {isStarting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4" />
+              )}
+              {isStarting ? "Starting..." : "Start Production"}
+            </Button>
+          )}
+        </div>
+
+        {/* GPU Auto-Shutdown Checkbox — only visible when local GPU is in use */}
+        {needsLocalGpu && !isRunning && !hasCompleted && (
+          <div className="flex items-center justify-end">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <label className="flex items-center gap-2 cursor-pointer select-none group">
+                    <Checkbox
+                      id="shutdown-when-done"
+                      checked={shutdownWhenDone}
+                      onCheckedChange={(checked) => setShutdownWhenDone(checked === true)}
+                      className="border-neutral-600 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
+                    />
+                    <Power className={`w-3.5 h-3.5 transition-colors ${shutdownWhenDone ? "text-orange-400" : "text-neutral-500 group-hover:text-neutral-400"}`} />
+                    <span className={`text-xs transition-colors ${shutdownWhenDone ? "text-orange-400" : "text-neutral-500 group-hover:text-neutral-400"}`}>
+                      Shut down GPU when done
+                    </span>
+                  </label>
+                </TooltipTrigger>
+                <TooltipContent
+                  side="top"
+                  className="max-w-xs bg-neutral-900 border-neutral-700"
+                >
+                  <p className="text-xs text-neutral-300">
+                    The GPU VM will automatically stop after this video&apos;s
+                    production is complete, but only if no other videos are
+                    still being produced.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
         )}
       </div>
 

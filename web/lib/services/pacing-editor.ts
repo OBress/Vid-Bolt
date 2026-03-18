@@ -15,6 +15,7 @@
  */
 
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 import { getSupabaseServiceClient } from '@/lib/queues/shared';
 
 // ============================================================================
@@ -46,7 +47,6 @@ export interface PacingReviewResult {
 // ============================================================================
 
 const LOG_PREFIX = '[PacingEditor]';
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const PACING_MODEL = 'google/gemini-3-flash-preview';
 
 // ============================================================================
@@ -98,24 +98,14 @@ export async function reviewTimelinePacing(
   // Call Gemini 3 Flash for pacing review
   const apiKey = await getOpenRouterApiKey(userId);
 
-  const response = await fetch(OPENROUTER_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-      'X-Title': 'Vid-Bolt Pacing Editor',
+  const result = await callOpenRouterWithKey(apiKey, [
+    {
+      role: 'system',
+      content: 'You are a YouTube retention specialist and editing supervisor. Review video timelines the way a top creator\'s editor would — looking for pacing issues, missed opportunities for engagement, and moments where the edit doesn\'t match the content\'s energy. Your standard is the best YouTube documentary channels.',
     },
-    body: JSON.stringify({
-      model: PACING_MODEL,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a YouTube retention specialist and editing supervisor. Review video timelines the way a top creator\'s editor would — looking for pacing issues, missed opportunities for engagement, and moments where the edit doesn\'t match the content\'s energy. Your standard is the best YouTube documentary channels.',
-        },
-        {
-          role: 'user',
-          content: `Review this video timeline for engagement quality:
+    {
+      role: 'user',
+      content: `Review this video timeline for engagement quality:
 
 ${JSON.stringify(timelineSummary, null, 2)}
 
@@ -129,48 +119,44 @@ Evaluate with a top YouTube editor's eye:
 6. **Pacing flatline**: Extended stretches (>15s) with the same cut rhythm — the pacing should feel like a rollercoaster
 
 For each issue, suggest a specific adjustment. If the pacing is well-crafted with intentional variety, return an empty adjustments array. Don't flag things just to flag them — only flag genuine engagement problems.`,
-        },
-      ],
-      temperature: 0.1,
-      max_tokens: 4096,
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'pacing_review',
-          strict: true,
-          schema: {
-            type: 'object',
-            required: ['adjustments', 'overall_assessment'],
-            additionalProperties: false,
-            properties: {
-              adjustments: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  required: ['shotIndex', 'reason'],
-                  additionalProperties: false,
-                  properties: {
-                    shotIndex: { type: 'number' },
-                    newDuration: { type: ['number', 'null'] },
-                    newTransition: { type: ['string', 'null'] },
-                    reason: { type: 'string' },
-                  },
+    },
+  ], {
+    model: PACING_MODEL,
+    temperature: 0.1,
+    maxTokens: 4096,
+    xTitle: 'Vid-Bolt Pacing Editor',
+    responseFormat: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'pacing_review',
+        strict: true,
+        schema: {
+          type: 'object',
+          required: ['adjustments', 'overall_assessment'],
+          additionalProperties: false,
+          properties: {
+            adjustments: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['shotIndex', 'reason'],
+                additionalProperties: false,
+                properties: {
+                  shotIndex: { type: 'number' },
+                  newDuration: { type: ['number', 'null'] },
+                  newTransition: { type: ['string', 'null'] },
+                  reason: { type: 'string' },
                 },
               },
-              overall_assessment: { type: 'string' },
             },
+            overall_assessment: { type: 'string' },
           },
         },
       },
-    }),
+    },
   });
 
-  if (!response.ok) {
-    throw new Error(`Pacing review API error: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || '{}';
+  const content = result.content;
 
   try {
     const parsed = JSON.parse(content);

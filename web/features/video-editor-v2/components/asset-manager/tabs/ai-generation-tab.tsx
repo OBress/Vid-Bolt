@@ -22,6 +22,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import type { AIGenerationMode } from '../../../stores/ai-generation-store';
 import {
   Image as ImageIcon,
   Pencil,
@@ -43,6 +44,8 @@ import {
   ExternalLink,
   Play,
   Pause,
+  CloudOff,
+  Info,
 } from 'lucide-react';
 import { cn } from '../../../utils/general/utils';
 import { Button } from '../../ui/button';
@@ -62,7 +65,6 @@ import {
   TooltipTrigger,
 } from '../../ui/tooltip';
 import { useAIGenerationStore } from '../../../stores/ai-generation-store';
-import type { AIGenerationMode } from '../../../stores/ai-generation-store';
 import { useEditorContext } from '../../../contexts/editor-context';
 import { useApiKeys } from '@/hooks/use-api-keys';
 import { useProjectSettings } from '@/hooks/use-project-settings';
@@ -121,6 +123,8 @@ interface CompactModelSelectProps {
   value: string;
   onChange: (value: string) => void;
   hasReplicateKey: boolean;
+  /** When false, local GPU models are disabled with a tooltip. */
+  isGpuOnline?: boolean;
 }
 
 function CompactModelSelect({
@@ -128,11 +132,23 @@ function CompactModelSelect({
   value,
   onChange,
   hasReplicateKey,
+  isGpuOnline = true,
 }: CompactModelSelectProps) {
   const models = getModelsByCategory(category);
   const localModels = models.filter((m) => m.provider === 'local');
   const replicateModels = models.filter((m) => m.provider === 'replicate');
   const selectedModel = getModelById(value);
+
+  // Auto-switch away from a local model when GPU goes offline
+  useEffect(() => {
+    if (!isGpuOnline && selectedModel?.provider === 'local') {
+      const firstReplicate = replicateModels.find((m) => hasReplicateKey || true);
+      if (firstReplicate) {
+        onChange(firstReplicate.id);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGpuOnline]);
 
   return (
     <div className="space-y-1">
@@ -147,12 +163,35 @@ function CompactModelSelect({
           {/* Local GPU Models */}
           <SelectGroup>
             <SelectLabel className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold px-2">
-              Local GPU
+              Local GPU{!isGpuOnline && ' (Offline)'}
             </SelectLabel>
             {localModels.map((model) => (
-              <SelectItem key={model.id} value={model.id} className="text-xs">
-                {model.label}
-              </SelectItem>
+              <TooltipProvider key={model.id}>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <SelectItem
+                        value={model.id}
+                        disabled={!isGpuOnline}
+                        className={cn('text-xs', !isGpuOnline && 'opacity-50')}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          {model.label}
+                          {!isGpuOnline && <CloudOff className="h-2.5 w-2.5 text-neutral-500" />}
+                        </span>
+                      </SelectItem>
+                    </span>
+                  </TooltipTrigger>
+                  {!isGpuOnline && (
+                    <TooltipContent
+                      side="right"
+                      className="bg-neutral-800 border-neutral-700 text-neutral-200 text-[10px] max-w-[200px]"
+                    >
+                      GPU is offline — start the VM to use local models
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
             ))}
           </SelectGroup>
 
@@ -1152,9 +1191,10 @@ interface ImageGenFormProps {
   projectId: string;
   loraGroups: LoRAGroup[];
   defaultLoraName?: string;
+  isGpuOnline: boolean;
 }
 
-function ImageGenForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName }: ImageGenFormProps) {
+function ImageGenForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName, isGpuOnline }: ImageGenFormProps) {
   const { imageGen, updateImageGen, isGenerating, lastResult, error, setGenerating, setResult, setError } =
     useAIGenerationStore();
 
@@ -1228,6 +1268,7 @@ function ImageGenForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName 
         value={imageGen.modelId}
         onChange={(v) => updateImageGen({ modelId: v })}
         hasReplicateKey={hasReplicateKey}
+        isGpuOnline={isGpuOnline}
       />
 
       {/* LoRA */}
@@ -1336,9 +1377,10 @@ interface ImageEditFormProps {
   projectId: string;
   loraGroups: LoRAGroup[];
   defaultLoraName?: string;
+  isGpuOnline: boolean;
 }
 
-function ImageEditForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName }: ImageEditFormProps) {
+function ImageEditForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName, isGpuOnline }: ImageEditFormProps) {
   const { imageEdit, updateImageEdit, isGenerating, lastResult, error, setGenerating, setResult, setError } =
     useAIGenerationStore();
 
@@ -1427,6 +1469,7 @@ function ImageEditForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName
         value={imageEdit.modelId}
         onChange={(v) => updateImageEdit({ modelId: v })}
         hasReplicateKey={hasReplicateKey}
+        isGpuOnline={isGpuOnline}
       />
 
       {/* LoRA */}
@@ -1502,9 +1545,10 @@ function ImageEditForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName
 interface VideoGenFormProps {
   hasReplicateKey: boolean;
   projectId: string;
+  isGpuOnline: boolean;
 }
 
-function VideoGenForm({ hasReplicateKey, projectId }: VideoGenFormProps) {
+function VideoGenForm({ hasReplicateKey, projectId, isGpuOnline }: VideoGenFormProps) {
   const { videoGen, updateVideoGen, isGenerating, lastResult, error, setGenerating, setResult, setError } =
     useAIGenerationStore();
 
@@ -1579,6 +1623,7 @@ function VideoGenForm({ hasReplicateKey, projectId }: VideoGenFormProps) {
         value={videoGen.modelId}
         onChange={(v) => updateVideoGen({ modelId: v })}
         hasReplicateKey={hasReplicateKey}
+        isGpuOnline={isGpuOnline}
       />
 
       {/* Start Frame URL */}
@@ -1731,7 +1776,25 @@ export function AIGenerationTab() {
   const { displayStatus, apiReady } = useGCPVM();
   const { currentMode, isSwitching, switchToAll, isGpuReady } = useVramMode(apiReady);
   const vmIsOn = displayStatus === "ON";
-  const showGpuOverlay = !isGpuReady;
+
+  // Modes that never need the GPU (browser-based or use external APIs)
+  const GPU_FREE_MODES: AIGenerationMode[] = useMemo(() => ['motion', 'tts', 'sfx'], []);
+  // Modes that can fallback to Replicate cloud when GPU is offline
+  const REPLICATE_FALLBACK_MODES: AIGenerationMode[] = useMemo(() => ['image-gen', 'image-edit', 'video-gen'], []);
+
+  // Only show the blocking GPU overlay for modes that strictly require the GPU (audio)
+  const showGpuOverlay = useMemo(() => {
+    if (isGpuReady) return false;
+    if (GPU_FREE_MODES.includes(activeMode)) return false;
+    if (REPLICATE_FALLBACK_MODES.includes(activeMode)) return false;
+    return true; // audio-gen → requires GPU
+  }, [isGpuReady, activeMode, GPU_FREE_MODES, REPLICATE_FALLBACK_MODES]);
+
+  // Show an info banner for modes that work but only with Replicate (GPU offline)
+  const showReplicateOnlyBanner = useMemo(() => {
+    if (isGpuReady) return false;
+    return REPLICATE_FALLBACK_MODES.includes(activeMode);
+  }, [isGpuReady, activeMode, REPLICATE_FALLBACK_MODES]);
 
   // Get LoRA info from project creative direction
   const projectLoras = useMemo(
@@ -1879,6 +1942,15 @@ export function AIGenerationTab() {
 
         {/* Actual content (grayed out when overlay is showing) */}
         <div className={showGpuOverlay ? 'opacity-40 pointer-events-none select-none' : ''}>
+        {/* GPU offline info banner for Replicate-fallback modes */}
+        {showReplicateOnlyBanner && (
+          <div className="flex items-start gap-2 p-2.5 mb-3 rounded-md border border-amber-500/30 bg-amber-500/5">
+            <Info className="h-3.5 w-3.5 text-amber-400 mt-0.5 shrink-0" />
+            <p className="text-[10px] text-amber-300/90 leading-relaxed">
+              GPU is offline — only <span className="font-semibold text-amber-200">Replicate</span> (cloud) models are available. Start the VM to use local models.
+            </p>
+          </div>
+        )}
         {(keysLoading || settingsLoading) ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
@@ -1889,6 +1961,7 @@ export function AIGenerationTab() {
             projectId={projectId}
             loraGroups={loraGroups}
             defaultLoraName={defaultLoraName}
+            isGpuOnline={isGpuReady}
           />
         ) : activeMode === 'image-edit' ? (
           <ImageEditForm
@@ -1896,11 +1969,13 @@ export function AIGenerationTab() {
             projectId={projectId}
             loraGroups={loraGroups}
             defaultLoraName={defaultLoraName}
+            isGpuOnline={isGpuReady}
           />
         ) : activeMode === 'video-gen' ? (
           <VideoGenForm
             hasReplicateKey={hasReplicateKey}
             projectId={projectId}
+            isGpuOnline={isGpuReady}
           />
         ) : activeMode === 'motion' ? (
           <React.Suspense fallback={

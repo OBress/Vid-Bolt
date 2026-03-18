@@ -21,6 +21,8 @@
 
 import { Job, Processor } from 'bullmq';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
+import type { OpenRouterMessage } from '@/lib/ai/openrouter';
 // Static video detection removed — VLM verifier catches bad media directly
 
 // ============================================================================
@@ -81,7 +83,6 @@ export interface VerifierJobData {
 // ============================================================================
 
 const LOG_PREFIX = '[Verifier]';
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const VERIFICATION_MODEL = 'google/gemini-3-flash-preview';
 
 /** Gemini 3.1 Pro for meta-review of borderline verdicts (deeper reasoning) */
@@ -111,6 +112,43 @@ function isVideoUrl(url: string): boolean {
  * Always includes first + last frame.
  */
 const _VIDEO_KEYFRAME_COUNT = 5;
+
+// ============================================================================
+// JSON SCHEMA FOR STRUCTURED OUTPUT
+// ============================================================================
+
+const VERIFIER_JSON_SCHEMA = {
+  type: 'json_schema' as const,
+  json_schema: {
+    name: 'verifier_result',
+    strict: true,
+    schema: {
+      type: 'object',
+      required: ['verdict', 'failure_type', 'dimension_feedback', 'suggested_corrections', 'recommended_action', 'confidence'],
+      additionalProperties: false,
+      properties: {
+        verdict: { type: 'string', enum: ['PASS', 'SOFT_FAIL', 'FAIL'] },
+        failure_type: { type: ['string', 'null'], enum: ['recoverable', 'fundamental', null] },
+        dimension_feedback: {
+          type: 'object',
+          required: ['semantic_alignment', 'entity_consistency', 'temporal_continuity', 'visual_quality', 'style_consistency', 'thematic_consistency'],
+          additionalProperties: false,
+          properties: {
+            semantic_alignment: { type: 'string' },
+            entity_consistency: { type: 'string' },
+            temporal_continuity: { type: 'string' },
+            visual_quality: { type: 'string' },
+            style_consistency: { type: 'string' },
+            thematic_consistency: { type: 'string' },
+          },
+        },
+        suggested_corrections: { type: 'array', items: { type: 'string' } },
+        recommended_action: { type: 'string', enum: ['re-edit', 'regenerate', 'accept'] },
+        confidence: { type: 'number' },
+      },
+    },
+  },
+};
 
 // ============================================================================
 // SYSTEM PROMPT
@@ -214,94 +252,31 @@ Respond ONLY with valid JSON matching this schema:
 }`;
 
 // ============================================================================
-// MULTIMODAL API CALL
+// MULTIMODAL API CALL (via central module)
 // ============================================================================
 
 /**
- * Call OpenRouter with multimodal content (text + images).
- * The standard callOpenRouter() only supports text messages, so we use
- * the raw API for vision calls.
+ * Call OpenRouter with multimodal content (text + images/videos).
+ * Uses the central callOpenRouterWithKey for rate limiting and retries.
  */
 async function callVisionModel(
   apiKey: string,
   systemPrompt: string,
-  userContent: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>
+  userContent: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } } | { type: 'video_url'; video_url: { url: string } }>,
+  config?: { model?: string; temperature?: number; maxTokens?: number }
 ): Promise<string> {
-  const response = await fetch(OPENROUTER_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-      'X-Title': 'Vid-Bolt Verifier',
-    },
-    body: JSON.stringify({
-      model: VERIFICATION_MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userContent },
-      ],
-      temperature: 0.2, // Low temperature for consistent scoring
-      max_tokens: 2048,
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'verifier_result',
-          strict: true,
-          schema: {
-            type: 'object',
-            required: ['verdict', 'failure_type', 'dimension_feedback', 'suggested_corrections', 'recommended_action', 'confidence'],
-            additionalProperties: false,
-            properties: {
-              verdict: { type: 'string', enum: ['PASS', 'SOFT_FAIL', 'FAIL'] },
-              failure_type: { type: ['string', 'null'], enum: ['recoverable', 'fundamental', null] },
-              dimension_feedback: {
-                type: 'object',
-                required: ['semantic_alignment', 'entity_consistency', 'temporal_continuity', 'visual_quality', 'style_consistency', 'thematic_consistency'],
-                additionalProperties: false,
-                properties: {
-                  semantic_alignment: { type: 'string' },
-                  entity_consistency: { type: 'string' },
-                  temporal_continuity: { type: 'string' },
-                  visual_quality: { type: 'string' },
-                  style_consistency: { type: 'string' },
-                  thematic_consistency: { type: 'string' },
-                },
-              },
-              suggested_corrections: { type: 'array', items: { type: 'string' } },
-              recommended_action: { type: 'string', enum: ['re-edit', 'regenerate', 'accept'] },
-              confidence: { type: 'number' },
-            },
-          },
-        },
-      },
-    }),
+  const response = await callOpenRouterWithKey(apiKey, [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userContent },
+  ], {
+    model: config?.model || VERIFICATION_MODEL,
+    temperature: config?.temperature ?? 0.2,
+    maxTokens: config?.maxTokens ?? 2048,
+    xTitle: 'Vid-Bolt Verifier',
+    responseFormat: VERIFIER_JSON_SCHEMA,
   });
 
-  const responseText = await response.text();
-
-  if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
-    throw new Error(`OpenRouter returned error page. Status: ${response.status}`);
-  }
-
-  let data;
-  try {
-    data = JSON.parse(responseText);
-  } catch {
-    throw new Error(`Invalid JSON from OpenRouter: ${responseText.substring(0, 200)}`);
-  }
-
-  if (!response.ok) {
-    const errorMessage = data.error?.message || `HTTP ${response.status}`;
-    throw new Error(`Verifier API error: ${errorMessage}`);
-  }
-
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error('No content in verifier API response');
-  }
-
-  return content;
+  return response.content;
 }
 
 // ============================================================================
@@ -311,8 +286,8 @@ async function callVisionModel(
 /**
  * Build the user prompt with all context for verification.
  */
-function buildVerificationPrompt(jobData: VerifierJobData): Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> {
-  const content: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [];
+function buildVerificationPrompt(jobData: VerifierJobData): Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } } | { type: 'video_url'; video_url: { url: string } }> {
+  const content: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } } | { type: 'video_url'; video_url: { url: string } }> = [];
 
   // Context text
   let contextText = `## Shot ${jobData.shotIndex + 1} Verification\n\n`;
@@ -432,38 +407,18 @@ async function performMetaReview(
   try {
     const metaPrompt = buildMetaReviewPrompt(shotIndex, initialResult, mediaType);
 
-    // Call Gemini 3.1 Pro for deeper reasoning
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-        'X-Title': 'Vid-Bolt Verifier Meta-Review',
-      },
-      body: JSON.stringify({
-        model: META_REVIEW_MODEL,
-        messages: [
-          { role: 'system', content: 'You are a senior quality reviewer for an AI video production pipeline. Your role is to provide a second opinion on borderline verification verdicts.' },
-          { role: 'user', content: metaPrompt },
-        ],
-        temperature: 0.1,
-        max_tokens: 2048,
-      }),
+    // Call Gemini 3.1 Pro via the central module
+    const response = await callOpenRouterWithKey(apiKey, [
+      { role: 'system', content: 'You are a senior quality reviewer for an AI video production pipeline. Your role is to provide a second opinion on borderline verification verdicts.' },
+      { role: 'user', content: metaPrompt },
+    ], {
+      model: META_REVIEW_MODEL,
+      temperature: 0.1,
+      maxTokens: 2048,
+      xTitle: 'Vid-Bolt Verifier Meta-Review',
     });
 
-    if (!response.ok) {
-      throw new Error(`Meta-review API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-
-    if (!content) {
-      throw new Error('No content in meta-review response');
-    }
-
-    const revisedResult = parseVerifierResponse(content);
+    const revisedResult = parseVerifierResponse(response.content);
     const overturned = revisedResult.verdict !== initialResult.verdict;
 
     if (overturned) {
