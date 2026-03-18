@@ -11,33 +11,35 @@
 -- ============================================================================
 
 -- 1. Create the recursive deep merge helper
-CREATE OR REPLACE FUNCTION public.jsonb_deep_merge(base jsonb, overlay jsonb)
+-- Note: "overlay" and "base" are reserved words in PostgreSQL, so we use
+-- base_val/updates_val as parameter names.
+CREATE OR REPLACE FUNCTION public.jsonb_deep_merge(base_val jsonb, updates_val jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
 IMMUTABLE
 SET search_path = ''
 AS $$
 DECLARE
-  result jsonb := base;
+  result jsonb := base_val;
   key text;
-  base_val jsonb;
-  overlay_val jsonb;
+  bv jsonb;
+  uv jsonb;
 BEGIN
-  -- Iterate over all keys in the overlay
-  FOR key IN SELECT jsonb_object_keys(overlay)
+  -- Iterate over all keys in the updates
+  FOR key IN SELECT jsonb_object_keys(updates_val)
   LOOP
-    overlay_val := overlay -> key;
-    base_val := result -> key;
+    uv := updates_val -> key;
+    bv := result -> key;
 
     -- If both values are objects, recurse
-    IF base_val IS NOT NULL
-       AND jsonb_typeof(base_val) = 'object'
-       AND jsonb_typeof(overlay_val) = 'object'
+    IF bv IS NOT NULL
+       AND jsonb_typeof(bv) = 'object'
+       AND jsonb_typeof(uv) = 'object'
     THEN
-      result := jsonb_set(result, ARRAY[key], public.jsonb_deep_merge(base_val, overlay_val));
+      result := jsonb_set(result, ARRAY[key], public.jsonb_deep_merge(bv, uv));
     ELSE
-      -- Otherwise overlay wins (same as || for non-object values)
-      result := jsonb_set(result, ARRAY[key], overlay_val);
+      -- Otherwise updates value wins (same as || for non-object values)
+      result := jsonb_set(result, ARRAY[key], uv);
     END IF;
   END LOOP;
 
