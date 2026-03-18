@@ -13,8 +13,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
 
 // ============================================================
 // VISION QC PROMPT
@@ -225,41 +226,30 @@ export async function POST(request: NextRequest) {
     ];
 
     // 5. Call OpenRouter with vision model
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-        'X-Title': 'Vid-Bolt Visual QC',
+    const qcResponse = await callOpenRouterWithKey(apiKey, [
+      {
+        role: 'system',
+        content: VISUAL_QC_PROMPT,
       },
-      body: JSON.stringify({
-        model: visionModel,
-        messages,
-        temperature: 0.3, // Low temperature for consistent evaluation
-        max_tokens: 2000, // Increased for element-specific detail
-        response_format: { type: 'json_object' },
-      }),
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text' as const,
+            text: `Original user request: "${prompt}"\n\n${code ? `Source code that generated this animation:\n\`\`\`tsx\n${code.substring(0, 6000)}\n\`\`\`\n\nCross-reference the screenshots below with the source code above. Identify issues by referencing specific variable names, constants, or JSX elements from the code.\n\n` : ''}The following ${screenshots.length} labeled screenshots show the animation at specific points in time.${durationContext} Evaluate the quality:`,
+          },
+          ...imageContent,
+        ],
+      },
+    ], {
+      model: visionModel,
+      temperature: 0.3,
+      maxTokens: 2000,
+      xTitle: 'Vid-Bolt Visual QC',
+      responseFormat: { type: 'json_object' },
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[VisualQC API] OpenRouter error:', errorText.substring(0, 200));
-      return NextResponse.json(
-        { error: `Vision analysis failed: HTTP ${response.status}` },
-        { status: 502 }
-      );
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-
-    if (!content) {
-      return NextResponse.json(
-        { error: 'No response from vision model' },
-        { status: 502 }
-      );
-    }
+    const content = qcResponse.content;
 
     // 6. Parse and validate the QC result
     let qcResult;

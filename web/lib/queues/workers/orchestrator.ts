@@ -21,10 +21,20 @@
 import { Job, Processor, Queue, QueueEvents } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus, appendActivityEvent } from '@/lib/queues/shared';
 import { getRedisConnection } from '@/lib/queues/redis';
+import {
+  calculateTtsTimeout,
+  calculateShotPlannerTimeout,
+  calculateAssetScoutTimeout,
+  calculateAssemblyTimeout,
+  calculateImageEditTimeout,
+  calculateVerifierTimeout,
+  calculatePortraitTimeout,
+} from '@/lib/queues/pipeline-timeouts';
 import { generateWorkerPrompts } from '@/lib/services/prompt-generator';
 import { listEntities, incrementAppearance } from '@/lib/services/gcm';
 import { selectBestFitSalvage, type SalvageAttempt } from '@/lib/services/best-fit-salvage';
 import { syncLorasToGpuApi } from '@/lib/services/lora-sync-service';
+import { decrementActiveProductions, executeGpuShutdown } from '@/lib/services/gpu-production-tracker';
 import type { VerifierResult } from '@/lib/queues/workers/verifier';
 import type {
   OrchestratorJobData,
@@ -224,7 +234,10 @@ async function executeTtsPhase(
     } : undefined,
   });
 
-  const audioResult = await audioJob.waitUntilFinished(queueEvents, 300_000);
+  // Dynamic timeout: scales with script length (word count → chunks → processing time)
+  const wordCount = jobData.scriptContent.split(/\s+/).length;
+  const ttsTimeout = calculateTtsTimeout(wordCount);
+  const audioResult = await audioJob.waitUntilFinished(queueEvents, ttsTimeout);
 
   if (!audioResult?.success) {
     throw new Error('TTS generation failed');
@@ -303,7 +316,9 @@ async function executeShotPlanningPhase(
     systemPrompt,
   });
 
-  const shotResult = await shotJob.waitUntilFinished(queueEvents, 300_000);
+  // Dynamic timeout: scales with video duration (more segments → more LLM batches)
+  const shotPlannerTimeout = calculateShotPlannerTimeout(totalDuration);
+  const shotResult = await shotJob.waitUntilFinished(queueEvents, shotPlannerTimeout);
 
   return {
     shotCount: shotResult?.output?.shots?.length || 0,
@@ -315,6 +330,9 @@ async function executeShotPlanningPhase(
 // ============================================================================
 
 const REFLECTION_MODEL = 'google/gemini-3-flash-preview';
+
+/** Timeout for video verification jobs (vision analysis is slower than text). */
+const VIDEO_VERIFY_TIMEOUT_MS = 180_000;
 
 interface ShotPlanReflectionResult {
   severity: 'none' | 'minor' | 'major';
@@ -364,27 +382,16 @@ async function performShotPlanReflection(
     description: (shot.description || shot.summary || '').toString().substring(0, 100),
   }));
 
-  const { getOpenRouterApiKey } = await import('@/lib/services/api-keys');
-  const apiKey = await getOpenRouterApiKey(userId);
+  const { callOpenRouter } = await import('@/lib/ai/openrouter');
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-      'X-Title': 'Vid-Bolt Shot Plan Reflection',
+  const result = await callOpenRouter(userId, [
+    {
+      role: 'system',
+      content: 'You review shot plans for AI video production.',
     },
-    body: JSON.stringify({
-      model: REFLECTION_MODEL,
-      messages: [
-        {
-          role: 'system',
-          content: 'You review shot plans for AI video production.',
-        },
-        {
-          role: 'user',
-          content: `Review this ${shotCount}-shot plan (total audio: ${totalDuration}s) for issues:
+    {
+      role: 'user',
+      content: `Review this ${shotCount}-shot plan (total audio: ${totalDuration}s) for issues:
 
 ${JSON.stringify(serializedPlan, null, 2)}
 
@@ -396,44 +403,38 @@ Check for:
 5. Total coverage: do durations roughly sum to ${totalDuration}s?
 
 Severity guidelines: "major" = fundamental plan errors that would produce unwatchable video. "minor" = imperfections that are acceptable. "none" = plan looks good.`,
-        },
-      ],
-      temperature: 0.1,
-      max_tokens: 2048,
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'shot_plan_reflection',
-          strict: true,
-          schema: {
-            type: 'object',
-            required: ['issues', 'severity'],
-            additionalProperties: false,
-            properties: {
-              issues: { type: 'array', items: { type: 'string' } },
-              severity: { type: 'string', enum: ['none', 'minor', 'major'] },
-            },
+    },
+  ], {
+    model: REFLECTION_MODEL,
+    temperature: 0.1,
+    maxTokens: 2048,
+    xTitle: 'Vid-Bolt Shot Plan Reflection',
+    responseFormat: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'shot_plan_reflection',
+        strict: true,
+        schema: {
+          type: 'object',
+          required: ['issues', 'severity'],
+          additionalProperties: false,
+          properties: {
+            issues: { type: 'array', items: { type: 'string' } },
+            severity: { type: 'string', enum: ['none', 'minor', 'major'] },
           },
         },
       },
-    }),
+    },
   });
 
-  if (!response.ok) {
-    throw new Error(`Reflection API error: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || '{}';
-
   try {
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(result.content);
     return {
       severity: ['none', 'minor', 'major'].includes(parsed.severity) ? parsed.severity : 'none',
       issues: Array.isArray(parsed.issues) ? parsed.issues : [],
     };
   } catch {
-    console.warn(`${LOG_PREFIX_REFLECT} JSON parse failed:`, content.substring(0, 200));
+    console.warn(`${LOG_PREFIX_REFLECT} JSON parse failed:`, result.content.substring(0, 200));
     return { severity: 'none', issues: [] };
   }
 }
@@ -447,7 +448,8 @@ async function executeAssetRetrievalPhase(
   videoId: string,
   jobData: OrchestratorJobData,
   taskId: string,
-  workerPrompts: WorkerPrompts
+  workerPrompts: WorkerPrompts,
+  shotCount: number = 30
 ): Promise<{ stockMatched: number; promptsGenerated: number }> {
   console.log(`${LOG_PREFIX} Phase III: Asset Retrieval + SFX`);
 
@@ -468,7 +470,9 @@ async function executeAssetRetrievalPhase(
     systemPrompt: workerPrompts.asset_scout,
   });
 
-  const assetResult = await assetJob.waitUntilFinished(queueEvents, 300_000);
+  // Dynamic timeout: scales with shot count (more shots → more stock search + prompt gen)
+  const assetScoutTimeout = calculateAssetScoutTimeout(shotCount);
+  const assetResult = await assetJob.waitUntilFinished(queueEvents, assetScoutTimeout);
 
   return {
     stockMatched: assetResult?.output?.metadata?.stock_count || 0,
@@ -559,7 +563,7 @@ async function executeWithVerification(
         }
       );
 
-      const editResult = await editJob.waitUntilFinished(editQueueEvents, 30_000); // ~15s edit + network buffer
+      const editResult = await editJob.waitUntilFinished(editQueueEvents, calculateImageEditTimeout());
       currentMediaUrl = editResult?.mediaUrl || editResult?.url || currentMediaUrl;
     } else {
       // --- FUNDAMENTAL or FIRST ATTEMPT: generate from scratch ---
@@ -604,7 +608,7 @@ async function executeWithVerification(
       previousFeedback,
     });
 
-    const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, 60_000);
+    const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, calculateVerifierTimeout(generationConfig.mediaType));
     const result: VerifierResult = verifyResult?.result;
 
     if (!result) {
@@ -1119,7 +1123,7 @@ async function executeProductionPhase(
               // Temporal continuity skipped for parallel path — shots verify out-of-order
             });
 
-            const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, 60_000);
+            const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, VIDEO_VERIFY_TIMEOUT_MS);
             const verdict = verifyResult?.result;
 
             // Track verification skips in state
@@ -1158,8 +1162,14 @@ async function executeProductionPhase(
               }
             }
           } catch (verifyErr) {
-            console.warn(`${LOG_PREFIX} Video shot ${shot.segment_index} verification error:`, verifyErr);
-            // Still use the video even if verification fails
+            const isTimeout = verifyErr instanceof Error && verifyErr.message.includes('timed out');
+            if (isTimeout) {
+              console.warn(`${LOG_PREFIX} Video shot ${shot.segment_index} verification timed out — accepting media`);
+              state.verification_skipped = (state.verification_skipped || 0) + 1;
+            } else {
+              console.warn(`${LOG_PREFIX} Video shot ${shot.segment_index} verification error:`, verifyErr);
+            }
+            // Still use the video even if verification fails/times out
           }
         })();
 
@@ -1319,6 +1329,11 @@ async function executeProductionPhase(
     console.log(`${LOG_PREFIX} ${mgSwitchedToVideo.size} MG shots switched to AI video — queueing video generation`);
     
     const switchedShots = shots.filter(s => mgSwitchedToVideo.has(s.segment_index));
+    // Collect all MG→video results, then persist in a SINGLE merge call.
+    // Previously each iteration called merge_video_metadata({ generated_videos: { "shot-X": url } }),
+    // which with JSONB || (shallow merge) REPLACED the entire generated_videos object each time,
+    // destroying all videos from the main batch and prior iterations.
+    const mgVideoResults: Record<string, string> = {};
     
     for (const shot of switchedShots) {
       try {
@@ -1345,12 +1360,8 @@ async function executeProductionPhase(
         const videoUrl = result?.mediaUrl || result?.url;
         
         if (videoUrl) {
-          // Store in generated_videos metadata
           const shotKey = `shot-${shot.segment_index}`;
-          await supabase.rpc('merge_video_metadata', {
-            p_video_id: videoId,
-            p_updates: { generated_videos: { [shotKey]: videoUrl } },
-          });
+          mgVideoResults[shotKey] = videoUrl;
           generatedAssets.set(`placeholder://shot-${shot.segment_index}/asset-0`, videoUrl);
           videosCompleted++;
           console.log(`${LOG_PREFIX} MG→Video shot ${shot.segment_index}: generated successfully`);
@@ -1362,6 +1373,15 @@ async function executeProductionPhase(
         videosFailed++;
         console.error(`${LOG_PREFIX} MG→Video shot ${shot.segment_index}: generation failed:`, err);
       }
+    }
+
+    // Batch persist ALL MG→video results in a single merge call
+    if (Object.keys(mgVideoResults).length > 0) {
+      await supabase.rpc('merge_video_metadata', {
+        p_video_id: videoId,
+        p_updates: { generated_videos: mgVideoResults },
+      });
+      console.log(`${LOG_PREFIX} MG→Video: persisted ${Object.keys(mgVideoResults).length} videos in single batch`);
     }
     
     (state as any).mg_switched_to_video = mgSwitchedToVideo.size;
@@ -1500,7 +1520,7 @@ async function executeAssemblyPhase(
     if (Array.isArray(shots)) shotCount = shots.length;
   } catch { /* use fallback */ }
   // Dynamic timeout: generous bounds for large videos (30 min max for hour-long content)
-  const dynamicTimeoutMs = Math.max(180_000, Math.min(1_800_000, 120_000 + shotCount * 20_000));
+  const dynamicTimeoutMs = calculateAssemblyTimeout(shotCount);
   console.log(`${LOG_PREFIX} Assembly timeout: ${dynamicTimeoutMs / 1000}s for ${shotCount} shots`);
   const assemblyResult = await assemblyJob.waitUntilFinished(queueEvents, dynamicTimeoutMs);
 
@@ -1575,7 +1595,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
             }
           );
 
-          const portraitResult = await portraitJob.waitUntilFinished(imageGenQueueEvents, 60_000);
+          const portraitResult = await portraitJob.waitUntilFinished(imageGenQueueEvents, calculatePortraitTimeout());
           const portraitUrl = portraitResult?.mediaUrl || portraitResult?.url;
 
           if (portraitUrl) {
@@ -1857,7 +1877,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       : Promise.resolve(null);
 
     const [assetResult, musicResult] = await Promise.all([
-      executeAssetRetrievalPhase(videoId, job.data, taskId, workerPrompts),
+      executeAssetRetrievalPhase(videoId, job.data, taskId, workerPrompts, state.phase_data.shot_planning?.shot_count || 30),
       musicPromise,
     ]);
 
@@ -2211,6 +2231,24 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
     console.log(`${LOG_PREFIX} ✅ Pipeline complete for video ${videoId}`);
     console.log(`${LOG_PREFIX} Summary:`, JSON.stringify(summary));
 
+    // --- GPU auto-shutdown check ---
+    try {
+      const { shouldShutdown, activeCount } = await decrementActiveProductions(userId);
+      if (shouldShutdown) {
+        console.log(`${LOG_PREFIX} Auto-shutting down GPU VM — no more active productions`);
+        await appendActivityEvent(taskId, {
+          phase: 'complete',
+          type: 'info',
+          message: 'GPU VM auto-shutdown initiated (all productions complete)',
+        });
+        await executeGpuShutdown(userId);
+      } else {
+        console.log(`${LOG_PREFIX} Production complete — ${activeCount} other production(s) still active, GPU stays on`);
+      }
+    } catch (shutdownErr) {
+      console.warn(`${LOG_PREFIX} GPU shutdown tracking failed (non-fatal):`, shutdownErr);
+    }
+
     return { success: true, videoId, summary };
 
   } catch (error) {
@@ -2221,6 +2259,16 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       try {
         await persistState(videoId, state);
       } catch { /* ignore */ }
+
+      // Decrement GPU production counter on cancellation
+      try {
+        const { shouldShutdown } = await decrementActiveProductions(userId);
+        if (shouldShutdown) {
+          console.log(`${LOG_PREFIX} Cancelled — auto-shutting down GPU (last production)`);
+          await executeGpuShutdown(userId);
+        }
+      } catch { /* non-fatal */ }
+
       return { success: false, cancelled: true, videoId };
     }
 
@@ -2253,6 +2301,15 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       // Don't reset progress — keep it at the last value so the UI shows the correct failed phase
       error_message: error instanceof Error ? error.message : 'Unknown error',
     });
+
+    // Decrement GPU production counter on failure
+    try {
+      const { shouldShutdown } = await decrementActiveProductions(userId);
+      if (shouldShutdown) {
+        console.log(`${LOG_PREFIX} Failed — auto-shutting down GPU (last production)`);
+        await executeGpuShutdown(userId);
+      }
+    } catch { /* non-fatal */ }
 
     throw error;
   }

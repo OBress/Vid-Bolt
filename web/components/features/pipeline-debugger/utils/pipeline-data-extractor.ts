@@ -282,14 +282,22 @@ function extractStepInputs(
         hasAssetReferenceImages: !!meta.assetReferenceImages,
         hasStockMedia: Array.isArray(meta.stockMediaResults) &&
           (meta.stockMediaResults as unknown[]).length > 0,
+        hasScrapedStock: !!meta.scraped_stock_images &&
+          Object.keys(meta.scraped_stock_images as object).length > 0,
       };
     case 7: // Editor
       return {
-        mediaCount: Array.isArray(meta.generatedMedia)
-          ? (meta.generatedMedia as unknown[]).length
-          : 0,
+        mediaCount:
+          Object.keys((meta.generated_videos || {}) as object).length +
+          Object.keys((meta.generated_images || {}) as object).length +
+          Object.keys((meta.generated_motion_graphics || {}) as object).length,
+        videoCount: Object.keys((meta.generated_videos || {}) as object).length,
+        imageCount: Object.keys((meta.generated_images || {}) as object).length,
+        mgCount: Object.keys((meta.generated_motion_graphics || {}) as object).length,
         hasEdl: !!meta.edl,
         hasAgentEdl: !!meta.agentEdl,
+        hasShotPlan: !!meta.shot_plan,
+        hasAudioChunks: !!(meta.audio_chunks || meta.audioChunks),
       };
     case 8: // Export
       return {
@@ -348,21 +356,40 @@ function extractStepOutputs(
         // Per-shot timing from shot plan (requested durations)
         shotTimings: extractShotTimings(meta),
       };
-    case 6:
+    case 6: {
+      // Count from actual worker-persisted maps (not legacy generatedMedia)
+      const genVideos = (meta.generated_videos || {}) as Record<string, string>;
+      const genImages = (meta.generated_images || {}) as Record<string, string>;
+      const genMG = (meta.generated_motion_graphics || {}) as Record<string, string>;
       return {
+        // Legacy array (if present)
         generatedMedia: meta.generatedMedia || [],
-        mediaCount: Array.isArray(meta.generatedMedia)
+        legacyMediaCount: Array.isArray(meta.generatedMedia)
           ? (meta.generatedMedia as unknown[]).length
           : 0,
         mediaBreakdown: getMediaBreakdown(meta.generatedMedia),
-        // Actual media asset maps (what the workers persist)
-        generated_videos_count: Object.keys((meta.generated_videos || {}) as object).length,
-        generated_images_count: Object.keys((meta.generated_images || {}) as object).length,
-        generated_mg_count: Object.keys((meta.generated_motion_graphics || {}) as object).length,
+        // Actual media asset maps (what the closed-loop workers persist)
+        generated_videos: genVideos,
+        generated_videos_count: Object.keys(genVideos).length,
+        generated_images: genImages,
+        generated_images_count: Object.keys(genImages).length,
+        generated_motion_graphics: genMG,
+        generated_mg_count: Object.keys(genMG).length,
+        totalMediaCount: Object.keys(genVideos).length +
+          Object.keys(genImages).length +
+          Object.keys(genMG).length,
+        // Scraped stock images (from asset-scout)
+        scraped_stock_count: Object.keys((meta.scraped_stock_images || {}) as object).length,
         video_gen_stats: meta.video_gen_stats || null,
         // Pipeline diagnostics (from orchestrator)
         pipeline_diagnostics: meta.pipeline_diagnostics || null,
+        // Verification & retry data
+        verifier_issues: meta.verifier_issues || [],
+        flagged_shots: getNestedValue(meta, 'closed_loop_state.flagged_shots') || [],
+        total_retries: getNestedValue(meta, 'closed_loop_state.total_retries') || 0,
+        verification_skipped: getNestedValue(meta, 'closed_loop_state.verification_skipped') || 0,
       };
+    }
     case 7:
       return {
         edl: meta.edl || null,
@@ -594,7 +621,7 @@ function getRelevantPhases(step: PipelineStep): string[] {
     case 4: return ['audio_generation', 'audio_processing'];
     case 5: return ['shot_planning']; // Phase from closed-loop
     case 6: return ['image_generation', 'video_generation', 'compositing'];
-    case 7: return ['edit_assembly'];
+    case 7: return ['edit_assembly', 'preprocessing', 'writing', 'compositing', 'postprocessing', 'encoding'];
     case 8: return ['encoding', 'uploading'];
     default: return [];
   }
@@ -638,6 +665,58 @@ function extractStepLogs(
       message: 'Pipeline diagnostics available',
       detail: JSON.stringify(diag, null, 2),
     });
+  }
+
+  // Extract closed_loop_state for steps 5-6 (BullMQ orchestrator state)
+  if ((step === 5 || step === 6) && meta.closed_loop_state) {
+    const clState = meta.closed_loop_state as Record<string, unknown>;
+    logs.push({
+      timestamp: (clState.started_at as string) || new Date().toISOString(),
+      level: 'info',
+      phase: 'orchestrator',
+      message: `Closed-loop pipeline: phase=${clState.phase}, status=${clState.status}`,
+      detail: JSON.stringify({
+        total_retries: clState.total_retries,
+        verification_skipped: clState.verification_skipped,
+        errors: clState.errors,
+        mg_switched_to_video: (clState as Record<string, unknown>).mg_switched_to_video,
+      }, null, 2),
+    });
+  }
+
+  // Extract verifier issues for step 6 (per-shot verification results)
+  if (step === 6 && Array.isArray(meta.verifier_issues)) {
+    for (const issue of meta.verifier_issues as Array<Record<string, unknown>>) {
+      logs.push({
+        timestamp: new Date().toISOString(),
+        level: issue.severity === 'error' ? 'error' : 'warning',
+        phase: 'verification',
+        message: `Shot ${issue.shotIndex}: ${issue.title}`,
+        detail: issue.description as string,
+      });
+    }
+  }
+
+  // Extract flagged_shots for step 6 (Best-Fit Salvage results)
+  if (step === 6) {
+    const flaggedShots = getNestedValue(meta, 'closed_loop_state.flagged_shots') as
+      Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(flaggedShots)) {
+      for (const flag of flaggedShots) {
+        logs.push({
+          timestamp: new Date().toISOString(),
+          level: 'warning',
+          phase: 'verification',
+          message: (flag.issue as string) || `Shot ${flag.shotIndex} flagged`,
+          detail: Array.isArray(flag.suggestions)
+            ? `Suggestions: ${(flag.suggestions as string[]).join('; ')}\n` +
+              (Array.isArray(flag.allAttemptUrls)
+                ? `Attempt URLs (${(flag.allAttemptUrls as string[]).length}): ${(flag.allAttemptUrls as string[]).join(', ')}`
+                : '')
+            : undefined,
+        });
+      }
+    }
   }
 
   // Extract task step logs
@@ -712,7 +791,7 @@ function extractStepErrors(
     });
   }
 
-  // Check for media generation failures in Step 6
+  // Check for media generation failures in Step 6 (legacy generatedMedia array)
   if (step === 6 && Array.isArray(meta.generatedMedia)) {
     const failedMedia = (meta.generatedMedia as Array<Record<string, unknown>>).filter(
       (m) => m.generation_status === 'failed'
@@ -721,6 +800,45 @@ function extractStepErrors(
       errors.push({
         message: `Shot ${m.shot_index}: ${m.error_message || 'Generation failed'}`,
       });
+    }
+  }
+
+  // Check verifier_issues for Step 6 (per-shot verification failures)
+  if (step === 6 && Array.isArray(meta.verifier_issues)) {
+    for (const issue of meta.verifier_issues as Array<Record<string, unknown>>) {
+      if (issue.severity === 'error') {
+        errors.push({
+          message: `Verification: Shot ${issue.shotIndex} — ${issue.title}`,
+          code: issue.type as string,
+        });
+      }
+    }
+  }
+
+  // Check flagged_shots from closed_loop_state (Best-Fit Salvage results)
+  if (step === 6) {
+    const flaggedShots = getNestedValue(meta, 'closed_loop_state.flagged_shots') as
+      Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(flaggedShots)) {
+      for (const flag of flaggedShots) {
+        errors.push({
+          message: (flag.issue as string) || `Shot ${flag.shotIndex}: Failed verification (salvaged)`,
+          code: 'best_fit_salvage',
+        });
+      }
+    }
+  }
+
+  // Check closed_loop_state errors for Steps 5-6
+  if ((step === 5 || step === 6) && meta.closed_loop_state) {
+    const clErrors = getNestedValue(meta, 'closed_loop_state.errors') as string[] | undefined;
+    if (Array.isArray(clErrors)) {
+      for (const err of clErrors) {
+        errors.push({
+          message: err,
+          code: 'orchestrator_error',
+        });
+      }
     }
   }
 

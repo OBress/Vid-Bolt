@@ -33,7 +33,11 @@ import {
   extractComponentCode,
 } from './code-validator';
 
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+import {
+  callOpenRouterWithKey as centralCallOpenRouter,
+  streamOpenRouterWithKey as centralStreamOpenRouter,
+} from '@/lib/ai/openrouter';
+import type { OpenRouterMessage } from '@/lib/ai/openrouter';
 
 export interface GenerationRequest {
   prompt: string;
@@ -59,7 +63,8 @@ interface EditOperation {
 type SSEWriter = (data: Record<string, unknown>) => void;
 
 /**
- * Call OpenRouter API (non-streaming) using fetch
+ * Call OpenRouter API (non-streaming) via the central module.
+ * Wrapper that adapts the service's call pattern to the central module's interface.
  */
 async function callOpenRouter(
   apiKey: string,
@@ -67,55 +72,27 @@ async function callOpenRouter(
   messages: Array<{ role: string; content: string }>,
   options: { temperature?: number; maxTokens?: number; responseFormat?: { type: string } } = {}
 ): Promise<{ content: string; finishReason: string }> {
-  const requestBody: Record<string, unknown> = {
-    model,
-    messages,
-    temperature: options.temperature ?? 0.7,
-    max_tokens: options.maxTokens ?? 8192,
-  };
-
-  if (options.responseFormat) {
-    requestBody.response_format = options.responseFormat;
-  }
-
-  const response = await fetch(OPENROUTER_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-      'X-Title': 'Vid-Bolt Motion Graphics',
-    },
-    body: JSON.stringify(requestBody),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    let errorMessage: string;
-    try {
-      const errorData = JSON.parse(errorText);
-      errorMessage = errorData.error?.message || `HTTP ${response.status}`;
-    } catch {
-      errorMessage = `HTTP ${response.status}: ${errorText.substring(0, 200)}`;
+  const result = await centralCallOpenRouter(
+    apiKey,
+    messages as OpenRouterMessage[],
+    {
+      model,
+      temperature: options.temperature ?? 0.7,
+      maxTokens: options.maxTokens ?? 8192,
+      xTitle: 'Vid-Bolt Motion Graphics',
+      responseFormat: options.responseFormat as any,
     }
-    throw new Error(`OpenRouter API error: ${errorMessage}`);
-  }
-
-  const data = await response.json();
-  const choice = data.choices?.[0];
-
-  if (!choice?.message?.content) {
-    throw new Error('Invalid response from OpenRouter API - no content');
-  }
+  );
 
   return {
-    content: choice.message.content,
-    finishReason: choice.finish_reason || 'stop',
+    content: result.content,
+    finishReason: result.finishReason,
   };
 }
 
 /**
- * Call OpenRouter API with streaming, yields content chunks
+ * Call OpenRouter API with streaming via the central module.
+ * Wrapper that adapts the service's call pattern to the central module's streaming interface.
  */
 async function* streamOpenRouter(
   apiKey: string,
@@ -123,62 +100,16 @@ async function* streamOpenRouter(
   messages: Array<{ role: string; content: string }>,
   options: { temperature?: number; maxTokens?: number } = {}
 ): AsyncGenerator<string> {
-  const response = await fetch(OPENROUTER_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-      'X-Title': 'Vid-Bolt Motion Graphics',
-    },
-    body: JSON.stringify({
+  yield* centralStreamOpenRouter(
+    apiKey,
+    messages as OpenRouterMessage[],
+    {
       model,
-      messages,
-      stream: true,
       temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 32000,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenRouter streaming error: HTTP ${response.status} - ${errorText.substring(0, 200)}`);
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error('No response body for stream');
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
-        const data = trimmed.slice(6);
-        if (data === '[DONE]') return;
-
-        try {
-          const parsed = JSON.parse(data);
-          const content = parsed.choices?.[0]?.delta?.content;
-          if (content) yield content;
-        } catch {
-          // Skip malformed SSE chunks
-        }
-      }
+      maxTokens: options.maxTokens ?? 32000,
+      xTitle: 'Vid-Bolt Motion Graphics',
     }
-  } finally {
-    reader.releaseLock();
-  }
+  );
 }
 
 class MotionGraphicsService {
@@ -752,9 +683,11 @@ class MotionGraphicsService {
       detectedSkills: string[];
       errorCorrection?: GenerationRequest['errorCorrection'];
       baseSystemPrompt?: string;
+      /** Syntax retry context — if present, finalizeGeneration can auto-retry Babel failures */
+      syntaxRetryContext?: { apiKey: string; model: string; prompt: string; attempt: number; baseSystemPrompt?: string };
     }
   ): Promise<void> {
-    const { prompt, model, currentCode, conversationHistory, detectedSkills, errorCorrection, baseSystemPrompt } = options;
+    const { prompt, model, currentCode, conversationHistory, detectedSkills, errorCorrection, baseSystemPrompt, syntaxRetryContext } = options;
 
     sendSSE({ type: 'stage', stage: 'editing', message: 'Analyzing edit request...' });
 
@@ -827,7 +760,7 @@ class MotionGraphicsService {
 
             if (fallbackResult.code) {
               sendSSE({ type: 'edit', summary: fallbackResult.summary || 'Applied fix via full replacement', editType: 'full' });
-              await this.finalizeGeneration(sendSSE, fallbackResult.code, detectedSkills, 'full');
+              await this.finalizeGeneration(sendSSE, fallbackResult.code, detectedSkills, 'full', null, syntaxRetryContext);
               return;
             }
           } catch (fallbackError) {
@@ -845,11 +778,11 @@ class MotionGraphicsService {
           editType: 'targeted',
         });
 
-        await this.finalizeGeneration(sendSSE, editResult.result!, detectedSkills, 'targeted');
+        await this.finalizeGeneration(sendSSE, editResult.result!, detectedSkills, 'targeted', null, syntaxRetryContext);
 
       } else if (result.type === 'full' && result.code) {
         sendSSE({ type: 'edit', summary: result.summary, editType: 'full' });
-        await this.finalizeGeneration(sendSSE, result.code, detectedSkills, 'full');
+        await this.finalizeGeneration(sendSSE, result.code, detectedSkills, 'full', null, syntaxRetryContext);
 
       } else {
         sendSSE({ type: 'error', error: 'Invalid response from AI - missing required fields', errorType: 'edit_failed' });
@@ -1027,6 +960,8 @@ class MotionGraphicsService {
               maxAttempts: MAX_SYNTAX_RETRIES,
             },
             baseSystemPrompt: _syntaxRetryContext.baseSystemPrompt,
+            // Pass decremented retry context so the chain can continue
+            syntaxRetryContext: { apiKey, model, prompt, attempt: attempt + 1, baseSystemPrompt: _syntaxRetryContext.baseSystemPrompt },
           });
           // handleFollowUpEdit calls finalizeGeneration internally with the fixed code,
           // so we return here — the recursive call handles completion.

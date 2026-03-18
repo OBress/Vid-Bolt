@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createClient<any>(supabaseUrl, supabaseKey);
 
     // =========================================================================
     // VIDEO / LTX2: Use GPU batch API directly (matches pipeline exactly)
@@ -173,7 +173,7 @@ export async function POST(request: NextRequest) {
 // =============================================================================
 
 async function handleVideoBatch(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<any>,
   userId: string,
   batchId: string,
   type: "video" | "ltx2",
@@ -344,7 +344,7 @@ async function handleVideoBatch(
 // =============================================================================
 
 async function handleImageBatch(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<any>,
   userId: string,
   batchId: string,
   type: "image" | "image-edit",

@@ -106,15 +106,19 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
 
     // Parse project metadata
     const metadata = (project.metadata || {}) as Record<string, unknown>;
-    const avScriptPart1 = (metadata.av_script_part1 || {}) as Record<string, unknown>;
-    const shots = (avScriptPart1.shots || []) as unknown as AssembleEditRequest['shots'];
+    // Use shot_plan as primary data source (canonical, used by video-gen + asset-scout),
+    // with av_script_part1 as fallback for backward compatibility.
+    const shotPlanData = metadata.shot_plan as { shots?: Array<Record<string, unknown>> } | undefined;
+    const avScriptFallback = (metadata.av_script_part1 || {}) as { shots?: Array<Record<string, unknown>> };
+    const allShotsRaw = shotPlanData?.shots || avScriptFallback?.shots || [];
+    const shots = allShotsRaw as unknown as AssembleEditRequest['shots'];
     // Build GeneratedMedia[] from actual metadata keys written by image-gen/video-gen workers
     // (The old av-script worker used metadata.generatedMedia, but the closed-loop pipeline
     //  writes to metadata.generated_images and metadata.generated_videos instead.)
     const generatedImages = (metadata.generated_images || {}) as Record<string, string>;
     const generatedVideos = (metadata.generated_videos || {}) as Record<string, string>;
     const generatedMG = (metadata.generated_motion_graphics || {}) as Record<string, string>;
-    const avScriptShots = (avScriptPart1.shots || []) as Array<Record<string, unknown>>;
+    const avScriptShots = allShotsRaw;
     
     // Read clip trim data computed by the VLM-guided clip trimmer (C5)
     const clipTrims = (metadata.clip_trims || []) as Array<{
@@ -128,6 +132,22 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     if (clipTrims.length > 0) {
       const trimmedCount = clipTrims.filter(t => t.wasTrimmed).length;
       console.log(`[EditAssembly Worker] Clip trims available: ${trimmedCount}/${clipTrims.length} clips trimmed`);
+    }
+
+    // Read generated background music segments from pipeline Phase III
+    const generatedMusicData = (metadata.generated_music || {}) as Record<string, unknown>;
+    const musicSegments = (generatedMusicData.segments || []) as Array<{
+      segment_index: number;
+      audio_url: string;
+      start_seconds: number;
+      end_seconds: number;
+      duration_seconds: number;
+      transition_type: 'crossfade' | 'cut' | 'fade_out_in';
+      transition_duration_seconds: number;
+      volume: number;
+    }>;
+    if (musicSegments.length > 0) {
+      console.log(`[EditAssembly Worker] Background music available: ${musicSegments.length} segments`);
     }
     
     const generatedMedia: GeneratedMedia[] = avScriptShots.map((shot) => {
@@ -351,6 +371,124 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
           description: issue.description,
         });
       }
+    }
+
+    // =====================================================================
+    // Overlay backfill: ensure every overlay clip has a main-video clip behind it
+    // =====================================================================
+    const overlayClips = mergedAgentEDL.clips.filter(c => c.trackId === 'overlays');
+    if (overlayClips.length > 0) {
+      const mainVideoClips = mergedAgentEDL.clips.filter(c => c.trackId === 'main-video');
+      const mainByShotIdx = new Map<number, boolean>();
+      mainVideoClips.forEach(c => { if (c.shotIndex != null) mainByShotIdx.set(c.shotIndex, true); });
+
+      let backfillCount = 0;
+      for (const overlay of overlayClips) {
+        if (overlay.shotIndex == null) continue;
+        if (mainByShotIdx.has(overlay.shotIndex)) continue; // main-video exists, no backfill needed
+
+        // Look up available media for this shot
+        const shotKey = `shot-${overlay.shotIndex}`;
+        const videoUrl = generatedVideos[shotKey];
+        const imageUrl = generatedImages[shotKey];
+        const mediaSrc = videoUrl || imageUrl;
+
+        if (mediaSrc) {
+          mergedAgentEDL.clips.push({
+            trackId: 'main-video',
+            shotIndex: overlay.shotIndex,
+            type: videoUrl ? 'video' : 'image',
+            startTime: overlay.startTime,
+            duration: overlay.duration,
+            label: `Backfill Shot ${overlay.shotIndex}`,
+          });
+          mainByShotIdx.set(overlay.shotIndex, true);
+          backfillCount++;
+          console.log(`[EditAssembly Worker] Backfilled main-video for overlay shot ${overlay.shotIndex}`);
+        } else {
+          // No media available — find nearest main-video clip and extend it
+          const nearest = mainVideoClips
+            .filter(c => c.startTime + c.duration <= overlay.startTime || c.startTime >= overlay.startTime + overlay.duration)
+            .sort((a, b) => Math.abs(a.startTime - overlay.startTime) - Math.abs(b.startTime - overlay.startTime))[0];
+          if (nearest) {
+            // Extend the nearest clip duration to cover the overlay gap
+            const gapEnd = overlay.startTime + overlay.duration;
+            const nearestEnd = nearest.startTime + nearest.duration;
+            if (nearestEnd < gapEnd) {
+              nearest.duration = gapEnd - nearest.startTime;
+              console.log(`[EditAssembly Worker] Extended nearest main-video clip to cover overlay shot ${overlay.shotIndex}`);
+              backfillCount++;
+            }
+          } else {
+            console.warn(`[EditAssembly Worker] ⚠️ Orphaned overlay shot ${overlay.shotIndex}: no media & no nearby main-video clip to extend`);
+          }
+        }
+      }
+      if (backfillCount > 0) {
+        console.log(`[EditAssembly Worker] ✅ Backfilled ${backfillCount} main-video clips for orphaned overlays`);
+      }
+    }
+
+    // =====================================================================
+    // Inject background music onto the timeline
+    // =====================================================================
+    if (musicSegments.length > 0) {
+      // Ensure a background-music track exists
+      const hasMusicTrack = mergedAgentEDL.tracks.some(t => t.id === 'background-music');
+      if (!hasMusicTrack) {
+        const maxAudioOrder = mergedAgentEDL.tracks
+          .filter(t => t.type === 'audio')
+          .reduce((max, t) => Math.max(max, t.order), -1);
+        mergedAgentEDL.tracks.push({
+          id: 'background-music',
+          type: 'audio',
+          name: 'Background Music',
+          group: 'audio',
+          order: maxAudioOrder + 1,
+        });
+      }
+
+      // Add a clip for each music segment
+      let injectedCount = 0;
+      for (const seg of musicSegments) {
+        if (!seg.audio_url) {
+          console.warn(`[EditAssembly Worker] Music segment ${seg.segment_index} has no audio_url, skipping`);
+          continue;
+        }
+        mergedAgentEDL.clips.push({
+          trackId: 'background-music',
+          type: 'audio',
+          startTime: seg.start_seconds,
+          duration: seg.duration_seconds,
+          label: `Music Segment ${seg.segment_index + 1}`,
+          // Extended: audio URL and volume for frontend import
+          // (AgentClip doesn't have a 'media' field — frontend reads these directly)
+          audioUrl: seg.audio_url,
+          volume: seg.volume,
+        } as any);
+        injectedCount++;
+      }
+
+      // Add music fades (gentle fade-in at start, fade-out at end)
+      if (injectedCount > 0) {
+        const firstSeg = musicSegments[0];
+        const lastSeg = musicSegments[musicSegments.length - 1];
+
+        mergedAgentEDL.audioFades.push({
+          target: 'music',
+          type: 'fadeIn',
+          startTime: firstSeg.start_seconds,
+          duration: 2.0,
+        });
+        mergedAgentEDL.audioFades.push({
+          target: 'music',
+          type: 'fadeOut',
+          startTime: lastSeg.end_seconds - 3.0,
+          duration: 3.0,
+        });
+      }
+
+      console.log(`[EditAssembly Worker] ✅ Injected ${injectedCount} background music clips onto timeline`);
     }
 
     await completeStep(taskId, reconStepId);

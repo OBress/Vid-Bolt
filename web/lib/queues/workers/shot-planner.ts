@@ -190,7 +190,7 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         text: shot.text || '',
         summary: shot.summary || '',
         content_type: shot.content_type || 'concept',
-        media_type: (shot.media_type as PlannedShot['media_type']) || 'motiongraphic',
+        media_type: (shot.media_type as PlannedShot['media_type']) || 'video',
         entity_refs: [],
         // Preserve AI-generated visual decisions (were previously being dropped)
         visual_elements: (shot.visual_elements || []) as string[],
@@ -204,6 +204,19 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         })),
         image_count: shot.image_count ?? 1,
       }));
+
+      // Post-processing: very short shots (< 1.5s) should never be standalone motion graphics.
+      // They don't have enough duration for meaningful animation and frequently fail to render.
+      let mgOverrideCount = 0;
+      for (const shot of plannedShots) {
+        if (shot.media_type === 'motiongraphic' && shot.duration_seconds < 1.5) {
+          shot.media_type = 'video';
+          mgOverrideCount++;
+        }
+      }
+      if (mgOverrideCount > 0) {
+        console.log(`${LOG_PREFIX} Overrode ${mgOverrideCount} trivially short MG shots to video`);
+      }
 
       // Compute media type breakdown
       const mediaBreakdown: Record<string, number> = {};

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 
 /**
  * POST /api/gpu-api/enhance-prompt
@@ -58,34 +59,17 @@ export async function POST(request: NextRequest) {
     // 4. Call OpenRouter
     const openRouterKey = await getOpenRouterApiKey(user.id);
 
-    const openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${openRouterKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt },
-        ],
-        max_tokens: 1024,
-        temperature: 0.7,
-      }),
+    const result = await callOpenRouterWithKey(openRouterKey, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt },
+    ], {
+      model: 'google/gemini-3-flash-preview',
+      maxTokens: 1024,
+      temperature: 0.7,
+      xTitle: 'Vid-Bolt GPU Enhance Prompt',
     });
 
-    if (!openRouterRes.ok) {
-      const errBody = await openRouterRes.text();
-      console.error('[gpu-enhance-prompt] OpenRouter error:', errBody);
-      return NextResponse.json(
-        { error: `AI enhancement failed (${openRouterRes.status})` },
-        { status: 502 },
-      );
-    }
-
-    const data = await openRouterRes.json();
-    const enhancedPrompt = data.choices?.[0]?.message?.content?.trim() || prompt;
+    const enhancedPrompt = result.content.trim() || prompt;
 
     return NextResponse.json({ enhancedPrompt });
   } catch (error) {

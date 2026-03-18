@@ -22,8 +22,8 @@ import { v4 as uuidv4 } from 'uuid';
 /** How often to poll for lock availability (ms) */
 const POLL_INTERVAL_MS = 2_000;
 
-/** Default max lock TTL — safety net if worker crashes (30 minutes) */
-const DEFAULT_MAX_LOCK_TTL_MS = 30 * 60 * 1_000;
+/** Default max lock TTL — safety net if worker crashes (60 minutes for long-form content) */
+const DEFAULT_MAX_LOCK_TTL_MS = 60 * 60 * 1_000;
 
 /** Minimum lock TTL to prevent overly aggressive expiry */
 const MIN_LOCK_TTL_MS = 60_000;

@@ -17,6 +17,8 @@ import {
   Database,
   Settings2,
   Bug,
+  ClipboardCopy,
+  Check,
 } from "lucide-react";
 import { usePipelineDebuggerStore } from "./stores/pipeline-debugger-store";
 import { VideoProjectSelector } from "./components/shared/VideoProjectSelector";
@@ -34,6 +36,7 @@ import { AnnotationSystem } from "./components/quality/AnnotationSystem";
 
 import type { DebuggerMode, PipelineStep, StepData, PipelineRun, PipelineDebuggerState, PipelineDebuggerActions } from "./types/pipeline-debugger";
 import { STEP_CONFIGS } from "./utils/step-config";
+import { buildDebugContext } from "./utils/copy-debug-context";
 
 interface PipelineDebuggerProps {
   onClose: () => void;
@@ -65,6 +68,7 @@ export function PipelineDebugger({ onClose }: PipelineDebuggerProps) {
   // ---- Resizable panels ----
   const [leftWidth, setLeftWidth] = useState(192);   // default ~w-48
   const [rightWidth, setRightWidth] = useState(288);  // default ~w-72
+  const [copyFeedback, setCopyFeedback] = useState(false);
   const draggingRef = useRef<"left" | "right" | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -128,6 +132,37 @@ export function PipelineDebugger({ onClose }: PipelineDebuggerProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Copy Debug Context button — copies steps 5-7 data (wizard steps 3-4) */}
+          <button
+            onClick={async () => {
+              if (!store.selectedRun) return;
+              try {
+                const ctx = buildDebugContext(store.selectedRun);
+                await navigator.clipboard.writeText(ctx);
+                setCopyFeedback(true);
+                setTimeout(() => setCopyFeedback(false), 2000);
+              } catch (err) {
+                console.error('Failed to copy debug context:', err);
+              }
+            }}
+            disabled={!store.selectedRun}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+              copyFeedback
+                ? 'bg-green-900/30 border-green-500/50 text-green-400'
+                : store.selectedRun
+                  ? 'bg-neutral-900 border-neutral-700 text-neutral-300 hover:border-orange-500/50 hover:text-orange-400'
+                  : 'bg-neutral-900/50 border-neutral-800 text-neutral-600 cursor-not-allowed'
+            }`}
+            title="Copy debug context for Production & Editor steps to clipboard (for AI debugging)"
+          >
+            {copyFeedback ? (
+              <Check className="w-3.5 h-3.5" />
+            ) : (
+              <ClipboardCopy className="w-3.5 h-3.5" />
+            )}
+            {copyFeedback ? 'Copied!' : 'Copy Debug'}
+          </button>
+
           {/* Mode tabs */}
           <div className="flex items-center bg-neutral-900 rounded-lg border border-neutral-800 p-0.5">
             {MODES.map((mode) => {

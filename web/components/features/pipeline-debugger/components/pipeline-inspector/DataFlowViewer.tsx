@@ -38,7 +38,9 @@ const DATA_FLOW_MAP: Record<number, Array<{ key: string; label: string; toStep: 
     { key: "assetReferenceImages", label: "Reference images", toStep: 6 },
   ],
   6: [
-    { key: "generatedMedia", label: "Images, videos, MG code", toStep: 7 },
+    { key: "generated_videos", label: "Generated videos", toStep: 7 },
+    { key: "generated_images", label: "Generated images", toStep: 7 },
+    { key: "generated_motion_graphics", label: "MG Remotion code", toStep: 7 },
   ],
   7: [
     { key: "edl", label: "Edit Decision List", toStep: 8 },

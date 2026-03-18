@@ -585,13 +585,10 @@ export function importWizardDataToStore(options: WizardData): boolean {
     const transparentPng =
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
-    const contentTypeColors: Record<string, string> = {
-      'list-item': '#f97316',
-      comparison: '#8b5cf6',
-      concept: '#3b82f6',
-      transition: '#22c55e',
-      'emotional-beat': '#ef4444',
-    };
+    // Clip colors are resolved by the timeline renderer's CLIP_TYPE_COLORS map
+    // based on clip.type (video → cyan, image → violet, motion-graphics → purple).
+    // Only overlay MG clips get an explicit color to distinguish them from base clips.
+    const MG_OVERLAY_COLOR = '#14b8a6'; // Teal — distinguishes overlay clips from base MG clips
 
     // Lazy-create an overlays track for pre-rendered motion graphics.
     // Only added when a clip actually gets routed to it — avoids empty unused tracks.
@@ -664,6 +661,12 @@ export function importWizardDataToStore(options: WizardData): boolean {
       // Track running time per internal track for sequential NaN fallback
       const trackRunningTime = new Map<string, number>();
 
+      // ── Dedup: Track which shots have been placed and where ──────────
+      // The AI sometimes places the same shotIndex on both main-video and
+      // overlays. We skip duplicate placements that would create visually
+      // identical clips on separate tracks.
+      const shotTrackPlacement = new Map<number, { trackId: string; clipType: string; hasRemotionCode: boolean }>();
+
       // Detect 0-based vs 1-based shot indices from agent EDL.
       // AI sometimes uses 0-based indices (shotIndex=0,1,2,...) while actual
       // shots use 1-based segment_index (1,2,3,...). Detect and offset.
@@ -720,7 +723,28 @@ export function importWizardDataToStore(options: WizardData): boolean {
           // pre-rendered MG clips (with real video URLs but no remotion_code) as 'video'.
           // Only fall back to agent EDL type if media map has no entry.
           const clipType: ClipType = resolvedMedia?.type as ClipType || (mgType ? 'motion-graphics' : clipTypeRaw as ClipType);
-          const color = shot ? contentTypeColors[shot.content_type] || '#6b7280' : '#6b7280';
+
+          // ── Dedup check: skip duplicate shot placements ──────────────
+          const isOnOverlaysTrackRaw = trackId === 'overlays';
+          const hasRemotionCode = !!resolvedMedia?.remotionCode;
+          if (shotIdx != null) {
+            const existing = shotTrackPlacement.get(shotIdx);
+            if (existing) {
+              if (isOnOverlaysTrackRaw && !hasRemotionCode) {
+                // Video shot placed on overlays as MG but has no remotion code → empty placeholder, skip
+                console.log(`[WizardDataImport] ⏭️ Skipping empty overlay for shot ${shotIdx} (no remotion_code)`);
+                continue;
+              }
+              if (isOnOverlaysTrackRaw && existing.clipType === 'motion-graphics' && (clipType === 'motion-graphics' || mgType)) {
+                // Pure MG already placed on main-video, duplicate on overlays → skip
+                console.log(`[WizardDataImport] ⏭️ Skipping duplicate MG overlay for shot ${shotIdx} (already on ${existing.trackId})`);
+                continue;
+              }
+              // Otherwise: hybrid case (video on main + real MG overlay with code) → allow
+            }
+            shotTrackPlacement.set(shotIdx, { trackId, clipType: clipType as string, hasRemotionCode });
+          }
+
           const clipId = generateId('clip');
 
           // Debug: log every visual clip creation
@@ -807,7 +831,7 @@ export function importWizardDataToStore(options: WizardData): boolean {
             type: clipType,
             sourceId: src,
             label: agentClip.label || (shot ? `Shot ${shot.segment_index}` : 'Clip'),
-            color,
+            color: (isOnOverlaysTrackRaw && clipType === 'motion-graphics') ? MG_OVERLAY_COLOR : undefined,
             transform: {
               x: agentClip.transform?.x ?? 0,
               y: agentClip.transform?.y ?? 0,
@@ -920,6 +944,70 @@ export function importWizardDataToStore(options: WizardData): boolean {
         console.log(`[WizardDataImport] Built ${videoAudioCount} muted video audio clips`);
       }
 
+      // ─── Background Music: Import music clips from agent EDL ─────
+      // The edit-assembly worker injects music clips on a 'background-music'
+      // track but they get skipped by the audio filter above. Process them here.
+      const bgMusicClips = agentEdl.clips.filter(c => {
+        const tId = (c as any).trackId ?? (c as any).track_id ?? '';
+        return (c.type === 'audio' || (c as any).type === 'audio') && tId === 'background-music';
+      });
+      if (bgMusicClips.length > 0) {
+        const musicTrackId = agentToInternalTrackId.get('background-music') || generateId('track');
+        if (!agentToInternalTrackId.has('background-music')) {
+          // Track wasn't created from agent EDL tracks — create it now
+          tracksToAdd[musicTrackId] = {
+            id: musicTrackId,
+            type: 'audio',
+            name: 'Background Music',
+            order: Object.keys(tracksToAdd).length,
+            group: 'audio',
+            locked: false,
+            visible: true,
+            muted: false,
+            allowOverlap: false,
+            createdAt: now,
+            updatedAt: now,
+          };
+          trackOrderToAdd.push(musicTrackId);
+        }
+
+        let musicImportCount = 0;
+        for (const musicClip of bgMusicClips) {
+          const rawStart = (musicClip as any).startTime ?? (musicClip as any).start_time ?? 0;
+          const rawDur = (musicClip as any).duration ?? 0;
+          // Volume and URL are stored as extended properties by the edit-assembly worker
+          const volume = (musicClip as any).volume ?? 0.20;
+          const musicSrc = rewriteR2Url((musicClip as any).audioUrl || '');
+
+          if (rawDur <= 0) continue;
+
+          const clipId = generateId('clip');
+
+          clipsToAdd[clipId] = {
+            id: clipId,
+            trackId: musicTrackId,
+            startTime: rawStart,
+            duration: rawDur,
+            type: 'audio',
+            sourceId: musicSrc || `music-segment-${musicImportCount}`,
+            label: musicClip.label || `Music ${musicImportCount + 1}`,
+            color: '#a855f7', // Purple — distinguishes music from narration
+            transform: { x: 0, y: 0, width: 0, height: 0, rotation: 0, opacity: 1 },
+            media: {
+              src: musicSrc,
+              speed: 1,
+              volume: volume,
+              mediaStartTime: 0,
+              mediaDuration: rawDur,
+            },
+            createdAt: now,
+            updatedAt: now,
+          };
+          musicImportCount++;
+        }
+        console.log(`[WizardDataImport] 🎵 Built ${musicImportCount} background music clips`);
+      }
+
       // ─── Agent EDL transitions ────────────────────────────────
       if (agentEdl.transitions && agentEdl.transitions.length > 0) {
         for (const transition of agentEdl.transitions) {
@@ -1023,7 +1111,7 @@ export function importWizardDataToStore(options: WizardData): boolean {
         const clipType = getVisualClipType(shot, mediaUrlMap);
         const resolvedMedia = mediaUrlMap.get(shot.segment_index);
         const src = resolvedMedia?.url ?? transparentPng;
-        const color = contentTypeColors[shot.content_type] || '#6b7280';
+        // No explicit color — let the timeline renderer's CLIP_TYPE_COLORS resolve by clip.type
         const clipId = generateId('clip');
 
         // Build motion-graphics properties for the rendering pipeline
@@ -1067,7 +1155,7 @@ export function importWizardDataToStore(options: WizardData): boolean {
           type: clipType,
           sourceId: src,
           label: `Shot ${shot.segment_index}`,
-          color,
+          // color resolved by CLIP_TYPE_COLORS in the timeline renderer
           transform: {
             x: 0,
             y: 0,

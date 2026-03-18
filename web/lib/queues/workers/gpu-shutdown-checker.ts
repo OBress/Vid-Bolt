@@ -18,6 +18,7 @@ interface GCPConfig {
   status: string;
   last_gpu_activity_at: string | null;
   gpu_auto_shutdown_minutes: number;
+  active_gpu_productions: number;
 }
 
 /**
@@ -37,7 +38,7 @@ export async function checkForInactiveVMs(): Promise<{ checked: number; shutdown
   // Find all running VMs
   const { data: runningVMs, error: queryError } = await supabase
     .from('user_gcp_config')
-    .select('user_id, project_id, status, last_gpu_activity_at, gpu_auto_shutdown_minutes')
+    .select('user_id, project_id, status, last_gpu_activity_at, gpu_auto_shutdown_minutes, active_gpu_productions')
     .eq('status', 'RUNNING');
   
   if (queryError) {
@@ -56,7 +57,13 @@ export async function checkForInactiveVMs(): Promise<{ checked: number; shutdown
   let shutdownCount = 0;
   
   for (const vm of runningVMs as GCPConfig[]) {
-    const { user_id, project_id, last_gpu_activity_at, gpu_auto_shutdown_minutes } = vm;
+    const { user_id, project_id, last_gpu_activity_at, gpu_auto_shutdown_minutes, active_gpu_productions } = vm;
+    
+    // Skip if there are active GPU productions — the production tracker will handle shutdown
+    if ((active_gpu_productions ?? 0) > 0) {
+      console.log(`[GPU Shutdown Checker] User ${user_id}: ${active_gpu_productions} active production(s), skipping inactivity check`);
+      continue;
+    }
     
     // Skip if no activity timestamp (shouldn't happen, but safety check)
     if (!last_gpu_activity_at) {

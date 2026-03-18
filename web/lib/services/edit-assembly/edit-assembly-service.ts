@@ -337,41 +337,22 @@ async function callLLMv2(
 
   // Helper to make the actual API call with a given max_tokens budget
   const callWithBudget = async (maxTokens: number, attempt: number) => {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': process.env.NEXT_PUBLIC_SITE_URL || 'https://vidbolt.com',
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.3,
-        max_tokens: maxTokens,
-        response_format: { type: 'json_schema', json_schema: edlJsonSchema },
-      }),
+    const { callOpenRouterWithKey } = await import('@/lib/ai/openrouter');
+
+    const result = await callOpenRouterWithKey(apiKey, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ], {
+      model,
+      temperature: 0.3,
+      maxTokens,
+      xTitle: 'Vid-Bolt Edit Assembly',
+      responseFormat: { type: 'json_schema', json_schema: edlJsonSchema },
     });
 
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`OpenRouter API error (${response.status}): ${errorBody}`);
-    }
+    console.log(`[EditAssembly] LLM response (attempt ${attempt}): ${result.content.length} chars, finish_reason=${result.finishReason}, max_tokens=${maxTokens}`);
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-
-    if (!content) {
-      throw new Error('Empty response from LLM');
-    }
-
-    const finishReason = data.choices?.[0]?.finish_reason;
-    console.log(`[EditAssembly] LLM response (attempt ${attempt}): ${content.length} chars, finish_reason=${finishReason}, max_tokens=${maxTokens}`);
-
-    return { content, finishReason };
+    return { content: result.content, finishReason: result.finishReason };
   };
 
   // Attempt 1 with calculated budget

@@ -15,6 +15,7 @@
  */
 
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 import { getSupabaseServiceClient } from '@/lib/queues/shared';
 
 // ============================================================================
@@ -50,7 +51,6 @@ export interface ClipTrimmerConfig {
 // ============================================================================
 
 const LOG_PREFIX = '[ClipTrimmer]';
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const TRIM_MODEL = 'google/gemini-3-flash-preview';
 const DEFAULT_FRAME_COUNT = 8;
 
@@ -220,66 +220,52 @@ async function analyzeTrimPoints(
     },
   ])).flat();
 
-  const response = await fetch(OPENROUTER_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-      'X-Title': 'Vid-Bolt Clip Trimmer',
+  const response = await callOpenRouterWithKey(apiKey, [
+    {
+      role: 'system',
+      content: 'You analyze AI-generated video clips to find the best usable segment.',
     },
-    body: JSON.stringify({
-      model: TRIM_MODEL,
-      messages: [
+    {
+      role: 'user',
+      content: [
         {
-          role: 'system',
-          content: 'You analyze AI-generated video clips to find the best usable segment.',
-        },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `These are ${frameCount} evenly-spaced frames from a ${durationSeconds.toFixed(1)}s AI-generated video clip.
+          type: 'text' as const,
+          text: `These are ${frameCount} evenly-spaced frames from a ${durationSeconds.toFixed(1)}s AI-generated video clip.
 The intended shot description is: "${shotDescription}"
 
 Identify the best CONTIGUOUS segment of this clip:
 - Which frames show the most meaningful motion and visual clarity?
 - Avoid: static/frozen frames at the start (startup artifacts), visual decay at the end
 - If ALL frames look good, return the full range (start_frame=0, end_frame=${frameCount - 1})`,
-            },
-            ...imageContent,
-          ],
         },
+        ...imageContent,
       ],
-      temperature: 0.1,
-      max_tokens: 512,
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'clip_trim',
-          strict: true,
-          schema: {
-            type: 'object',
-            required: ['start_frame', 'end_frame', 'reason'],
-            additionalProperties: false,
-            properties: {
-              start_frame: { type: 'number' },
-              end_frame: { type: 'number' },
-              reason: { type: 'string' },
-            },
+    },
+  ], {
+    model: TRIM_MODEL,
+    temperature: 0.1,
+    maxTokens: 512,
+    xTitle: 'Vid-Bolt Clip Trimmer',
+    responseFormat: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'clip_trim',
+        strict: true,
+        schema: {
+          type: 'object',
+          required: ['start_frame', 'end_frame', 'reason'],
+          additionalProperties: false,
+          properties: {
+            start_frame: { type: 'number' },
+            end_frame: { type: 'number' },
+            reason: { type: 'string' },
           },
         },
       },
-    }),
+    },
   });
 
-  if (!response.ok) {
-    throw new Error(`Trim analysis API error: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || '{}';
+  const content = response.content;
 
   try {
     const parsed = JSON.parse(content);

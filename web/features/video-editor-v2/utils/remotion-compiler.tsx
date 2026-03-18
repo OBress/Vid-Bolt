@@ -459,6 +459,62 @@ const SafeMediaImg: React.FC<any> = (props: Record<string, any>) => {
   });
 };
 
+/**
+ * SafeImg — drop-in replacement for Remotion's <Img> component in AI-generated code.
+ * 
+ * Remotion's Img component calls cancelRender() when it can't decode a source,
+ * which crashes the entire editor. Video URLs (.mp4/.webm/.mov) are the primary
+ * offender — Img tries to decode them as images and fails.
+ * 
+ * This wrapper:
+ * 1. Detects video URLs → renders <video> element instead
+ * 2. For valid image URLs → delegates to Remotion's real Img with an onError fallback
+ * 3. For broken URLs → shows a graceful placeholder instead of crashing
+ */
+const SafeImg: React.FC<any> = (props: Record<string, any>) => {
+  const { src, style, alt, ...rest } = props;
+  const [hasError, setHasError] = React.useState(false);
+
+  // Detect video URLs and render <video> element instead of Img
+  const isVideo = src && typeof src === 'string' && /\.(mp4|webm|mov|avi)([?#]|$)/i.test(src);
+
+  if (isVideo) {
+    return React.createElement('video', {
+      src,
+      style: { objectFit: 'cover' as const, width: '100%', height: '100%', ...style },
+      autoPlay: true,
+      muted: true,
+      loop: true,
+      playsInline: true,
+    });
+  }
+
+  if (hasError || !src) {
+    return React.createElement('div', {
+      style: {
+        width: '100%',
+        height: '100%',
+        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+        ...style,
+      },
+      'aria-label': alt || 'Image unavailable',
+    });
+  }
+
+  // For valid image URLs, use Remotion's Img with error handling
+  return React.createElement(Img, {
+    ...rest,
+    src,
+    alt,
+    style,
+    onError: (e: any) => {
+      e?.preventDefault?.();
+      console.warn(`[SafeImg] Failed to load image: ${src}`);
+      setHasError(true);
+    },
+  });
+};
+
 function createComponentFromTranspiled(
   transpiledCode: string, 
   options: CompilationOptions = {}
@@ -488,15 +544,20 @@ function createComponentFromTranspiled(
       );
     };
 
-    // SafeReact proxy: intercepts createElement("img", ...) calls from
-    // AI-generated code and substitutes SafeMediaImg to handle video URLs
+    // SafeReact proxy: intercepts createElement calls from AI-generated code
+    // and substitutes safe wrappers for img/Img to handle video URLs
     // and broken images gracefully instead of crashing the editor.
     const SafeReact = new Proxy(React, {
       get(target, prop, receiver) {
         if (prop === 'createElement') {
           return (type: any, ...args: any[]) => {
+            // Intercept lowercase <img> → SafeMediaImg
             if (type === 'img') {
               return React.createElement(SafeMediaImg, ...args);
+            }
+            // Intercept Remotion's <Img> → SafeImg (prevents cancelRender crash)
+            if (type === Img) {
+              return React.createElement(SafeImg, ...args);
             }
             return React.createElement(type, ...args);
           };
@@ -514,7 +575,7 @@ function createComponentFromTranspiled(
       useVideoConfig,
       spring,
       Sequence,
-      Img,
+      Img: SafeImg,
       Easing,
       Series,
       random,
@@ -583,7 +644,7 @@ function createComponentFromTranspiled(
       useVideoConfig,
       spring,
       Sequence,
-      Img,
+      SafeImg,
       Easing,
       Series,
       random,
