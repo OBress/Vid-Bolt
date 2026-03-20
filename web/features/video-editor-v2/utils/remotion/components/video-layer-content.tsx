@@ -82,25 +82,29 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
 
 
 
+  // Shared fallback UI for invalid/missing video sources
+  const renderFallback = (message: string) => (
+    <div 
+      style={{ 
+        width: '100%', 
+        height: '100%', 
+        backgroundColor: '#1a1a2e',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#888',
+        fontSize: '13px',
+        fontFamily: 'monospace',
+      }}
+    >
+      {message}
+    </div>
+  );
+
   // Safety check - don't render if src is missing
   if (!overlay.src || overlay.src.trim() === '') {
     console.warn('VideoLayerContent: No src provided for video overlay', overlay);
-    return (
-      <div 
-        style={{ 
-          width: '100%', 
-          height: '100%', 
-          backgroundColor: '#1a1a1a',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#666',
-          fontSize: '14px',
-        }}
-      >
-        Video source missing
-      </div>
-    );
+    return renderFallback('Video source missing');
   }
 
   // Safety check - data:image/ URIs cannot be played as video by OffthreadVideo.
@@ -108,23 +112,20 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
   // because the generated media URL is not available yet.
   if (overlay.src.startsWith('data:image/')) {
     console.warn(`VideoLayerContent: src is an image data URI, cannot render as video (id=${overlay.id})`);
-    return (
-      <div 
-        style={{ 
-          width: '100%', 
-          height: '100%', 
-          backgroundColor: '#1a1a2e',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#888',
-          fontSize: '13px',
-          fontFamily: 'monospace',
-        }}
-      >
-        Media pending…
-      </div>
-    );
+    return renderFallback('Media pending…');
+  }
+
+  // Safety check - reject stringified objects / obviously invalid sources.
+  // Remotion's VideoForPreview unconditionally fires console.error("Error occurred in video", {})
+  // on any native <video> error, so we must prevent mounting with bad URLs.
+  if (
+    overlay.src === '[object Object]' ||
+    overlay.src.startsWith('blob:') ||
+    overlay.src === 'undefined' ||
+    overlay.src === 'null'
+  ) {
+    console.warn(`VideoLayerContent: Invalid src "${overlay.src}" for video (id=${overlay.id})`);
+    return renderFallback('Media pending…');
   }
 
   // Determine the video source URL first

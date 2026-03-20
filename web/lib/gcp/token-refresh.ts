@@ -219,7 +219,7 @@ export async function clearStoredTokens(userId: string): Promise<void> {
 /**
  * Refresh a YouTube access token using the user's own OAuth credentials.
  */
-async function refreshYouTubeAccessToken(
+export async function refreshYouTubeAccessToken(
   refreshToken: string,
   clientId: string,
   clientSecret: string

@@ -7,7 +7,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { refreshGoogleAccessToken } from '@/lib/gcp/token-refresh';
+import { refreshYouTubeAccessToken } from '@/lib/gcp/token-refresh';
 import { YouTubeApi } from '@/lib/youtube/api';
 
 export async function GET(
@@ -32,6 +32,16 @@ export async function GET(
   if (!connection) {
     return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
   }
+
+  // Get user's per-user YouTube OAuth credentials (needed for token refresh)
+  const { data: oauthConfig } = await serviceSupabase
+    .from('user_gcp_config')
+    .select('youtube_oauth_client_id, youtube_oauth_client_secret')
+    .eq('user_id', user.id)
+    .single() as { data: {
+      youtube_oauth_client_id: string | null;
+      youtube_oauth_client_secret: string | null;
+    } | null; error: any };
 
   // Get channels already linked to this connection
   const { data: existingChannels } = await supabase
@@ -58,7 +68,16 @@ export async function GET(
         return NextResponse.json({ channels: [], error: 'No refresh token for this connection' });
       }
 
-      const refreshed = await refreshGoogleAccessToken(connection.refresh_token);
+      if (!oauthConfig?.youtube_oauth_client_id || !oauthConfig?.youtube_oauth_client_secret) {
+        return NextResponse.json({ channels: [], error: 'YouTube OAuth credentials not configured. Please set up your YouTube OAuth in settings.' });
+      }
+
+      // Use per-user OAuth credentials — the connection was authorized with these, not the global GCP ones
+      const refreshed = await refreshYouTubeAccessToken(
+        connection.refresh_token,
+        oauthConfig.youtube_oauth_client_id,
+        oauthConfig.youtube_oauth_client_secret,
+      );
       accessToken = refreshed.accessToken;
 
       // Cache the refreshed token back to the connection

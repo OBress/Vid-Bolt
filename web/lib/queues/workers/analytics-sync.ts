@@ -18,7 +18,7 @@
 
 import { Job, Processor } from 'bullmq';
 import { createClient } from '@supabase/supabase-js';
-import { getValidGCPToken, getValidYouTubeToken, refreshGoogleAccessToken } from '@/lib/gcp/token-refresh';
+import { getValidGCPToken, getValidYouTubeToken, refreshYouTubeAccessToken } from '@/lib/gcp/token-refresh';
 import { YouTubeApi } from '@/lib/youtube/api';
 import { YouTubeAnalyticsApi } from '@/lib/youtube/analytics-api';
 
@@ -104,9 +104,25 @@ async function getConnectionToken(
     return { token: conn.access_token, isSocialConnection: true };
   }
 
-  // Refresh the token
+  // Refresh the token using per-user YouTube OAuth credentials
   console.log(`[AnalyticsSync] Refreshing social connection token...`);
-  const refreshed = await refreshGoogleAccessToken(conn.refresh_token);
+
+  const { data: oauthConfig } = await supabase
+    .from('user_gcp_config')
+    .select('youtube_oauth_client_id, youtube_oauth_client_secret')
+    .eq('user_id', userId)
+    .single();
+
+  if (!oauthConfig?.youtube_oauth_client_id || !oauthConfig?.youtube_oauth_client_secret) {
+    console.warn(`[AnalyticsSync] No per-user YouTube OAuth credentials for user ${userId}, falling back to YouTube token`);
+    return { token: await getValidYouTubeToken(userId), isSocialConnection: false };
+  }
+
+  const refreshed = await refreshYouTubeAccessToken(
+    conn.refresh_token,
+    oauthConfig.youtube_oauth_client_id,
+    oauthConfig.youtube_oauth_client_secret,
+  );
 
   // Cache the refreshed token
   await supabase
