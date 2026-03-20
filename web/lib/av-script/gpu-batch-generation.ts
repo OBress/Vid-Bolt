@@ -14,6 +14,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   callGpuBatchImageGenerate,
   callGpuBatchVideoGenerate,
+  callGpuCancelBatch,
   callGpuGetMode,
   callGpuSwitchMode,
   forceUpdateGpuActivity,
@@ -31,7 +32,8 @@ import {
   getKeyFromUrl,
   STORAGE_PATHS,
 } from '@/lib/services/r2-storage';
-import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
+import { waitForWebhookResult, abortAllListenersForPrefix } from '@/lib/queues/webhook-listener';
+import { CancellationError, checkCancelled } from '@/lib/queues/cancellation';
 
 // ============================================================================
 // CONFIGURATION
@@ -93,6 +95,8 @@ export interface ShotForGpuGeneration {
   visual_elements?: import('@/types/video').RoutingTag[];
   /** Narration text for MG pacing */
   narration_text?: string;
+  /** Compact neighbor context note for style continuity */
+  neighbor_context?: string;
 }
 
 export interface GpuGenerationResult {
@@ -296,6 +300,8 @@ export async function processGpuBatchGeneration(
   loraTriggerWords?: string,
   /** Optional streaming callback — fires with full result for each resolved video item */
   onItemResolved?: (result: GpuGenerationResult) => void,
+  /** Optional task ID for cancellation checks during long-running GPU operations */
+  taskId?: string,
 ): Promise<BatchGpuGenerationResult> {
   const logPrefix = '[GPU-Batch]';
   const results: GpuGenerationResult[] = [];
@@ -393,6 +399,18 @@ export async function processGpuBatchGeneration(
     ? await processImageBatch(userId, videoId, videoShots, aspectRatio, 'keyframe', imageItemCallback, loraName, loraTriggerWords)
     : [];
   
+  // ----- Cancellation checkpoint 1: After image batches complete -----
+  if (taskId) {
+    try {
+      await checkCancelled(taskId);
+    } catch (err) {
+      if (err instanceof CancellationError) {
+        console.log(`${logPrefix} Cancellation detected after image generation — aborting before video batch`);
+      }
+      throw err;
+    }
+  }
+  
   // Assemble multi-image shots: group results by shot_index and build media_items
   const assembledResults = assembleMultiImageResults(standaloneImageShots, standaloneResults);
   results.push(...assembledResults);
@@ -458,10 +476,34 @@ export async function processGpuBatchGeneration(
         stats.videosFailed++;
       }
     } else {
+      // ----- Cancellation checkpoint 2: Before video batch submission -----
+      if (taskId) {
+        try {
+          await checkCancelled(taskId);
+        } catch (err) {
+          if (err instanceof CancellationError) {
+            console.log(`${logPrefix} Cancellation detected before video batch submission — skipping video generation`);
+          }
+          throw err;
+        }
+      }
+
       onProgress?.(`Generating ${videoShots.length} videos...`, 60);
       const videoResults = await processVideoBatch(userId, videoId, videoShots, aspectRatio, onItemComplete, onItemResolved);
       results.push(...videoResults);
       
+      // ----- Cancellation checkpoint 3: After video batch completes -----
+      if (taskId) {
+        try {
+          await checkCancelled(taskId);
+        } catch (err) {
+          if (err instanceof CancellationError) {
+            console.log(`${logPrefix} Cancellation detected after video generation — clean exit`);
+          }
+          throw err;
+        }
+      }
+
       stats.videosGenerated = videoResults.filter(r => r.generation_status === 'completed').length;
       stats.videosFailed = videoResults.filter(r => r.generation_status === 'failed').length;
     }
@@ -545,9 +587,13 @@ async function processImageBatch(
         const { putUrl } = await generatePresignedPutUrl(key, 'image/png');
         
         // Inject LoRA trigger words into prompt text for style activation
-        const effectivePrompt = loraTriggerWords
-          ? `${loraTriggerWords} ${shot.visual_prompt}`
+        // Inject neighbor context for visual consistency across adjacent shots
+        const basePrompt = shot.neighbor_context
+          ? `${shot.visual_prompt}. ${shot.neighbor_context}`
           : shot.visual_prompt;
+        const effectivePrompt = loraTriggerWords
+          ? `${loraTriggerWords} ${basePrompt}`
+          : basePrompt;
 
         items.push({
           item_id: itemId,
@@ -696,60 +742,86 @@ function assembleMultiImageResults(
 // ============================================================================
 
 /**
- * Enrich a visual prompt for LTX-2 video generation.
- * Based on official LTX-2 prompting guide (https://ltx.io/model/model-blog/prompting-guide-for-ltx-2):
- * - Single flowing paragraph (no bullets/lists)
- * - Present tense verbs for movement and action
- * - Explicit camera motion terms (tracks, pans, pushes in, etc.)
- * - Describe the action as a natural beginning-to-end sequence
- * - 4-8 descriptive sentences covering shot, scene, action, camera
+ * Enrich a visual prompt for LTX-2.3 video generation.
+ * Based on LTX-2.3 best practices:
+ * - Specificity wins — complex prompts with multiple subjects, spatial relationships
+ * - Use VERBS for motion — "walks", "turns", "adjusts" — not static descriptions
+ * - Describe texture and material — fabric types, hair texture, surface finish
+ * - Explicit camera motion — "camera slowly pushes forward", "tracking shot"
+ * - Spatial layout matters — left vs right, foreground vs background
+ * - Avoid static photo-like prompts — include action to reduce freezing
+ * - Single flowing paragraph, present tense, 4-8 sentences
  */
-function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number, shotIndex?: number): string {
+function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number, shotIndex?: number, neighborContext?: string): string {
   // Check if agent already specified detailed camera motion
   const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot|orbit|sweep|glide)\b/i.test(rawPrompt);
 
-  // If the agent already provided camera motion, DON'T override it —
-  // only add quality constraints and duration-aware pacing guidance
+  // LTX 2.3 anti-static guard: if prompt reads like a still image, add motion verbs
+  const hasActionVerbs = /\b(walks?|turns?|moves?|reaches?|adjusts?|steps?|gestures?|shifts?|drifts?|rises?|falls?|runs?|looks?|glances?|nods?|leans?|stands?\s+up|sits?\s+down)\b/i.test(rawPrompt);
+
+  // Inject neighbor context for style continuity
+  const contextPrefix = neighborContext ? `${neighborContext} ` : '';
+
+  // Duration-aware pacing
+  const pacingHint = durationSeconds <= 3
+    ? 'Quick, decisive movement within the short duration.'
+    : durationSeconds <= 5
+    ? 'Smooth, measured movement filling the full duration.'
+    : `Extended, graceful movement maintaining visual interest across ${durationSeconds}s.`;
+
+  // If the agent already provided camera motion, preserve it
   if (hasMotionLanguage) {
-    // Duration-aware pacing hint (Fix 4: calibrate motion to clip length)
-    const pacingHint = durationSeconds <= 3
-      ? 'Execute camera movement quickly and decisively within the short duration.'
-      : durationSeconds <= 5
-      ? 'Smooth, measured camera movement filling the full duration.'
-      : `Extended, graceful camera movement maintaining visual interest across the full ${durationSeconds}s.`;
-    
-    return [
-      rawPrompt.trim().replace(/\.$/, ''),
+    const parts = [
+      contextPrefix + rawPrompt.trim().replace(/\.$/, ''),
       pacingHint,
-      'Cinematic quality, photorealistic rendering.',
-      'No watermarks, no text overlays, no CGI artifacts.',
-    ].join('. ') + '.';
+    ];
+
+    // LTX 2.3: Add texture detail if not present
+    if (!/\b(texture|fabric|surface|grain|strands?|material)\b/i.test(rawPrompt)) {
+      parts.push('Fine surface textures and material details visible.');
+    }
+
+    parts.push('Cinematic quality, photorealistic rendering.');
+    parts.push('No watermarks, no text overlays, no CGI artifacts.');
+
+    return parts.join('. ') + '.';
   }
 
-  // No camera motion specified by agent — add duration-calibrated motion
+  // No camera motion specified — add duration-calibrated motion
   const cameraStyles = [
-    'Slow dolly push-in revealing fine details, shallow depth of field.',
-    'Smooth tracking shot follows the action laterally, cinematic movement.',
-    'Subtle crane shot rising gently, establishing the scene from above.',
-    'Handheld close-up with natural micro-movements, intimate perspective.',
-    'Wide establishing shot with gentle parallax drift, atmospheric depth.',
-    'Medium shot with slow orbit around the subject, smooth rotation.',
+    'The camera slowly pushes forward, revealing fine details with shallow depth of field.',
+    'A smooth tracking shot follows the action laterally with cinematic movement.',
+    'A subtle crane shot rises gently, establishing the scene from above.',
+    'Handheld close-up captures natural micro-movements from an intimate perspective.',
+    'Wide establishing shot with gentle parallax drift creates atmospheric depth.',
+    'Medium shot with a slow orbit around the subject provides smooth rotation.',
   ];
 
-  // Fix 4: Duration-calibrated motion intensity
   const motionCue = durationSeconds <= 3
-    ? 'Camera locks on subject with minimal organic movement, sharp focus.'
-    : durationSeconds <= 5
-    ? cameraStyles[(shotIndex || 0) % cameraStyles.length]
-    : `${cameraStyles[(shotIndex || 0) % cameraStyles.length]} The movement continues smoothly for the full ${durationSeconds}s duration.`;
+    ? 'Camera holds steady on the subject with sharp focus and minimal organic movement.'
+    : cameraStyles[(shotIndex || 0) % cameraStyles.length];
 
-  return [
-    rawPrompt.trim().replace(/\.$/, ''),
-    motionCue,
-    'Soft natural lighting with atmospheric depth and volumetric haze.',
-    'Cinematic quality, photorealistic rendering, smooth continuous motion throughout the entire shot.',
-    'No watermarks, no text overlays, no stock photo feel, no CGI artifacts.',
-  ].join('. ') + '.';
+  const parts = [
+    contextPrefix + rawPrompt.trim().replace(/\.$/, ''),
+  ];
+
+  // LTX 2.3 anti-static: inject subtle action if prompt has no verbs
+  if (!hasActionVerbs) {
+    parts.push('Subtle natural movement in the scene — wind, breathing, ambient motion.');
+  }
+
+  parts.push(motionCue);
+
+  // LTX 2.3: texture/material emphasis for improved VAE
+  if (!/\b(texture|fabric|surface|grain|strands?|material)\b/i.test(rawPrompt)) {
+    parts.push('Fine textures and material details are clearly visible.');
+  }
+
+  parts.push('Soft natural lighting with atmospheric depth.');
+  parts.push('Cinematic quality, photorealistic rendering, smooth continuous motion.');
+  parts.push('No watermarks, no text overlays, no CGI artifacts.');
+
+  return parts.join('. ') + '.';
 }
 
 // ============================================================================
@@ -800,7 +872,7 @@ async function processVideoBatch(
       items.push({
         item_id: itemId,
         start_frame_url: shot.start_frame_url,
-        prompt: enrichLtx2Prompt(shot.visual_prompt, shot.duration_seconds || 5, shot.segment_index),
+        prompt: enrichLtx2Prompt(shot.visual_prompt, shot.duration_seconds || 5, shot.segment_index, shot.neighbor_context),
         duration_seconds: Math.min(shot.duration_seconds || 5, 10),
         aspect_ratio: aspectRatio,
         save_url: putUrl,

@@ -146,7 +146,7 @@ Easing presets: "linear", "ease", "easeIn", "easeOut", "easeInOut", "easeInCubic
 ### PROJECT SETTINGS
 
 - aspectRatio: "16:9" (landscape), "9:16" (portrait/shorts), "1:1" (square), "4:5" (Instagram)
-- fps: 30 (default)
+- fps: 24 (default)
 - backgroundColor: "#000000"
 `.trim();
 }
@@ -266,6 +266,10 @@ export interface AgentClip {
   audioEffects?: AgentAudioEffect[];
   /** Display label */
   label?: string;
+  /** Audio source URL (for background music clips) */
+  audioUrl?: string;
+  /** Audio volume 0.0–1.0 (for background music clips) */
+  volume?: number;
 }
 
 /**

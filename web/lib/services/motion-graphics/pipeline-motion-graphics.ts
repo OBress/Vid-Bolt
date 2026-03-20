@@ -92,7 +92,7 @@ export function buildEnrichedMGPrompt(
   parts.push(basePrompt);
 
   // Duration context
-  parts.push(`\nDuration: ${duration} seconds (${duration * 30} frames at 30fps).`);
+  parts.push(`\nDuration: ${duration} seconds (${duration * 24} frames at 24fps).`);
 
   // Context hint
   if (contextHint) {
@@ -203,7 +203,7 @@ export function getStaticRemotionFallback(
     ? narrationText.substring(0, 60) + (narrationText.length > 60 ? '...' : '')
     : `Scene ${shotIndex + 1}`;
 
-  const fps = 30;
+  const fps = 24;
   const totalFrames = Math.max(fps, Math.round(duration * fps));
 
   const code = `import React from 'react';
@@ -433,6 +433,22 @@ Keep the content relevant to the narration above, but simplify the visual execut
   // Strip markdown fences and validate syntax
   const cleanCode = stripMarkdownFences(finalCode);
   const validation = validateCode(cleanCode);
+  let codeToCheck = validation.fixedCode || cleanCode;
+
+  // Direct fix for #1 MG failure: AI names timing constants "frame",
+  // colliding with `const frame = useCurrentFrame()`.
+  // Rename to TIMING (matching prompt examples the AI references).
+  if (/const\s+frame\s*=\s*useCurrentFrame\(\)/.test(codeToCheck) && /const\s+frame\s*=\s*\{/.test(codeToCheck)) {
+    console.log(`[PipelineMG] Shot ${request.shotIndex}: Detected "const frame = {}" collision — auto-renaming to TIMING`);
+    codeToCheck = codeToCheck.replace(/const\s+frame\s*=\s*\{/, 'const TIMING = {');
+    const timingObjMatch = codeToCheck.match(/const\s+TIMING\s*=\s*\{([^}]*)\}/);
+    if (timingObjMatch) {
+      const keys = [...timingObjMatch[1].matchAll(/(\w+)\s*:/g)].map(m => m[1]);
+      for (const key of keys) {
+        codeToCheck = codeToCheck.replace(new RegExp(`\\bframe\\.${key}\\b`, 'g'), `TIMING.${key}`);
+      }
+    }
+  }
 
   if (!validation.isValid) {
     console.warn(`[PipelineMG] Shot ${request.shotIndex}: Code validation failed:`, validation.errors);
@@ -445,12 +461,12 @@ Keep the content relevant to the narration above, but simplify the visual execut
 
   // Babel syntax check — catches ALL syntax errors the regex check misses.
   // This is the #1 reason MG generation "succeeds" but fails at render time.
-  const syntaxResult = transpileCheck(validation.fixedCode || cleanCode);
+  const syntaxResult = transpileCheck(codeToCheck);
   if (!syntaxResult.valid) {
     console.warn(`[PipelineMG] Shot ${request.shotIndex}: ❌ Babel check failed: ${syntaxResult.error}`);
     return {
       success: false,
-      remotionCode: validation.fixedCode || cleanCode,
+      remotionCode: codeToCheck,
       error: `Syntax error: ${syntaxResult.error}`,
     };
   }
@@ -459,7 +475,7 @@ Keep the content relevant to the narration above, but simplify the visual execut
 
   return {
     success: true,
-    remotionCode: cleanCode,
+    remotionCode: codeToCheck,
     skills,
     durationFrames,
     usedIcons,

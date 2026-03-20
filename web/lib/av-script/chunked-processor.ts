@@ -93,6 +93,7 @@ export interface ChunkShotResult {
   text: string;
   summary: string;
   stock_worthy: boolean;
+  stock_search_query?: string; // 2-4 word entity-focused search query for stock-worthy shots
   reuse_entity?: string; // Entity name to reuse (e.g. "Donald Trump") or null for fresh scrape
   image_count?: number;
   character_refs?: string[];
@@ -405,6 +406,7 @@ async function generateChunkShots(
       summary: string;
       media_type: 'video' | 'motiongraphic';
       stock_worthy?: boolean;
+      stock_search_query?: string;
       image_count?: number;
       visual_description?: string;
       visual_elements?: import('@/types/video').RoutingTag[];
@@ -437,6 +439,7 @@ async function generateChunkShots(
       stock_worthy: (aiSummary?.stock_worthy ?? false) ||
         characterRefs.length > 0 ||
         locationRefs.length > 0,
+      stock_search_query: aiSummary?.stock_search_query,
       image_count: aiSummary?.image_count,
       visual_description: aiSummary?.visual_description,
       visual_elements: aiSummary?.visual_elements,
@@ -570,15 +573,30 @@ Avoid repetitive imagery - vary your visual approaches while keeping the same st
 ## YOUR TASK
 Generate visual summaries for the following ${context.currentSegments.length} segments.
 For each segment, provide:
-1. summary: A 1-sentence visual description (under 25 words) describing what should be shown
+1. summary: A vivid visual description (under 30 words) describing the CORE subject to be shown. This is used for stock image search — keep it factual and specific.
 2. media_type: "video" (default) or "motiongraphic"
    - PREFER "motiongraphic" for: list-items, comparisons, step-by-step, data/stats, quotes, evidence
    - PREFER "video" for: emotional beats, transitions, atmospheric moments, single-scene cinematics
 3. stock_worthy: true when real-world footage of a named person, place, event, or organization would enhance authenticity
-4. reuse_entity: The entity name if this entity appeared before and should reuse its image
-5. image_count: (optional) for motiongraphics, number of images if multiple improve clarity
-6. visual_description: A detailed description of what you envision (1-2 sentences)
-7. visual_elements: Array of routing tags for generation tools
+4. stock_search_query: (required when stock_worthy=true) 2-4 words, JUST the entity name for Google Images search (e.g., "Julius Caesar", "Roman Forum", "Colosseum")
+5. reuse_entity: The entity name if this entity appeared before and should reuse its image
+6. image_count: (optional) for motiongraphics, number of images if multiple improve clarity
+7. visual_description: The PROMPT sent directly to the AI generation model. Format depends on media_type:
+
+   **For IMAGE shots (media_type="motiongraphic" or stock-backed)** — Z-Image Turbo scaffold format:
+   Use comma-separated structured sections in this order:
+   [Shot type & subject], [appearance/age], [clothing], [environment/background], [lighting], [mood/atmosphere], [color palette], [style: realistic photography], [technical: 4K, shallow depth of field], [no watermark, no text, no logos]
+   Example: "Medium-shot portrait of an adult Roman senator in his 50s, stern weathered face, short gray hair, wearing a white toga with gold trim, standing in a marble senate hall with tall columns, dramatic torchlight from the left casting deep shadows, tense and foreboding atmosphere, muted gold and stone-gray palette, realistic photography, cinematic composition, shallow depth of field, 4K quality, no watermark, no text, no logos"
+
+   **For VIDEO shots (media_type="video")** — LTX 2.3 prose format:
+   Write a flowing paragraph (3-5 sentences) that reads like a director's shot description. MUST include:
+   - ACTIVE VERBS describing what happens: "walks", "turns", "adjusts", "drifts", "reaches" — NOT "the scene comes alive"
+   - SPATIAL LAYOUT: who/what is on the left vs right, foreground vs background
+   - CAMERA MOTION: "camera slowly pushes forward", "tracking shot follows laterally", "gentle crane rising"
+   - TEXTURE/MATERIAL details: fabric types, hair texture, surface finish, environmental wear
+   - Describe beginning-to-end action sequence within the shot
+   Example: "A weathered Roman senator stands at a marble podium on the left, his white toga rippling as he gestures firmly with one hand. The camera slowly pushes forward from a medium shot into a close-up of his stern face, torchlight from the left casting deep shadows across the creased texture of his skin. Other senators sit in soft focus behind tall stone columns in the background. He turns slightly toward the crowd, adjusting his toga over one shoulder."
+8. visual_elements: Array of routing tags for generation tools
 
 ## ROUTING TAGS (visual_elements)
 Select ALL that apply from these categories:
@@ -642,7 +660,35 @@ Bad SFX: Generic whooshes on every cut, distracting clicks
 - Stat/data card with animated numbers (no base media): ["remotion_overlay"]
 - Full-screen infographic with icons: ["remotion_overlay"]
 - Video with animated border + lower-third: ["ai_video", "remotion_video_manipulation", "remotion_overlay"]
-- Photo montage with transition effects: ["stock_image", "remotion_image_manipulation", "sound_effects"]`);
+- Photo montage with transition effects: ["stock_image", "remotion_image_manipulation", "sound_effects"]
+
+## MULTI-IMAGE COMPOSITIONS (image_count)
+
+When a moment involves MULTIPLE entities TOGETHER, use image_count to create richer compositions:
+
+- **Character groups** (2-3 people discussed together): image_count: 2-3 with remotion_image_manipulation
+  → Creates side-by-side portraits, relationship diagrams, or comparison layouts
+  → Example: "Caesar and Brutus" → image_count: 2, two AI portraits composed into a dramatic face-off
+- **Before/after or cause/effect**: image_count: 2 with remotion_image_manipulation
+  → Split-screen or transition reveal showing transformation
+- **Process steps or timelines**: image_count: 3-4 with remotion_image_manipulation
+  → Sequential images animated left-to-right showing progression
+- **Comparison/contrast**: image_count: 2 with remotion_image_manipulation
+  → Juxtaposed images highlighting differences
+
+When you use image_count > 1, describe EACH image in visual_description:
+  → "Left: Caesar in white toga, confident and powerful. Right: Brutus in shadows, conflicted expression."
+
+For CONSECUTIVE SHOTS about the SAME scene/event, maintain visual coherence:
+  → Keep the same visual style, color palette, and atmospheric tone
+  → Reference elements from preceding shots in visual_description
+  → The generation system will automatically propagate style context to subsequent shots
+
+CRITICAL: VISUAL DISTINCTNESS
+  → Consecutive shots MUST describe visually DIFFERENT perspectives (different camera angle, framing, or focal point)
+  → If two shots depict the same subject/setting, VARY the shot type: wide → close-up → over-shoulder → low-angle
+  → NEVER repeat the same visual description for adjacent shots — each must contribute a unique visual`);
+
 
   // Upcoming content preview (for transitions)
   if (!context.isLastChunk && context.upcomingSegments.length > 0) {
@@ -689,6 +735,7 @@ Return JSON:
       "summary": "Brief visual description...", 
       "media_type": "video", 
       "stock_worthy": true, 
+      "stock_search_query": "Donald Trump",
       "reuse_entity": "Donald Trump",
       "visual_description": "Cinematic slow-motion shot of the subject speaking at a podium with dramatic lighting",
       "visual_elements": ["ai_video", "remotion_overlay"],

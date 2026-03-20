@@ -341,5 +341,9 @@ export const selectDurationInSeconds = createSelector(
 /** Total timeline duration in frames */
 export const selectDurationInFrames = createSelector(
   [selectDurationInSeconds, selectFpsValue],
-  (durationSeconds, fps): number => Math.ceil(durationSeconds * fps),
+  (durationSeconds, fps): number => {
+    const frames = Math.ceil(durationSeconds * (fps || 24));
+    // Defense: prevent NaN/0 from reaching Remotion Player (causes "Frame NaN is not finite")
+    return Number.isFinite(frames) && frames > 0 ? frames : 900;
+  },
 );

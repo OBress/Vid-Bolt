@@ -490,66 +490,98 @@ export class StockMediaDirector {
 
   /**
    * Build search query specifically for Serper image search.
-   * Creates CONCRETE, SUBJECT-FOCUSED queries that will find real documentary/archival content.
    * 
-   * Uses Gemini 3 Flash to intelligently convert the shot summary into an
-   * optimal image search query. This is far more effective than rule-based
-   * string manipulation because the AI can:
-   * 1. Extract key subjects (people, places, objects)
-   * 2. Remove production language naturally
-   * 3. Format specifically for image search
-   * 4. Adapt based on context
+   * ENTITY-FIRST approach: If the shot has explicit entity refs (character names,
+   * locations, reuse_entity), build the query directly from those — no AI needed.
+   * Only falls back to AI for shots without explicit entity references.
+   * 
+   * This is critical because a query for "Julius Caesar" needs to be exactly that,
+   * not "cinematic dramatic close-up of Roman emperor speaking at podium photo".
    */
   private async buildSerperQuery(shot: ShotPart1): Promise<string> {
+    // =========================================================================
+    // FAST PATH: Entity-first query (no AI call needed)
+    // If we know the specific person/place/thing, just search for it directly.
+    // =========================================================================
+    const entityParts: string[] = [];
+    
+    // Priority 1: reuse_entity is the most explicit signal
+    if (shot.reuse_entity) {
+      entityParts.push(shot.reuse_entity);
+    }
+    
+    // Priority 2: character_refs (named people)
+    if (shot.character_refs && shot.character_refs.length > 0) {
+      for (const ref of shot.character_refs) {
+        if (!entityParts.includes(ref)) entityParts.push(ref);
+      }
+    }
+    
+    // Priority 3: location_refs (named places)
+    if (shot.location_refs && shot.location_refs.length > 0) {
+      for (const ref of shot.location_refs) {
+        if (!entityParts.includes(ref)) entityParts.push(ref);
+      }
+    }
+    
+    // Priority 4: stock_search_query from chunked processor (AI-curated, entity-focused)
+    if (shot.stock_search_query) {
+      const query = shot.stock_search_query;
+      log.debug(`Using AI-curated stock_search_query: "${query}"`);
+      return query + ' photo';
+    }
+    
+    // If we have entity names, build query directly — no AI needed
+    if (entityParts.length > 0) {
+      // Take up to 2 entities to keep the query focused
+      const query = entityParts.slice(0, 2).join(' ') + ' photo';
+      log.debug(`Entity-first Serper query: "${query}" (entities: ${entityParts.join(', ')})`);
+      return query;
+    }
+    
+    // =========================================================================
+    // SLOW PATH: AI query builder (only for shots without explicit entity refs)
+    // =========================================================================
     const { generateText } = await import('@/lib/ai/openrouter');
     
-    // Prepare the summary - strip @() syntax for the AI
+    // Clean summary: strip @() syntax AND overlay/composition language
     const cleanSummary = (shot.summary || shot.text?.substring(0, 150) || '')
-      .replace(/@\(([^)]+)\)/g, '$1');
+      .replace(/@\(([^)]+)\)/g, '$1')
+      .replace(/with\s+(\w+\s+)*overlay/gi, '')
+      .replace(/with\s+(location|name|info)\s*tag/gi, '')
+      .replace(/with\s+lower[- ]third/gi, '')
+      .replace(/with\s+nameplate/gi, '')
+      .replace(/split[- ]screen/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
     
-    const systemPrompt = `You are a Google Images search query optimizer. Convert visual descriptions into optimal image search queries.
+    const systemPrompt = `Convert a visual description into a Google Images search query.
+Extract ONLY the concrete subject (person, place, or object). Remove all cinematic/production language.
+Keep under 6 words. Add "photo" at the end. Return ONLY the query.
 
-RULES:
-1. Extract ONLY concrete subjects (real people, real places, real objects)
-2. Remove ALL production language (cinematic, motiongraphic, aerial, close-up, etc.)
-3. Remove ALL overlay/composition language (overlay, lower-third, nameplate, location tag, family tree, split-screen, annotation, infographic, data HUD, etc.) — these are post-production graphics, not stock photo subjects
-4. Remove abstract concepts and metaphors
-5. Keep the query under 8 words
-6. Add "photo" at the end for better image results
-7. Return ONLY the search query, nothing else
-
-EXAMPLES:
-- "@(Donald Trump) speaking at rally podium" → "Donald Trump campaign rally speech photo"
-- "Crime board with evidence connecting suspects" → "crime investigation evidence board photo"
+Examples:
 - "Aerial view of New York skyline at sunset" → "New York skyline photo"
-- "Motiongraphic showing stock market crash visualization" → "stock market trading floor photo"
-- "Marble bust of Brutus with family tree overlay" → "marble bust Lucius Junius Brutus photo"
-- "Interior of Curia of Pompey with location tag overlay" → "interior Curia of Pompey ancient Rome photo"
-- "Senator profile with nameplate overlay" → "Roman senator portrait photo"`;
-
-    const userPrompt = `Convert this visual description into an image search query:
-
-Visual: "${cleanSummary}"
-Video topic: "${this.config.videoTopic || 'documentary'}"
-
-Return ONLY the search query:`;
+- "Crime board with evidence connecting suspects" → "crime evidence board photo"
+- "Marble bust of Brutus" → "Brutus marble bust photo"`;
+    
+    const userPrompt = `Visual: "${cleanSummary}"
+Topic: "${this.config.videoTopic || 'documentary'}"`;
 
     try {
       const response = await generateText(
         this.config.userId,
         systemPrompt,
         userPrompt,
-        { temperature: 0.3, maxTokens: 50 } // Low temp for consistent formatting
+        { temperature: 0.2, maxTokens: 30 }
       );
       
       const query = response.content.trim()
-        .replace(/^["']|["']$/g, '') // Remove quotes if present
-        .replace(/\n.*/g, ''); // Take only first line
+        .replace(/^["']|["']$/g, '')
+        .replace(/\n.*/g, '');
       
       log.debug(`AI-generated Serper query: "${query}" (from: "${cleanSummary.substring(0, 50)}...")`);
       return query;
     } catch (error) {
-      // Fallback to simple cleaning if AI fails
       log.warn('AI query generation failed, using fallback:', error instanceof Error ? error.message : error);
       const fallbackQuery = cleanSummary.substring(0, 50) + ' photo';
       log.debug(`Fallback Serper query: "${fallbackQuery}"`);
@@ -645,7 +677,20 @@ Return ONLY the search query:`;
       
       // Build focused search query for Serper (concrete subjects + "photo" suffix)
       const searchQuery = await this.buildSerperQuery(shot);
-      const shotDescription = shot.summary || shot.text;
+      
+      // Build SIMPLIFIED relevance description for validation.
+      // Instead of cinematic language ("Close-up of Caesar's mouth speaking"),
+      // use entity-focused descriptions ("Julius Caesar") so the validator asks
+      // "Is this a photo of Julius Caesar?" — not "Is this a dramatic close-up?"
+      const entityNames: string[] = [
+        ...(shot.character_refs || []),
+        ...(shot.location_refs || []),
+        ...(shot.reuse_entity ? [shot.reuse_entity] : []),
+      ].filter((v, i, a) => a.indexOf(v) === i); // dedupe
+      
+      const shotDescription = entityNames.length > 0
+        ? `${entityNames.join(', ')}${this.config.videoTopic ? `. Video about: ${this.config.videoTopic}` : ''}`
+        : (shot.summary || shot.text);
       
       // OPTIMIZATION: For single-image shots, use efficient "first match wins"
       // This downloads sequentially and stops after first valid match = much less R2 storage

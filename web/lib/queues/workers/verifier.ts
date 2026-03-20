@@ -76,6 +76,17 @@ export interface VerifierJobData {
   styleGuide?: string;
   /** If this is a re-verification after edits, include the original feedback */
   previousFeedback?: string;
+  // --- Creative context (dynamic prompt injection) ---
+  /** Channel + video creative direction from Creative Manifest */
+  creativeDirection?: string;
+  /** LoRA name and trigger words (defines the intended visual aesthetic) */
+  loraInfo?: { name: string; triggerWords?: string };
+  /** Video genre (documentary, comedy, horror, etc.) */
+  genre?: string;
+  /** Narrative beat of this specific shot (hook, reveal, climax, transition, etc.) */
+  narrativeBeat?: string;
+  /** If this shot had a creative image edit applied, what was the instruction */
+  imageEditInstruction?: string;
 }
 
 // ============================================================================
@@ -154,20 +165,61 @@ const VERIFIER_JSON_SCHEMA = {
 // SYSTEM PROMPT
 // ============================================================================
 
-const VERIFIER_SYSTEM_PROMPT = `You are a visual quality critic for an automated video production pipeline.
-Your role is to evaluate generated images and videos against their shot descriptions,
-entity references, and style guides.
+/**
+ * Build a dynamic verifier system prompt that adapts to the video's creative context.
+ * Injects creative direction, LoRA info, genre, narrative beat, and image edit context.
+ */
+function buildVerifierSystemPrompt(jobData: VerifierJobData): string {
+  const parts: string[] = [];
 
+  parts.push(`You are a visual quality critic for an automated video production pipeline.
+Your role is to evaluate generated images and videos against their shot descriptions,
+entity references, and style guides.`);
+
+  // Inject creative direction so the verifier understands the video's goal
+  if (jobData.creativeDirection) {
+    parts.push(`\n=== VIDEO CREATIVE DIRECTION ===\n${jobData.creativeDirection}\nUse this context to understand what the final video is trying to achieve. Evaluate whether the generated media serves this creative vision.`);
+  }
+
+  // Inject genre context
+  if (jobData.genre) {
+    parts.push(`\n=== GENRE: ${jobData.genre.toUpperCase()} ===\nThis video is a ${jobData.genre} production. Evaluate visual quality through the lens of ${jobData.genre} content — what works for ${jobData.genre} may not work for other genres, and vice versa.`);
+  }
+
+  // Inject narrative beat context
+  if (jobData.narrativeBeat) {
+    const beatGuidance: Record<string, string> = {
+      'hook': 'This is a HOOK shot — it needs to grab attention immediately. Be stricter on visual impact and engagement.',
+      'reveal': 'This is a REVEAL shot — the visual must clearly convey the revealing information. Semantic accuracy is critical.',
+      'climax': 'This is a CLIMAX shot — dramatic impact matters most. Be stricter on visual quality and emotional resonance.',
+      'transition': 'This is a TRANSITION shot — it bridges two sections. Visual perfection is less critical than flow and coherence.',
+      'cta': 'This is a CTA (call-to-action) shot — clarity and readability matter most.',
+      'exposition': 'This is an EXPOSITION shot — informational clarity is key. Subject accuracy matters.',
+    };
+    const guidance = beatGuidance[jobData.narrativeBeat] || `This shot serves a "${jobData.narrativeBeat}" narrative purpose.`;
+    parts.push(`\n=== NARRATIVE BEAT: ${jobData.narrativeBeat.toUpperCase()} ===\n${guidance}`);
+  }
+
+  // Inject image edit context
+  if (jobData.imageEditInstruction) {
+    parts.push(`\n=== CREATIVE IMAGE EDIT APPLIED ===\nThis image was intentionally edited with the instruction: "${jobData.imageEditInstruction}"\nThe edit result should be evaluated FOR the edit — verify the edit was applied correctly. Do NOT penalize edit artifacts as "AI artifacts" if they are clearly part of the intended edit (e.g., an added mask, modified background, highlighted elements).`);
+  }
+
+  parts.push(`
 You must evaluate 6 dimensions and return a THREE-TIER verdict:
   PASS      — the output is acceptable as-is for the final video.
   SOFT_FAIL — the output is USABLE but has a clearly noticeable issue.
               The media will be included in the timeline with a warning in the editor.
-  FAIL      — the output is catastrophically broken and must be regenerated.
+  FAIL      — the output is catastrophically broken and must be regenerated.`);
 
-CRITICAL — STYLE MODEL (LoRA) RULE:
-If the style guide mentions a "STYLE MODEL (LoRA)", this model defines the INTENDED visual aesthetic.
-The AI model's trained style IS the correct style — do NOT penalize shots for looking like the LoRA's output.
+  // LoRA context — either from jobData or styleGuide
+  if (jobData.loraInfo) {
+    parts.push(`\nCRITICAL — STYLE MODEL (LoRA): "${jobData.loraInfo.name}"\nThis model defines the INTENDED visual aesthetic. The AI model's trained style IS the correct style — do NOT penalize shots for looking like the LoRA's output.${jobData.loraInfo.triggerWords ? ` Trigger words: "${jobData.loraInfo.triggerWords}"` : ''}`);
+  } else {
+    parts.push(`\nCRITICAL — STYLE MODEL (LoRA) RULE:\nIf the style guide mentions a "STYLE MODEL (LoRA)", this model defines the INTENDED visual aesthetic.\nThe AI model's trained style IS the correct style — do NOT penalize shots for looking like the LoRA's output.`);
+  }
 
+  parts.push(`
 === IMAGE-SPECIFIC RULES ===
 For IMAGES, be moderately strict:
 1. AI artifacts (extra fingers, melted faces, garbled text, floating objects) are FAIL.
@@ -187,36 +239,16 @@ FAIL — ONLY for catastrophically broken video. ALL of these must be true:
   - OR completely static with absolutely zero motion of any kind
   NOTHING ELSE IS A FAIL FOR VIDEOS. Not wrong subject, not wrong lighting, not wrong style.
   For frozen/corrupted/static failures, include "SIMPLIFY_PROMPT" as the FIRST item in
-  suggested_corrections — complex prompts can cause these artifacts in video models.
+  suggested_corrections.
 
 SOFT_FAIL — ONLY when something is DRAMATICALLY wrong (not subtly wrong):
   - The subject is completely wrong: description says "a cat" but video clearly shows a dog
-  - The background/setting is DRAMATICALLY different: description says "a battlefield" but video shows "a beach"
-  - The style is DRASTICALLY off: the video looks like a completely different production or art style
-    (e.g., description expects realistic but video is cartoon, or vice versa)
-  - A completely different character appears than what was described
-  IMPORTANT: "subtly wrong" is NOT SOFT_FAIL. If the subject is roughly correct but the lighting,
-  composition, colors, or minor details differ — that is PASS. SOFT_FAIL is ONLY for things that
-  are so obviously wrong that any viewer would immediately notice without reading the description.
+  - The background/setting is DRAMATICALLY different
+  - The style is DRASTICALLY off (realistic vs cartoon)
+  - A completely different character appears than described
+  IMPORTANT: "subtly wrong" is NOT SOFT_FAIL. If the subject is roughly correct but minor details differ — that is PASS.
 
-PASS — Everything else, which should be almost all videos:
-  - Scene is recognizable and broadly related to the description
-  - Video has some motion and isn't corrupted
-  - Style/lighting/composition differs from description — PASS (AI video can't control these)
-  - Missing camera movement — PASS
-  - Wrong lighting mood — PASS
-  - Missing volumetric lighting, film grain, depth of field — PASS
-  - Minor entity inconsistencies (slightly wrong clothing, minor style drift) — PASS
-  - The LoRA/model aesthetic is present — PASS
-  - Minor morphing, flickering, shimmer — PASS
-  - Text warping or illegible text — PASS
-  - Subtle face/hand distortions — PASS
-
-EXAMPLES:
-  - Video of a Roman bust with different lighting than described → PASS
-  - Video of a Roman bust that looks slightly different than previous shot → PASS
-  - Video of a Roman bust but it's a car instead → SOFT_FAIL
-  - Black screen / frozen frame → FAIL
+PASS — Everything else, which should be almost all videos.
 
 === GENERAL RULES ===
 - Minor temporal discontinuities between shots are acceptable — PASS.
@@ -230,9 +262,7 @@ For PASS verdicts, set failure_type to null.
 
 PROMPT SIMPLIFICATION:
 When a video FAIL is caused by visual artifacts (frozen, static, corrupted frames),
-include "SIMPLIFY_PROMPT" as the first suggested_correction. This signals to the
-video generation system that the prompt may be too complex and should be simplified
-on retry. Do NOT suggest SIMPLIFY_PROMPT for OOM errors or API failures.
+include "SIMPLIFY_PROMPT" as the first suggested_correction.
 
 Respond ONLY with valid JSON matching this schema:
 {
@@ -249,7 +279,10 @@ Respond ONLY with valid JSON matching this schema:
   "suggested_corrections": ["correction 1", "correction 2"],
   "recommended_action": "re-edit" | "regenerate" | "accept",
   "confidence": 0.0-1.0
-}`;
+}`);
+
+  return parts.join('\n');
+}
 
 // ============================================================================
 // MULTIMODAL API CALL (via central module)
@@ -527,7 +560,7 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
     for (let attempt = 1; attempt <= MAX_VERIFIER_RETRIES; attempt++) {
       try {
         console.log(`${LOG_PREFIX} Calling Gemini 3 Flash for shot ${shotIndex} (attempt ${attempt}/${MAX_VERIFIER_RETRIES})...`);
-        const rawResponse = await callVisionModel(apiKey, VERIFIER_SYSTEM_PROMPT, userContent);
+        const rawResponse = await callVisionModel(apiKey, buildVerifierSystemPrompt(job.data), userContent);
         const result = parseVerifierResponse(rawResponse);
 
         // If parse succeeded with real confidence, use it

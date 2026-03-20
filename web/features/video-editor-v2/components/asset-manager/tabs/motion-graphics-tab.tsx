@@ -1028,7 +1028,14 @@ export const MotionGraphicsTab: React.FC = () => {
     const editInstruction = forceFullRegeneration 
       ? '' 
       : ' Use targeted edits (type: "edit") — do NOT rewrite the entire component.';
-    const autoPrompt = `${modeLabel}: ${feedbackPrompt}${editInstruction}`;
+    
+    // CRITICAL: Always include the original user prompt so the AI knows what to create.
+    // Without this, full regenerations produce random/unrelated content because the AI
+    // only sees the error feedback and has no idea what the animation was supposed to be.
+    const originalPromptContext = qcPrompt 
+      ? `\n\nOriginal request: "${qcPrompt}"\nMake sure the regenerated animation fulfills this original request.` 
+      : '';
+    const autoPrompt = `${modeLabel}: ${feedbackPrompt}${editInstruction}${originalPromptContext}`;
 
     // Add auto-correction message to chat (system-generated, not user input)
     const autoCorrectionMsgId = `auto-correct-${Date.now()}`;

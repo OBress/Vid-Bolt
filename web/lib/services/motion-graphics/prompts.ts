@@ -17,6 +17,8 @@ These rules come from Remotion's official documentation and MUST be followed:
 
 - All animations MUST be driven by useCurrentFrame(). CSS animations/transitions are FORBIDDEN.
 - Import Video and Audio from "@remotion/media", NOT from "remotion"
+- Video accepts trimBefore (trims start by N frames), trimAfter (limits duration), and volume (0-1) props
+- Audio accepts trimBefore (trims start by N frames), trimAfter (limits duration), and volume (0-1) props
 - Use random() from "remotion" instead of Math.random() for deterministic rendering
 - random() requires a static string seed: random("my-seed") — same seed = same value every render
 - spring() returns 0→1 and is used for natural motion. Combine with interpolate() for custom ranges.
@@ -104,9 +106,14 @@ return (
 
 Recommended constant groups:
 - Colors: const COLORS = { bg: "#0A0A0A", primary: "#3B82F6", text: "#FFFFFF" };
-- Timing: const TIMING = { entrance: 20, staggerDelay: 5, hold: 15 };
+- Timing: const TIMING = { entrance: 20, staggerDelay: 5, hold: 15 };  ← values in FRAMES (Remotion's primary unit)
 - Sizes: const SIZES = { title: 48, icon: 64, padding: 40 };
 - Text: const TEXT = { title: "Hello World", subtitle: "Welcome" };
+
+⚠️ NEVER name a constant "frame" — this variable is RESERVED for useCurrentFrame().
+- ❌ BAD: const frame = { intro: 30, hold: 15 };  ← SHADOWS useCurrentFrame()! WILL CRASH!
+- ✅ GOOD: const TIMING = { intro: 30, hold: 15 };
+- All timing values should be in FRAMES (e.g., 24 = 1 second at 24fps). Use fps from useVideoConfig() for dynamic calculations.
 
 This allows users to easily customize the animation by editing constants at the top.
 
@@ -116,6 +123,15 @@ This allows users to easily customize the animation by editing constants at the 
 - Never constrain content to a small centered box unless specifically requested
 - Use Math.max(minValue, Math.round(width * percentage)) for responsive sizing
 - AbsoluteFill is your primary container - always use it as root
+
+### VIEWPORT BOUNDS (CRITICAL — NO CLIPPING)
+
+ALL content elements MUST fit within the visible frame. Nothing should be cut off:
+- Use width and height from useVideoConfig() to calculate positions
+- Keep a safe zone: at least 40px padding from all edges for any content element
+- When arranging elements in a circle/grid, calculate positions relative to center and ensure the outermost elements (including their full size) stay within bounds
+- For absolute positioning: ensure left + elementWidth < width - padding AND top + elementHeight < height - padding
+- If you have N elements to arrange around a center, reduce the radius or element size so ALL fit on screen
 
 ## ANIMATION RULES (CRITICAL FOR SMOOTH MOTION)
 
@@ -210,7 +226,7 @@ const STAGGER_DELAY = 5; // frames between items
 ### End-Hold Padding (IMPORTANT)
 
 Animations must NOT end abruptly the instant the last element finishes animating in.
-Reserve the last ~15 frames (0.5s at 30fps) as a static hold where all elements are fully visible
+Reserve the last ~12 frames (0.5s at 24fps) as a static hold where all elements are fully visible
 and nothing is still animating. This gives viewers time to see the final composed state.
 
 \`\`\`tsx
@@ -240,7 +256,7 @@ import { flip } from "@remotion/transitions/flip";
 import { clockWipe } from "@remotion/transitions/clock-wipe";
 
 // Shapes
-import { Circle, Rect, Triangle, Star, Ellipse, Pie, Polygon } from "@remotion/shapes";
+import { Circle, Rect, Triangle, Star, Ellipse, Pie, Polygon, Arrow } from "@remotion/shapes";
 
 // 3D (optional)
 import { ThreeCanvas } from "@remotion/three";
@@ -735,7 +751,7 @@ Break down the animation into:
 
 If the user specifies a total duration (e.g. "6 second animation") or specific time markers
 (e.g. "at 0.5s show title, at 1.5s show subtitle"), use those EXACTLY.
-- Convert every time marker to frames: seconds × 30 = frames
+- Convert every time marker to frames: seconds × 24 = frames
 - Set totalDurationFrames to match the user's requested total length
 - If time markers are given but no total, set total = last time marker + adequate exit time
 - NEVER shorten, compress, or override user-specified timing
@@ -782,7 +798,7 @@ Return ONLY a valid JSON object with NO comments, NO trailing commas, NO extra t
   ],
   "timing": {
     "totalDurationFrames": 150,
-    "fps": 30
+    "fps": 24
   },
   "style": {
     "backgroundColor": "#HEX",
@@ -847,7 +863,7 @@ Structure your response exactly like this:
   ],
   "timing": {
     "totalDurationFrames": 90,
-    "fps": 30
+    "fps": 24
   },
   "style": {
     "backgroundColor": "#HEX",
@@ -915,7 +931,21 @@ export function buildErrorCorrectionContext(errorCorrection: {
   // Analyze error type to give specific guidance
   let specificGuidance = '';
   
-  if (error.includes('Unexpected token')) {
+  if (error.includes('has already been declared')) {
+    const lineMatch = error.match(/\((\d+):(\d+)\)/);
+    const lineInfo = lineMatch ? ` at line ${lineMatch[1]}` : '';
+    const varMatch = error.match(/Identifier '(\w+)'/);
+    const varName = varMatch ? varMatch[1] : 'unknown';
+    
+    specificGuidance = `
+DIAGNOSIS: Duplicate variable declaration${lineInfo} — '${varName}' is declared more than once in the same scope.
+FIX:
+1. Search the code for ALL lines containing "const ${varName}" — there are at least two
+2. KEEP the FIRST declaration and DELETE all subsequent duplicates
+3. Do NOT add a new "const ${varName} = ..." line — it already exists at the top
+4. Common cause: "const frame = useCurrentFrame()" or "const { fps } = useVideoConfig()" appears twice
+5. Just REMOVE the duplicate line entirely — do not rename it, do not wrap it`;
+  } else if (error.includes('Unexpected token')) {
     const lineMatch = error.match(/\((\d+):(\d+)\)/);
     const lineInfo = lineMatch ? ` around line ${lineMatch[1]}` : '';
     
@@ -967,6 +997,7 @@ CRITICAL RULES:
 - Start with imports, end with };
 - Do NOT include line numbers in your output code
 - Do NOT truncate or cut off the code
+- Do NOT re-declare variables that already exist (e.g., if "const frame = useCurrentFrame()" already appears in the code, do NOT add another one)
 - Test mentally that all brackets balance before outputting
 `;
 }

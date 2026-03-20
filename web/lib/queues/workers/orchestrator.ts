@@ -42,6 +42,7 @@ import type {
   WorkerPrompts,
   GCMEntity,
 } from '@/lib/types/closed-loop';
+import { getShotNeighborContextForMG } from '@/lib/services/shot-context';
 
 // Entity reference shape used by the verifier and image-edit workers
 interface EntityReference {
@@ -68,35 +69,9 @@ function toEntityReferences(entities: GCMEntity[]): EntityReference[] {
 const LOG_PREFIX = '[Orchestrator]';
 const MAX_VERIFY_ATTEMPTS = 3;
 
-/**
- * Custom error for task cancellation — allows clean exit without error logging.
- */
-class CancellationError extends Error {
-  constructor(taskId: string) {
-    super(`Task ${taskId} was cancelled`);
-    this.name = 'CancellationError';
-  }
-}
-
-/**
- * Check if the task has been cancelled or failed in Supabase.
- * Called between orchestrator phases as a defensive layer —
- * even if the Redis job wasn't fully cleaned, the orchestrator
- * will self-terminate at the next phase boundary.
- */
-async function checkCancelled(taskId: string): Promise<void> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
-    .from('tasks')
-    .select('status')
-    .eq('id', taskId)
-    .single();
-
-  if (data?.status === 'cancelled' || data?.status === 'failed') {
-    console.log(`${LOG_PREFIX} Task ${taskId} is ${data.status} — aborting pipeline`);
-    throw new CancellationError(taskId);
-  }
-}
+// CancellationError and checkCancelled are shared across the pipeline
+// (orchestrator, gpu-batch-generation, etc.) to avoid circular imports.
+import { CancellationError, checkCancelled } from '@/lib/queues/cancellation';
 
 // ============================================================================
 // QUEUE EVENTS CACHE
@@ -372,11 +347,16 @@ async function performShotPlanReflection(
   const shots = shotPlan.shots as Array<Record<string, unknown>>;
   const totalDuration = (shotPlan.metadata as Record<string, unknown>)?.total_duration_seconds || 0;
 
-  // Serialize the shot plan for LLM review
+  // Serialize the shot plan for LLM review (include new fields)
   const serializedPlan = shots.map((shot, i) => ({
     index: i,
     media_type: shot.media_type,
     content_type: shot.content_type,
+    narrative_beat: shot.narrative_beat || 'unknown',
+    scene_id: shot.scene_id || 'unassigned',
+    continuity: shot.continuity_from_previous || false,
+    angle_change: shot.angle_change || null,
+    synthesis_mode: shot.synthesis_mode || 'T2V',
     duration: shot.duration_seconds,
     entity_refs: (shot.entity_refs as string[])?.length || 0,
     description: (shot.description || shot.summary || '').toString().substring(0, 100),
@@ -387,7 +367,7 @@ async function performShotPlanReflection(
   const result = await callOpenRouter(userId, [
     {
       role: 'system',
-      content: 'You review shot plans for AI video production.',
+      content: 'You review shot plans for AI video production. You understand narrative structure, scene composition, and visual storytelling.',
     },
     {
       role: 'user',
@@ -401,6 +381,10 @@ Check for:
 3. Media type imbalance: are all shots the same type?
 4. Entity consistency: shots referencing characters but no entity_refs?
 5. Total coverage: do durations roughly sum to ${totalDuration}s?
+6. Scene structure: do shots with the same scene_id form coherent visual groups?
+7. Narrative beat variety: is there a pacing rollercoaster (varying energy), or are all beats the same?
+8. Continuity consistency: is angle_change only present when continuity=true? Is the first shot in each scene always continuity=false?
+9. Synthesis mode: are continuity shots using I2V and first-in-scene shots using T2V?
 
 Severity guidelines: "major" = fundamental plan errors that would produce unwatchable video. "minor" = imperfections that are acceptable. "none" = plan looks good.`,
     },
@@ -517,6 +501,12 @@ async function executeWithVerification(
     styleGuide?: string;
     /** GCM entity IDs referenced by this shot (for appearance tracking) */
     entityIds?: string[];
+    // Creative context for dynamic verifier prompt
+    creativeDirection?: string;
+    loraInfo?: { name: string; triggerWords?: string };
+    genre?: string;
+    narrativeBeat?: string;
+    imageEditInstruction?: string;
   },
   state: ClosedLoopState
 ): Promise<{ mediaUrl: string; verified: boolean; flag?: ReturnType<typeof selectBestFitSalvage>['flag']; softFailed?: boolean }> {
@@ -606,6 +596,12 @@ async function executeWithVerification(
       previousShotUrl: verificationContext.previousShotUrl,
       styleGuide: verificationContext.styleGuide,
       previousFeedback,
+      // Creative context for dynamic verifier prompt
+      creativeDirection: verificationContext.creativeDirection,
+      loraInfo: verificationContext.loraInfo,
+      genre: verificationContext.genre,
+      narrativeBeat: verificationContext.narrativeBeat,
+      imageEditInstruction: verificationContext.imageEditInstruction,
     });
 
     const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, calculateVerifierTimeout(generationConfig.mediaType));
@@ -760,6 +756,12 @@ async function executeProductionPhase(
     end_seconds: number;
     duration_seconds: number;
     entity_refs?: string[];
+    synthesis_mode?: string;
+    angle_change?: string;
+    continuity_from_previous?: boolean;
+    narrative_beat?: string;
+    scene_id?: string;
+    image_edit_instruction?: string;
   }>;
 
   // Global word timestamps for millisecond-precision MG animation timing
@@ -809,11 +811,19 @@ async function executeProductionPhase(
   const imageShots = shots.filter(s =>
     s.media_type === 'stock' && scrapedStock[`shot-${s.segment_index}`]
   );
-  const videoShots = shots.filter(s =>
+  const allVideoShots = shots.filter(s =>
     s.media_type === 'video' ||
     (s.media_type === 'image') ||
     (s.media_type === 'stock' && !scrapedStock[`shot-${s.segment_index}`])
   );
+
+  // Separate I2V shots from the batch — they depend on the previous shot's output
+  // and must be processed sequentially after the batch completes
+  const i2vShots = allVideoShots.filter(s => s.synthesis_mode === 'I2V' && s.angle_change);
+  const videoShots = allVideoShots.filter(s => !(s.synthesis_mode === 'I2V' && s.angle_change));
+  if (i2vShots.length > 0) {
+    console.log(`${LOG_PREFIX} Separated ${i2vShots.length} I2V shots for sequential processing after batch`);
+  }
   const mgShots = shots.filter(s => s.media_type === 'motiongraphic');
 
   // -----------------------------------------------------------------------
@@ -862,10 +872,15 @@ async function executeProductionPhase(
         : '';
 
       // Build a rich prompt from actual shot data (summary, narration, visual description)
+      // Include neighbor context so MG animations complement surrounding shots
+      const mgShotIndex = mgShots.indexOf(shot);
+      const neighborCtxForMG = getShotNeighborContextForMG(shots as any[], shots.indexOf(shot));
+
       const mgPrompt = [
         shot.visual_description || shot.summary || '',
         shot.text ? `\nNarration during this shot: "${shot.text}"` : '',
         timingContext,
+        neighborCtxForMG,
         styleContext ? `\n\nSTYLE REQUIREMENTS:\n${styleContext}` : '',
       ].filter(Boolean).join('');
 
@@ -1028,12 +1043,136 @@ async function executeProductionPhase(
     }
 
     const imageStatusText = imageShots.length > 0
-      ? `Images done (${imagesCompleted}/${imageShots.length}). Generating videos...`
+      ? `Images done (${imagesCompleted}/${imageShots.length}). Harmonizing scenes...`
       : 'Generating videos...';
     await updateTaskStatus(taskId, {
       current_step: `Phase IV: ${imageStatusText}`,
-      progress_percent: 50, // Entering video band: 50–70
+      progress_percent: 50, // Entering harmonization sub-band: 50–52
     });
+
+    // --- SCENE HARMONIZATION (proactive image editing) ---
+    // After all keyframe images are generated, harmonize visual consistency
+    // across thematically related shots before they're used as video keyframes.
+    if (imagesCompleted >= 2) {
+      try {
+        const { harmonizeSceneImages } = await import('@/lib/services/scene-harmonizer');
+        // Fetch current generated_images from metadata
+        const { data: freshProject } = await supabase
+          .from('video_projects')
+          .select('metadata')
+          .eq('id', videoId)
+          .single();
+        const freshMeta = (freshProject?.metadata || {}) as Record<string, unknown>;
+        const currentGenImages = (freshMeta.generated_images || {}) as Record<string, string>;
+
+        if (Object.keys(currentGenImages).length >= 2) {
+          console.log(`${LOG_PREFIX} Running scene harmonization on ${Object.keys(currentGenImages).length} images...`);
+          await updateTaskStatus(taskId, {
+            current_step: 'Phase IV: Harmonizing visual consistency across scenes...',
+            progress_percent: 50,
+          });
+
+          const harmResult = await harmonizeSceneImages(
+            jobData.userId,
+            videoId,
+            shots as any,
+            currentGenImages,
+            (msg) => console.log(`${LOG_PREFIX} ${msg}`),
+          );
+
+          // Merge harmonized image URLs back into metadata
+          if (harmResult.harmonized > 0) {
+            const mergedImages = { ...currentGenImages, ...harmResult.updatedImages };
+            await supabase
+              .from('video_projects')
+              .update({
+                metadata: { ...freshMeta, generated_images: mergedImages },
+              })
+              .eq('id', videoId);
+
+            console.log(`${LOG_PREFIX} Scene harmonization: ${harmResult.harmonized} images updated, ` +
+              `${harmResult.skipped} skipped, ${harmResult.sequences} sequences`);
+          } else {
+            console.log(`${LOG_PREFIX} Scene harmonization: no shots needed harmonizing`);
+          }
+        }
+      } catch (harmErr) {
+        // Non-fatal: harmonization is a best-effort enhancement
+        console.warn(`${LOG_PREFIX} Scene harmonization error (non-fatal):`, harmErr);
+      }
+    }
+
+    // --- CREATIVE IMAGE EDITING ---
+    // After harmonization, apply any image_edit_instruction directives from the
+    // shot planner. These are creative edits on keyframe/stock images used in
+    // ANY shot type (video, MG, stock overlay, etc.) — e.g., "add clown mask",
+    // "make background apocalyptic", "highlight data in red".
+    const shotsWithEdits = shots.filter(s => s.image_edit_instruction && s.image_edit_instruction.trim());
+    if (shotsWithEdits.length > 0) {
+      console.log(`${LOG_PREFIX} Applying ${shotsWithEdits.length} creative image edits...`);
+      await updateTaskStatus(taskId, {
+        current_step: `Phase IV: Applying ${shotsWithEdits.length} creative image edits...`,
+        progress_percent: 51,
+      });
+
+      const { applyCreativeEdit } = await import('@/lib/av-script/i2v-processor');
+
+      // Fetch current images (post-harmonization)
+      const { data: editMeta } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+      const editMetaObj = (editMeta?.metadata || {}) as Record<string, unknown>;
+      const currentImages = (editMetaObj.generated_images || {}) as Record<string, string>;
+      const currentStock = (editMetaObj.scraped_stock_images || {}) as Record<string, string>;
+      const editedImages: Record<string, string> = {};
+
+      // Process edits in parallel (they're independent of each other)
+      await Promise.all(shotsWithEdits.map(async (shot) => {
+        const shotKey = `shot-${shot.segment_index}`;
+        const sourceUrl = currentImages[shotKey] || currentStock[shotKey];
+
+        if (!sourceUrl) {
+          console.warn(`${LOG_PREFIX} Shot ${shot.segment_index}: No source image for creative edit, skipping`);
+          return;
+        }
+
+        try {
+          const editedUrl = await applyCreativeEdit(
+            sourceUrl,
+            shot.image_edit_instruction!,
+            videoId,
+            shot.segment_index,
+            jobData.creativeManifest.style.aspect_ratio
+          );
+
+          if (editedUrl !== sourceUrl) {
+            editedImages[shotKey] = editedUrl;
+            console.log(`${LOG_PREFIX} Shot ${shot.segment_index}: Creative edit applied → ${editedUrl}`);
+          }
+        } catch (err) {
+          console.warn(`${LOG_PREFIX} Shot ${shot.segment_index}: Creative edit failed (non-blocking):`, err);
+        }
+      }));
+
+      // Persist edited images (overwrite keyframes with edited versions)
+      if (Object.keys(editedImages).length > 0) {
+        await supabase.rpc('merge_video_metadata', {
+          p_video_id: videoId,
+          p_updates: { generated_images: editedImages },
+        });
+        console.log(`${LOG_PREFIX} Persisted ${Object.keys(editedImages).length} creatively edited images`);
+      }
+    }
+
+    await updateTaskStatus(taskId, {
+      current_step: 'Phase IV: Generating videos...',
+      progress_percent: 52, // Entering video band: 52–70
+    });
+
+    // Cancellation checkpoint: after image shots, before video batch dispatch
+    await checkCancelled(taskId);
 
 
     // --- VIDEOS (PARALLEL STREAMING VERIFICATION) ---
@@ -1120,6 +1259,12 @@ async function executeProductionPhase(
               shotIndex: shot.segment_index,
               entityReferences: entityRefs,
               styleGuide: aiStyleGuide,
+              // Creative context for dynamic verifier prompt
+              creativeDirection: [jobData.creativeManifest?.master_creative_prompt, jobData.creativeManifest?.video_creative_prompt].filter(Boolean).join('\n') || undefined,
+              loraInfo: jobData.creativeManifest?.lora ? { name: jobData.creativeManifest.lora.name, triggerWords: jobData.creativeManifest.lora.trigger_words } : undefined,
+              genre: (jobData.creativeManifest?.script_context as any)?.genre || undefined,
+              narrativeBeat: shot.narrative_beat || undefined,
+              imageEditInstruction: shot.image_edit_instruction || undefined,
               // Temporal continuity skipped for parallel path — shots verify out-of-order
             });
 
@@ -1295,6 +1440,129 @@ async function executeProductionPhase(
       console.warn(`${LOG_PREFIX} ${videosFailed}/${videoShots.length} video shots had no URL in batch results`);
     }
 
+    // -----------------------------------------------------------------
+    // I2V CONTINUITY: Process I2V shots AFTER batch completes
+    // -----------------------------------------------------------------
+    // I2V shots extract the last frame from the previous shot's video,
+    // run it through Qwen-Edit with the angle_change directive, then
+    // dispatch a single-shot video-gen job using the edited frame.
+    if (i2vShots.length > 0) {
+      console.log(`${LOG_PREFIX} Processing ${i2vShots.length} I2V continuity shots...`);
+      await updateTaskStatus(taskId, {
+        current_step: `Phase IV: Processing ${i2vShots.length} scene-continuity shots...`,
+        progress_percent: 67,
+      });
+
+      const { processI2VShot } = await import('@/lib/av-script/i2v-processor');
+      const i2vVideoGenQueue = new Queue('video-gen', { connection: getRedisConnection() });
+      const i2vQueueEvents = await getQueueEvents('video-gen');
+
+      // Fetch current generated videos to find previous shot URLs
+      const { data: freshMeta } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+      const currentGenVideos = ((freshMeta?.metadata as Record<string, unknown>)?.generated_videos || {}) as Record<string, string>;
+
+      for (const i2vShot of i2vShots) {
+        const shotIdx = i2vShot.segment_index;
+
+        // Find the previous shot's video URL
+        const prevShotIdx = shotIdx - 1;
+        const prevVideoUrl = currentGenVideos[`shot-${prevShotIdx}`]
+          || generatedAssets.get(`placeholder://shot-${prevShotIdx}/asset-0`) as string;
+
+        if (!prevVideoUrl) {
+          console.warn(`${LOG_PREFIX} I2V shot ${shotIdx}: No previous video found (shot ${prevShotIdx}), falling back to T2V`);
+          // Fall through to T2V — use existing keyframe
+        } else {
+          // Run the I2V pipeline: extract frame → quality check → Qwen-Edit
+          const i2vResult = await processI2VShot(
+            prevVideoUrl,
+            i2vShot.angle_change || '',
+            videoId,
+            shotIdx,
+            jobData.userId,
+            jobData.creativeManifest.style.aspect_ratio
+          );
+
+          if (i2vResult) {
+            // Success: store edited frame as keyframe, dispatch video-gen
+            try {
+              console.log(`${LOG_PREFIX} I2V shot ${shotIdx}: Dispatching video gen with edited start frame`);
+
+              await supabase.rpc('merge_video_metadata', {
+                p_video_id: videoId,
+                p_updates: {
+                  generated_images: { [`shot-${shotIdx}`]: i2vResult.startFrameUrl },
+                },
+              });
+
+              const i2vGenJob = await i2vVideoGenQueue.add(`i2v-shot-${shotIdx}`, {
+                taskId,
+                userId: jobData.userId,
+                videoId,
+                aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+                singleShotIndex: shotIdx,
+                loraName: jobData.creativeManifest.lora?.name,
+                loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
+              }, { attempts: 1 });
+
+              const i2vTimeout = Math.max(120_000, (i2vShot.duration_seconds || 5) * 12 * 1_000 * 2);
+              const i2vGenResult = await i2vGenJob.waitUntilFinished(
+                i2vQueueEvents,
+                i2vTimeout
+              ) as Record<string, unknown>;
+
+              const mediaUrl = i2vGenResult?.mediaUrl as string;
+              if (mediaUrl) {
+                generatedAssets.set(`placeholder://shot-${shotIdx}/asset-0`, mediaUrl);
+                videosCompleted++;
+                console.log(`${LOG_PREFIX} I2V shot ${shotIdx}: ✅ Generated with continuity frame`);
+                continue; // Next I2V shot
+              }
+            } catch (err) {
+              console.error(`${LOG_PREFIX} I2V shot ${shotIdx}: Video gen failed, falling back to T2V:`, err);
+            }
+          }
+        }
+
+        // Fallback: treat as regular T2V shot (dispatch with existing keyframe)
+        console.log(`${LOG_PREFIX} I2V shot ${shotIdx}: Falling back to T2V`);
+        try {
+          const fallbackJob = await i2vVideoGenQueue.add(`i2v-fallback-${shotIdx}`, {
+            taskId,
+            userId: jobData.userId,
+            videoId,
+            aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+            singleShotIndex: shotIdx,
+            loraName: jobData.creativeManifest.lora?.name,
+            loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
+          }, { attempts: 1 });
+
+          const fallbackTimeout = Math.max(120_000, (i2vShot.duration_seconds || 5) * 12 * 1_000 * 2);
+          const fallbackResult = await fallbackJob.waitUntilFinished(
+            i2vQueueEvents,
+            fallbackTimeout
+          ) as Record<string, unknown>;
+
+          const fallbackUrl = fallbackResult?.mediaUrl as string;
+          if (fallbackUrl) {
+            generatedAssets.set(`placeholder://shot-${shotIdx}/asset-0`, fallbackUrl);
+            videosCompleted++;
+          } else {
+            videosFailed++;
+          }
+        } catch (err) {
+          console.error(`${LOG_PREFIX} I2V fallback for shot ${shotIdx} failed:`, err);
+          videosFailed++;
+        }
+      }
+
+      console.log(`${LOG_PREFIX} I2V processing complete: ${i2vShots.length} shots handled`);
+    }
+
     return generatedAssets;
   })();
 
@@ -1303,6 +1571,9 @@ async function executeProductionPhase(
     mgPass1Promise,
     gpuPipelinePromise,
   ]);
+
+  // Cancellation checkpoint: after GPU + MG pipelines complete, before persistence
+  await checkCancelled(taskId);
 
   // -----------------------------------------------------------------------
   // MG PASS 1 PERSISTENCE: Save generated Remotion code to metadata
@@ -1845,15 +2116,22 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
           end_seconds: number;
           summary?: string;
           text?: string;
+          narrative_beat?: string;
+          scene_id?: string;
         }>;
         return {
           userId: job.data.userId,
           videoId,
           totalDurationSeconds: musicTotalDuration,
           scriptContent: job.data.scriptContent,
-          mood: job.data.creativeManifest.style.lighting_mood,
-          genre: job.data.creativeManifest.style.visual_style,
-          visualStyle: job.data.creativeManifest.style.visual_style,
+          // Creative context — pass actual creative direction, not visual style
+          creativeDirection: [
+            job.data.creativeManifest?.master_creative_prompt,
+            job.data.creativeManifest?.video_creative_prompt,
+          ].filter(Boolean).join('\n') || undefined,
+          genre: (job.data.creativeManifest?.script_context as any)?.genre || undefined,
+          mood: job.data.creativeManifest?.style?.lighting_mood,
+          visualStyle: job.data.creativeManifest?.style?.visual_style,
           shots: musicShots,
         };
       } catch (err) {

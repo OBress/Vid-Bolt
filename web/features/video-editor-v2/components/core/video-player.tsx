@@ -220,10 +220,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const { width: compositionWidth, height: compositionHeight } = getAspectRatioDimensions();
 
   // Player configuration - memoized to prevent unnecessary re-renders
-  const PLAYER_CONFIG = useMemo(() => ({
-    durationInFrames: Math.round(durationInFrames),
-    fps: fps,
-  }), [durationInFrames, fps]);
+  // Defense: explicit NaN guards — Remotion throws "Frame NaN is not finite" if either is NaN/0
+  const PLAYER_CONFIG = useMemo(() => {
+    const rawFrames = Math.round(durationInFrames);
+    return {
+      durationInFrames: Number.isFinite(rawFrames) && rawFrames > 0 ? rawFrames : 900,
+      fps: Number.isFinite(fps) && fps > 0 ? fps : 30,
+    };
+  }, [durationInFrames, fps]);
 
   // Calculate optimal player size
   const playerSize = useMemo(() => {

@@ -82,15 +82,22 @@ function countBalanceIgnoringStrings(code: string, open: string, close: string):
  * The system prompt contains 25-35 examples of `const frame = useCurrentFrame()`
  * across skill docs, causing the AI to redeclare these in the same scope.
  * This auto-fix keeps the FIRST occurrence and removes all subsequent duplicates.
+ *
+ * IMPORTANT: The regexes intentionally do NOT anchor to end-of-line ($) because
+ * AI models frequently produce variants like:
+ *   - `const frame = useCurrentFrame(); // get current frame`
+ *   - `const frame = useCurrentFrame(), ...`
+ * The old $ anchor caused these to slip through, triggering Babel errors.
  */
 function deduplicateHookDeclarations(code: string): { code: string; fixes: string[] } {
   const fixes: string[] = [];
   const lines = code.split('\n');
 
-  // Patterns for hook declarations — matches any destructuring variant
+  // Patterns for hook declarations — no end-of-line anchor so we catch variants
+  // with trailing comments, semicolons, or extra content
   const hookPatterns: Array<{ regex: RegExp; label: string }> = [
-    { regex: /^\s*const\s+frame\s*=\s*useCurrentFrame\(\)\s*;?\s*$/, label: 'const frame = useCurrentFrame()' },
-    { regex: /^\s*const\s+\{[^}]*fps[^}]*\}\s*=\s*useVideoConfig\(\)\s*;?\s*$/, label: 'const { ... } = useVideoConfig()' },
+    { regex: /^\s*const\s+frame\s*=\s*useCurrentFrame\(\)/, label: 'const frame = useCurrentFrame()' },
+    { regex: /^\s*const\s+\{[^}]*fps[^}]*\}\s*=\s*useVideoConfig\(\)/, label: 'const { ... } = useVideoConfig()' },
   ];
 
   for (const { regex, label } of hookPatterns) {
@@ -121,6 +128,73 @@ function deduplicateHookDeclarations(code: string): { code: string; fixes: strin
 }
 
 /**
+ * Rename `const frame = { ... }` to `const TIMING = { ... }` when it collides
+ * with `const frame = useCurrentFrame()`. The AI frequently names its timing
+ * constants object "frame" (e.g., `const frame = { intro: 30, flightStart: 45 }`)
+ * which shadows the hook and causes Babel to reject the code.
+ *
+ * We rename to TIMING (not FRAMES) because the system prompt examples use TIMING
+ * and the AI often references TIMING.prop in the code body already.
+ *
+ * Also renames all `frame.propertyName` references to `TIMING.propertyName`,
+ * but only for property accesses that match the known keys of the object.
+ */
+function renameFrameConstantCollision(code: string): { code: string; fixes: string[] } {
+  const fixes: string[] = [];
+
+  // Check if both patterns exist: const frame = useCurrentFrame() AND const frame = {
+  const hasHook = /const\s+frame\s*=\s*useCurrentFrame\(\)/.test(code);
+  const objectMatch = code.match(/const\s+frame\s*=\s*\{/);
+
+  if (!hasHook || !objectMatch) return { code, fixes };
+
+  // Find the object declaration and extract its property names so we can
+  // selectively rename `frame.prop` → `TIMING.prop` without breaking
+  // other legitimate uses of `frame` (e.g., `spring({ frame, fps })`)
+  const objectStartIdx = objectMatch.index!;
+
+  // Extract the object's keys by finding the matching closing brace
+  let braceDepth = 0;
+  let objectEndIdx = objectStartIdx;
+  for (let i = objectStartIdx; i < code.length; i++) {
+    if (code[i] === '{') braceDepth++;
+    if (code[i] === '}') {
+      braceDepth--;
+      if (braceDepth === 0) {
+        objectEndIdx = i;
+        break;
+      }
+    }
+  }
+
+  const objectBody = code.substring(objectStartIdx, objectEndIdx + 1);
+  const keyPattern = /(\w+)\s*:/g;
+  const keys: string[] = [];
+  let keyMatch;
+  while ((keyMatch = keyPattern.exec(objectBody)) !== null) {
+    keys.push(keyMatch[1]);
+  }
+
+  // Rename the declaration: const frame = { → const TIMING = {
+  let fixed = code.replace(/const\s+frame\s*=\s*\{/, (match) => {
+    return match.replace('frame', 'TIMING');
+  });
+
+  // Rename property accesses for the known keys: frame.intro → TIMING.intro
+  for (const key of keys) {
+    const propRegex = new RegExp(`\\bframe\\.${key}\\b`, 'g');
+    fixed = fixed.replace(propRegex, `TIMING.${key}`);
+  }
+
+  if (fixed !== code) {
+    fixes.push(`Renamed "const frame = {...}" → "const TIMING = {...}" to avoid collision with useCurrentFrame()`);
+    console.log(`[CodeValidator] Auto-fixed: renamed "const frame = {}" → "const TIMING = {}" (${keys.length} properties: ${keys.join(', ')})`);
+  }
+
+  return { code: fixed, fixes };
+}
+
+/**
  * Fix common syntax errors in AI-generated code
  */
 function fixSyntaxErrors(code: string): { code: string; fixes: string[] } {
@@ -128,6 +202,13 @@ function fixSyntaxErrors(code: string): { code: string; fixes: string[] } {
   const hookDedup = deduplicateHookDeclarations(code);
   let fixed = hookDedup.code;
   const fixes: string[] = [...hookDedup.fixes];
+
+  // Second: rename "const frame = { ... }" objects that collide with useCurrentFrame()
+  const frameRename = renameFrameConstantCollision(fixed);
+  if (frameRename.fixes.length > 0) {
+    fixed = frameRename.code;
+    fixes.push(...frameRename.fixes);
+  }
 
   const braceBalance = countBalanceIgnoringStrings(fixed, '{', '}');
   const parenBalance = countBalanceIgnoringStrings(fixed, '(', ')');
@@ -456,7 +537,10 @@ export function validateCode(code: string): ValidationResult {
   // AI models sometimes hallucinate variables that don't exist in the Remotion scope.
   // These pass Babel syntax checks but crash at runtime → blank/error screens.
   const FORBIDDEN_IDENTIFIERS: Array<{ pattern: RegExp; label: string; replacement?: string }> = [
-    { pattern: /\bTIMING\b/, label: 'TIMING is not defined in Remotion scope', replacement: 'frame' },
+    // NOTE: TIMING was removed from this list — it IS a valid identifier.
+    // renameFrameConstantCollision() (line 142) intentionally renames
+    // `const frame = { ... }` → `const TIMING = { ... }` to avoid collision
+    // with useCurrentFrame(). Having TIMING here undid that fix.
     { pattern: /\bTimeline\b(?!\s*[.])/, label: 'Timeline is not a Remotion API — use Sequence or interpolate()' },
     { pattern: /\bgsap\b/, label: 'gsap is not available — use spring()/interpolate() from Remotion' },
     { pattern: /\banime\b(?!\s*\()/, label: 'anime.js is not available — use spring()/interpolate() from Remotion' },

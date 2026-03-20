@@ -77,6 +77,10 @@ const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   },
 };
 
+/** Check if a string is a valid UUID v4 */
+const isValidUuid = (id: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 export function useProjectSettings(projectId: string | undefined) {
@@ -92,7 +96,11 @@ export function useProjectSettings(projectId: string | undefined) {
   const pendingSettingsRef = useRef<ProjectSettings | null>(null);
 
   const loadSettings = useCallback(async () => {
-    if (!projectId) return;
+    // Skip fetch for missing or non-UUID projectIds (e.g. DevTools "devtools-test")
+    if (!projectId || !isValidUuid(projectId)) {
+      setLoading(false);
+      return;
+    }
 
     // 1. Try Cache first
     const cached = SettingsCache.get<ProjectSettings>(cacheKey);

@@ -2097,12 +2097,18 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
               const clipsArr = Object.values(state.clips) as TimelineClip[];
               if (clipsArr.length === 0) return 30; // Default 30 seconds
 
-              return Math.max(...clipsArr.map((c) => c.startTime + c.duration));
+              // Guard: filter out clips with NaN/Infinity timing to prevent Math.max → NaN
+              const ends = clipsArr
+                .map((c) => c.startTime + c.duration)
+                .filter(Number.isFinite);
+              return ends.length > 0 ? Math.max(...ends) : 30;
             },
 
             getDurationInFrames: () => {
               const state = get();
-              return Math.ceil(get().getDurationInSeconds() * state.fps);
+              const frames = Math.ceil(get().getDurationInSeconds() * (state.fps || 24));
+              // Defense: prevent NaN/0 from propagating (causes Remotion crash)
+              return Number.isFinite(frames) && frames > 0 ? frames : 900;
             },
 
             getClipsByTrack: (trackId) => {

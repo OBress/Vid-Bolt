@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     // Parse payload
     const payload: WebhookPayload = JSON.parse(rawBody);
     
-    console.log(`[GPUCallback] Received ${payload.event} for job ${payload.job_id} (item: ${payload.item_id})`);
+    console.log(`[GPUCallback] Received ${payload.event} for job ${payload.job_id} (item: ${payload.item_id}${payload.status === 'cancelled' ? ' — CANCELLED' : ''})`);
 
     // Extract key information
     const result = {

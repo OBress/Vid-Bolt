@@ -37,6 +37,14 @@ interface ShotDataInput {
   content_type?: string;
   summary?: string;
   media_type?: 'image' | 'video' | 'motiongraphic';
+  /** Scene grouping ID — shots sharing a scene_id belong to the same visual scene */
+  scene_id?: string;
+  /** Narrative purpose (e.g., 'hook', 'reveal', 'climax', 'transition', 'cta') */
+  narrative_beat?: string;
+  /** Whether this shot continues the previous shot's scene seamlessly */
+  continuity_from_previous?: boolean;
+  /** Creative image edit applied to this shot's keyframe */
+  image_edit_instruction?: string;
 }
 
 export interface AssembleEditRequest {
@@ -83,7 +91,7 @@ export async function assembleEdit(request: AssembleEditRequest): Promise<Assemb
     videoTitle,
     audioChunks,
     scriptText = '',
-    fps = 30,
+    fps = 24,
     apiKey,
     model = 'google/gemini-3-flash-preview',
     shotTimeRange,
@@ -189,6 +197,9 @@ function buildContext(
         hasRemotionCode: !!media?.remotion_code,
         contentType: shot.content_type,
         sectionBreak: shot.content_type === 'transition',
+        sceneId: shot.scene_id,
+        narrativeBeat: shot.narrative_beat,
+        continuityFromPrevious: shot.continuity_from_previous,
       };
     }),
     scriptSentences,
@@ -745,6 +756,27 @@ function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAg
       }
     }
 
+    // === DUPLICATE SHOT DEDUPLICATION ===
+    // If the same shotIndex appears more than once on the same track, keep only
+    // the first occurrence. This catches LLM hallucination and normalization bugs.
+    const seenShots = new Set<number>();
+    const deduped: typeof clips = [];
+    for (const clip of clips) {
+      if (clip.shotIndex != null) {
+        const key = clip.shotIndex;
+        if (seenShots.has(key)) {
+          console.warn(`[EditAssembly] Fix: Removed duplicate clip for shot ${key} on track ${trackId}`);
+          continue;
+        }
+        seenShots.add(key);
+      }
+      deduped.push(clip);
+    }
+    if (deduped.length < clips.length) {
+      clips.length = 0;
+      clips.push(...deduped);
+    }
+
     // === GAP PREVENTION (main-video track only) ===
     if (trackId === 'main-video' && clips.length > 0) {
       // 1. Snap first clip to t=0 if offset (prevent black screen at start).
@@ -809,7 +841,7 @@ function generateFallbackAgentEDL(
   // Base visual clips on main-video, MG overlays on overlays track.
   const tracks: AgentTrack[] = [
     { id: 'main-video', type: 'video', name: 'Main Video', group: 'video', order: 0 },
-    { id: 'overlays', type: 'video', name: 'Video 2', group: 'video', order: 1 },
+    { id: 'overlays', type: 'video', name: 'Video 2', group: 'overlays', order: 1 },
     { id: 'sfx', type: 'audio', name: 'Sound Effects', group: 'audio', order: 1 },
   ];
 
@@ -918,7 +950,8 @@ function generateFallbackAgentEDL(
         type: 'motion-graphics',
         startTime: clipStartTime,
         duration: shot.duration_seconds,
-        label: `${shot.text?.substring(0, 30)} (overlay)`,
+        transform: { opacity: 1 },
+        label: `Overlay: ${shot.text?.substring(0, 30) || 'MG overlay'}`,
       });
     }
 

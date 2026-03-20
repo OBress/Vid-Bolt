@@ -703,7 +703,7 @@ const EasingCurvePreview: React.FC<{ type: string; size?: number; color?: string
 function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
-  const frames = Math.floor((seconds % 1) * 30);
+  const frames = Math.floor((seconds % 1) * 24);
   return `${mins}:${secs.toString().padStart(2, '0')}:${frames.toString().padStart(2, '0')}`;
 }
 

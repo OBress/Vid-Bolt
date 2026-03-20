@@ -27,6 +27,7 @@ import type { AspectRatio } from '@/lib/services/gpu-api-service';
 import { CostTracker } from '@/lib/queues/cost-tracker';
 import { withGpuLock } from '@/lib/queues/gpu-lock';
 import { emitVideoItemComplete } from '@/lib/queues/video-completion-emitter';
+import { getShotNeighborContext } from '@/lib/services/shot-context';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -184,6 +185,12 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           visualPrompt = feedbackPrefix + fullPrompt;
         }
 
+        // Build neighbor context for style continuity across adjacent shots
+        const neighborCtx = getShotNeighborContext(
+          allShots as any[],
+          allShots.findIndex((shot: Record<string, unknown>) => (shot.segment_index as number) === segmentIndex),
+        );
+
         return {
           segment_index: segmentIndex,
           media_type: 'video' as const,
@@ -196,6 +203,7 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           start_frame_url: keyframeUrl, // Will be undefined for T2V shots
           visual_elements: s.visual_elements as import('@/types/video').RoutingTag[] | undefined,
           narration_text: s.text as string | undefined,
+          neighbor_context: shouldSimplify ? undefined : (neighborCtx.compactNote || undefined),
         };
       });
 

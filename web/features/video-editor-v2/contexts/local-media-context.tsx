@@ -36,6 +36,10 @@ const LocalMediaContext = createContext<LocalMediaContextType | undefined>(
 
 const PAGE_SIZE = 50;
 
+/** Check if a string is a valid UUID v4 */
+const isValidUuid = (id: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
 /**
  * Convert S3 MediaFile to LocalMediaFile format
  */
@@ -96,7 +100,9 @@ export const LocalMediaProvider: React.FC<{
       const offset = reset ? 0 : currentOffsetRef.current;
       console.log('[LocalMedia] Loading media from S3/Supabase for project:', projectId || 'all', 'offset:', offset);
       
-      const { media, total } = await getMedia(projectId, { limit: PAGE_SIZE, offset, includeGenerated: true });
+      // Only pass projectId to API if it's a valid UUID (DevTools uses non-UUID IDs)
+      const safeProjectId = projectId && isValidUuid(projectId) ? projectId : undefined;
+      const { media, total } = await getMedia(safeProjectId, { limit: PAGE_SIZE, offset, includeGenerated: true });
       const files = media.map(toLocalMediaFile);
       
       console.log(`[LocalMedia] Loaded ${files.length} media files (total: ${total})`);

@@ -486,8 +486,8 @@ export interface CompositionDefinition {
  */
 export const DEFAULT_COMPOSITION: Omit<CompositionDefinition, 'id' | 'layers'> = {
   name: 'New Composition',
-  duration: 150, // 5 seconds at 30fps
-  fps: 30,
+  duration: 120, // 5 seconds at 24fps
+  fps: 24,
   width: 1920,
   height: 1080,
   backgroundColor: 'transparent',

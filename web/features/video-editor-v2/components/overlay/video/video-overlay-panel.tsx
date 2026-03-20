@@ -141,7 +141,7 @@ export const VideoOverlayPanel: React.FC = () => {
         const clipId = selectedClip.id;
         
         // Get new video duration
-        let newDuration = 6.67; // fallback (200 frames at 30fps)
+        let newDuration = 6.67; // fallback (160 frames at 24fps)
         try {
           const result = await getSrcDuration(videoUrl);
           newDuration = result.durationInSeconds;
@@ -176,7 +176,7 @@ export const VideoOverlayPanel: React.FC = () => {
       } else {
         // Add mode: Create new clip
         // Get actual video duration using media-parser
-        let duration = 6.67; // fallback (200 frames at 30fps)
+        let duration = 6.67; // fallback (160 frames at 24fps)
         
         try {
           const result = await getSrcDuration(videoUrl);

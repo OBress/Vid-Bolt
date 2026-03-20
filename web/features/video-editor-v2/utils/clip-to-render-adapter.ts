@@ -230,14 +230,19 @@ export function clipToOverlay(
   const fromFrame = Math.round(fromSeconds * fps);
   const durationInFrames = Math.round((toSeconds - fromSeconds) * fps);
   
+  // Defense: Remotion throws "Frame NaN is not finite" if from/durationInFrames is NaN/Infinity.
+  // This can happen when clips have undefined/NaN startTime or duration (e.g. from persisted data).
+  const safeFrom = Number.isFinite(fromFrame) ? fromFrame : 0;
+  const safeDuration = Number.isFinite(durationInFrames) && durationInFrames > 0 ? durationInFrames : 1;
+  
   // Convert string ID to safe numeric ID (handles IDs that exceed MAX_SAFE_INTEGER)
   const numericId = clipIdToNumeric(clip.id);
   
   // Base properties shared by all overlay types
   const baseOverlay = {
     id: numericId,
-    from: fromFrame,
-    durationInFrames,
+    from: safeFrom,
+    durationInFrames: safeDuration,
     row: trackIndex,
     left: clip.transform?.x ?? 0,
     top: clip.transform?.y ?? 0,
@@ -582,7 +587,7 @@ export function useRenderState(): RenderState {
   const clips = Array.isArray(clipsRecord) ? clipsRecord : Object.values(clipsRecord) as TimelineClip[];
   const tracks = Array.isArray(tracksRecord) ? tracksRecord : Object.values(tracksRecord) as TimelineTrack[];
   const transitions = useVideoEditorStore((state: any) => state.transitions) || {};
-  const fps = useVideoEditorStore((state: any) => state.fps) || 30;
+  const fps = useVideoEditorStore((state: any) => state.fps) || 24;
   const aspectRatio = useVideoEditorStore((state: any) => state.aspectRatio) || '16:9';
   const resolution = useVideoEditorStore((state: any) => state.resolution) || '1080p';
   const backgroundColor = useVideoEditorStore((state: any) => state.backgroundColor) || '#000000';
@@ -692,7 +697,7 @@ export function useRenderClipState(): RenderClipState {
   const clips = Array.isArray(clipsRecord) ? clipsRecord : Object.values(clipsRecord) as TimelineClip[];
   const tracks = Array.isArray(tracksRecord) ? tracksRecord : Object.values(tracksRecord) as TimelineTrack[];
   const transitions = useVideoEditorStore((state: any) => state.transitions) || {};
-  const fps = useVideoEditorStore((state: any) => state.fps) || 30;
+  const fps = useVideoEditorStore((state: any) => state.fps) || 24;
   const aspectRatio = useVideoEditorStore((state: any) => state.aspectRatio) || '16:9';
   const resolution = useVideoEditorStore((state: any) => state.resolution) || '1080p';
   const backgroundColor = useVideoEditorStore((state: any) => state.backgroundColor) || '#000000';

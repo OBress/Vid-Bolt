@@ -5,8 +5,8 @@ import { COMP_NAME } from "../../constants";
 
 
 // Default configuration values - these should be configurable in a real implementation
-const DEFAULT_FPS = 30;
-const DEFAULT_DURATION_IN_FRAMES = 900; // 30 seconds at 30fps
+const DEFAULT_FPS = 24;
+const DEFAULT_DURATION_IN_FRAMES = 720; // 30 seconds at 24fps
 const DEFAULT_VIDEO_WIDTH = 1920;
 const DEFAULT_VIDEO_HEIGHT = 1080;
 

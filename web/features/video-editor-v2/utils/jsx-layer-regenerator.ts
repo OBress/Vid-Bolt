@@ -57,7 +57,7 @@ function regenerateLayerMeta(code: string, layer: CompositionLayer): string {
 function keyframesToInterpolate(
   varName: string,
   keyframes: Keyframe[],
-  fps: number = 30
+  fps: number = 24
 ): string {
   if (keyframes.length < 2) {
     // Single keyframe = static value
@@ -83,7 +83,7 @@ function keyframesToInterpolate(
 function keyframesToSpring(
   varName: string,
   keyframes: Keyframe[],
-  fps: number = 30
+  fps: number = 24
 ): string {
   const first = keyframes[0];
   const delayFrames = secondsToFrames(first.time, fps);
@@ -98,7 +98,7 @@ function keyframesToSpring(
 /**
  * Regenerate animation calculations for a layer
  */
-function regenerateLayerCalculations(code: string, layer: CompositionLayer, fps: number = 30): string {
+function regenerateLayerCalculations(code: string, layer: CompositionLayer, fps: number = 24): string {
   const layerId = layer.id;
   const normalizedId = layerId.replace(/-/g, '');
   
@@ -304,7 +304,7 @@ function updateJSXStyles(jsxContent: string, updates: Record<string, any>): stri
 export function regenerateJSXFromLayer(
   originalCode: string,
   layer: CompositionLayer,
-  fps: number = 30
+  fps: number = 24
 ): string {
   console.log(`[JSX Regenerator] Regenerating JSX for layer: ${layer.id}`);
   
@@ -329,7 +329,7 @@ export function regenerateJSXFromLayer(
 export function regenerateJSXFromLayers(
   originalCode: string,
   layers: CompositionLayer[],
-  fps: number = 30
+  fps: number = 24
 ): string {
   console.log(`[JSX Regenerator] Regenerating JSX for ${layers.length} layer(s)`);
   

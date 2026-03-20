@@ -403,6 +403,23 @@ function preprocessCode(code: string): { componentBody: string; wrappedSource: s
     console.log(`[Compiler] ✓ Applied ${fixCount} Math function auto-fixes`);
   }
   
+  // Auto-fix: rename duplicate 'frame' variable to avoid "Identifier 'frame' has already been declared"
+  // AI code sometimes declares both `const frame = useCurrentFrame()` and `const frame = { keyframes }`
+  const hasUseCurrentFrame = /const\s+frame\s*=\s*useCurrentFrame\s*\(\s*\)/.test(componentBody);
+  const hasFrameObject = /const\s+frame\s*=\s*\{/.test(componentBody);
+  if (hasUseCurrentFrame && hasFrameObject) {
+    // Rename the object declaration (not the useCurrentFrame one) to 'TIMING'
+    // Must match the server-side convention (code-validator.ts, motion-graphics-service.ts)
+    componentBody = componentBody.replace(
+      /const\s+frame\s*=\s*\{/,
+      'const TIMING = {'
+    );
+    // Update property-access references: frame.intro → TIMING.intro, etc.
+    // Must not rename standalone 'frame' (the useCurrentFrame return value)
+    componentBody = componentBody.replace(/\bframe\.([\w]+)/g, 'TIMING.$1');
+    console.log('[Compiler] Auto-fixed: renamed duplicate "frame" object to "TIMING"');
+  }
+  
   // Wrap in a function component
   const wrappedSource = `const DynamicAnimation = () => {\n${componentBody}\n};`;
   

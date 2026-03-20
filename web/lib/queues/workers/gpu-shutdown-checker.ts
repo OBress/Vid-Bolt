@@ -4,6 +4,10 @@
  * Monitors user VMs for inactivity and automatically shuts them down
  * when no GPU API calls have been made within the user's configured timeout.
  * 
+ * Now includes a safety valve: when the active_gpu_productions counter is > 0,
+ * it cross-references with actual running BullMQ orchestrator jobs. If there
+ * are no real jobs, the counter is treated as stale and reset to 0.
+ * 
  * Runs as a BullMQ repeatable job every 5 minutes.
  */
 
@@ -11,6 +15,7 @@ import { Job, Processor } from 'bullmq';
 import { createClient } from '@supabase/supabase-js';
 import { stopNode } from '../../gcp/provision';
 import { getValidGCPToken } from '../../gcp/token-refresh';
+import { resetActiveProductions } from '@/lib/services/gpu-production-tracker';
 
 interface GCPConfig {
   user_id: string;
@@ -19,6 +24,32 @@ interface GCPConfig {
   last_gpu_activity_at: string | null;
   gpu_auto_shutdown_minutes: number;
   active_gpu_productions: number;
+}
+
+/**
+ * Count how many orchestrator jobs are actually running/active for a given user.
+ * Uses the orchestrator queue to check reality vs. the counter in the DB.
+ */
+async function countActualRunningProductions(userId: string): Promise<number> {
+  try {
+    const { orchestratorQueue } = await import('@/lib/queues/queues');
+
+    // Get all active + waiting jobs
+    const [activeJobs, waitingJobs] = await Promise.all([
+      orchestratorQueue.getActive(),
+      orchestratorQueue.getWaiting(),
+    ]);
+
+    const allJobs = [...activeJobs, ...waitingJobs];
+
+    // Count jobs belonging to this user
+    const userJobs = allJobs.filter((job) => job.data?.userId === userId);
+    return userJobs.length;
+  } catch (err) {
+    console.warn('[GPU Shutdown Checker] Failed to query BullMQ jobs:', err);
+    // Return -1 to signal we couldn't verify — don't reset counter on error
+    return -1;
+  }
 }
 
 /**
@@ -59,10 +90,35 @@ export async function checkForInactiveVMs(): Promise<{ checked: number; shutdown
   for (const vm of runningVMs as GCPConfig[]) {
     const { user_id, project_id, last_gpu_activity_at, gpu_auto_shutdown_minutes, active_gpu_productions } = vm;
     
-    // Skip if there are active GPU productions — the production tracker will handle shutdown
+    // If the counter says there are active productions, verify against actual BullMQ jobs
     if ((active_gpu_productions ?? 0) > 0) {
-      console.log(`[GPU Shutdown Checker] User ${user_id}: ${active_gpu_productions} active production(s), skipping inactivity check`);
-      continue;
+      const actualCount = await countActualRunningProductions(user_id);
+      
+      if (actualCount === -1) {
+        // Couldn't verify — be safe and skip (same as old behavior)
+        console.log(`[GPU Shutdown Checker] User ${user_id}: ${active_gpu_productions} active production(s), could not verify — skipping`);
+        continue;
+      }
+      
+      if (actualCount > 0) {
+        // Counter matches reality — skip as normal
+        console.log(`[GPU Shutdown Checker] User ${user_id}: ${actualCount} verified active production(s), skipping inactivity check`);
+        continue;
+      }
+      
+      // Counter > 0 but no actual jobs running → stale counter!
+      console.warn(
+        `[GPU Shutdown Checker] User ${user_id}: STALE COUNTER detected! ` +
+        `DB says ${active_gpu_productions} active, but 0 actual BullMQ jobs found. Resetting to 0.`
+      );
+      
+      try {
+        await resetActiveProductions(user_id, 0);
+      } catch (resetErr) {
+        console.error(`[GPU Shutdown Checker] User ${user_id}: Failed to reset stale counter:`, resetErr);
+      }
+      
+      // Fall through to normal inactivity check
     }
     
     // Skip if no activity timestamp (shouldn't happen, but safety check)
@@ -123,4 +179,3 @@ export const gpuShutdownCheckProcessor: Processor = async (job: Job) => {
   const result = await checkForInactiveVMs();
   return { success: true, ...result };
 };
-

@@ -57,8 +57,26 @@ export type MediaType = z.infer<typeof MediaType>;
 export const SynthesisMode = z.enum([
   'T2V',    // Text-to-Video (first shot or isolated scene)
   'FF2V',   // First-Frame-to-Video (sequential continuation)
+  'I2V',    // Image-to-Video (image-edited frame → new video)
 ]);
 export type SynthesisMode = z.infer<typeof SynthesisMode>;
+
+/**
+ * Narrative beat classification for director-level shot planning.
+ * Replaces the old 5-category content_type with purpose-driven categories.
+ */
+export const NarrativeBeat = z.enum([
+  'hook',          // Grab attention (first 3-15s)
+  'establishing',  // Set the scene, show the world
+  'buildup',       // Increase tension, stack information
+  'detail',        // Focus on specific evidence/element
+  'reveal',        // Payoff moment, show the key thing
+  'reaction',      // Emotional weight, let it land
+  'transition',    // Bridge between topics
+  'climax',        // Peak dramatic moment
+  'resolution',    // Wrap up, debrief
+]);
+export type NarrativeBeat = z.infer<typeof NarrativeBeat>;
 
 export const VerifierVerdict = z.enum(['PASS', 'FAIL']);
 export type VerifierVerdict = z.infer<typeof VerifierVerdict>;
@@ -308,10 +326,26 @@ export const PlannedShot = z.object({
   })).default([]),
   /** Whether this shot is stock-worthy */
   stock_worthy: z.boolean().default(false),
+  /** Entity-focused search query for stock media (2-4 words, e.g., "Julius Caesar") */
+  stock_search_query: z.string().optional(),
   /** Number of images needed */
   image_count: z.number().int().default(1),
   /** MG composition tier */
   mg_tier: z.enum(['self-contained', 'reference-overlay', 'composite']).optional(),
+  /** Scene grouping ID — shots sharing a scene_id maintain visual continuity */
+  scene_id: z.string().optional(),
+  /** Narrative purpose of this shot (director-level beat classification) */
+  narrative_beat: NarrativeBeat.optional(),
+  /** Whether this shot continues the previous shot's scene (same location/environment) */
+  continuity_from_previous: z.boolean().default(false),
+  /** Angle change directive for I2V synthesis — edits the previous shot's last frame */
+  angle_change: z.string().optional(),
+  /** General-purpose image edit instruction (applies to ANY shot type: video, MG, stock, image).
+   *  When present, the base image (keyframe, stock photo, etc.) is edited via Qwen-Edit
+   *  before being used in its context (video start frame, MG composition, overlay, etc.).
+   *  Examples: "add a clown mask to the statue", "highlight the data points in red",
+   *  "make the background darker and more dramatic", "add rain effects" */
+  image_edit_instruction: z.string().optional(),
 });
 export type PlannedShot = z.infer<typeof PlannedShot>;
 
@@ -326,6 +360,16 @@ export const ShotPlan = z.object({
     average_segment_duration: z.number(),
     content_type_breakdown: z.record(z.string(), z.number()),
     media_type_breakdown: z.record(z.string(), z.number()),
+    /** Number of scenes identified by the scene decomposer */
+    scene_count: z.number().int().optional(),
+    /** Per-scene breakdown with timing and shot counts */
+    scene_breakdown: z.array(z.object({
+      scene_id: z.string(),
+      shot_count: z.number().int(),
+      start_seconds: z.number(),
+      end_seconds: z.number(),
+      description: z.string(),
+    })).optional(),
   }),
 });
 export type ShotPlan = z.infer<typeof ShotPlan>;

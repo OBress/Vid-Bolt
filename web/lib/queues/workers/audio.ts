@@ -144,6 +144,24 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
         });
         console.log(`[Audio] Chunk ${i + 1}: TTS done in ${Date.now() - ttsStart}ms (${ttsResult.audioBuffer.length} bytes, ${ttsResult.durationSeconds.toFixed(1)}s audio, ${ttsResult.wordTimestamps?.length ?? 0} timestamps)`);
 
+        // Normalize TTS audio to -16 LUFS (EBU R128 compliant)
+        const { normalizeAudio } = await import('@/lib/services/audio-normalizer');
+        let audioToUpload = ttsResult.audioBuffer;
+        try {
+          const normResult = await normalizeAudio(ttsResult.audioBuffer, { inputFormat: 'mp3' });
+          if (normResult.normalized) {
+            audioToUpload = normResult.buffer;
+            console.log(
+              `[Audio] Chunk ${i + 1}: normalized ${normResult.originalLufs.toFixed(1)} → ${normResult.normalizedLufs.toFixed(1)} LUFS ` +
+              `(${normResult.gainApplied > 0 ? '+' : ''}${normResult.gainApplied.toFixed(1)} dB, ${normResult.processingTimeMs}ms)`
+            );
+          } else if (normResult.skipReason) {
+            console.log(`[Audio] Chunk ${i + 1}: normalization skipped — ${normResult.skipReason}`);
+          }
+        } catch (normErr) {
+          console.warn(`[Audio] Chunk ${i + 1}: normalization failed, using original audio:`, normErr);
+        }
+
         // Upload to R2
         const { uploadAudioBuffer, generateTtsKey, isR2Configured } = await import('@/lib/services/r2-storage');
 
@@ -154,7 +172,7 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
         console.log(`[Audio] Chunk ${i + 1}: uploading to R2...`);
         const uploadStart = Date.now();
         const key = generateTtsKey(userId, videoId, chunk.index);
-        const uploadResult = await uploadAudioBuffer(ttsResult.audioBuffer, key, 'audio/mpeg');
+        const uploadResult = await uploadAudioBuffer(audioToUpload, key, 'audio/mpeg');
         console.log(`[Audio] Chunk ${i + 1}: R2 upload done in ${Date.now() - uploadStart}ms`);
 
         await (chunkStepId ? completeStep(taskId, chunkStepId) : Promise.resolve());

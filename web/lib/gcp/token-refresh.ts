@@ -266,11 +266,16 @@ export async function getValidYouTubeToken(userId: string): Promise<string> {
   const { data: config } = await supabase
     .from("user_gcp_config")
     .select(
-      "youtube_refresh_token, youtube_access_token, youtube_token_expires_at, " +
-      "youtube_oauth_client_id, youtube_oauth_client_secret"
+      "youtube_refresh_token, youtube_access_token, youtube_token_expires_at, youtube_oauth_client_id, youtube_oauth_client_secret"
     )
     .eq("user_id", userId)
-    .single();
+    .single() as { data: {
+      youtube_refresh_token: string | null;
+      youtube_access_token: string | null;
+      youtube_token_expires_at: string | null;
+      youtube_oauth_client_id: string | null;
+      youtube_oauth_client_secret: string | null;
+    } | null; error: any };
 
   if (!config?.youtube_refresh_token) {
     throw new Error("YouTube not connected. User needs to set up YouTube OAuth in settings.");

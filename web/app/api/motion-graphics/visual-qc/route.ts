@@ -31,45 +31,61 @@ Note: The source code may be truncated for length — do NOT treat truncated cod
 
 ## EVALUATION PHILOSOPHY
 
-Think like a creative director doing a quick review — NOT a pixel-perfect QA tester. The goal is to catch genuinely broken animations, not nitpick cosmetic imperfections. Motion graphics are inherently imprecise — slight position offsets, minor overlaps, and approximate geographic placement are NORMAL and ACCEPTABLE.
+Think like a viewer watching the final video — NOT a pixel-perfect QA tester.
+Ask yourself: "Would a viewer notice something is wrong?" If yes, it fails. If a viewer wouldn't notice or care, it passes.
+
+Key principle: ALL content elements must be FULLY VISIBLE within the frame. No clipping, no cut-off labels, no hidden cards. But don't nitpick sizing, spacing, or minor cosmetic choices — those are design preferences, not bugs.
 
 ## VERDICT TIERS (CRITICAL — READ CAREFULLY)
 
-### FAIL — Only for genuinely broken output:
-- ALL frames are completely blank, solid color, or show only a background with no content
-- A requested element is COMPLETELY MISSING (user asked for a chart with 5 bars, only 3 appear)
-- Elements are FULLY off-screen or invisible (zero opacity, white-on-white, completely behind other elements)
-- Text is COMPLETELY unreadable (not just slightly overlapping — actually impossible to read)
+### FAIL — A viewer would clearly notice something is wrong:
+- ANY content element is clipped or cut off by the viewport edge (labels, cards, icons, text — if ANY part is outside the visible frame, it's a fail)
+- ALL frames are blank, solid color, or show only a background with no content
+- A requested element is MISSING (user asked for 5 items, only 3 appear)
+- Elements are invisible (zero opacity, same color as background, completely behind other elements)
+- Text or labels are UNREADABLE because another element is covering them (not minor overlap — actually blocking the text)
 - No animation exists at all (every frame is identical)
 - Content is fundamentally wrong (asked for a bar chart, got a pie chart)
+- A JavaScript runtime error prevents rendering (blank/broken output)
 
-### PASS WITH NOTES — Usable but has minor cosmetic issues:
-- Elements are slightly offset from ideal positions (e.g., city marker 20-50px from expected location)
-- Minor overlaps that don't prevent readability
-- Text partially extends beyond boundaries but is still readable
+### PASS WITH NOTES — Usable, a viewer probably wouldn't notice:
+- Elements are slightly offset from ideal positions (e.g., marker 20-50px from expected spot)
+- Minor overlaps where content is still fully readable
 - Colors or fonts don't perfectly match expectations but look reasonable
-- Geographic markers are in the approximate correct region (on or near the correct landmass)
-- Layering is slightly off but content is still visible and readable
+- Layering is slightly off but ALL content is still visible and readable
 - Animation timing is slightly fast/slow but functional
 - Minor visual artifacts that don't affect comprehension
+- Elements are small but still legible
 
 ### PASS — Meets all requirements with no notable issues
 
-## MAP-SPECIFIC LENIENCY (IMPORTANT)
+## CLIPPING RULES (IMPORTANT)
 
-For map/geography animations, be ESPECIALLY lenient:
-- City markers that are on or near the correct landmass = ACCEPTABLE (don't fail for being 30px off)
+Content being cut off by the viewport edge is a FAIL, not a cosmetic issue:
+- ❌ FAIL: A card, label, or icon is partially outside the visible frame
+- ❌ FAIL: Text is truncated by the viewport edge
+- ✅ PASS: All elements fit within the frame, even if positioned close to the edge
+- ✅ PASS: Decorative elements (background gradients, subtle effects) extend beyond the frame — that's fine
+
+## LAYERING RULES (IMPORTANT)
+
+Only fail for layering issues that ACTUALLY BLOCK content:
+- ❌ FAIL: An element completely covers a label/card, making it unreadable
+- ❌ FAIL: Two text elements overlap so badly that neither is readable
+- ✅ PASS: Minor z-order imperfections where everything is still readable
+- ✅ PASS: Slight overlaps between decorative elements
+
+## MAP-SPECIFIC LENIENCY
+
+For map/geography animations, be lenient about geographic precision:
+- City markers on or near the correct landmass = ACCEPTABLE
 - Map projections that show the correct region even if not perfectly centered = ACCEPTABLE
-- Slight clipping of map edges = ACCEPTABLE as long as key content is visible
+- Slight clipping of map EDGES (not key content) = ACCEPTABLE
 - Flight paths that follow the approximate correct direction = ACCEPTABLE
 
 ## ELEMENT IDENTIFICATION
 
 When reporting issues, reference elements by their variable name, constant name, or JSX component name from the source code.
-
-## THOROUGHNESS
-
-List issues you find, but ONLY flag them as FAIL-worthy if they meet the FAIL criteria above. Everything else goes in pass_with_notes.
 
 You MUST respond with ONLY a valid JSON object in this exact format:
 {
@@ -90,10 +106,10 @@ You MUST respond with ONLY a valid JSON object in this exact format:
 }
 
 Rules:
-- "verdict": "pass" if output is good, "pass_with_notes" if usable with minor cosmetic issues, "fail" ONLY if genuinely broken
-- "confidence": 0-100 how confident you are in your verdict. If unsure whether something is a real problem, lower your confidence.
+- "verdict": "pass" if output is good, "pass_with_notes" if usable with minor cosmetic issues, "fail" ONLY if a viewer would notice something wrong
+- "confidence": 0-100 how confident you are in your verdict
 - "passed": true if verdict is "pass" or "pass_with_notes", false only if verdict is "fail"
-- "elementIssues": array of objects identifying specific code elements. Only use severity "critical" or "major" for FAIL-worthy issues.
+- "elementIssues": array of objects identifying specific code elements. Use "critical" for clipping/missing/blocking issues, "major" for significant visual problems, "minor" for cosmetic notes.
 - "generalIssues": problems that don't map to a specific element
 - "summary": single concise sentence
 - For "pass" verdict: both issue arrays should be empty

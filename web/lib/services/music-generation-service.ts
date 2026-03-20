@@ -113,6 +113,10 @@ export interface MusicGenerationContext {
   mood?: string;
   genre?: string;
   visualStyle?: string;
+  /** Full creative direction from Creative Manifest (master + video prompts) */
+  creativeDirection?: string;
+  /** User's original video idea / prompt */
+  userPrompt?: string;
   /** Shot plan for transition alignment */
   shots?: Array<{
     segment_index: number;
@@ -120,6 +124,10 @@ export interface MusicGenerationContext {
     end_seconds: number;
     summary?: string;
     text?: string;
+    /** Narrative purpose: hook, reveal, climax, transition, exposition, cta */
+    narrative_beat?: string;
+    /** Scene group identifier for boundary alignment */
+    scene_id?: string;
   }>;
 }
 
@@ -127,66 +135,102 @@ export interface MusicGenerationContext {
 // MUSIC DIRECTOR AGENT PROMPT
 // ============================================================================
 
-const MUSIC_DIRECTOR_SYSTEM_PROMPT = `You are the Music Director for an AI video production pipeline. Your job is to plan segmented instrumental background music that matches the video's narrative arc.
+const MUSIC_DIRECTOR_SYSTEM_PROMPT = `You are the Music Director for an AI video production pipeline. Your ONLY job is to plan barely-noticeable ambient background texture that sits underneath narration.
+
+## CORE PHILOSOPHY — READ THIS FIRST
+The viewer must NEVER consciously notice the music. If it sounds like something on Spotify, it's too prominent. If someone could hum it, it's too melodic. If it has a beat you could tap your foot to, it's too rhythmic.
+
+Think: the hum of a warm room. A distant ocean. The barely-there tone of a meditation app. That's the energy level — MAXIMUM.
 
 ## Your Task
-Analyze the video context (script, duration, mood, shot plan) and output a structured music plan. The number of segments is DYNAMIC — you will be told how many to generate based on the video duration. Each segment is 30-180 seconds long (the quality sweet spot for ACE-Step 1.5).
+Analyze the video context (script, creative direction, shot plan) and output a structured ambient texture plan. Each segment is 30-180 seconds long (quality sweet spot for ACE-Step 1.5).
 
-## ACE-Step 1.5 Prompting Rules (CRITICAL)
-You are generating prompts for ACE-Step 1.5 music generation. Follow these rules exactly:
+## ACE-Step 1.5 Prompting Rules
 
 ### Caption Format
-Captions MUST be comma-separated tags, NOT prose sentences.
-Include: genre, 2-3 specific instruments, mood adjective, tempo feel, production style
-GOOD: "dark ambient electronic, deep synthesizer pads, subtle string textures, slow atmospheric drone, melancholic, warm mix"
-BAD:  "make some background music that sounds dark and electronic"
+Captions MUST be comma-separated texture/atmosphere tags. NEVER use genre labels that imply composed music.
+GOOD: "soft ambient pad, warm analog drone, gentle atmospheric texture, slow evolving soundscape, minimal, lo-fi warmth"
+GOOD: "dark ambient drone, deep sub-bass hum, distant reverb wash, sparse ethereal texture, immersive"
+BAD:  "cinematic orchestral score, epic drums, emotional piano melody"
+BAD:  "lo-fi hip hop beats, jazzy chords, catchy synth lead"
 
-### Lyrics Structure Field
-Even though this is instrumental, the lyrics_structure field controls the song's ENERGY DYNAMICS.
-Use section tags with energy descriptors:
+### BANNED Elements — NEVER include these in captions:
+- Melodies, hooks, riffs, leads, solos
+- Drums, beats, percussion patterns, rhythmic loops
+- Piano chords, guitar strums, bass lines
+- Any instrument being "featured" or "prominent"
+- Words like: catchy, groovy, driving, powerful, soaring, epic, uplifting beat
 
-Example for a build-up segment:
-[Intro]
-[Instrumental - gentle piano, atmospheric pads, sparse percussion]
-[Verse]
-[Instrumental - building layers, deeper bass, subtle rhythmic pulse]
+### ALLOWED Elements — use ONLY these:
+- Ambient pads, drones, texture layers, soundscapes
+- Atmospheric washes, reverb tails, subtle shimmer
+- Warm analog hum, tape hiss, room tone
+- Distant/faint string textures (not melodies — textures)
+- Soft sub-bass undertones
+- Evolving timbres, granular synthesis textures
 
-Example for a climax segment:
-[Chorus - intense, full instrumentation]
-[Instrumental - driving rhythm, soaring strings, powerful drums]
-[Bridge]
-[Instrumental - peak energy, all instruments layered]
+### Lyrics Structure Field (Energy Dynamics)
+Even though this is instrumental, the lyrics_structure field controls energy shape.
+Do NOT use [Verse], [Chorus], [Bridge] — these make ACE-Step generate composed music.
 
-Example for a resolution segment:
-[Bridge - winding down]
-[Instrumental - stripped back, reflective, fading textures]
+Use these section tags instead:
+
+Gentle/low energy:
+[Ambient Bed]
+[Texture - warm analog pad, barely audible drone, spacious]
+[Ambient Bed]
+[Texture - same tone, slowly evolving, minimal movement]
+
+Slightly warmer (for emotional moments):
+[Ambient Bed]
+[Texture - slightly deeper warmth, additional subtle layer, still distant]
+[Ambient Bed]
+[Texture - gentle swell then recede, atmospheric]
+
+Cooling down:
+[Ambient Bed]
+[Texture - stripping back to single pad, fading, dissolving]
 [Outro]
-[Instrumental - ambient fade, single instrument, dissolving]
+[Texture - near-silence, single faint tone]
 
 ### Segment Design Rules
 1. ALWAYS instrumental — never include actual lyrics text
-2. All segments share the EXACT SAME genre, instruments, and style — they must sound like ONE piece
-3. Only the ENERGY LEVEL changes between segments (build-up → climax → resolution)
-4. Each segment: 30-180 seconds (quality sweet spot — longer degrades quality)
-5. You MUST generate EXACTLY the number of segments specified in the user prompt
-6. Segments must cover the entire video duration with no gaps and no overlaps
-7. Distribute segment boundaries at natural narrative transition points
-8. Use crossfade transitions (2-5s) for seamless blending
-9. For very long videos (30min+): create a repeating energy pattern (build→climax→resolve→build→climax→resolve...)
-10. Despite many segments, they must ALL sound like one continuous piece — same genre, instruments, timbre
+2. All segments share the EXACT SAME timbre and texture palette — one continuous atmosphere
+3. Only the WARMTH/DENSITY changes between segments (never dramatic shifts)
+4. Each segment: 30-180 seconds (quality sweet spot)
+5. Generate EXACTLY the number of segments specified in the user prompt
+6. Segments must cover the entire video duration with no gaps/overlaps
+7. Place boundary changes at scene transitions (use scene_id changes from shot data)
+8. Use crossfade transitions (3-5s) — never hard cuts in ambient texture
+9. Energy differences between segments should be EXTREMELY subtle — think 5-10% variation, not 50%
+10. Despite multiple segments, they must sound like one continuous ambient bed
 
-### BPM Selection Guide
-- 60-80 BPM: Calm, reflective, melancholic → documentaries, emotional scenes
-- 80-120 BPM: Balanced, optimistic, easygoing → tutorials, comparisons, general content  
-- 120-160 BPM: Energetic, joyful, tense → montages, action, highlights
+### BPM Selection
+- 50-70 BPM ONLY. Anything faster produces rhythmic music.
+- Lower BPM = more ambient, less structured. Default to 55-60.
 
 ### Seed
-Generate a random seed (1-999999) and use it across ALL segments for timbral consistency.
+Generate one random seed (1-999999), shared across ALL segments.
 
 ### Key Scale
-Pick one key/scale that fits the mood and lock it across all segments.
-- Major keys (C Major, G Major): bright, uplifting, happy
-- Minor keys (Am, Em, Dm): darker, serious, emotional, contemplative`;
+Pick one key that fits the mood:
+- Minor keys preferred (Am, Dm, Em) — they produce warmer, more ambient textures
+- Avoid major keys — they tend to sound "happy" and noticeable
+
+## Using Creative Direction
+You will receive the video's creative direction. Use it to understand the VIDEO's mood — then translate that into ambient texture. Examples:
+- Horror video → dark, unsettling drone with subtle dissonance
+- Documentary → warm, neutral analog pad
+- Comedy → light, airy ambient shimmer (but still barely noticeable)
+- Tutorial → clean, minimal room-tone-like texture
+
+## Using Narrative Beats
+Shots may include a narrative_beat (hook, reveal, climax, transition, exposition, cta). Use these for MICRO energy adjustments:
+- hook/climax → slightly denser texture (add one more subtle layer)
+- transition/exposition → standard ambient bed
+- cta → strip back to near-silence so the call-to-action is prominent
+These are 5% adjustments, not dramatic shifts. The viewer should never notice the change.`;
+
 
 // ============================================================================
 // VRAM MODE MANAGEMENT
@@ -251,6 +295,78 @@ async function ensureAudioMode(): Promise<boolean> {
 const PLANNING_BATCH_SIZE = 6;
 
 /**
+ * Post-process LLM-planned segment timings to guarantee sequential,
+ * gap-free, overlap-free placement covering the full video duration.
+ *
+ * The LLM controls creative decisions (energy, captions, proportions)
+ * but actual timestamps become deterministic after this function.
+ */
+function fixSegmentTimings(
+  segments: MusicSegmentPlan[],
+  totalDurationSeconds: number
+): MusicSegmentPlan[] {
+  if (segments.length === 0) return segments;
+
+  // Sort by segment_index to ensure correct order
+  const sorted = [...segments].sort((a, b) => a.segment_index - b.segment_index);
+
+  // Calculate original total of LLM-planned durations
+  const llmTotalDuration = sorted.reduce((sum, s) => sum + s.duration_seconds, 0);
+
+  // Scale proportionally so segments cover exactly totalDurationSeconds
+  // (preserves relative proportions the LLM chose)
+  const scaleFactor = llmTotalDuration > 0
+    ? totalDurationSeconds / llmTotalDuration
+    : totalDurationSeconds / sorted.length;
+
+  let cursor = 0;
+  let correctionsMade = 0;
+
+  for (const seg of sorted) {
+    const originalStart = seg.start_seconds;
+    const originalDuration = seg.duration_seconds;
+
+    // Scale duration proportionally, clamped to valid range
+    let scaledDuration = llmTotalDuration > 0
+      ? originalDuration * scaleFactor
+      : totalDurationSeconds / sorted.length;
+    scaledDuration = Math.max(10, Math.min(180, scaledDuration));
+
+    // Force sequential placement starting from cursor
+    seg.start_seconds = cursor;
+    seg.duration_seconds = scaledDuration;
+    seg.end_seconds = cursor + scaledDuration;
+
+    if (Math.abs(originalStart - seg.start_seconds) > 0.5 ||
+        Math.abs(originalDuration - seg.duration_seconds) > 0.5) {
+      console.log(`${LOG_PREFIX} fixSegmentTimings: Seg ${seg.segment_index} ` +
+        `${originalStart.toFixed(1)}s/${originalDuration.toFixed(1)}s → ` +
+        `${seg.start_seconds.toFixed(1)}s/${seg.duration_seconds.toFixed(1)}s`);
+      correctionsMade++;
+    }
+
+    cursor = seg.end_seconds;
+  }
+
+  // Stretch/shrink last segment to exactly hit totalDurationSeconds
+  const last = sorted[sorted.length - 1];
+  const overshoot = last.end_seconds - totalDurationSeconds;
+  if (Math.abs(overshoot) > 0.1) {
+    last.duration_seconds = totalDurationSeconds - last.start_seconds;
+    last.end_seconds = totalDurationSeconds;
+    console.log(`${LOG_PREFIX} fixSegmentTimings: Adjusted last segment to end at ${totalDurationSeconds.toFixed(1)}s`);
+  }
+
+  if (correctionsMade > 0) {
+    console.log(`${LOG_PREFIX} fixSegmentTimings: Corrected ${correctionsMade}/${sorted.length} segment timings`);
+  } else {
+    console.log(`${LOG_PREFIX} fixSegmentTimings: All ${sorted.length} segment timings were already correct`);
+  }
+
+  return sorted;
+}
+
+/**
  * Invoke the Music Director Agent to produce a segmented music plan.
  *
  * For short videos (≤BATCH_SIZE segments), this is a single LLM call.
@@ -293,9 +409,11 @@ async function invokeMusicDirector(
     ) || [];
     const shotContext = windowShots.length > 0
       ? `\n\nSHOTS IN THIS WINDOW (${windowShots.length}):\n` +
-        windowShots.map(s =>
-          `  Shot ${s.segment_index}: ${s.start_seconds.toFixed(1)}s–${s.end_seconds.toFixed(1)}s | ${s.summary || s.text || 'No description'}`
-        ).join('\n')
+        windowShots.map(s => {
+          const beatTag = s.narrative_beat ? ` | beat:${s.narrative_beat}` : '';
+          const sceneTag = s.scene_id ? ` | scene:${s.scene_id}` : '';
+          return `  Shot ${s.segment_index}: ${s.start_seconds.toFixed(1)}s–${s.end_seconds.toFixed(1)}s${beatTag}${sceneTag} | ${s.summary || s.text || 'No description'}`;
+        }).join('\n')
       : '';
 
     // Script excerpt for this window (proportional)
@@ -318,26 +436,27 @@ async function invokeMusicDirector(
     let userPrompt: string;
     if (batchIdx === 0) {
       // First batch: establish style, seed, BPM, key
-      userPrompt = `Plan background music for this video (BATCH 1 of ${totalBatches}):
+      userPrompt = `Plan ambient background texture for this video (BATCH 1 of ${totalBatches}):
 
 FULL VIDEO DURATION: ${context.totalDurationSeconds.toFixed(1)} seconds (${(context.totalDurationSeconds / 60).toFixed(1)} minutes)
 THIS BATCH: segments ${batchStart} through ${batchEnd - 1} (${batchCount} segments, covering ${windowStartSec.toFixed(0)}s–${windowEndSec.toFixed(0)}s)
 TOTAL SEGMENTS PLANNED: ${requiredSegments} across all batches
 TARGET SEGMENT LENGTH: ~${Math.round(segDuration)}s each
+${context.creativeDirection ? `\nCREATIVE DIRECTION:\n${context.creativeDirection}` : ''}
+${context.userPrompt ? `\nVIDEO IDEA: ${context.userPrompt}` : ''}
+${context.genre ? `\nCONTENT GENRE: ${context.genre}` : ''}
 
-MOOD: ${context.mood || 'not specified'}
-GENRE HINT: ${context.genre || 'not specified'}
-VISUAL STYLE: ${context.visualStyle || 'not specified'}
+REMINDER: Generate barely-noticeable ambient texture, NOT composed music. No melodies, beats, or hooks.
 
 SCRIPT FOR THIS WINDOW:
 ${scriptExcerpt}${scriptExcerpt.length >= 600 ? '...' : ''}
 ${shotContext}
 
 Generate exactly ${batchCount} segments (indices ${batchStart} to ${batchEnd - 1}) covering ${windowStartSec.toFixed(0)}s–${windowEndSec.toFixed(0)}s.
-Also establish shared_seed, shared_bpm, shared_key_scale, and style_summary for the entire video.`;
+Also establish shared_seed, shared_bpm (50-70 range ONLY), shared_key_scale, and style_summary for the entire video.`;
     } else {
       // Subsequent batches: use established parameters, carry forward context
-      userPrompt = `Continue planning background music (BATCH ${batchIdx + 1} of ${totalBatches}):
+      userPrompt = `Continue planning ambient background texture (BATCH ${batchIdx + 1} of ${totalBatches}):
 
 FULL VIDEO DURATION: ${context.totalDurationSeconds.toFixed(1)} seconds (${(context.totalDurationSeconds / 60).toFixed(1)} minutes)
 THIS BATCH: segments ${batchStart} through ${batchEnd - 1} (${batchCount} segments, covering ${windowStartSec.toFixed(0)}s–${windowEndSec.toFixed(0)}s)
@@ -349,13 +468,15 @@ ESTABLISHED STYLE (from batch 1 — DO NOT change these):
 - style_summary: "${styleSummary}"
 ${prevContext}
 
+REMINDER: This is barely-noticeable ambient texture, NOT composed music.
+
 SCRIPT FOR THIS WINDOW:
 ${scriptExcerpt}${scriptExcerpt.length >= 600 ? '...' : ''}
 ${shotContext}
 
 Generate exactly ${batchCount} segments (indices ${batchStart} to ${batchEnd - 1}) covering ${windowStartSec.toFixed(0)}s–${windowEndSec.toFixed(0)}s.
 Use the EXACT same shared_seed, shared_bpm, shared_key_scale, and style_summary as batch 1.
-Maintain musical continuity with previous segments.`;
+Maintain timbral continuity with previous segments.`;
     }
 
     console.log(`${LOG_PREFIX} Planning batch ${batchIdx + 1}/${totalBatches}: ` +
@@ -391,12 +512,15 @@ Maintain musical continuity with previous segments.`;
     console.log(`${LOG_PREFIX} Batch ${batchIdx + 1}: ${batchResult.segments.length} segments planned`);
   }
 
-  console.log(`${LOG_PREFIX} Music plan complete: ${allSegments.length} segments, ` +
+  // Fix LLM-planned timings to guarantee sequential, gap-free placement
+  const fixedSegments = fixSegmentTimings(allSegments, context.totalDurationSeconds);
+
+  console.log(`${LOG_PREFIX} Music plan complete: ${fixedSegments.length} segments, ` +
     `${sharedBpm} BPM, ${sharedKeyScale}, seed=${sharedSeed}`);
   console.log(`${LOG_PREFIX} Style: ${styleSummary}`);
 
   return {
-    segments: allSegments,
+    segments: fixedSegments,
     shared_seed: sharedSeed,
     shared_bpm: sharedBpm,
     shared_key_scale: sharedKeyScale,
@@ -476,6 +600,24 @@ async function generateSegment(
 
     console.log(`${segPrefix} ✓ Generated successfully → ${publicUrl}`);
 
+    // Normalize music segment to -16 LUFS (EBU R128 compliant)
+    // The GPU uploads WAV directly to R2 via presigned URL.
+    // We download → normalize → re-upload in place.
+    try {
+      const { normalizeAudioFromR2 } = await import('./audio-normalizer');
+      const normResult = await normalizeAudioFromR2(publicUrl, r2Key, { inputFormat: 'wav' });
+      if (normResult.normalized) {
+        console.log(
+          `${segPrefix} Normalized: ${normResult.originalLufs.toFixed(1)} → ${normResult.normalizedLufs.toFixed(1)} LUFS ` +
+          `(${normResult.gainApplied > 0 ? '+' : ''}${normResult.gainApplied.toFixed(1)} dB, ${normResult.processingTimeMs}ms)`
+        );
+      } else if (normResult.skipReason) {
+        console.log(`${segPrefix} Normalization skipped — ${normResult.skipReason}`);
+      }
+    } catch (normErr) {
+      console.warn(`${segPrefix} Normalization failed, using original audio:`, normErr);
+    }
+
     return {
       segment_index: segment.segment_index,
       audio_url: publicUrl,
@@ -484,7 +626,7 @@ async function generateSegment(
       duration_seconds: segment.duration_seconds,
       transition_type: segment.transition_type,
       transition_duration_seconds: segment.transition_duration_seconds,
-      volume: 0.20, // Background music default: -14dB (0.20 linear ≈ -14dB)
+      volume: 0.15, // Post-normalization: all audio at -16 LUFS; editor controls final mix
     };
   } catch (error) {
     console.error(`${segPrefix} Failed:`, error);

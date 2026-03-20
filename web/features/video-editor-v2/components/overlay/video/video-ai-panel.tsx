@@ -145,7 +145,7 @@ export const VideoAIPanel: React.FC<VideoAIPanelProps> = ({
         // Calculate total duration in frames based on the last caption
         const lastCaption = captions[captions.length - 1];
         const totalDurationMs = lastCaption.endMs + 500; // Add small buffer
-        const calculatedDurationInFrames = Math.ceil((totalDurationMs / 1000) * 30); // Assuming 30 FPS
+        const calculatedDurationInFrames = Math.ceil((totalDurationMs / 1000) * 24); // Assuming 24 FPS
 
         // Add at playhead position
         const { from, row, updatedOverlays } = addAtPlayhead(

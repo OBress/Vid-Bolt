@@ -68,6 +68,8 @@ export interface ShotPart1 {
   
   // Stock-worthy flag: true if this shot depicts famous people/landmarks suitable for stock media
   stock_worthy?: boolean;
+  // Entity-focused search query for stock media (2-4 words, e.g., "Julius Caesar")
+  stock_search_query?: string;
   // Number of images the AI wants for this shot (default: 1, for multi-image layouts)
   image_count?: number;
   // Entity name to reuse stock media for (e.g. "Donald Trump") - ensures visual consistency

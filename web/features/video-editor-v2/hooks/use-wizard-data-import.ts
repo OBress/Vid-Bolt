@@ -795,15 +795,15 @@ export function importWizardDataToStore(options: WizardData): boolean {
                   name: shot?.text?.substring(0, 40) || `Motion Graphic ${shotIdx ?? ''}`.trim(),
                   description: shot?.visual_prompt || 'AI-generated motion graphic',
                   category: MotionGraphicsCategory.CUSTOM,
-                  duration: Math.round(visualDur * 30), // seconds → frames at 30fps
+                  duration: Math.round(visualDur * 24), // seconds → frames at 24fps
                   editableProperties: [],
                 },
                 ...(resolvedMedia?.remotionCode ? {
                   compositionDefinition: {
                     id: `comp-${clipId}`,
                     name: shot?.text?.substring(0, 40) || `Motion Graphic ${shotIdx ?? ''}`.trim(),
-                    duration: Math.round(visualDur * 30),
-                    fps: 30,
+                    duration: Math.round(visualDur * 24),
+                    fps: 24,
                     width: 1920,
                     height: 1080,
                     backgroundColor: '#000000',
@@ -976,7 +976,7 @@ export function importWizardDataToStore(options: WizardData): boolean {
           const rawStart = (musicClip as any).startTime ?? (musicClip as any).start_time ?? 0;
           const rawDur = (musicClip as any).duration ?? 0;
           // Volume and URL are stored as extended properties by the edit-assembly worker
-          const volume = (musicClip as any).volume ?? 0.20;
+          const volume = (musicClip as any).volume ?? 0.15; // Post-normalization: subtle background level
           const musicSrc = rewriteR2Url((musicClip as any).audioUrl || '');
 
           if (rawDur <= 0) continue;
@@ -1123,15 +1123,15 @@ export function importWizardDataToStore(options: WizardData): boolean {
                 name: shot.text?.substring(0, 40) || `Motion Graphic ${shot.segment_index}`,
                 description: shot.visual_prompt || 'AI-generated motion graphic',
                 category: MotionGraphicsCategory.CUSTOM,
-                duration: Math.round(shot.duration_seconds * 30),
+                duration: Math.round(shot.duration_seconds * 24),
                 editableProperties: [],
               },
               ...(resolvedMedia?.remotionCode ? {
                 compositionDefinition: {
                   id: `comp-${clipId}`,
                   name: shot.text?.substring(0, 40) || `Motion Graphic ${shot.segment_index}`,
-                  duration: Math.round(shot.duration_seconds * 30),
-                  fps: 30,
+                  duration: Math.round(shot.duration_seconds * 24),
+                  fps: 24,
                   width: 1920,
                   height: 1080,
                   backgroundColor: '#000000',

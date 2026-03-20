@@ -1576,11 +1576,11 @@ export async function callGpuSetVramMode(mode: VramMode): Promise<{
 
 /** Webhook payload sent by GPU API on job completion */
 export interface WebhookPayload {
-  event: 'generation.completed' | 'generation.failed';
+  event: 'generation.completed' | 'generation.failed' | 'generation.cancelled';
   job_id: string;
   item_id: string;
   batch_id: string | null;
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'cancelled';
   completed_at: number;
   generation_type: 'image_generation' | 'image_editing' | 'video_generation';
   result?: {
@@ -1647,7 +1647,7 @@ export interface BatchSubmitResponse {
 export interface BatchItemStatus {
   item_index: number;
   job_id: string;
-  status: "pending" | "processing" | "completed" | "failed" | "retrying";
+  status: "pending" | "processing" | "completed" | "failed" | "retrying" | "cancelled";
   retry_count: number;
   result?: { save_url: string; generation_time: number };
   error_message?: string;
@@ -1656,7 +1656,7 @@ export interface BatchItemStatus {
 /** Full batch status response */
 export interface BatchStatusResponse {
   batch_id: string;
-  status: "pending" | "processing" | "completed" | "failed";
+  status: "pending" | "processing" | "completed" | "failed" | "cancelling" | "cancelled";
   batch_type: "image_generation" | "image_editing" | "video_generation";
   total_items: number;
   completed_items: number;
@@ -1664,7 +1664,9 @@ export interface BatchStatusResponse {
   pending_items: number;
   processing_items: number;
   retrying_items: number;
+  cancelled_items?: number;
   created_at: number;
+  cancelled_at?: number;
   items: BatchItemStatus[];
 }
 
@@ -1928,6 +1930,43 @@ export async function callGpuDeleteBatch(batchId: string): Promise<BatchStatusRe
     const data = await response.json();
     return { success: true, batch: data as BatchStatusResponse };
   } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+/**
+ * Cancel a batch — pending items are removed from the GPU queue,
+ * currently-processing items finish normally.
+ * Uses POST /api/v1/batch/{batch_id}/cancel (GPU API v0.7.0+)
+ */
+export async function callGpuCancelBatch(batchId: string): Promise<BatchStatusResult> {
+  const baseUrl = await fetchDynamicGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  
+  console.log(`[GPUApiService] Cancelling batch ${batchId}`);
+  
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/batch/${batchId}/cancel`, {
+      method: "POST",
+      headers: { "X-API-Key": apiKey },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        error: errorData.detail || `HTTP ${response.status}`,
+      };
+    }
+
+    const data = await response.json();
+    console.log(`[GPUApiService] Batch ${batchId} cancel response: ${data.cancelled_items || 0} items cancelled`);
+    return { success: true, batch: data as BatchStatusResponse };
+  } catch (error) {
+    console.error(`[GPUApiService] Batch cancel failed for ${batchId}:`, error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",

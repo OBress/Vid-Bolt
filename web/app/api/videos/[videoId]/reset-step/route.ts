@@ -187,6 +187,86 @@ async function resetStepData(
           result.errors.push(`R2 cleanup failed: ${errorMsg}`);
           console.error("[Reset Step 3] R2 cleanup error:", r2Error);
         }
+
+        // Drain child jobs from pipeline sub-queues (matches PATCH /api/tasks/[taskId] logic)
+        try {
+          const { Queue } = await import("bullmq");
+          const { getRedisConnection } = await import("@/lib/queues/redis");
+          const connection = getRedisConnection();
+
+          const PIPELINE_CHILD_QUEUES = [
+            "audio-workflow",
+            "shot-planner",
+            "asset-scout",
+            "image-gen",
+            "video-gen",
+            "verifier",
+            "image-edit",
+          ];
+
+          let childJobsRemoved = 0;
+          for (const queueName of PIPELINE_CHILD_QUEUES) {
+            try {
+              const queue = new Queue(queueName, { connection });
+              const waitingJobs = await queue.getJobs(["waiting", "delayed"]);
+              for (const job of waitingJobs) {
+                if (job?.data?.videoId === videoId) {
+                  try {
+                    await job.remove();
+                    childJobsRemoved++;
+                  } catch {
+                    // Job may have started processing — that's fine
+                  }
+                }
+              }
+              await queue.close();
+            } catch (err) {
+              console.warn(`[Reset Step 3] Failed to clean ${queueName}:`, err);
+            }
+          }
+
+          if (childJobsRemoved > 0) {
+            console.log(`[Reset Step 3] Removed ${childJobsRemoved} child jobs for video ${videoId}`);
+            result.resetFields.push(`bullmq (${childJobsRemoved} child jobs removed)`);
+          }
+
+          // Also remove the orchestrator job itself (if queued/delayed)
+          try {
+            const orchestratorQueue = new Queue("orchestrator", { connection });
+            const orchestratorJobs = await orchestratorQueue.getJobs(["waiting", "delayed"]);
+            for (const job of orchestratorJobs) {
+              if (job?.data?.videoId === videoId) {
+                try {
+                  await job.remove();
+                  console.log(`[Reset Step 3] Removed orchestrator job ${job.id}`);
+                  result.resetFields.push('orchestrator job removed');
+                } catch {
+                  // Active — the cancellation check will handle it
+                }
+              }
+            }
+            await orchestratorQueue.close();
+          } catch (err) {
+            console.warn("[Reset Step 3] Orchestrator queue cleanup error:", err);
+          }
+        } catch (bullmqError) {
+          console.warn("[Reset Step 3] BullMQ cleanup error:", bullmqError);
+        }
+
+        // Abort any pending webhook listeners for this video's GPU jobs
+        try {
+          const { abortAllListenersForPrefix } = await import("@/lib/queues/webhook-listener");
+          const aborted = abortAllListenersForPrefix(
+            `shot-`,
+            `Video ${videoId} reset to step 2 — cancelling GPU webhook listeners`
+          );
+          if (aborted > 0) {
+            console.log(`[Reset Step 3] Aborted ${aborted} pending webhook listeners`);
+            result.resetFields.push(`webhook listeners (${aborted} aborted)`);
+          }
+        } catch (webhookErr) {
+          console.warn("[Reset Step 3] Webhook listener abort error:", webhookErr);
+        }
         break;
 
       case 4: // Editor - clear editor state, timeline, EDL, and agentEdl

@@ -7,6 +7,8 @@ import { toast } from "sonner";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+export type VMDisplayStatus = "SETUP" | "STARTING" | "BUILDING" | "LOADING" | "ON" | "STOPPING" | "OFF";
+
 export interface GCPVMState {
   status: string;
   ip: string | null;
@@ -18,7 +20,8 @@ export interface GCPVMState {
   startVM: () => Promise<void>;
   stopVM: () => Promise<void>;
   gcpToken: string | null;
-  displayStatus: "SETUP" | "SETTING UP" | "ON" | "STOPPING" | "OFF";
+  displayStatus: VMDisplayStatus;
+  statusDetail: string | null;
   statusColor: string;
   checkConnection: () => Promise<void>;
   // Extended fields used by the settings page
@@ -167,7 +170,7 @@ export function GCPVMProvider({ children }: { children: React.ReactNode }) {
           filter: `user_id=eq.${userId}`,
         },
         (payload) => {
-          const newData = payload.new as { status?: string; external_ip?: string };
+          const newData = payload.new as { status?: string; external_ip?: string; metadata?: any };
           if (newData.status) setStatus(newData.status);
           if (newData.external_ip) setIp(newData.external_ip);
         }
@@ -241,7 +244,7 @@ export function GCPVMProvider({ children }: { children: React.ReactNode }) {
 
     // Also fetch logs from DB during transitions
     const fetchLogs = async () => {
-      const isTransitioning = ["PROVISIONING", "STAGING", "STOPPING"].includes(statusRef.current);
+      const isTransitioning = ["PROVISIONING", "STAGING", "STOPPING", "BOOTING", "INSTALLING_DRIVERS", "INSTALLING_DOCKER", "CLONING_REPO", "CHECKING_UPDATES", "UPDATING_REPO", "CLEANING_DOCKER", "BUILDING_DOCKER", "STARTING_APP", "REBOOTING"].includes(statusRef.current);
       if (!isTransitioning || !userId) return;
 
       const { data } = await supabase
@@ -264,7 +267,7 @@ export function GCPVMProvider({ children }: { children: React.ReactNode }) {
     let tickCount = 0;
     const interval = setInterval(() => {
       tickCount++;
-      const isTransitioning = ["PROVISIONING", "STAGING", "STOPPING"].includes(statusRef.current);
+      const isTransitioning = ["PROVISIONING", "STAGING", "STOPPING", "BOOTING", "INSTALLING_DRIVERS", "INSTALLING_DOCKER", "CLONING_REPO", "CHECKING_UPDATES", "UPDATING_REPO", "CLEANING_DOCKER", "BUILDING_DOCKER", "STARTING_APP", "REBOOTING"].includes(statusRef.current);
       if (isTransitioning || tickCount % 6 === 0) {
         fetchStatus();
         fetchLogs();
@@ -321,22 +324,49 @@ export function GCPVMProvider({ children }: { children: React.ReactNode }) {
 
   // ── Derived Display State ───────────────────────────────────────────────
 
-  let displayStatus: "SETUP" | "SETTING UP" | "ON" | "STOPPING" | "OFF" = "OFF";
+  // Statuses reported by the VM startup script (uppercased by the webhook):
+  // BOOTING, INSTALLING_DRIVERS, INSTALLING_DOCKER, CLONING_REPO,
+  // CHECKING_UPDATES, UPDATING_REPO, CLEANING_DOCKER, BUILDING_DOCKER,
+  // STARTING_APP, REBOOTING, READY (→ mapped to RUNNING by webhook)
+  const BUILDING_STATUSES = [
+    "BUILDING_DOCKER", "CLEANING_DOCKER", "UPDATING_REPO",
+    "CLONING_REPO", "INSTALLING_DRIVERS", "INSTALLING_DOCKER", "REBOOTING",
+  ];
+  const STARTING_STATUSES = [
+    "PROVISIONING", "STAGING", "BOOTING", "CHECKING_UPDATES", "STARTING_APP",
+  ];
+
+  let displayStatus: VMDisplayStatus = "OFF";
   let statusColor = "bg-red-500";
+  let statusDetail: string | null = null;
 
   if (status === "NOT_FOUND") {
     displayStatus = "SETUP";
     statusColor = "bg-neutral-500";
-  } else if (status === "PROVISIONING" || status === "STAGING") {
-    displayStatus = "SETTING UP";
+  } else if (BUILDING_STATUSES.includes(status)) {
+    displayStatus = "BUILDING";
+    statusColor = "bg-orange-500 animate-pulse";
+    // Provide context-specific detail
+    if (status === "BUILDING_DOCKER") statusDetail = "Building containers (~10-20 min)";
+    else if (status === "CLEANING_DOCKER") statusDetail = "Cleaning old containers...";
+    else if (status === "UPDATING_REPO" || status === "CLONING_REPO") statusDetail = "Pulling latest code...";
+    else if (status === "INSTALLING_DRIVERS") statusDetail = "Installing GPU drivers (first boot)";
+    else if (status === "INSTALLING_DOCKER") statusDetail = "Installing Docker (first boot)";
+    else if (status === "REBOOTING") statusDetail = "Rebooting after driver install...";
+  } else if (STARTING_STATUSES.includes(status)) {
+    displayStatus = "STARTING";
     statusColor = "bg-yellow-500 animate-pulse";
+    if (status === "STARTING_APP") statusDetail = "Starting containers...";
+    else if (status === "CHECKING_UPDATES") statusDetail = "Checking for updates...";
+    else statusDetail = "Booting VM...";
   } else if (status === "RUNNING") {
     if (apiReady) {
       displayStatus = "ON";
       statusColor = "bg-green-500";
     } else {
-      displayStatus = "SETTING UP";
-      statusColor = "bg-yellow-500 animate-pulse";
+      displayStatus = "LOADING";
+      statusColor = "bg-blue-500 animate-pulse";
+      statusDetail = "Loading AI models...";
     }
   } else if (status === "STOPPING") {
     displayStatus = "STOPPING";
@@ -360,6 +390,7 @@ export function GCPVMProvider({ children }: { children: React.ReactNode }) {
     stopVM: () => performAction("stop"),
     gcpToken,
     displayStatus,
+    statusDetail,
     statusColor,
     checkConnection,
     // Extended

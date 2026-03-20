@@ -141,7 +141,7 @@ function extractLayerCalculations(code: string, layerId: string): string {
  * Parse an interpolate() call to extract keyframes
  * Example: interpolate(frame, [0, 30], [0, 1], { extrapolateRight: 'clamp' })
  */
-function parseInterpolate(expression: string, fps: number = 30): Keyframe[] | null {
+function parseInterpolate(expression: string, fps: number = 24): Keyframe[] | null {
   // Match interpolate(frame, [start, end], [fromValue, toValue], options)
   const pattern = /interpolate\s*\(\s*frame\s*,\s*\[([^\]]+)\]\s*,\s*\[([^\]]+)\]/;
   const match = expression.match(pattern);
@@ -180,7 +180,7 @@ function parseInterpolate(expression: string, fps: number = 30): Keyframe[] | nu
  * Parse a spring() call to extract keyframe with spring physics
  * Example: spring({ frame, fps, config: { damping: 15 } })
  */
-function parseSpring(expression: string, fps: number = 30): Keyframe[] | null {
+function parseSpring(expression: string, fps: number = 24): Keyframe[] | null {
   // Match spring({ frame: frame - delay, fps, config: {...} })
   const frameMatch = expression.match(/frame:\s*frame\s*-\s*(\d+)/);
   const delay = frameMatch ? parseInt(frameMatch[1], 10) : 0;
@@ -231,7 +231,7 @@ function parseSpring(expression: string, fps: number = 30): Keyframe[] | null {
 /**
  * Parse animation calculations into keyframes array
  */
-function parseAnimationCalculations(calculations: string, layerId: string, fps: number = 30): PropertyKeyframes[] {
+function parseAnimationCalculations(calculations: string, layerId: string, fps: number = 24): PropertyKeyframes[] {
   const keyframesArray: PropertyKeyframes[] = [];
   const normalizedId = layerId.replace(/-/g, '');
   
@@ -375,7 +375,7 @@ function buildLayer(
   parsed: ParsedLayer,
   calculations: string,
   index: number,
-  fps: number = 30
+  fps: number = 24
 ): CompositionLayer | null {
   const { metadata, jsxContent } = parsed;
   
@@ -478,7 +478,7 @@ function buildLayer(
 /**
  * Parse tagged JSX code into composition layers
  */
-export function parseTaggedJSX(code: string, fps: number = 30): CompositionLayer[] {
+export function parseTaggedJSX(code: string, fps: number = 24): CompositionLayer[] {
   console.log('[JSX Parser] Parsing tagged JSX with fps:', fps);
   
   // Extract all layer metadata

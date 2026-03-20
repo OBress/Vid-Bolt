@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/popover";
 
 export function VMStatus() {
-  const { displayStatus, statusColor, status, startVM, stopVM, isLoading, ip } =
+  const { displayStatus, statusColor, statusDetail, status, startVM, stopVM, isLoading, ip } =
     useGCPVM();
   const router = useRouter();
 
@@ -78,15 +78,24 @@ export function VMStatus() {
                 CONFIGURE
               </Button>
             </div>
-          ) : status === "PROVISIONING" || status === "STAGING" ? (
-            <Button
-              disabled
-              size="sm"
-              className="w-full bg-neutral-800 text-neutral-400 border border-neutral-700"
-            >
-              <Loader2 className="w-3 h-3 mr-2 animate-spin" />
-              <span className="text-xs">Setting Up...</span>
-            </Button>
+          ) : status === "PROVISIONING" || status === "STAGING" || displayStatus === "STARTING" || displayStatus === "BUILDING" || displayStatus === "LOADING" ? (
+            <div className="space-y-2">
+              <Button
+                disabled
+                size="sm"
+                className="w-full bg-neutral-800 text-neutral-400 border border-neutral-700"
+              >
+                <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                <span className="text-xs">
+                  {displayStatus === "BUILDING" ? "Building..." : displayStatus === "LOADING" ? "Loading..." : "Starting..."}
+                </span>
+              </Button>
+              {statusDetail && (
+                <p className="text-[10px] text-neutral-500 text-center">
+                  {statusDetail}
+                </p>
+              )}
+            </div>
           ) : status === "STOPPING" ? (
             <Button
               disabled

@@ -49,7 +49,7 @@ export function VMStartupWarningDialog({
             <div className="grid grid-cols-2 gap-3 p-3 bg-black/30 rounded-lg border border-neutral-800">
               <div className="flex items-center gap-2 text-xs">
                 <Clock className="w-4 h-4 text-neutral-500" />
-                <span className="text-neutral-300">~2-3 min startup</span>
+                <span className="text-neutral-300">~1-3 min startup*</span>
               </div>
               <div className="flex items-center gap-2 text-xs">
                 <DollarSign className="w-4 h-4 text-neutral-500" />

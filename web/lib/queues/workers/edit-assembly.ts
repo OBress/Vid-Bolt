@@ -36,6 +36,7 @@ import type {
 import type { GeneratedMedia } from '@/types/video';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
 import { CostTracker } from '@/lib/queues/cost-tracker';
+import { PROJECT_FPS } from '@/lib/constants/video';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -46,15 +47,6 @@ export interface EditAssemblyJobData {
   userId: string;
   videoId: string;
 }
-
-// ============================================================================
-// CONSTANTS
-// ============================================================================
-
-/** Maximum shots per batch for chunked EDL generation.
- * Reduced from 10 to 8 to prevent LLM response truncation on large batches —
- * 10 shots with keyframes/transitions can exceed token limits. */
-const SHOTS_PER_BATCH = 8;
 
 // ============================================================================
 // WORKER PROCESSOR
@@ -217,13 +209,37 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     console.log(`[EditAssembly Worker] Context loaded: ${shots.length} shots, ${generatedMedia.length} media, ${audioChunks.length} audio chunks`);
 
     // =====================================================================
-    // PHASE 2: Chunked EDL Generation (10-80%)
+    // PHASE 2: Scene-Aware Chunked EDL Generation (10-80%)
+    // Group shots by scene_id for coherent editing within scenes.
+    // Cross-scene transitions are handled by injecting scene boundary markers
+    // in the prompt so the LLM chooses purposeful transitions.
     // =====================================================================
-    const totalBatches = Math.ceil(shots.length / SHOTS_PER_BATCH);
+
+    // Build scene-based batches instead of arbitrary fixed-size chunks
+    const MAX_BATCH_SIZE = 10; // Safety cap — scenes with >10 shots get split
+    const sceneBatches: Array<typeof shots> = [];
+    let currentBatch: typeof shots = [];
+    let currentSceneId: string | undefined;
+
+    for (const shot of shots) {
+      const shotSceneId = (shot as any).scene_id as string | undefined;
+      const isNewScene = shotSceneId && shotSceneId !== currentSceneId;
+      const batchFull = currentBatch.length >= MAX_BATCH_SIZE;
+
+      if ((isNewScene || batchFull) && currentBatch.length > 0) {
+        sceneBatches.push(currentBatch);
+        currentBatch = [];
+      }
+      currentBatch.push(shot);
+      if (shotSceneId) currentSceneId = shotSceneId;
+    }
+    if (currentBatch.length > 0) sceneBatches.push(currentBatch);
+
+    const totalBatches = sceneBatches.length;
     const isChunked = totalBatches > 1;
 
     if (isChunked) {
-      console.log(`[EditAssembly Worker] Chunked mode: ${totalBatches} batches of ~${SHOTS_PER_BATCH} shots`);
+      console.log(`[EditAssembly Worker] Scene-based chunked mode: ${totalBatches} batches (${sceneBatches.map(b => b.length).join(', ')} shots)`);
     } else {
       console.log(`[EditAssembly Worker] Single-pass mode: ${shots.length} shots`);
     }
@@ -232,12 +248,10 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     const chunkLegacyEDLs: EditDecisionList[] = [];
 
     for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
-      const batchStart = batchIdx * SHOTS_PER_BATCH;
-      const batchEnd = Math.min(batchStart + SHOTS_PER_BATCH, shots.length);
-      const batchShots = shots.slice(batchStart, batchEnd);
+      const batchShots = sceneBatches[batchIdx];
 
       const stepName = isChunked
-        ? `EDL batch ${batchIdx + 1}/${totalBatches} (shots ${batchStart + 1}-${batchEnd})`
+        ? `EDL batch ${batchIdx + 1}/${totalBatches} (shots ${batchShots[0].segment_index + 1}-${batchShots[batchShots.length - 1].segment_index + 1})`
         : `Generate EDL (${shots.length} shots)`;
 
       const batchStepId = await addTaskStep(taskId, 'writing', stepName, batchIdx + 2);
@@ -293,7 +307,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
           videoTitle: project.name || 'Untitled',
           audioChunks: batchAudioChunks,
           scriptText: batchScriptText,
-          fps: 30,
+          fps: PROJECT_FPS,
           apiKey,
           model,
           shotTimeRange: { startSeconds: batchStartSeconds, endSeconds: batchEndSeconds },
@@ -461,11 +475,9 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
           startTime: seg.start_seconds,
           duration: seg.duration_seconds,
           label: `Music Segment ${seg.segment_index + 1}`,
-          // Extended: audio URL and volume for frontend import
-          // (AgentClip doesn't have a 'media' field — frontend reads these directly)
           audioUrl: seg.audio_url,
-          volume: seg.volume,
-        } as any);
+          volume: Math.min(seg.volume ?? 0.15, 0.25), // Post-normalization: all audio at -16 LUFS; editor controls final mix
+        });
         injectedCount++;
       }
 
@@ -688,9 +700,19 @@ function mergeAgentEDLChunks(
         }
       }
 
-      // GAP DIAGNOSTIC: Log gaps for visibility but do NOT close them.
-      // Gaps are expected when shots fail — closing them destroys audio sync
-      // by shifting all subsequent clips earlier than their narration positions.
+      // Close micro-gaps (< 0.1s) caused by float-precision overlap fixes.
+      // These are NOT intentional audio-sync gaps (those are > 0.1s from failed shots).
+      // Extending the previous clip by a few ms prevents visible black frames.
+      for (let i = 1; i < clips.length; i++) {
+        const prevEnd = clips[i - 1].startTime + clips[i - 1].duration;
+        const gap = clips[i].startTime - prevEnd;
+        if (gap > 0 && gap < 0.1) {
+          clips[i - 1].duration += gap;
+        }
+      }
+
+      // GAP DIAGNOSTIC: Log remaining gaps (> 0.1s) for visibility.
+      // These are expected when shots fail — preserving them maintains audio sync.
       for (let i = 1; i < clips.length; i++) {
         const prevEnd = clips[i - 1].startTime + clips[i - 1].duration;
         const gap = clips[i].startTime - prevEnd;

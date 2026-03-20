@@ -169,6 +169,24 @@ Transitions are VOCABULARY — each one communicates something different to the 
 
 Choose the transition that MEANS what the content is doing. Don't repeat the same transition type consecutively unless creating an intentional rhythm.
 
+## SCENE COHERENCE
+
+Recognize when consecutive shots share the same setting, characters, or narrative moment (a "visual sequence"). Within a visual sequence:
+- Use HARD CUTS between shots — they're part of the same moment
+- Keep keyframe animation DIRECTION consistent (e.g., all drift-right within the same sequence)
+- Match animation intensity — don't go from subtle to aggressive within the same scene
+
+Between visual sequences (when the setting/topic/mood clearly shifts):
+- Use stronger transitions (fadeToBlack for major shifts, dissolve for soft shifts)
+- This signals to the viewer: "We're moving to something new"
+- Consider an SFX transition marker on these boundaries
+
+### DUPLICATE PREVENTION (CRITICAL)
+- NEVER place the same shotIndex on BOTH main-video and overlays tracks simultaneously
+  (unless it's a hybrid shot: base video on main-video + MG overlay with remotion_code on overlays)
+- Do NOT repeat the same shot consecutively — each clip MUST display unique visual content
+- If you need to extend the same visual, increase that clip's duration instead of creating a copy
+
 ## SOUND DESIGN
 
 Use sound effects as **emotional punctuation**, not decoration:
@@ -193,7 +211,7 @@ Use visual effects to create a consistent mood that serves the story — NOT app
 
 Create tracks based on content needs:
 - Always create a "main-video" track (type: video, group: video, order: 0) for base visual clips
-- Always create an "overlays" track (type: video, name: "Video 2", group: video, order: 1) for motion-graphics overlays
+- Always create an "overlays" track (type: video, name: "Video 2", group: overlays, order: 1) for motion-graphics overlays
 - Always create an "sfx" track (type: audio, name: "Sound Effects", group: audio, order: 1) for sound effects
 - Place image and video clips on the "main-video" track
 - For STANDALONE motion-graphics shots (no base media), place on "main-video"
@@ -264,6 +282,12 @@ export interface EditAssemblyContext {
     contentType?: string;
     /** True if this shot marks a major section/topic boundary */
     sectionBreak?: boolean;
+    /** Scene grouping ID — shots sharing a scene_id belong to the same visual scene */
+    sceneId?: string;
+    /** Narrative purpose (e.g., 'hook', 'reveal', 'climax', 'transition', 'cta') */
+    narrativeBeat?: string;
+    /** Whether this shot continues the previous shot's scene seamlessly */
+    continuityFromPrevious?: boolean;
   }>;
   scriptSentences: string[];
   failedShots: number[];
@@ -283,8 +307,9 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   lines.push(`Total duration: ${context.totalDuration.toFixed(1)}s | FPS: ${context.fps}`);
   lines.push('');
 
-  // Shot list with full narration for content-aware pacing decisions
+  // Shot list with full narration + narrative context for content-aware editing
   lines.push('## Shots');
+  let prevSceneId: string | undefined;
   for (const shot of context.shots) {
     const mediaStatus = shot.hasMedia ? `✓ ${shot.mediaType}` : '✗ no media';
     const hybridTag = (shot.hasRemotionCode && shot.hasMedia && shot.mediaType !== 'motiongraphic') ? ' ⚡ HYBRID' : '';
@@ -295,7 +320,18 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
     const energy = classifyEnergy(shot.contentType || '', shot.text);
     const energyTag = ` ⚡${energy}`;
 
-    lines.push(`  [${shot.index}] ${shot.startSeconds.toFixed(1)}s-${shot.endSeconds.toFixed(1)}s (${shot.durationSeconds.toFixed(1)}s) | ${mediaStatus}${hybridTag}${ctTag}${energyTag}${sectionTag}`);
+    // Narrative context tags
+    const beatTag = shot.narrativeBeat ? ` 🎬${shot.narrativeBeat}` : '';
+    const continuityTag = shot.continuityFromPrevious ? ' 🔗CONTINUOUS' : '';
+
+    // Scene boundary detection — inject a scene transition marker
+    const isNewScene = shot.sceneId && shot.sceneId !== prevSceneId;
+    if (isNewScene && prevSceneId) {
+      lines.push(`  --- SCENE TRANSITION (${prevSceneId} → ${shot.sceneId}) --- Choose a purposeful transition here based on mood shift ---`);
+    }
+    prevSceneId = shot.sceneId;
+
+    lines.push(`  [${shot.index}] ${shot.startSeconds.toFixed(1)}s-${shot.endSeconds.toFixed(1)}s (${shot.durationSeconds.toFixed(1)}s) | ${mediaStatus}${hybridTag}${ctTag}${energyTag}${beatTag}${continuityTag}${sectionTag}`);
     // Include truncated narration text so the LLM can match pacing to content
     const narrationPreview = shot.text.length > 150 ? shot.text.substring(0, 147) + '...' : shot.text;
     lines.push(`    Narration: "${narrationPreview}"`);
@@ -366,6 +402,13 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   lines.push('- Use SFX intentionally as emotional punctuation on the "sfx" track');
   lines.push('- Include fadeIn and fadeOut audio fades');
   lines.push(`- The timeline MUST match total audio duration (~${audioRunning.toFixed(0)}s). Do NOT exceed this.`);
+  lines.push('');
+  lines.push('**Narrative-aware transitions:**');
+  lines.push('- 🔗CONTINUOUS shots: use hard cuts ONLY — these are the same scene, no transition needed');
+  lines.push('- 🎬reveal / 🎬climax: use a hard cut + snap-zoom keyframe for dramatic impact');
+  lines.push('- 🎬transition: use crossfade or dissolve to signal a gentle topic shift');
+  lines.push('- SCENE TRANSITION markers: use a purposeful transition (fadeToBlack, dissolve, or wipe) based on the mood shift between scenes');
+  lines.push('- Within the same scene_id: keep a consistent visual rhythm — similar keyframe patterns and minimal transitions');
 
   return lines.join('\n');
 }

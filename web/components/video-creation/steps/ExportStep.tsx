@@ -135,7 +135,7 @@ export function ExportStep({
       setExportMessage("Rendering video...");
 
       // Calculate timeout: 2x video duration, minimum 120s
-      const videoDurationSec = state.durationInFrames / 30;
+      const videoDurationSec = state.durationInFrames / 24;
       const maxWaitMs = Math.max(videoDurationSec * 2, 120) * 1000;
       const pollStartTime = Date.now();
       console.log(`[ExportStep] Polling timeout: ${Math.round(maxWaitMs / 1000)}s (video: ${Math.round(videoDurationSec)}s)`);

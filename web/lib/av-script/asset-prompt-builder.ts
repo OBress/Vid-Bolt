@@ -14,6 +14,9 @@ import type {
   ObjectProfile,
 } from '@/lib/queues/writing/types';
 
+/** Default base style suffix when no style override is provided */
+const DEFAULT_IMAGE_STYLE = 'photorealistic, high detail, professional lighting, cinematic color grading';
+
 // ============================================================================
 // CHARACTER PROMPT BUILDING
 // ============================================================================
@@ -27,7 +30,7 @@ import type {
  */
 export function buildCharacterPrompt(
   profile: CharacterProfile,
-  options: { aspectRatio?: '16:9' | '9:16'; expression?: string } = {}
+  options: { aspectRatio?: '16:9' | '9:16'; expression?: string; styleOverride?: string } = {}
 ): string {
   const parts: string[] = [];
 
@@ -92,8 +95,8 @@ export function buildCharacterPrompt(
     parts.push(profile.visualInstructions.styleNotes);
   }
 
-  // Base style for consistency
-  parts.push('photorealistic, high detail, professional lighting, cinematic color grading');
+  // Base style — uses Creative Manifest override or default
+  parts.push(options.styleOverride || DEFAULT_IMAGE_STYLE);
 
   // Filter out empty parts and join
   return parts.filter((p) => p && p.trim()).join(', ');
@@ -137,7 +140,7 @@ export function buildCharacterNegativePrompt(profile: CharacterProfile): string 
  */
 export function buildLocationPrompt(
   profile: LocationProfile,
-  options: { timeOfDay?: string; weather?: string } = {}
+  options: { timeOfDay?: string; weather?: string; styleOverride?: string } = {}
 ): string {
   const parts: string[] = [];
 
@@ -196,8 +199,8 @@ export function buildLocationPrompt(
     parts.push(profile.visualInstructions.styleNotes);
   }
 
-  // Base style
-  parts.push('photorealistic, cinematic composition, high detail, professional photography');
+  // Base style — uses Creative Manifest override or default
+  parts.push(options.styleOverride || 'photorealistic, cinematic composition, high detail, professional photography');
 
   return parts.filter((p) => p && p.trim()).join(', ');
 }
@@ -237,7 +240,10 @@ export function buildLocationNegativePrompt(profile: LocationProfile): string {
  * @param profile - The object profile with visual descriptors
  * @returns A detailed prompt string for AI image generation
  */
-export function buildObjectPrompt(profile: ObjectProfile): string {
+export function buildObjectPrompt(
+  profile: ObjectProfile,
+  options: { styleOverride?: string } = {}
+): string {
   const parts: string[] = [];
 
   // Base descriptor
@@ -272,9 +278,9 @@ export function buildObjectPrompt(profile: ObjectProfile): string {
     parts.push(profile.visualInstructions.styleNotes);
   }
 
-  // Base style - product photography style for objects
+  // Base style — uses Creative Manifest override or default
   parts.push(
-    'product photography, studio lighting, white background, high detail, photorealistic'
+    options?.styleOverride || 'product photography, studio lighting, white background, high detail, photorealistic'
   );
 
   return parts.filter((p) => p && p.trim()).join(', ');

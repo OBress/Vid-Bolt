@@ -6,7 +6,7 @@ import { cookies } from "next/headers";
 import { v4 as uuidv4 } from "uuid";
 import { buildCreativeManifest } from "@/lib/services/manifest-builder";
 import { hasAnyLocalModel } from "@/lib/constants/model-registry";
-import { incrementActiveProductions, setShutdownRequested } from "@/lib/services/gpu-production-tracker";
+import { incrementActiveProductions, setShutdownRequested, resetActiveProductions } from "@/lib/services/gpu-production-tracker";
 import type { ProjectSettings } from "@/types/settings";
 
 /**
@@ -241,10 +241,41 @@ export async function POST(request: NextRequest) {
 
     if (needsLocalGpu) {
       try {
-        await incrementActiveProductions(user.id);
-        if (shutdownWhenDone) {
-          await setShutdownRequested(user.id, true);
+        // Safety: sync the counter with actual running BullMQ jobs before incrementing.
+        // This catches stale counters from previous crashes/restarts that never decremented.
+        try {
+          const [activeJobs, waitingJobs] = await Promise.all([
+            orchestratorQueue.getActive(),
+            orchestratorQueue.getWaiting(),
+          ]);
+          const actualUserJobs = [...activeJobs, ...waitingJobs].filter(
+            (j) => j.data?.userId === user.id
+          );
+
+          // Fetch current counter from DB
+          const { data: gcpConfig } = await supabase
+            .from('user_gcp_config')
+            .select('active_gpu_productions')
+            .eq('user_id', user.id)
+            .single();
+
+          const dbCount = gcpConfig?.active_gpu_productions ?? 0;
+          // actualUserJobs doesn't include the job we just added (it's already submitted),
+          // so the expected count is actualUserJobs.length (not +1)
+          if (dbCount > actualUserJobs.length) {
+            console.warn(
+              `[Closed-Loop API] Stale GPU counter detected: DB=${dbCount}, actual BullMQ jobs=${actualUserJobs.length}. Resetting to ${actualUserJobs.length}.`
+            );
+            await resetActiveProductions(user.id, actualUserJobs.length);
+          }
+        } catch (syncErr) {
+          // Non-blocking: sync failure shouldn't prevent production
+          console.warn('[Closed-Loop API] Counter sync check failed (non-fatal):', syncErr);
         }
+
+        await incrementActiveProductions(user.id);
+        // Always sync the checkbox state — clears stale flags from prior runs
+        await setShutdownRequested(user.id, !!shutdownWhenDone);
       } catch (trackErr) {
         // Non-blocking: tracking failure shouldn't prevent production
         console.warn('[Closed-Loop API] GPU production tracking failed (non-fatal):', trackErr);

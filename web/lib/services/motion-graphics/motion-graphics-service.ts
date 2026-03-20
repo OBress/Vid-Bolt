@@ -384,7 +384,7 @@ class MotionGraphicsService {
     const timing = plan.timing as { totalDurationFrames?: number; fps?: number } | undefined;
     if (timing) {
       context += `### Timing\n`;
-      context += `- Duration: ${timing.totalDurationFrames} frames at ${timing.fps || 30}fps (${((timing.totalDurationFrames || 0) / 30).toFixed(1)}s)\n\n`;
+      context += `- Duration: ${timing.totalDurationFrames} frames at ${timing.fps || 24}fps (${((timing.totalDurationFrames || 0) / 24).toFixed(1)}s)\n\n`;
     }
 
     const style = plan.style as Record<string, unknown> | undefined;
@@ -936,8 +936,34 @@ class MotionGraphicsService {
       cleanedCode = validation.fixedCode;
     }
 
+    // Step 1b: Direct fix for the #1 MG failure — AI names timing constants "frame"
+    // which collides with `const frame = useCurrentFrame()`. This catch runs
+    // unconditionally as a safety net in case the validator's auto-fix didn't apply.
+    // We rename to TIMING (not FRAMES) because the prompt examples use TIMING and
+    // the AI often references TIMING.prop in the code body.
+    if (/const\s+frame\s*=\s*useCurrentFrame\(\)/.test(cleanedCode) && /const\s+frame\s*=\s*\{/.test(cleanedCode)) {
+      console.log('[MotionGraphicsService] Detected "const frame = {}" collision with useCurrentFrame() — auto-renaming to TIMING');
+      // Rename the object declaration (not the hook)
+      cleanedCode = cleanedCode.replace(/const\s+frame\s*=\s*\{/, 'const TIMING = {');
+      // Find the TIMING object's keys and rename property accesses
+      const timingObjMatch = cleanedCode.match(/const\s+TIMING\s*=\s*\{([^}]*)\}/);
+      if (timingObjMatch) {
+        const keys = [...timingObjMatch[1].matchAll(/(\w+)\s*:/g)].map(m => m[1]);
+        for (const key of keys) {
+          cleanedCode = cleanedCode.replace(new RegExp(`\\bframe\\.${key}\\b`, 'g'), `TIMING.${key}`);
+        }
+        console.log(`[MotionGraphicsService] Renamed frame.{${keys.join(', ')}} → TIMING.{...}`);
+      }
+    }
+
     // Step 2: Babel syntax check (~1-2ms) — catches ALL syntax errors
     const syntaxResult = transpileCheck(cleanedCode);
+
+    if (!syntaxResult.valid) {
+      // Log the offending code for debugging — helps identify what the AI actually generated
+      console.error(`[MotionGraphicsService] Babel check FAILED: ${syntaxResult.error}`);
+      console.error(`[MotionGraphicsService] Code (first 500 chars):\n${cleanedCode.substring(0, 500)}`);
+    }
 
     if (!syntaxResult.valid && _syntaxRetryContext) {
       const { apiKey, model, prompt, attempt } = _syntaxRetryContext;

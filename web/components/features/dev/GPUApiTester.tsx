@@ -61,6 +61,19 @@ interface DebugInfo {
   response?: unknown;
   statusCode?: number;
   gpuApiUrl?: string;
+  query?: string;
+  totalCount?: number;
+  resultCount?: number;
+  results?: Array<{
+    id: number;
+    name: string;
+    username: string;
+    duration: number;
+    rating: number;
+    downloads: number;
+    previewUrl: string;
+    freesoundUrl: string;
+  }>;
 }
 
 interface TestResult {

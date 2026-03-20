@@ -37,17 +37,17 @@ export type SecondsTime = number & { readonly __brand: 'SecondsTime' };
  * Convert frames to seconds
  * 
  * @param frames - Time in frames
- * @param fps - Frames per second (default: 30)
+ * @param fps - Frames per second (default: 24)
  * @returns Time in seconds
  * 
  * @example
  * framesToSeconds(30, 30) // returns 1 (30 frames at 30fps = 1 second)
  * framesToSeconds(90, 30) // returns 3 (90 frames at 30fps = 3 seconds)
  */
-export function framesToSeconds(frames: number, fps: number = 30): number {
+export function framesToSeconds(frames: number, fps: number = 24): number {
   if (fps <= 0) {
-    console.warn('[TimeConversion] Invalid fps value:', fps, '- using 30');
-    fps = 30;
+    console.warn('[TimeConversion] Invalid fps value:', fps, '- using 24');
+    fps = 24;
   }
   return frames / fps;
 }
@@ -56,17 +56,17 @@ export function framesToSeconds(frames: number, fps: number = 30): number {
  * Convert seconds to frames
  * 
  * @param seconds - Time in seconds
- * @param fps - Frames per second (default: 30)
+ * @param fps - Frames per second (default: 24)
  * @returns Time in frames (rounded to nearest frame)
  * 
  * @example
  * secondsToFrames(1, 30) // returns 30 (1 second at 30fps = 30 frames)
  * secondsToFrames(2.5, 30) // returns 75 (2.5 seconds at 30fps = 75 frames)
  */
-export function secondsToFrames(seconds: number, fps: number = 30): number {
+export function secondsToFrames(seconds: number, fps: number = 24): number {
   if (fps <= 0) {
-    console.warn('[TimeConversion] Invalid fps value:', fps, '- using 30');
-    fps = 30;
+    console.warn('[TimeConversion] Invalid fps value:', fps, '- using 24');
+    fps = 24;
   }
   return Math.round(seconds * fps);
 }
@@ -91,7 +91,7 @@ export const secondToFrame = secondsToFrames;
  */
 export function convertKeyframeTimesToSeconds<T extends { time: number }>(
   keyframes: T[],
-  fps: number = 30
+  fps: number = 24
 ): T[] {
   return keyframes.map(kf => ({
     ...kf,
@@ -109,7 +109,7 @@ export function convertKeyframeTimesToSeconds<T extends { time: number }>(
  */
 export function convertKeyframeTimesToFrames<T extends { time: number }>(
   keyframes: T[],
-  fps: number = 30
+  fps: number = 24
 ): T[] {
   return keyframes.map(kf => ({
     ...kf,
@@ -132,7 +132,7 @@ export function convertKeyframeTimesToFrames<T extends { time: number }>(
  */
 export function detectFrameBasedTimes(
   keyframeTimes: number[],
-  fps: number = 30,
+  fps: number = 24,
   duration?: number
 ): boolean {
   if (keyframeTimes.length === 0) return false;
@@ -169,7 +169,7 @@ export function detectFrameBasedTimes(
  */
 export function normalizeKeyframeTimes<T extends { time: number }>(
   keyframes: T[],
-  fps: number = 30,
+  fps: number = 24,
   expectedDurationSeconds?: number
 ): T[] {
   if (keyframes.length === 0) return keyframes;
@@ -199,7 +199,7 @@ export function normalizeKeyframeTimes<T extends { time: number }>(
 export function formatTime(
   seconds: number,
   format: 'seconds' | 'timecode' | 'frames' = 'seconds',
-  fps: number = 30
+  fps: number = 24
 ): string {
   switch (format) {
     case 'frames':
@@ -226,7 +226,7 @@ export function formatTime(
  * @param timeString - Time string to parse
  * @param fps - Frames per second (for frame/timecode parsing)
  */
-export function parseTime(timeString: string, fps: number = 30): number {
+export function parseTime(timeString: string, fps: number = 24): number {
   const trimmed = timeString.trim().toLowerCase();
   
   // Frames format: "30f", "45f"
@@ -258,7 +258,7 @@ export function parseTime(timeString: string, fps: number = 30): number {
 // ============================================================
 
 /** Standard frame rate */
-export const DEFAULT_FPS = 30;
+export const DEFAULT_FPS = 24;
 
 /** Common frame rates */
 export const COMMON_FPS = {

@@ -22,6 +22,7 @@ import {
 import type { AspectRatio } from '@/lib/services/gpu-api-service';
 import { CostTracker } from '@/lib/queues/cost-tracker';
 import { withGpuLock } from '@/lib/queues/gpu-lock';
+import { getShotNeighborContext } from '@/lib/services/shot-context';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -99,16 +100,25 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
           const mediaType = s.media_type as string;
           return mediaType !== 'stock'; // Image and video shots both need keyframe images
         })
-        .map((s: Record<string, unknown>) => ({
-          segment_index: s.segment_index as number,
-          media_type: (s.media_type as 'video' | 'motiongraphic') || 'motiongraphic',
-          visual_prompt: (s.visual_prompt as string) || (s.summary as string) || `Visual for segment ${s.segment_index}`,
-          duration_seconds: (s.duration_seconds as number) || 5,
-          start_frame_url: undefined,
-          visual_elements: s.visual_elements as import('@/types/video').RoutingTag[] | undefined,
-          narration_text: s.text as string | undefined,
-          image_count: (s.image_count as number) || 1,
-        }));
+        .map((s: Record<string, unknown>, idx: number, filtered: Record<string, unknown>[]) => {
+          // Build neighbor context from the full shot list for visual continuity
+          const neighborCtx = getShotNeighborContext(
+            shots as any[], // Full shot list for context
+            shots.indexOf(s), // Index in the full list
+          );
+
+          return {
+            segment_index: s.segment_index as number,
+            media_type: (s.media_type as 'video' | 'motiongraphic') || 'motiongraphic',
+            visual_prompt: (s.visual_prompt as string) || (s.summary as string) || `Visual for segment ${s.segment_index}`,
+            duration_seconds: (s.duration_seconds as number) || 5,
+            start_frame_url: undefined,
+            visual_elements: s.visual_elements as import('@/types/video').RoutingTag[] | undefined,
+            narration_text: s.text as string | undefined,
+            image_count: (s.image_count as number) || 1,
+            neighbor_context: neighborCtx.compactNote || undefined,
+          };
+        });
 
       console.log(`${LOG_PREFIX} ${gpuShots.length} shots need image generation`);
 

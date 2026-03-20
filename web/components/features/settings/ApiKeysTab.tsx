@@ -78,6 +78,7 @@ export function ApiKeysTab() {
     projectId,
     gcpToken: _gcpToken,
     displayStatus,
+    statusDetail,
     statusColor,
     logs,
     addLog,
@@ -492,6 +493,11 @@ export function ApiKeysTab() {
                         {displayStatus}
                       </span>
                     </div>
+                    {statusDetail && (
+                      <p className="text-[10px] text-neutral-500 font-mono mt-1">
+                        {statusDetail}
+                      </p>
+                    )}
                     {vmIp && (
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-neutral-500 font-mono">
@@ -514,13 +520,13 @@ export function ApiKeysTab() {
                       Actions
                     </h4>
                     <div className="flex gap-2">
-                      {vmStatus === "PROVISIONING" || vmStatus === "STAGING" ? (
+                      {displayStatus === "STARTING" || displayStatus === "BUILDING" || displayStatus === "LOADING" ? (
                         <Button
                           disabled
                           className="w-full bg-neutral-800 text-neutral-400 border border-neutral-700 h-8 text-xs"
                         >
                           <Loader2 className="w-3 h-3 mr-2 animate-spin" />
-                          Turning On...
+                          {displayStatus === "BUILDING" ? "Building..." : displayStatus === "LOADING" ? "Loading..." : "Starting..."}
                         </Button>
                       ) : vmStatus === "STOPPING" ? (
                         <Button

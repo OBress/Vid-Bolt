@@ -105,7 +105,7 @@ export const LocalMediaPanel: React.FC = () => {
 
     if (file.type === "video") {
       // Like Premiere Pro: separate video and audio but link them together
-      const duration = file.duration || 6.67; // Default to ~200 frames at 30fps
+      const duration = file.duration || 6.67; // Default to ~160 frames at 24fps
       
       // Create video clip (without volume control)
       const videoClipId = addClip({
@@ -226,7 +226,7 @@ export const LocalMediaPanel: React.FC = () => {
         createdClipIds.push(imageClipId);
       }
     } else if (file.type === "audio") {
-      const duration = file.duration || 6.67; // Default to ~200 frames at 30fps
+      const duration = file.duration || 6.67; // Default to ~160 frames at 24fps
       
       const audioClipId = addClip({
         trackId: audioTrackId,

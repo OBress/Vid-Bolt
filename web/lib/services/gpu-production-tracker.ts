@@ -68,6 +68,9 @@ export async function incrementActiveProductions(userId: string): Promise<void> 
  * Decrement the active GPU production count and check if shutdown should fire.
  * Called when a production pipeline ends (completed, failed, or cancelled).
  *
+ * Uses an atomic SQL RPC to avoid race conditions when multiple productions
+ * complete simultaneously (the old read-then-write pattern could lose decrements).
+ *
  * @returns Whether the GPU should be shut down and the remaining count.
  */
 export async function decrementActiveProductions(userId: string): Promise<{
@@ -76,7 +79,40 @@ export async function decrementActiveProductions(userId: string): Promise<{
 }> {
   const supabase = getSupabaseServiceClient();
 
-  // Read current state
+  // Atomic decrement via SQL RPC — does decrement + shutdown check + flag clear
+  // all in a single DB round-trip with no race window.
+  const { data, error } = await supabase.rpc('decrement_active_gpu_productions', {
+    p_user_id: userId,
+  });
+
+  if (error) {
+    // Fallback: if the RPC doesn't exist yet, use the legacy read-then-write path
+    console.warn('[GPUProductionTracker] Atomic decrement RPC failed, using fallback:', error.message);
+    return decrementFallback(userId);
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  const newCount = row?.new_count ?? 0;
+  const shouldShutdown = row?.should_shutdown ?? false;
+
+  console.log(
+    `[GPUProductionTracker] Decremented active productions for user ${userId}: ` +
+    `count=${newCount}, shouldShutdown=${shouldShutdown}`
+  );
+
+  return { shouldShutdown, activeCount: newCount };
+}
+
+/**
+ * Legacy fallback decrement (read-then-write).
+ * Only used if the atomic RPC migration hasn't been applied yet.
+ */
+async function decrementFallback(userId: string): Promise<{
+  shouldShutdown: boolean;
+  activeCount: number;
+}> {
+  const supabase = getSupabaseServiceClient();
+
   const { data, error: readError } = await supabase
     .from('user_gcp_config')
     .select('active_gpu_productions, shutdown_after_production_requested, status')
@@ -84,7 +120,7 @@ export async function decrementActiveProductions(userId: string): Promise<{
     .single();
 
   if (readError || !data) {
-    console.warn('[GPUProductionTracker] Failed to read user config:', readError?.message);
+    console.warn('[GPUProductionTracker] Fallback: failed to read user config:', readError?.message);
     return { shouldShutdown: false, activeCount: 0 };
   }
 
@@ -94,7 +130,6 @@ export async function decrementActiveProductions(userId: string): Promise<{
     data.shutdown_after_production_requested === true &&
     data.status === 'RUNNING';
 
-  // Update counter (and clear flag if shutting down)
   const updatePayload: Record<string, unknown> = {
     active_gpu_productions: newCount,
   };
@@ -109,7 +144,7 @@ export async function decrementActiveProductions(userId: string): Promise<{
     .eq('user_id', userId);
 
   console.log(
-    `[GPUProductionTracker] Decremented active productions for user ${userId}: ` +
+    `[GPUProductionTracker] Decremented (fallback) for user ${userId}: ` +
     `count=${newCount}, shouldShutdown=${shouldShutdown}`
   );
 
@@ -134,6 +169,33 @@ export async function setShutdownRequested(userId: string, requested: boolean): 
   }
 
   console.log(`[GPUProductionTracker] Set shutdown_after_production_requested=${requested} for user ${userId}`);
+}
+
+/**
+ * Reset the active GPU production counter to a specific value.
+ * Used as a safety valve when stale counters are detected (e.g., from crashed workers).
+ *
+ * @param userId - The user whose counter to reset
+ * @param count - The value to reset to (default: 0)
+ */
+export async function resetActiveProductions(userId: string, count: number = 0): Promise<void> {
+  const supabase = getSupabaseServiceClient();
+
+  const { error } = await supabase.rpc('reset_active_gpu_productions', {
+    p_user_id: userId,
+    p_count: count,
+  });
+
+  if (error) {
+    // Fallback: direct update if RPC doesn't exist
+    console.warn('[GPUProductionTracker] Reset RPC failed, using direct update:', error.message);
+    await supabase
+      .from('user_gcp_config')
+      .update({ active_gpu_productions: count })
+      .eq('user_id', userId);
+  }
+
+  console.log(`[GPUProductionTracker] Reset active productions for user ${userId} to ${count}`);
 }
 
 /**
@@ -181,3 +243,4 @@ export async function executeGpuShutdown(userId: string): Promise<boolean> {
     return false;
   }
 }
+

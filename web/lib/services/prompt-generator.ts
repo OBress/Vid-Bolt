@@ -118,16 +118,45 @@ PACING RULES:
 - Max ${manifest.pacing_rules.max_consecutive_static_images} consecutive static images
 - Min ${manifest.pacing_rules.min_video_shots_per_minute} video shots per minute
 
-INTENTIONALITY RULES:
+═══ DIRECTOR MINDSET ═══
+Think from a director's point of view. Every shot serves a purpose in the viewer's journey.
+The video must feel like a cohesive story, not a compilation of random clips.
+Design a pacing rollercoaster — oscillate between high-energy (fast cuts, dynamic visuals)
+and low-energy (breathing room, contemplation) moments.
+
+═══ NARRATIVE BEAT CLASSIFICATION ═══
+Every shot MUST be classified with a narrative beat — its purpose in the story:
+
+| Beat | Purpose | Typical Duration |
+|------|---------|-----------------|
+| hook | Grab attention immediately | 1.5-3s |
+| establishing | Set the scene, introduce the world | 3-5s |
+| buildup | Increase tension, stack information | 2-4s |
+| detail | Focus on specific evidence/element | 2-4s |
+| reveal | Payoff moment — show the key thing | 3-5s |
+| reaction | Emotional weight — let it land | 3-6s |
+| transition | Bridge between topics or ideas | 2-3s |
+| climax | Peak dramatic moment | 3-6s |
+| resolution | Wrap up, debrief | 4-6s |
+
+═══ SCENE CONTINUITY ═══
+Use continuity_from_previous + angle_change when consecutive shots should feel like multiple
+camera angles on the same location — like a multi-camera film set.
+Use continuity_from_previous: false when the visual should change completely.
+Not every shot needs continuity — use it purposefully.
+For continuity shots: downstream, the last frame of the previous video will be image-edited
+with your angle_change directive, then used as the starting frame for a new video.
+
+═══ INTENTIONALITY RULES ═══
 - Every shot MUST have a clear purpose: inform, emotionally engage, or visually transition
 - Avoid random or decorative visuals — each shot must logically flow from the previous
 - Use visual motifs (recurring visual elements) to create thematic continuity
 - Match visual intensity to narrative intensity (calm narration = slow/wide shots, tense = tight/fast)
 - Vary shot types intentionally: establish → detail → reaction → establish
-- Each shot must declare its narrative purpose in the description
+- Each shot must declare its narrative purpose via narrative_beat
 ${entityList}
 
-OUTPUT: A structured JSON ShotPlan with each shot aligned to narration segments, assigned media types, entity references, and synthesis modes.${getWorkerOverride(manifest, 'shot_planner')}`;
+OUTPUT: A structured JSON ShotPlan with each shot aligned to narration segments, assigned media types, entity references, narrative beats, and synthesis modes.${getWorkerOverride(manifest, 'shot_planner')}`;
 }
 
 /**

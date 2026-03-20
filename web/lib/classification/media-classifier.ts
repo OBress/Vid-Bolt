@@ -514,7 +514,7 @@ export interface StockImageValidation {
 }
 
 // Prompt for comprehensive stock image validation
-const COMPREHENSIVE_VALIDATION_PROMPT = `You are a visual quality expert validating stock images for video production.
+const COMPREHENSIVE_VALIDATION_PROMPT = `You are a visual quality expert validating stock images for documentary video production.
 
 Analyze this image for THREE criteria:
 
@@ -526,16 +526,19 @@ Analyze this image for THREE criteria:
    - Drug-related content
    - Other harmful content (hate symbols, disturbing imagery)
 
-3. **RELEVANCE**: Does this image make sense for the video we are producing?
+3. **RELEVANCE**: Does this image show the CORRECT SUBJECT?
 {VIDEO_CONTEXT}
    
-   This specific shot needs: "{SHOT_DESCRIPTION}"
+   Looking for: "{SHOT_DESCRIPTION}"
    
-   Consider:
-   - Does the image show what is described in the shot?
-   - Is this image directly relevant to the overall video topic?
-   - Would this image make sense in the context of the overall story?
-   - Be strict - tangentially related images are NOT acceptable
+   IMPORTANT: For stock footage, the key question is SUBJECT IDENTITY:
+   - Does this image show the correct person, place, thing, or concept?
+   - Camera angle, composition, lighting, and artistic style are IRRELEVANT
+     (post-production handles those — we just need the right subject)
+   - Historical depictions are valid: paintings, sculptures, engravings, and
+     artistic interpretations of historical figures/places all count as relevant
+   - Be GENEROUS: if the image is reasonably connected to the subject, accept it
+   - Only reject if the image is clearly about something completely different
 
 Return a JSON object with these exact fields:
 {
@@ -548,14 +551,10 @@ Return a JSON object with these exact fields:
   "nsfwDetails": "Description of NSFW content if found",
   
   "isRelevant": true/false,
-  "relevanceScore": 0 to 10 (10 = perfect match for both shot AND video topic, 0 = completely wrong),
+  "relevanceScore": 0 to 10 (10 = exact subject match, 7+ = clearly the right subject, 5-6 = related but not ideal, below 5 = wrong subject),
   "whatImageShows": "Brief description of what the image actually shows",
-  "relevanceReason": "Why it matches or doesn't match the video topic and this specific shot"
+  "relevanceReason": "Why it matches or doesn't match the requested subject"
 }
-
-BE VERY STRICT about relevance. An image must be relevant to BOTH:
-- The overall video topic (if provided)
-- The specific shot description
 
 Respond with valid JSON only, no markdown.`;
 
@@ -1138,7 +1137,7 @@ export async function validateStockImage(
     // Check watermark (reject if confidence > 0.7)
     const hasWatermark = result.hasWatermark && result.watermarkConfidence > 0.7;
     const isNSFW = result.isNSFW;
-    const isRelevant = result.isRelevant && result.relevanceScore >= 7; // Require 7+ relevance
+    const isRelevant = result.isRelevant && result.relevanceScore >= 5; // Require 5+ (subject identity, not cinematic match)
 
     validationLog.debug(`Image analysis: watermark=${hasWatermark}, nsfw=${isNSFW}, relevant=${isRelevant} (${result.relevanceScore}/10)`);
     validationLog.debug(`What image shows: ${result.whatImageShows}`);

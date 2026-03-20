@@ -5,7 +5,7 @@
  */
 
 import React from "react";
-import { MediaIssuesBadge, MediaIssuesPanel } from "../panels/media-issues-panel";
+import { MediaIssuesPopover } from "../panels/media-issues-panel";
 
 // ==========================================
 // CANVAS TOOLBAR PROPS
@@ -33,11 +33,8 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Media Issues Badge */}
-      <MediaIssuesBadge />
-
-      {/* Media Issues Panel (popover, anchored to toolbar) */}
-      <MediaIssuesPanel />
+      {/* Media Issues (badge + popover panel) */}
+      <MediaIssuesPopover />
     </div>
   );
 };

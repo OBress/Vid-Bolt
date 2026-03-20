@@ -24,7 +24,7 @@ export interface WebhookResult {
   jobId: string;
   itemId: string;        // Maps to taskId
   batchId?: string;
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'cancelled';
   completedAt: number;
   generationType: string;
   result?: { 
@@ -195,6 +195,49 @@ export async function waitForWebhookResult(
  */
 export function getPendingListenerCount(): number {
   return pendingListeners.size;
+}
+
+/**
+ * Abort a pending webhook listener for a specific task.
+ * The listener's promise is rejected with the given reason.
+ * 
+ * @param taskId - The task ID whose listener should be aborted
+ * @param reason - Optional reason string for the rejection
+ * @returns true if a listener was found and aborted, false otherwise
+ */
+export function abortPendingListener(taskId: string, reason?: string): boolean {
+  const listener = pendingListeners.get(taskId);
+  if (!listener) return false;
+
+  clearTimeout(listener.timeoutId);
+  pendingListeners.delete(taskId);
+  listener.reject(new Error(reason || `Webhook listener aborted for ${taskId}`));
+  console.log(`[WebhookListener] Aborted pending listener for ${taskId}`);
+  return true;
+}
+
+/**
+ * Abort all pending webhook listeners whose taskId starts with the given prefix.
+ * Useful for bulk-cancelling all items in a batch (e.g., prefix = "shot-" for a videoId).
+ * 
+ * @param prefix - Prefix to match against pending listener taskIds
+ * @param reason - Optional reason string for the rejections
+ * @returns Number of listeners that were aborted
+ */
+export function abortAllListenersForPrefix(prefix: string, reason?: string): number {
+  let aborted = 0;
+  for (const [taskId, listener] of pendingListeners) {
+    if (taskId.startsWith(prefix)) {
+      clearTimeout(listener.timeoutId);
+      pendingListeners.delete(taskId);
+      listener.reject(new Error(reason || `Webhook listener aborted (prefix: ${prefix})`));
+      aborted++;
+    }
+  }
+  if (aborted > 0) {
+    console.log(`[WebhookListener] Aborted ${aborted} pending listeners for prefix "${prefix}"`);
+  }
+  return aborted;
 }
 
 /**

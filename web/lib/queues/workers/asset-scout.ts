@@ -20,6 +20,7 @@ import { processWithStockMedia } from '@/lib/av-script/stock-media-director';
 import { getEntitiesByIds } from '@/lib/services/gcm';
 import type { AssetEntry, AssetManifest, PlannedShot } from '@/lib/types/closed-loop';
 import { CostTracker } from '@/lib/queues/cost-tracker';
+import { getShotNeighborContext } from '@/lib/services/shot-context';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -190,9 +191,17 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
           ? ` Featuring: ${shotEntities.map(e => `${e.name} (${e.text_description})`).join(', ')}.`
           : '';
 
-        const enrichedPrompt = `${shot.visual_description || shot.summary || shot.text}${entityContext}`;
 
-        // Determine source type
+        let enrichedPrompt = `${shot.visual_description || shot.summary || shot.text}${entityContext}`;
+
+
+        // Neighbor context: inject awareness of surrounding shots' visual intent
+        const neighborCtx = getShotNeighborContext(shots, i);
+        const enrichedPromptWithContext = neighborCtx.compactNote
+          ? `${enrichedPrompt} [${neighborCtx.compactNote}]`
+          : enrichedPrompt;
+
+
         let source: AssetEntry['source'] = 'motiongraphic';
         if (shot.media_type === 'stock') {
           source = 'stock';
@@ -218,7 +227,7 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
 
         entries.push({
           segment_index: shot.segment_index,
-          visual_prompt: enrichedPrompt,
+          visual_prompt: enrichedPromptWithContext,
           source,
           stock_url: stockMatch?.url,
           sfx: hasSfx ? {

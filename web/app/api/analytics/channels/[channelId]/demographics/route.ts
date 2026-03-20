@@ -51,7 +51,7 @@ export async function GET(
   }
 
   // Multiple channels — aggregate latest snapshot per channel
-  const allDemos = [];
+  const allDemos: Record<string, any>[] = [];
   for (const chId of channelIds) {
     const { data } = await supabase
       .from('youtube_audience_demographics')
