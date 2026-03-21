@@ -34,8 +34,9 @@ import {
 } from '@/lib/av-script/scene-decomposer';
 import {
   planAllSceneShots,
-  type EnrichedPlannedShot,
 } from '@/lib/av-script/scene-shot-planner';
+import { listEntities } from '@/lib/services/gcm';
+import { enrichShotPlan } from '@/lib/services/shot-plan-enrichment';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -80,11 +81,12 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
       // Fetch outline assets and creative manifest from metadata
       const { data: video } = await supabase
         .from('video_projects')
-        .select('metadata')
+        .select('metadata, project_id')
         .eq('id', videoId)
         .single();
 
       const metadata = (video?.metadata || {}) as Record<string, unknown>;
+      const projectId = video?.project_id as string | undefined;
 
       // Build creative context for scene decomposition
       const creativeManifest = metadata.creative_manifest as Record<string, unknown> | undefined;
@@ -199,6 +201,7 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
       const allShots: PlannedShot[] = [];
       let segmentIndex = 0;
       let fallbackSceneCount = 0;
+      const fallbackSceneIds: string[] = [];
 
       for (const { scene, shots } of sceneResults) {
         if (shots) {
@@ -217,6 +220,7 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
               entity_refs: [],
               visual_elements: shot.visual_elements,
               visual_description: shot.visual_description,
+              visual_treatment: shot.visual_treatment,
               stock_worthy: shot.stock_worthy,
               stock_search_query: shot.stock_search_query,
               sound_effects: shot.sound_effects.map(sfx => ({
@@ -226,15 +230,22 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
                 anchor_word: sfx.anchor_word,
               })),
               image_count: shot.image_count,
+              mg_mode: shot.mg_mode,
+              template_type: shot.template_type,
               scene_id: shot.scene_id,
               narrative_beat: shot.narrative_beat as PlannedShot['narrative_beat'],
               continuity_from_previous: shot.continuity_from_previous,
               angle_change: shot.angle_change,
+              image_edit_instruction: shot.image_edit_instruction,
+              persistent_graphic_id: shot.persistent_graphic_id,
+              persistent_graphic_type: shot.persistent_graphic_type,
+              graphic_state_patch: shot.graphic_state_patch,
             });
           }
         } else {
           // Per-scene legacy fallback — only for this one failing scene
           fallbackSceneCount++;
+          fallbackSceneIds.push(scene.scene_id);
           console.warn(
             `${LOG_PREFIX} ⚠️ Scene "${scene.scene_id}" using legacy fallback ` +
             `(words ${scene.start_word_index}-${scene.end_word_index})`
@@ -271,30 +282,38 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         console.log(`${LOG_PREFIX} Overrode ${mgOverrideCount} trivially short MG shots to video`);
       }
 
+      const projectEntities = projectId ? await listEntities(projectId) : [];
+      const enrichment = enrichShotPlan(allShots, projectEntities, {
+        fallbackSceneCount,
+        fallbackSceneIds,
+      });
+      const enrichedShots = enrichment.shots;
+
       // Compute breakdowns
       const mediaBreakdown: Record<string, number> = {};
       const contentBreakdown: Record<string, number> = {};
-      for (const shot of allShots) {
+      for (const shot of enrichedShots) {
         mediaBreakdown[shot.media_type] = (mediaBreakdown[shot.media_type] || 0) + 1;
         contentBreakdown[shot.content_type] = (contentBreakdown[shot.content_type] || 0) + 1;
       }
 
       const shotPlan: ShotPlan = {
-        shots: allShots,
+        shots: enrichedShots,
         metadata: {
-          total_segments: allShots.length,
+          total_segments: enrichedShots.length,
           total_duration_seconds: totalDurationSeconds,
-          average_segment_duration: totalDurationSeconds / Math.max(1, allShots.length),
+          average_segment_duration: totalDurationSeconds / Math.max(1, enrichedShots.length),
           content_type_breakdown: contentBreakdown,
           media_type_breakdown: mediaBreakdown,
           scene_count: scenes.length,
           scene_breakdown: scenes.map(s => ({
             scene_id: s.scene_id,
-            shot_count: allShots.filter(shot => shot.scene_id === s.scene_id).length,
+            shot_count: enrichedShots.filter(shot => shot.scene_id === s.scene_id).length,
             start_seconds: s.start_seconds,
             end_seconds: s.end_seconds,
             description: s.description,
           })),
+          planner_diagnostics: enrichment.diagnostics,
         },
       };
 
@@ -311,7 +330,7 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
             shot_plan: shotPlan,
             // Keep backward-compat av_script_part1 format
             av_script_part1: {
-              shots: allShots,
+              shots: enrichedShots,
             },
           },
           updated_at: new Date().toISOString(),
@@ -321,13 +340,13 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
       if (!isClosedLoop) {
         await updateTaskStatus(taskId, {
           status: 'completed',
-          current_step: `Shot plan complete: ${allShots.length} shots across ${scenes.length} scenes`,
+          current_step: `Shot plan complete: ${enrichedShots.length} shots across ${scenes.length} scenes`,
           progress_percent: 100,
         });
       }
 
       console.log(
-        `${LOG_PREFIX} ✅ Complete: ${allShots.length} shots across ${scenes.length} scenes ` +
+        `${LOG_PREFIX} ✅ Complete: ${enrichedShots.length} shots across ${scenes.length} scenes ` +
         `(${fallbackSceneCount} legacy fallbacks)`
       );
 
@@ -529,19 +548,32 @@ async function runLegacyPipeline(
 
   const mediaBreakdown: Record<string, number> = {};
   const contentBreakdown: Record<string, number> = {};
-  for (const shot of plannedShots) {
+  const projectId = ((metadata.creative_manifest as Record<string, unknown> | undefined)?.project_id as string | undefined);
+  const projectEntities = projectId ? await listEntities(projectId) : [];
+  const enrichment = enrichShotPlan(plannedShots, projectEntities, {
+    fallbackSceneCount: 0,
+    fallbackSceneIds: [],
+  });
+  const enrichedShots = enrichment.shots;
+
+  for (const shot of enrichedShots) {
     mediaBreakdown[shot.media_type] = (mediaBreakdown[shot.media_type] || 0) + 1;
     contentBreakdown[shot.content_type] = (contentBreakdown[shot.content_type] || 0) + 1;
   }
 
   const shotPlan: ShotPlan = {
-    shots: plannedShots,
+    shots: enrichedShots,
     metadata: {
-      total_segments: plannedShots.length,
+      total_segments: enrichedShots.length,
       total_duration_seconds: totalDurationSeconds,
-      average_segment_duration: totalDurationSeconds / Math.max(1, plannedShots.length),
+      average_segment_duration: totalDurationSeconds / Math.max(1, enrichedShots.length),
       content_type_breakdown: contentBreakdown,
       media_type_breakdown: mediaBreakdown,
+      planner_diagnostics: {
+        ...enrichment.diagnostics,
+        fallback_scene_count: 1,
+        fallback_scene_ids: ['legacy-full-fallback'],
+      },
     },
   };
 
@@ -551,7 +583,7 @@ async function runLegacyPipeline(
       metadata: {
         ...metadata,
         shot_plan: shotPlan,
-        av_script_part1: { shots: shotSummaries, analysis },
+        av_script_part1: { shots: enrichedShots, analysis },
       },
       updated_at: new Date().toISOString(),
     })

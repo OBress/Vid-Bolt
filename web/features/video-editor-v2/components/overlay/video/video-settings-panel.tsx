@@ -67,6 +67,8 @@ export const VideoSettingsPanel: React.FC<VideoSettingsPanelProps> = ({
   const volume = localOverlay?.styles?.volume ?? 1;
   const isMuted = volume === 0;
   const speed = localOverlay?.speed ?? 1;
+  const usesSeparateNormalizedAudio =
+    localOverlay?.data?.audioSourceMode === 'separate_normalized';
 
   React.useEffect(() => {
     return () => {
@@ -249,24 +251,31 @@ export const VideoSettingsPanel: React.FC<VideoSettingsPanelProps> = ({
             <span className="text-sm font-medium text-foreground">Volume</span>
           </div>
           <button
-            onClick={() => handleStyleChange({ volume: isMuted ? 1 : 0 })}
+            onClick={() => !usesSeparateNormalizedAudio && handleStyleChange({ volume: isMuted ? 1 : 0 })}
             className={`text-xs px-2 py-1 rounded transition-colors ${
               isMuted 
                 ? 'bg-red-500/20 text-red-400' 
                 : 'bg-neutral-800 text-muted-foreground hover:bg-neutral-700'
             }`}
+            disabled={usesSeparateNormalizedAudio}
           >
             {isMuted ? "Unmute" : "Mute"}
           </button>
         </div>
+        {usesSeparateNormalizedAudio && (
+          <p className="text-xs text-muted-foreground">
+            Embedded video audio is disabled. Edit the linked normalized audio clip instead.
+          </p>
+        )}
         <div className="flex items-center gap-3">
           <Slider
             value={[volume]}
-            onValueChange={(value) => handleStyleChange({ volume: value[0] })}
+            onValueChange={(value) => !usesSeparateNormalizedAudio && handleStyleChange({ volume: value[0] })}
             min={0}
             max={1}
             step={0.01}
             className="flex-1"
+            disabled={usesSeparateNormalizedAudio}
           />
           <span className="text-xs text-muted-foreground w-10 text-right tabular-nums">
             {Math.round(volume * 100)}%

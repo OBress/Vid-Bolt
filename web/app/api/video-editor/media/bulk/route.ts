@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { deleteFiles } from "@/lib/services/r2-storage";
+import { getVideoEditorMediaDeletionKeys } from "@/lib/services/video-editor-media";
 
 // Service role client for database operations
 function getServiceClient() {
@@ -53,7 +54,7 @@ export async function DELETE(request: NextRequest) {
     // 3. Query media to delete (to get S3 keys)
     let query = serviceClient
       .from("video_editor_media")
-      .select("id, s3_key")
+      .select("id, s3_key, s3_url, normalized_audio_url")
       .eq("user_id", user.id);
 
     if (projectId) {
@@ -81,7 +82,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // 4. Extract S3 keys and delete from R2 in batch
-    const s3Keys = mediaToDelete.map(m => m.s3_key).filter(Boolean);
+    const s3Keys = mediaToDelete.flatMap(getVideoEditorMediaDeletionKeys);
     const mediaIdsToDelete = mediaToDelete.map(m => m.id);
 
     console.log(`[VideoEditorMedia] Bulk deleting ${s3Keys.length} files from R2`);

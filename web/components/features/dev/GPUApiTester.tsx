@@ -2602,7 +2602,7 @@ export function GPUApiTester({
                       {vramMode === "image_editing" &&
                         "Qwen-Image-Edit-2511 (~12GB VRAM)"}
                       {vramMode === "video_generation" &&
-                        "LTX-2 only (~20GB VRAM)"}
+                        "LTX-2.3 only (~20GB VRAM)"}
                       {vramMode === "audio_creation" &&
                         "ACE-Step 1.5 + AudioGen (~8GB VRAM)"}
                       {vramMode === "all" && "All models loaded (~40GB+ VRAM)"}

@@ -39,6 +39,10 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { createBrowserClient } from "@supabase/ssr";
 import { useProjectSettings } from "@/hooks/use-project-settings";
+import {
+  normalizeResearchDepth,
+  resolveWritingConfig,
+} from "@/lib/script-config";
 import { ResearchDocsPanel } from "./ResearchDocsPanel";
 
 // ============================================================================
@@ -180,6 +184,23 @@ interface OutlineStepProps {
     durationRange: number[];
     angle: string;
     stockMediaLevel?: StockMediaLevel;
+    pov?: "1st" | "2nd" | "3rd";
+    protagonistGender?: "male" | "female" | "any";
+    openrouterModel?: string;
+    qualityReviewModel?: string;
+    contentNiche?: string;
+    toneStyle?: string;
+    targetAudience?: string;
+    styleConfig?: {
+      customBannedPhrases?: string[];
+      customWordReplacements?: Record<string, string[]>;
+      systemPromptOverrides?: {
+        expansion?: string;
+        quality?: string;
+        rewrite?: string;
+        transition?: string;
+      };
+    };
   } | null;
   onComplete: (output: OutlineOutput, config: any) => void;
   onSave: (output: OutlineOutput, config: any) => void;
@@ -236,19 +257,13 @@ export function OutlineStep({
   );
   const [simulatedProgress, setSimulatedProgress] = useState(0);
 
-  // Helper to normalize research toggle (handle legacy values)
-  const normalizeResearchToggle = (value: string | undefined): ResearchToggle => {
-    if (value === "off") return "off";
-    return "full"; // Map 'full', 'deep', 'light', or any other value to 'full' (Standard)
-  };
-
   // Form state
   const [topic, setTopic] = useState(initialConfig?.topic || initialTopic);
   const [genre, setGenre] = useState<ScriptGenre>(
     initialConfig?.genre || projectSettings?.script?.genre || "documentary",
   );
   const [researchToggle, setResearchToggle] = useState<ResearchToggle>(
-    normalizeResearchToggle(
+    normalizeResearchDepth(
       initialConfig?.researchToggle || projectSettings?.script?.researchDepth
     ),
   );
@@ -287,7 +302,7 @@ export function OutlineStep({
       if (initialConfig.topic) setTopic(initialConfig.topic);
       if (initialConfig.genre) setGenre(initialConfig.genre);
       if (initialConfig.researchToggle)
-        setResearchToggle(normalizeResearchToggle(initialConfig.researchToggle));
+        setResearchToggle(normalizeResearchDepth(initialConfig.researchToggle));
       if (initialConfig.durationRange)
         setDurationRange(initialConfig.durationRange);
       if (initialConfig.angle) setAngle(initialConfig.angle);
@@ -312,11 +327,61 @@ export function OutlineStep({
     if (!settingsLoading && projectSettings && !initialConfig) {
       if (projectSettings.script?.genre) setGenre(projectSettings.script.genre);
       if (projectSettings.script?.researchDepth)
-        setResearchToggle(normalizeResearchToggle(projectSettings.script.researchDepth));
+        setResearchToggle(normalizeResearchDepth(projectSettings.script.researchDepth));
       if (projectSettings.basic_info?.videoDurationRange)
         setDurationRange(projectSettings.basic_info.videoDurationRange);
     }
   }, [settingsLoading, projectSettings, initialConfig]);
+
+  const buildOutlineConfigPayload = useCallback(
+    () => {
+      const resolvedConfig = resolveWritingConfig({
+        topic,
+        genre,
+        researchToggle,
+        angle,
+        projectSettings,
+        overrides: {
+          toneStyle: initialConfig?.toneStyle,
+          targetAudience: initialConfig?.targetAudience,
+          pov: initialConfig?.pov,
+          protagonistGender: initialConfig?.protagonistGender,
+          openrouterModel: initialConfig?.openrouterModel,
+          qualityReviewModel: initialConfig?.qualityReviewModel,
+          contentNiche: initialConfig?.contentNiche,
+        },
+      });
+
+      return {
+        ...resolvedConfig,
+      durationRange,
+      stockMediaLevel,
+        styleConfig: initialConfig?.styleConfig || resolvedConfig.styleConfig,
+      };
+    },
+    [
+      angle,
+      durationRange,
+      genre,
+      initialConfig,
+      projectSettings,
+      researchToggle,
+      stockMediaLevel,
+      topic,
+    ],
+  );
+
+  const buildOutlineRequestPayload = useCallback(
+    () => ({
+      videoId,
+      ...buildOutlineConfigPayload(),
+      durationRange: {
+        minMinutes: durationRange[0],
+        maxMinutes: durationRange[1],
+      },
+    }),
+    [buildOutlineConfigPayload, durationRange, videoId],
+  );
 
   // Initialize editing spine when output changes
   useEffect(() => {
@@ -374,12 +439,7 @@ export function OutlineStep({
 
           // Auto-save the result
           onSave(newOutput, {
-            topic,
-            genre,
-            researchToggle,
-            durationRange,
-            angle,
-            stockMediaLevel,
+            ...buildOutlineConfigPayload(),
           });
         }
       } else if (statusData.status === "failed") {
@@ -387,16 +447,7 @@ export function OutlineStep({
         setView("config");
       }
     },
-    [
-      supabase,
-      topic,
-      genre,
-      researchToggle,
-      durationRange,
-      angle,
-      stockMediaLevel,
-      onSave,
-    ],
+    [supabase, onSave, buildOutlineConfigPayload],
   );
 
   // Polling effect
@@ -447,27 +498,7 @@ export function OutlineStep({
       const response = await fetch("/api/process/outline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          videoId,
-          topic,
-          genre,
-          researchToggle,
-          stockMediaLevel,
-          durationRange: {
-            minMinutes: durationRange[0],
-            maxMinutes: durationRange[1],
-          },
-          angle: angle || undefined,
-          pov: projectSettings?.script?.pov || "1st",
-          protagonistGender:
-            projectSettings?.script?.protagonistGender || "any",
-          openrouterModel:
-            projectSettings?.script?.openrouterModel ||
-            "google/gemini-3-flash-preview",
-          contentNiche: projectSettings?.script?.contentNiche,
-          toneStyle: projectSettings?.script?.toneStyle,
-          targetAudience: projectSettings?.script?.targetAudience,
-        }),
+        body: JSON.stringify(buildOutlineRequestPayload()),
       });
 
       const data = await response.json();
@@ -496,14 +527,7 @@ export function OutlineStep({
     try {
       const updatedOutput = { ...output, spine: editingSpine };
       setOutput(updatedOutput);
-      await onSave(updatedOutput, {
-        topic,
-        genre,
-        researchToggle,
-        durationRange,
-        angle,
-        stockMediaLevel,
-      });
+      await onSave(updatedOutput, buildOutlineConfigPayload());
       setHasChanges(false);
     } finally {
       setIsSaving(false);
@@ -517,14 +541,7 @@ export function OutlineStep({
         hasChanges && editingSpine
           ? { ...output, spine: editingSpine }
           : output;
-      onComplete(finalOutput, {
-        topic,
-        genre,
-        researchToggle,
-        durationRange,
-        angle,
-        stockMediaLevel,
-      });
+      onComplete(finalOutput, buildOutlineConfigPayload());
     }
   };
 

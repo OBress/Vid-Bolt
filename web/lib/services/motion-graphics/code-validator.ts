@@ -12,6 +12,10 @@
  */
 
 import { parse } from '@babel/parser';
+import {
+  normalizeMotionGraphicCode,
+  stripMarkdownFences as stripSharedMarkdownFences,
+} from '@/lib/utils/motion-graphics-code-normalizer';
 
 export interface ValidationResult {
   isValid: boolean;
@@ -622,9 +626,7 @@ export function extractIconNames(code: string): string[] {
  * Strip markdown code fences from AI response
  */
 export function stripMarkdownFences(code: string): string {
-  let cleaned = code.replace(/^```(?:tsx|typescript|jsx|javascript)?\s*\n?/gm, '');
-  cleaned = cleaned.replace(/\n?```\s*$/gm, '');
-  return cleaned.trim();
+  return stripSharedMarkdownFences(code);
 }
 
 /**
@@ -700,8 +702,9 @@ export function extractComponentCode(code: string): string {
  * Babel-based syntax validation for AI-generated Remotion code.
  * Uses @babel/parser to parse TSX — catches ALL syntax errors in ~1-2ms.
  * 
- * Wraps the code in a component shell before parsing (same pattern
- * as the frontend remotion-compiler) so it validates accurately.
+ * Normalizes both body-only snippets and full TSX modules into canonical
+ * `DynamicAnimation` source before parsing so validation matches the
+ * frontend preview compiler.
  */
 export function transpileCheck(code: string): { valid: boolean; error?: string } {
   if (!code?.trim()) {
@@ -712,29 +715,11 @@ export function transpileCheck(code: string): { valid: boolean; error?: string }
     // Strip imports — the runtime injects everything into scope, so imports
     // are decorative. Removing them avoids false-positive parse errors from
     // import-only syntax issues while keeping the actual component logic intact.
-    let body = code;
-    body = body.replace(/import\s+type\s*\{[\s\S]*?\}\s*from\s*["'][^"']+["'];?/g, '');
-    body = body.replace(/import\s+\w+\s*,\s*\{[\s\S]*?\}\s*from\s*["'][^"']+["'];?/g, '');
-    body = body.replace(/import\s*\{[\s\S]*?\}\s*from\s*["'][^"']+["'];?/g, '');
-    body = body.replace(/import\s+\*\s+as\s+\w+\s+from\s*["'][^"']+["'];?/g, '');
-    body = body.replace(/import\s+\w+\s+from\s*["'][^"']+["'];?/g, '');
-    body = body.replace(/import\s*["'][^"']+["'];?/g, '');
-    // Strip ICONS comment
-    body = body.replace(/^\/\/\s*ICONS:.*$/m, '');
+    // Normalize both body-only snippets and full TSX modules so the server
+    // validates the exact same shape the client preview compiler executes.
+    const normalized = normalizeMotionGraphicCode(code);
 
-    body = body.trim();
-
-    // Detect if the code is a module-level construct (has export, top-level const, function, etc.)
-    // If so, parse directly as a module. If it's just a function body (starts with hooks/return),
-    // wrap it in a component shell.
-    const isModuleCode = /^\s*(export\s|const\s|let\s|var\s|function\s|class\s|\/\*|\/\/)/m.test(body)
-      && /\bexport\b/.test(body);
-
-    const sourceToCheck = isModuleCode
-      ? body
-      : `const DynamicAnimation = () => {\n${body}\n};`;
-
-    parse(sourceToCheck, {
+    parse(normalized.normalizedCode, {
       sourceType: 'module',
       plugins: ['jsx', 'typescript'],
       errorRecovery: false,

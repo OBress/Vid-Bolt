@@ -13,6 +13,12 @@ import { useVideoEditorStore, getTypedState, useTypedStore } from '../../../../s
 import { useMediaAdaptors } from '../../../../contexts/media-adaptor-context';
 import { calculateIntelligentAssetSize, getAssetDimensions } from '../../../../utils/asset-sizing';
 import type { TimelineClip, ClipTransform } from '../../../../types/timeline-v2';
+import {
+  ensureNormalizedTimelineAudio,
+  getMediaSourceUrl,
+  getNormalizationBlockReason,
+  getNormalizedAudioUrl,
+} from '../../../../utils/audio-normalization';
 
 interface UseTimelineHandlersProps {
   playerRef: React.RefObject<any>;
@@ -191,7 +197,7 @@ export const useTimelineHandlers = ({
 
   // Handler for new item drop from media panel
   const handleNewItemDrop = React.useCallback(
-    (
+    async (
       itemType: string,
       trackIndex: number,
       startTime: number,
@@ -219,9 +225,19 @@ export const useTimelineHandlers = ({
       
       const canvasDimensions = getAspectRatioDimensions();
       const duration = itemData?.duration || 5;
+      const projectId = getTypedState().projectId || undefined;
       
       if (itemType === 'video' && itemData?.data) {
         const video = itemData.data;
+        const videoBlockReason = getNormalizationBlockReason({
+          ...video,
+          type: 'video',
+        });
+
+        if (videoBlockReason) {
+          window.alert(videoBlockReason);
+          return;
+        }
         
         let videoUrl: string = '';
         
@@ -239,8 +255,13 @@ export const useTimelineHandlers = ({
         
         // Fallback: try common URL properties if adaptor lookup failed
         if (!videoUrl) {
-          videoUrl = video.src || video.url || video.videoUrl || video.file || video.hd?.url || '';
+          videoUrl = getMediaSourceUrl(video) || video.videoUrl || video.hd?.url || '';
         }
+
+        const normalizedVideoAudioUrl = getNormalizedAudioUrl({
+          ...video,
+          type: 'video',
+        });
         
         // Fill the entire canvas - standard NLE behavior
         const transform: ClipTransform = {
@@ -265,7 +286,7 @@ export const useTimelineHandlers = ({
             mediaStartTime: 0,
             mediaDuration: duration,
             speed: 1,
-            volume: 1,
+            volume: 0,
           },
           thumbnailUrl: video.thumbnail || video.thumbnailUrl,
           styles: {
@@ -278,6 +299,10 @@ export const useTimelineHandlers = ({
             thumbnailUrl: video.thumbnail || video.thumbnailUrl,
             width: video.width,
             height: video.height,
+            audioSourceMode: 'separate_normalized',
+            audioNormalizationStatus: video.audioNormalizationStatus ?? 'completed',
+            normalizedAudioUrl: normalizedVideoAudioUrl,
+            hasEmbeddedAudio: video.hasEmbeddedAudio ?? false,
           },
         });
         
@@ -332,13 +357,13 @@ export const useTimelineHandlers = ({
           audioTrack = audioTracks.find(t => !t.locked) || audioTracks[0];
         }
         
-        if (audioTrack) {
+        if (audioTrack && normalizedVideoAudioUrl) {
           const audioClipId = addClip({
             trackId: audioTrack.id,
             startTime,
             duration,
             type: 'audio',
-            sourceId: videoUrl,
+            sourceId: normalizedVideoAudioUrl,
             label: 'Audio',
             transform: {
               x: 0,
@@ -355,8 +380,11 @@ export const useTimelineHandlers = ({
             },
             linkedClipId: videoClipId,
             data: {
-              src: videoUrl,
-              originalUrl: videoUrl,
+              src: normalizedVideoAudioUrl,
+              originalUrl: normalizedVideoAudioUrl,
+              normalizedAudioUrl: normalizedVideoAudioUrl,
+              audioNormalizationStatus: 'completed',
+              requiresNormalizedAudio: true,
             },
           });
           
@@ -425,7 +453,22 @@ export const useTimelineHandlers = ({
         selectClips([imageClipId]);
       } else if (itemType === 'audio' && itemData?.data) {
         const audio = itemData.data;
-        const audioUrl = audio.src || audio.url || audio.file || '';
+        let normalizedAudio;
+        try {
+          normalizedAudio = await ensureNormalizedTimelineAudio(
+            {
+              ...audio,
+              type: 'audio',
+            },
+            projectId,
+          );
+        } catch (error) {
+          window.alert(
+            error instanceof Error ? error.message : 'Failed to normalize audio',
+          );
+          return;
+        }
+        const audioUrl = normalizedAudio.url;
         
         const audioClipId = addClip({
           trackId: targetTrack.id,
@@ -449,7 +492,10 @@ export const useTimelineHandlers = ({
           },
           data: {
             src: audioUrl,
-            originalUrl: audioUrl,
+            originalUrl: getMediaSourceUrl(audio) || audioUrl,
+            normalizedAudioUrl: normalizedAudio.normalizedAudioUrl,
+            audioNormalizationStatus: normalizedAudio.audioNormalizationStatus,
+            requiresNormalizedAudio: true,
           },
         });
         

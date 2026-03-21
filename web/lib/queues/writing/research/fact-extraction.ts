@@ -60,6 +60,8 @@ export interface ExtractionOptions {
   isDeepResearch?: boolean;
   /** Source preferences from user */
   sourcePreferences?: string;
+  /** OpenRouter model to use for extraction */
+  model?: string;
 }
 
 // ============================================================================
@@ -81,7 +83,7 @@ export async function extractAndVerifyFacts(
   questions: ResearchQuestion[],
   options: ExtractionOptions = {}
 ): Promise<ExtractedFacts> {
-  const { isDeepResearch = false, sourcePreferences } = options;
+  const { isDeepResearch = false, sourcePreferences, model } = options;
 
   const allFacts: VerifiedFact[] = [];
   const allQuotes: AttributableQuote[] = [];
@@ -186,7 +188,7 @@ Return as JSON:
         userId,
         UNIVERSAL_PROMPTS.factExtraction,
         userPrompt,
-        { searchContextSize: 'high' }
+        { model, searchContextSize: 'high' }
       );
 
       // Convert web citations to source citations

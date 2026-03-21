@@ -284,7 +284,10 @@ export function clipToOverlay(
         styles: {
           opacity,
           zIndex,
-          volume: clip.media?.volume ?? 1,
+          volume:
+            clip.data?.audioSourceMode === 'separate_normalized'
+              ? 0
+              : (clip.media?.volume ?? 1),
           ...clip.styles,
         },
       };

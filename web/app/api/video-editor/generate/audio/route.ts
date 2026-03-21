@@ -19,6 +19,7 @@ import {
 } from '@/lib/services/r2-storage';
 import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
 import { v4 as uuidv4 } from 'uuid';
+import { normalizeAudioFromR2 } from '@/lib/services/audio-normalizer';
 
 const getWebhookUrl = () =>
   process.env.WEBHOOK_CALLBACK_URL || 'http://localhost:3000/api/gpu-callback';
@@ -114,12 +115,35 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const normalized = await normalizeAudioFromR2(publicUrl, r2Key, {
+      inputFormat: 'wav',
+      outputFormat: 'wav',
+    });
+    const normalizationCompleted =
+      normalized.normalized || normalized.skipReason === 'Already within tolerance';
+
+    if (!normalizationCompleted) {
+      return NextResponse.json(
+        {
+          error:
+            normalized.skipReason ||
+            'Music generation succeeded but audio normalization failed',
+        },
+        { status: 500 }
+      );
+    }
+
     // 7. Return the public URL
     return NextResponse.json({
       url: publicUrl,
       jobId,
       generationTime: result.generationTime,
       durationSeconds: gpuRequest.duration_seconds,
+      audioNormalizationStatus: 'completed',
+      normalizedAudioUrl: publicUrl,
+      originalLufs: normalized.originalLufs,
+      normalizedLufs: normalized.normalizedLufs,
+      truePeakDbtp: normalized.originalTruePeak,
     });
   } catch (error) {
     console.error('[generate/audio] Error:', error);

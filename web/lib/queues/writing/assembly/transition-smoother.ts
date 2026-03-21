@@ -6,7 +6,7 @@
  */
 
 import { generateJSON, type OpenRouterConfig } from '@/lib/ai/openrouter';
-import type { ExpandedBeat, Spine } from '../types';
+import type { ExpandedBeat, ScriptGenre, Spine } from '../types';
 import { countWords } from '../utils';
 
 // ============================================================================
@@ -41,11 +41,17 @@ export interface TransitionSmoothingResult {
   averageTransitionScore: number;
 }
 
+export interface TransitionSmoothingOptions {
+  genre: ScriptGenre;
+  model?: string;
+  transitionPromptOverride?: string;
+}
+
 // ============================================================================
 // PROMPTS
 // ============================================================================
 
-const TRANSITION_ANALYSIS_PROMPT = `Analyze the transition between these two consecutive beats in a YouTube documentary script.
+const TRANSITION_ANALYSIS_PROMPT = `Analyze the transition between these two consecutive beats in a YouTube script.
 
 BEAT {n} ENDING:
 "{beatEnding}"
@@ -66,7 +72,7 @@ BEAT {n+1} OPENING:
 - Ending on a complete thought with no forward momentum
 - Opening that ignores what just happened
 
-## DOCUMENTARY-SPECIFIC CHECKS:
+## FORMAT-SPECIFIC CHECKS:
 - Does the ending create curiosity for what's next?
 - Does the opening feel like a natural continuation?
 - Is there implicit temporal or causal linkage?
@@ -86,7 +92,7 @@ Return ONLY valid JSON:
 
 If the transition scores 7+ overall, set needsFix to false and omit rewrites.`;
 
-const TRANSITION_REWRITE_PROMPT = `You are a documentary script editor smoothing the transition between two beats.
+const TRANSITION_REWRITE_PROMPT = `You are a YouTube script editor smoothing the transition between two beats.
 
 CONTEXT: This transition connects Beat {n} to Beat {n+1} in a YouTube video.
 
@@ -125,7 +131,8 @@ Return JSON only:
 export async function smoothTransitions(
   userId: string,
   expandedBeats: ExpandedBeat[],
-  _spine: Spine
+  _spine: Spine,
+  options: TransitionSmoothingOptions,
 ): Promise<TransitionSmoothingResult> {
   console.log(`[TransitionSmoother] Analyzing ${expandedBeats.length - 1} transitions...`);
 
@@ -158,7 +165,8 @@ export async function smoothTransitions(
         userId,
         i,
         beatEnding,
-        beatOpening
+        beatOpening,
+        options,
       );
 
       analyses.push(analysis);
@@ -172,7 +180,8 @@ export async function smoothTransitions(
           i,
           beatEnding,
           beatOpening,
-          analysis.issues
+          analysis.issues,
+          options,
         );
 
         if (fixed) {
@@ -222,7 +231,8 @@ async function analyzeTransition(
   userId: string,
   beatIndex: number,
   beatEnding: string,
-  beatOpening: string
+  beatOpening: string,
+  options: TransitionSmoothingOptions,
 ): Promise<TransitionAnalysis> {
   const prompt = TRANSITION_ANALYSIS_PROMPT
     .replace(/{n}/g, String(beatIndex + 1))
@@ -231,14 +241,16 @@ async function analyzeTransition(
 
   try {
     const config: OpenRouterConfig = {
-      model: TRANSITION_MODEL,
+      model: options.model || TRANSITION_MODEL,
       temperature: 0.3,
     };
 
     const response = await generateJSON<TransitionAnalysis>(
       userId,
-      'Analyze script transitions for quality.',
-      prompt,
+      options.transitionPromptOverride
+        ? `${options.transitionPromptOverride}\n\nAnalyze script transitions for quality.`
+        : 'Analyze script transitions for quality.',
+      `${prompt}\n\nACTIVE GENRE: ${options.genre}`,
       config
     );
 
@@ -269,7 +281,8 @@ async function fixTransition(
   beatIndex: number,
   currentEnding: string,
   currentOpening: string,
-  issues: string[]
+  issues: string[],
+  options: TransitionSmoothingOptions,
 ): Promise<{ rewrittenEnding: string; rewrittenOpening: string } | null> {
   const prompt = TRANSITION_REWRITE_PROMPT
     .replace(/{n}/g, String(beatIndex + 1))
@@ -279,14 +292,16 @@ async function fixTransition(
 
   try {
     const config: OpenRouterConfig = {
-      model: TRANSITION_MODEL,
+      model: options.model || TRANSITION_MODEL,
       temperature: 0.6,
     };
 
     return await generateJSON<{ rewrittenEnding: string; rewrittenOpening: string }>(
       userId,
-      'Rewrite script transitions for smooth flow.',
-      prompt,
+      options.transitionPromptOverride
+        ? `${options.transitionPromptOverride}\n\nRewrite script transitions for smooth flow.`
+        : 'Rewrite script transitions for smooth flow.',
+      `${prompt}\n\nACTIVE GENRE: ${options.genre}`,
       config
     );
   } catch (error) {

@@ -57,6 +57,7 @@ import {
   gpuShutdownCheckProcessor,
   videoRenderProcessor,
   editAssemblyProcessor,
+  mediaNormalizationProcessor,
   orchestratorProcessor,
   shotPlannerProcessor,
   assetScoutProcessor,
@@ -221,6 +222,12 @@ const workerConfigs: WorkerConfig[] = [
     processor: editAssemblyProcessor,
     concurrency: 3,
     description: 'AI-driven EDL generation for video editing',
+  },
+  {
+    queue: 'media-normalization',
+    processor: mediaNormalizationProcessor,
+    concurrency: 2,
+    description: 'Video editor audio normalization',
   },
   {
     queue: 'orchestrator',

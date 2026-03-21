@@ -33,7 +33,7 @@ export type VideoStage = typeof VIDEO_STAGES[number] | 'idea' | 'stock' | 'media
  */
 export type RoutingTag =
   // Core GPU generation
-  | 'ai_video'                        // → GPU API: LTX-2 video generation
+  | 'ai_video'                        // → GPU API: LTX-2.3 video generation
   | 'ai_image'                        // → GPU API: Z-Image Turbo images
   // Stock media
   | 'stock_image'                     // → Valyu Search: static photos
@@ -62,6 +62,105 @@ export const ROUTING_TAG_CONFIG: Record<RoutingTag, { style: string; label: stri
   remotion_image_manipulation: { style: 'bg-purple-900/50 text-purple-300', label: 'Image FX' },
   remotion_video_manipulation: { style: 'bg-fuchsia-900/50 text-fuchsia-300', label: 'Video FX' },
 };
+
+// ============================================================================
+// MOTION GRAPHICS STRATEGY TYPES
+// ============================================================================
+
+export const MOTION_GRAPHICS_MODES = ['template', 'freeform'] as const;
+export type MotionGraphicsMode = typeof MOTION_GRAPHICS_MODES[number];
+
+export const MOTION_GRAPHICS_TEMPLATE_TYPES = [
+  'map_focus',
+  'timeline',
+  'evidence_board',
+  'document_callout',
+  'quote_card',
+  'lower_third',
+  'photo_montage',
+  'comparison_board',
+  'route_trace',
+  'process_diagram',
+] as const;
+export type MotionGraphicsTemplateType = typeof MOTION_GRAPHICS_TEMPLATE_TYPES[number];
+
+export const PERSISTENT_GRAPHIC_TYPES = [
+  'crime_board',
+  'relationship_board',
+  'investigation_wall',
+  'timeline_board',
+  'route_map',
+  'evidence_dossier',
+  'entity_comparison',
+  'state_of_story',
+] as const;
+export type PersistentGraphicType = typeof PERSISTENT_GRAPHIC_TYPES[number];
+
+export const MG_ASSET_KINDS = [
+  'image',
+  'video',
+  'document',
+  'logo',
+  'portrait',
+  'screenshot',
+  'diagram',
+  'stock',
+  'reference',
+  'placeholder',
+  'video_context',
+] as const;
+export type MGAssetKind = typeof MG_ASSET_KINDS[number];
+
+export interface MotionGraphicsAssetBundleItem {
+  /** Stable asset identifier within the shot/template */
+  id: string;
+  /** R2 or placeholder URL */
+  url: string;
+  /** Semantic asset type for template routing */
+  asset_kind: MGAssetKind;
+  /** Human-readable label used in prompts/debugging */
+  label?: string;
+  /** What this asset should represent in the composition */
+  usage?: string;
+  /** Descriptive context for the model/template system */
+  description?: string;
+  /** Origin of this asset */
+  source?: 'generated' | 'stock' | 'reference' | 'placeholder';
+  /** Optional source shot when borrowed from nearby shots */
+  source_shot_index?: number;
+}
+
+export interface GraphicStatePatch {
+  /** Override title/headline for the persistent graphic */
+  headline?: string;
+  /** Short notes or bullet updates to reveal */
+  notes?: string[];
+  /** Labels/items to add to the current persistent graphic */
+  add_labels?: string[];
+  /** Labels/items that should be removed or resolved */
+  remove_labels?: string[];
+  /** Which label/item should receive emphasis in this shot */
+  focus_label?: string;
+  /** Narrative update status for the persistent graphic */
+  status?: 'introduced' | 'updated' | 'revealed' | 'resolved';
+}
+
+export interface PersistentMotionGraphicState {
+  id: string;
+  type: PersistentGraphicType;
+  template_type: MotionGraphicsTemplateType;
+  title?: string;
+  subtitle?: string;
+  focus_label?: string;
+  notes?: string[];
+  items?: Array<{
+    label: string;
+    detail?: string;
+    asset_index?: number;
+    emphasis?: 'normal' | 'highlighted' | 'dim';
+  }>;
+  updated_at_shot?: number;
+}
 
 /**
  * Sound effect with millisecond-precise timing
@@ -174,6 +273,10 @@ export interface GeneratedMedia {
   media_url?: string;
   /** Thumbnail URL for video/motion content */
   thumbnail_url?: string;
+  /** Whether the generated video asset has an embedded audio stream */
+  has_audio?: boolean;
+  /** Normalized linked audio URL extracted from the generated video */
+  normalized_audio_url?: string;
   /** The visual prompt used for generation (for video: describes motion/animation) */
   visual_prompt: string;
   
@@ -214,6 +317,18 @@ export interface GeneratedMedia {
   remotion_code?: string;
   /** Lucide-react icon names used in the generated Remotion code */
   used_icons?: string[];
+  /** MG generation lane used for this shot */
+  mg_mode?: MotionGraphicsMode;
+  /** Deterministic template type when mg_mode=template */
+  template_type?: MotionGraphicsTemplateType;
+  /** Asset bundle consumed by the MG renderer */
+  mg_asset_bundle?: MotionGraphicsAssetBundleItem[];
+  /** Stable ID for reusable graphics across shots */
+  persistent_graphic_id?: string;
+  /** Reusable graphic family/type */
+  persistent_graphic_type?: PersistentGraphicType;
+  /** Patch applied to the persistent graphic for this shot */
+  graphic_state_patch?: GraphicStatePatch;
   
   // ═══════════════════════════════════════════════════════════════════════════
   // Clip trim data (from VLM-guided clip trimmer)

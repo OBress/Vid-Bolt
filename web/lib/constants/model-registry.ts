@@ -96,12 +96,12 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
   // ── Video Generation ──────────────────────────────────────────────────
   {
     id: 'local-ltx2',
-    label: 'LTX-2 19B',
+    label: 'LTX-2.3 22B',
     provider: 'local',
     category: 'video',
     pricing: null,
     replicateModelId: null,
-    description: 'Generates video clips using your local GPU API.',
+    description: 'Generates video clips using your local LTX-2.3 GPU API.',
   },
   {
     id: 'replicate-veo-3.1',

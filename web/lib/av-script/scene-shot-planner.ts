@@ -20,6 +20,21 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { generateJSON, QUALITY_REVIEW_MODEL } from '@/lib/ai/openrouter';
 import { NarrativeBeat } from '@/lib/types/closed-loop';
+import {
+  MOTION_GRAPHICS_MODES,
+  MOTION_GRAPHICS_TEMPLATE_TYPES,
+  PERSISTENT_GRAPHIC_TYPES,
+  type GraphicStatePatch,
+  type MotionGraphicsMode,
+  type MotionGraphicsTemplateType,
+  type PersistentGraphicType,
+} from '@/types/video';
+import {
+  getRecommendedPlaceholderCount,
+  hasMeaningfulGraphicPatch,
+  inferTemplateType,
+  resolveMotionGraphicsMode,
+} from '@/lib/services/motion-graphics/strategy';
 import type { EnrichedScene, WordTimestamp } from './scene-decomposer';
 
 // ============================================================================
@@ -42,7 +57,20 @@ const SceneShotOutput = z.object({
   synthesis_mode: z.enum(['T2V', 'I2V']),
   continuity_from_previous: z.boolean(),
   angle_change: z.string(),
+  image_count: z.number().int().min(1).max(6).optional(),
   image_edit_instruction: z.string(),
+  mg_mode: z.enum(MOTION_GRAPHICS_MODES).optional(),
+  template_type: z.enum(MOTION_GRAPHICS_TEMPLATE_TYPES).optional(),
+  persistent_graphic_id: z.string().optional(),
+  persistent_graphic_type: z.enum(PERSISTENT_GRAPHIC_TYPES).optional(),
+  graphic_state_patch: z.object({
+    headline: z.string().optional(),
+    notes: z.array(z.string()).optional(),
+    add_labels: z.array(z.string()).optional(),
+    remove_labels: z.array(z.string()).optional(),
+    focus_label: z.string().optional(),
+    status: z.enum(['introduced', 'updated', 'revealed', 'resolved']).optional(),
+  }).optional(),
   sound_effects: z.array(z.object({
     type: z.string(),
     description: z.string(),
@@ -79,11 +107,17 @@ export interface EnrichedPlannedShot {
     anchor_word?: string;
   }>;
   image_count: number;
+  visual_treatment?: 'stock' | 'archival' | 'mg_template' | 'ai_image' | 'ai_video' | 'hybrid';
+  mg_mode?: MotionGraphicsMode;
+  template_type?: MotionGraphicsTemplateType;
   scene_id: string;
   narrative_beat: string;
   continuity_from_previous: boolean;
   angle_change?: string;
   image_edit_instruction?: string;
+  persistent_graphic_id?: string;
+  persistent_graphic_type?: PersistentGraphicType;
+  graphic_state_patch?: GraphicStatePatch;
   entity_refs: string[];
 }
 
@@ -213,7 +247,29 @@ CREATIVE IMAGE EDITING (image_edit_instruction):
 - image_edit_instruction edits the shot's OWN keyframe or stock image for creative effect.
 - Examples: "add a crown to the person's head", "make the background apocalyptic", "highlight the chart data in red", "add dramatic storm clouds", "overlay a red X across the image"
 - Set to empty string "" when no creative edit is needed (most shots won't need this).
-- Use sparingly and purposefully — only when the edit genuinely enhances storytelling.`);
+- Use sparingly and purposefully — only when the edit genuinely enhances storytelling.
+
+MOTION GRAPHICS STRATEGY:
+- If media_type is "motiongraphic", ALSO decide whether the shot should use mg_mode "template" or "freeform".
+- Use mg_mode: "template" for deterministic documentary graphics such as maps, route traces, timelines, evidence boards, document callouts, quote cards, lower thirds, photo montages, comparison boards, and process diagrams.
+- Use mg_mode: "freeform" only when the motion graphic truly needs bespoke animated treatment that doesn't fit a documentary template.
+- template_type is optional, but when mg_mode is "template" you should usually provide one of:
+  map_focus, route_trace, timeline, evidence_board, document_callout, quote_card, lower_third, photo_montage, comparison_board, process_diagram
+- Use image_count > 1 when the template would benefit from multiple stills, especially for evidence boards, photo montages, and comparison boards.
+
+PERSISTENT GRAPHICS:
+- When a board/map/timeline/relationship graphic should evolve across multiple shots, provide persistent_graphic_id and persistent_graphic_type.
+- Reuse the SAME persistent_graphic_id for every shot that updates the same graphic.
+- persistent_graphic_type should be one of:
+  crime_board, relationship_board, investigation_wall, timeline_board, route_map, evidence_dossier, entity_comparison, state_of_story
+- Use graphic_state_patch to describe what changes in this shot:
+  - headline: optional new title
+  - notes: short note cards or annotations to add
+  - add_labels: new labels/items to introduce
+  - remove_labels: labels/items that should be removed or marked resolved
+  - focus_label: which label/item should be emphasized now
+  - status: introduced, updated, revealed, or resolved
+- Only use persistent graphics when they add real narrative continuity. Do NOT force them into every scene.`);
 
   return parts.join('\n');
 }
@@ -225,6 +281,20 @@ SCENE TEXT (word indices ${scene.start_word_index}-${scene.end_word_index}):
 "${scene.text}"
 
 Generate the shot plan JSON for this scene.`;
+}
+
+function inferVisualTreatment(
+  mediaType: 'video' | 'motiongraphic',
+  stockWorthy: boolean,
+  mgMode?: MotionGraphicsMode,
+  visualElements: string[] = [],
+): EnrichedPlannedShot['visual_treatment'] {
+  if (mediaType === 'motiongraphic') {
+    return mgMode === 'template' ? 'mg_template' : 'hybrid';
+  }
+  if (stockWorthy || visualElements.some((tag) => tag.startsWith('stock_'))) return 'stock';
+  if (visualElements.includes('ai_image')) return 'ai_image';
+  return 'ai_video';
 }
 
 // ============================================================================
@@ -326,6 +396,36 @@ function postProcessSceneShots(
     const startSec = wordTimestamps[shot.start_word_index].start_seconds;
     const endSec = wordTimestamps[shot.end_word_index].end_seconds;
     const text = words.slice(shot.start_word_index, shot.end_word_index + 1).join(' ');
+    const resolvedMgMode = shot.media_type === 'motiongraphic'
+      ? resolveMotionGraphicsMode({
+          prompt: shot.visual_description,
+          requestedMode: shot.mg_mode,
+          requestedTemplateType: shot.template_type,
+          imageCount: shot.image_count || 1,
+          persistentGraphicType: shot.persistent_graphic_type,
+        })
+      : undefined;
+    const resolvedTemplateType = resolvedMgMode === 'template'
+      ? inferTemplateType({
+          prompt: shot.visual_description,
+          requestedMode: resolvedMgMode,
+          requestedTemplateType: shot.template_type,
+          imageCount: shot.image_count || 1,
+          persistentGraphicType: shot.persistent_graphic_type,
+        })
+      : undefined;
+    const imageCount = shot.media_type === 'motiongraphic'
+      ? Math.max(
+          shot.image_count || 1,
+          resolvedTemplateType
+            ? getRecommendedPlaceholderCount(resolvedTemplateType, shot.image_count || 1)
+            : 1
+        )
+      : 1;
+    const persistentGraphicId = shot.persistent_graphic_id?.trim() || undefined;
+    const graphicStatePatch = hasMeaningfulGraphicPatch(shot.graphic_state_patch)
+      ? shot.graphic_state_patch
+      : undefined;
 
     // Compute SFX timing from anchor words
     const soundEffects = shot.sound_effects
@@ -364,7 +464,15 @@ function postProcessSceneShots(
       stock_worthy: shot.stock_worthy,
       stock_search_query: shot.stock_search_query || undefined,
       sound_effects: soundEffects,
-      image_count: 1,
+      image_count: imageCount,
+      visual_treatment: inferVisualTreatment(
+        shot.media_type,
+        shot.stock_worthy,
+        resolvedMgMode,
+        shot.visual_elements,
+      ),
+      mg_mode: resolvedMgMode,
+      template_type: resolvedTemplateType,
       scene_id: scene.scene_id,
       narrative_beat: shot.narrative_beat,
       continuity_from_previous: shot.continuity_from_previous,
@@ -374,6 +482,9 @@ function postProcessSceneShots(
       image_edit_instruction: shot.image_edit_instruction
         ? shot.image_edit_instruction
         : undefined,
+      persistent_graphic_id: persistentGraphicId,
+      persistent_graphic_type: shot.persistent_graphic_type || undefined,
+      graphic_state_patch: graphicStatePatch,
       entity_refs: [],
     };
   });

@@ -42,6 +42,55 @@ export interface AssetScoutJobData {
 
 const LOG_PREFIX = '[AssetScout]';
 
+function resolveAssetSource(shot: PlannedShot): AssetEntry['source'] {
+  switch (shot.visual_treatment) {
+    case 'stock':
+    case 'archival':
+      return 'stock';
+    case 'ai_image':
+      return 'ai_image';
+    case 'ai_video':
+      return 'ai_video';
+    case 'mg_template':
+    case 'hybrid':
+      return 'motiongraphic';
+    default:
+      if (shot.media_type === 'stock') return 'stock';
+      if (shot.media_type === 'image') return 'ai_image';
+      if (shot.media_type === 'video') return 'ai_video';
+      return 'motiongraphic';
+  }
+}
+
+function buildClusterPromptNote(shots: PlannedShot[], currentIndex: number): string {
+  const shot = shots[currentIndex];
+  if (!shot.scene_cluster_id) return '';
+
+  const clusterShots = shots.filter(candidate => candidate.scene_cluster_id === shot.scene_cluster_id);
+  if (clusterShots.length < 2) return '';
+
+  const anchor = clusterShots[0];
+  if (anchor.segment_index === shot.segment_index) {
+    return 'This shot establishes a continuity cluster. Make the setting, character styling, and visual identity clear enough for follow-up shots to inherit.';
+  }
+
+  return [
+    'This shot belongs to a continuity cluster.',
+    `Match the established world of the anchor shot: "${anchor.visual_description || anchor.summary || anchor.text}".`,
+    'Preserve the same setting, entity styling, lighting language, and visual identity while changing framing or action as needed.',
+  ].join(' ');
+}
+
+function buildBreakdownPromptNote(shot: PlannedShot): string {
+  if (!shot.breakdown_sequence_id || !shot.breakdown_role) return '';
+
+  return [
+    `This shot is part of connected breakdown sequence ${shot.breakdown_sequence_id}.`,
+    `Its role is ${shot.breakdown_role}.`,
+    'Preserve continuity with adjacent shots while changing the scale of explanation rather than inventing a new world.',
+  ].join(' ');
+}
+
 export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
   job: Job<AssetScoutJobData>
 ) => {
@@ -174,8 +223,9 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
       }
 
       const entries: AssetEntry[] = [];
+      const resolvedPrompts: Record<string, string> = {};
       let stockCount = 0;
-      const aiImageCount = 0;
+      let aiImageCount = 0;
       let aiVideoCount = 0;
       let mgCount = 0;
       let sfxCount = 0;
@@ -192,27 +242,27 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
           : '';
 
 
-        let enrichedPrompt = `${shot.visual_description || shot.summary || shot.text}${entityContext}`;
+        const enrichedPrompt = `${shot.visual_description || shot.summary || shot.text}${entityContext}`;
 
 
         // Neighbor context: inject awareness of surrounding shots' visual intent
         const neighborCtx = getShotNeighborContext(shots, i);
-        const enrichedPromptWithContext = neighborCtx.compactNote
-          ? `${enrichedPrompt} [${neighborCtx.compactNote}]`
+        const promptNotes = [
+          neighborCtx.compactNote,
+          buildClusterPromptNote(shots, i),
+          buildBreakdownPromptNote(shot),
+        ].filter(Boolean);
+        const enrichedPromptWithContext = promptNotes.length > 0
+          ? `${enrichedPrompt} [${promptNotes.join(' ')}]`
           : enrichedPrompt;
 
 
-        let source: AssetEntry['source'] = 'motiongraphic';
-        if (shot.media_type === 'stock') {
-          source = 'stock';
+        const source = resolveAssetSource(shot);
+        if (source === 'stock') {
           stockCount++;
-        } else if (shot.media_type === 'video') {
-          source = 'ai_video';
-          aiVideoCount++;
-        } else if (shot.media_type === 'image') {
-          // Upgrade standalone AI images → ai_video (static AI images are not engaging)
-          // AI images can still be used INSIDE motion graphics as composited assets
-          source = 'ai_video';
+        } else if (source === 'ai_image') {
+          aiImageCount++;
+        } else if (source === 'ai_video') {
           aiVideoCount++;
         } else {
           mgCount++;
@@ -236,6 +286,7 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
             trigger_at_seconds: shot.sound_effects[0].trigger_at_seconds,
           } : undefined,
         });
+        resolvedPrompts[`shot-${shot.segment_index}`] = enrichedPromptWithContext;
 
         // Progress update every 5 shots
         if (!isClosedLoop && i % 5 === 0) {
@@ -279,6 +330,7 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
             ...metadata,
             asset_manifest: manifest,
             scraped_stock_images: stockUrlMap,
+            resolved_prompts: resolvedPrompts,
           },
           updated_at: new Date().toISOString(),
         })

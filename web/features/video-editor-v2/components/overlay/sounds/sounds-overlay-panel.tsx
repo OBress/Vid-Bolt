@@ -9,6 +9,7 @@ import { SoundDetails } from "./sound-details";
 import { UnifiedTabs } from "../shared/unified-tabs";
 import SoundCard, { AudioWithSource } from "./sound-card";
 import { getSrcDuration } from "../../../hooks/use-src-duration";
+import { ensureNormalizedTimelineAudio } from "../../../utils/audio-normalization";
 
 /**
  * Ensure audio track exists
@@ -60,6 +61,7 @@ const SoundsOverlayPanel: React.FC = () => {
   const addClip = useVideoEditorStore(s => s.addClip);
   const selectClip = useVideoEditorStore(s => s.selectClip);
   const currentTime = useVideoEditorStore(s => s.playback?.currentTime || 0);
+  const projectId = useVideoEditorStore(s => s.projectId);
 
   /**
    * Load audio tracks from adaptors on component mount
@@ -156,6 +158,24 @@ const SoundsOverlayPanel: React.FC = () => {
       console.warn("Failed to get audio duration, using fallback:", error);
     }
 
+    let normalizedAudio;
+    try {
+      normalizedAudio = await ensureNormalizedTimelineAudio(
+        {
+          type: 'audio',
+          file: sound.file,
+          name: sound.title,
+          projectId,
+        },
+        projectId,
+      );
+    } catch (error) {
+      window.alert(
+        error instanceof Error ? error.message : 'Failed to normalize sound',
+      );
+      return;
+    }
+
     const trackId = ensureAudioTrack();
     
     const clipId = addClip({
@@ -163,7 +183,7 @@ const SoundsOverlayPanel: React.FC = () => {
       startTime: currentTime,
       duration,
       type: 'audio',
-      sourceId: sound.file,
+      sourceId: normalizedAudio.url,
       label: sound.title,
       transform: {
         x: 0,
@@ -181,8 +201,11 @@ const SoundsOverlayPanel: React.FC = () => {
         volume: 1,
       },
       data: {
-        src: sound.file,
+        src: normalizedAudio.url,
         originalUrl: sound.file,
+        normalizedAudioUrl: normalizedAudio.normalizedAudioUrl,
+        audioNormalizationStatus: normalizedAudio.audioNormalizationStatus,
+        requiresNormalizedAudio: true,
       },
     });
     

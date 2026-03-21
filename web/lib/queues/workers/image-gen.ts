@@ -32,6 +32,10 @@ export interface ImageGenJobData {
   taskId: string;
   userId: string;
   videoId: string;
+  /** When set, only generate this one shot */
+  singleShotIndex?: number;
+  /** Backward-compatible alias used by the orchestrator */
+  shotIndex?: number;
   /** Aspect ratio for generation */
   aspectRatio?: '16:9' | '9:16';
   /** Optional LoRA name to apply for all image generations */
@@ -46,10 +50,39 @@ export interface ImageGenJobData {
 
 const LOG_PREFIX = '[ImageGen]';
 
+function getResolvedPromptForShot(
+  metadata: Record<string, unknown>,
+  shot: Record<string, unknown>,
+): string {
+  const shotKey = `shot-${shot.segment_index as number}`;
+  const resolvedPrompts = (metadata.resolved_prompts || {}) as Record<string, string>;
+  const assetEntries = ((((metadata.asset_manifest || {}) as Record<string, unknown>).entries) || []) as Array<Record<string, unknown>>;
+  const assetEntry = assetEntries.find(entry => (entry.segment_index as number) === (shot.segment_index as number));
+
+  return resolvedPrompts[shotKey]
+    || (assetEntry?.visual_prompt as string | undefined)
+    || (shot.visual_prompt as string | undefined)
+    || (shot.visual_description as string | undefined)
+    || (shot.summary as string | undefined)
+    || `Visual for segment ${shot.segment_index as number}`;
+}
+
 export const imageGenProcessor: Processor<ImageGenJobData> = async (
   job: Job<ImageGenJobData>
 ) => {
-  const { taskId, userId, videoId, aspectRatio = '16:9', loraName, loraTriggerWords } = job.data;
+  const {
+    taskId,
+    userId,
+    videoId,
+    aspectRatio = '16:9',
+    loraName,
+    loraTriggerWords,
+    singleShotIndex,
+    shotIndex,
+  } = job.data;
+  const requestedShotIndex = typeof singleShotIndex === 'number'
+    ? singleShotIndex
+    : shotIndex;
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
 
@@ -94,13 +127,18 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
         return { success: true, videoId, stats: { imagesGenerated: 0, imagesFailed: 0 } };
       }
 
-      // Filter to only image-needing shots (not pure MG or stock)
+      // Filter to true image-led shots unless a specific shot was requested.
       const gpuShots: ShotForGpuGeneration[] = shots
         .filter((s: Record<string, unknown>) => {
+          const segmentIndex = s.segment_index as number;
+          if (typeof requestedShotIndex === 'number') {
+            return segmentIndex === requestedShotIndex;
+          }
           const mediaType = s.media_type as string;
-          return mediaType !== 'stock'; // Image and video shots both need keyframe images
+          const visualTreatment = s.visual_treatment as string | undefined;
+          return visualTreatment === 'ai_image' || mediaType === 'image';
         })
-        .map((s: Record<string, unknown>, idx: number, filtered: Record<string, unknown>[]) => {
+        .map((s: Record<string, unknown>) => {
           // Build neighbor context from the full shot list for visual continuity
           const neighborCtx = getShotNeighborContext(
             shots as any[], // Full shot list for context
@@ -109,8 +147,8 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
 
           return {
             segment_index: s.segment_index as number,
-            media_type: (s.media_type as 'video' | 'motiongraphic') || 'motiongraphic',
-            visual_prompt: (s.visual_prompt as string) || (s.summary as string) || `Visual for segment ${s.segment_index}`,
+            media_type: 'image' as const,
+            visual_prompt: getResolvedPromptForShot(metadata, s),
             duration_seconds: (s.duration_seconds as number) || 5,
             start_frame_url: undefined,
             visual_elements: s.visual_elements as import('@/types/video').RoutingTag[] | undefined,
@@ -121,6 +159,20 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
         });
 
       console.log(`${LOG_PREFIX} ${gpuShots.length} shots need image generation`);
+
+      if (gpuShots.length === 0) {
+        await updateTaskStatus(taskId, {
+          status: 'completed',
+          current_step: 'No image-led shots to generate',
+          progress_percent: 100,
+        });
+        return {
+          success: true,
+          videoId,
+          ...(typeof requestedShotIndex === 'number' ? { mediaUrl: '' } : {}),
+          stats: { imagesGenerated: 0, imagesFailed: 0 },
+        };
+      }
 
       // =====================================================================
       // STEP 2: Run GPU batch generation (image mode only)
@@ -146,21 +198,15 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
         console.log(`${LOG_PREFIX} Images: ${event.completed}/${event.total}`);
       };
 
-      // Override all shots to image type for this worker — the video-gen worker handles video later
-      const imageShotsOnly = gpuShots.map(s => ({
-        ...s,
-        media_type: 'motiongraphic' as const, // Force image mode for all
-      }));
-
       // Acquire per-user GPU lock to prevent VRAM mode thrashing
       // when multiple pipelines for the same user run concurrently
-      const lockTtlMs = calculateTimeout('image_generation', imageShotsOnly.length) + MODE_SWITCH_TIMEOUT_MS + 60_000;
+      const lockTtlMs = calculateTimeout('image_generation', gpuShots.length) + MODE_SWITCH_TIMEOUT_MS + 60_000;
 
       const gpuResult = await withGpuLock(userId, async () => {
         return processGpuBatchGeneration(
           userId,
           videoId,
-          imageShotsOnly,
+          gpuShots,
           aspectRatio as AspectRatio,
           onProgress,
           onItemComplete,
@@ -179,17 +225,31 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
 
       // Store image results for downstream workers (video-gen needs keyframes)
       const imageResults: Record<string, string> = {};
+      const imageProvenance: Record<string, string> = {};
       for (const r of gpuResult.results) {
         if (r.generation_status === 'completed') {
           imageResults[`shot-${r.shot_index}`] = r.media_url;
+          imageProvenance[`shot-${r.shot_index}`] = 'standalone_image';
         }
       }
+
+      const { data: latestVideo } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+      const latestMeta = (latestVideo?.metadata || {}) as Record<string, unknown>;
+      const existingImages = (latestMeta.generated_images || {}) as Record<string, string>;
+      const existingProvenance = (latestMeta.generated_image_provenance || {}) as Record<string, string>;
+      const mergedImages = { ...existingImages, ...imageResults };
+      const mergedProvenance = { ...existingProvenance, ...imageProvenance };
 
       // Atomic merge — prevents race with concurrent metadata writes
       await supabase.rpc('merge_video_metadata', {
         p_video_id: videoId,
         p_updates: {
-          generated_images: imageResults,
+          generated_images: mergedImages,
+          generated_image_provenance: mergedProvenance,
           image_gen_stats: gpuResult.stats,
         },
       });
@@ -205,6 +265,9 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
       return {
         success: true,
         videoId,
+        ...(typeof requestedShotIndex === 'number'
+          ? { mediaUrl: mergedImages[`shot-${requestedShotIndex}`] }
+          : {}),
         stats: {
           imagesGenerated: gpuResult.stats.imagesGenerated,
           imagesFailed: gpuResult.stats.imagesFailed,

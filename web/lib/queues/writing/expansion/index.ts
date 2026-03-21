@@ -45,6 +45,13 @@ export interface ExpansionOptions {
   dossier: ResearchDossier | null;
   assetRegistry: AssetRegistry;
   angle?: string;
+  toneStyle?: string;
+  targetAudience?: string;
+  pov?: '1st' | '2nd' | '3rd';
+  protagonistGender?: 'male' | 'female' | 'any';
+  contentNiche?: string;
+  openrouterModel?: string;
+  qualityReviewModel?: string;
   /** Optional callback for reporting progress after each beat */
   onProgress?: ExpansionProgressCallback;
   /** User's style customization (banned phrases, word replacements, etc.) */
@@ -101,6 +108,13 @@ export async function expandSpineToScript(
         dossier,
         bannedPhrases,
         genre,
+        toneStyle: options.toneStyle,
+        targetAudience: options.targetAudience,
+        pov: options.pov,
+        protagonistGender: options.protagonistGender,
+        contentNiche: options.contentNiche,
+        openrouterModel: options.openrouterModel,
+        qualityReviewModel: options.qualityReviewModel,
         // Enhanced context for quality review
         spine,
         allPreviousBeats: [...expandedBeats],
@@ -109,6 +123,8 @@ export async function expandSpineToScript(
         enableQualityReview: false,
         // System prompt override from user settings (only tone/persona context)
         expansionSystemPrompt: options.styleConfig?.systemPromptOverrides?.expansion,
+        qualityPromptOverride: options.styleConfig?.systemPromptOverrides?.quality,
+        rewritePromptOverride: options.styleConfig?.systemPromptOverrides?.rewrite,
       };
 
       // Expand the beat
@@ -145,7 +161,11 @@ export async function expandSpineToScript(
     await onProgress(spine.beats.length, spine.beats.length, 'Rating script quality...');
   }
   const { batchRateBeats, rewriteLowScorers } = await import('./quality-reviewer');
-  const ratingResult = await batchRateBeats(userId, expandedBeats);
+  const ratingResult = await batchRateBeats(userId, expandedBeats, {
+    genre,
+    model: options.qualityReviewModel,
+    qualityPromptOverride: options.styleConfig?.systemPromptOverrides?.quality,
+  });
   
   // Assign scores to each beat
   expandedBeats.forEach((beat, i) => {
@@ -161,7 +181,14 @@ export async function expandSpineToScript(
       await onProgress(spine.beats.length, spine.beats.length, 'Enforcing style constraints...');
     }
     const { enforceStyleConstraints } = await import('./quality-reviewer');
-    await enforceStyleConstraints(userId, expandedBeats, options.styleConfig!, continuityTracker.currentState);
+    await enforceStyleConstraints(
+      userId,
+      expandedBeats,
+      genre,
+      options.styleConfig!,
+      continuityTracker.currentState,
+      options.qualityReviewModel,
+    );
   }
 
   // Rewrite sections that scored below threshold (uses gemini-3-pro)
@@ -172,7 +199,17 @@ export async function expandSpineToScript(
   const rewriteResults = await rewriteLowScorers(
     userId,
     expandedBeats,
-    continuityTracker.currentState
+    continuityTracker.currentState,
+    {
+      genre,
+      toneStyle: options.toneStyle,
+      targetAudience: options.targetAudience,
+      pov: options.pov,
+      protagonistGender: options.protagonistGender,
+      contentNiche: options.contentNiche,
+      model: options.qualityReviewModel,
+      rewritePromptOverride: options.styleConfig?.systemPromptOverrides?.rewrite,
+    },
   );
   
   // Apply rewrites and update word counts

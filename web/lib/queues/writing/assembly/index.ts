@@ -13,6 +13,7 @@ import type {
   UniversalScriptOutput,
   QualityValidation,
   ScriptGenre,
+  ScriptStyleConfig,
 } from '../types';
 import { 
   validateQuality, 
@@ -43,6 +44,8 @@ export interface AssemblyOptions {
   assetRegistry: AssetRegistry;
   dossier: ResearchDossier | null;
   durationDecision: DurationDecision;
+  qualityReviewModel?: string;
+  styleConfig?: ScriptStyleConfig;
   /** Optional callback for reporting progress during assembly */
   onProgress?: AssemblyProgressCallback;
 }
@@ -86,7 +89,11 @@ export async function assembleScript(
   if (onProgress) {
     await onProgress('Smoothing transitions...', 1, TOTAL_SUBSTEPS);
   }
-  const transitionResult = await aiSmoothTransitions(userId, expandedBeats, spine);
+  const transitionResult = await aiSmoothTransitions(userId, expandedBeats, spine, {
+    genre,
+    model: options.qualityReviewModel,
+    transitionPromptOverride: options.styleConfig?.systemPromptOverrides?.transition,
+  });
   const smoothedBeats = transitionResult.smoothedBeats;
   console.log(`[Assembly] Transitions fixed: ${transitionResult.transitionsFixed}, avg score: ${transitionResult.averageTransitionScore.toFixed(1)}/10`);
 
@@ -111,6 +118,7 @@ export async function assembleScript(
     spine,
     dossier,
     assetRegistry,
+    styleConfig: options.styleConfig,
   };
   
   const qualityValidation = await validateQuality(validationOptions);

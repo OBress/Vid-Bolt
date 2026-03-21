@@ -109,6 +109,8 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     //  writes to metadata.generated_images and metadata.generated_videos instead.)
     const generatedImages = (metadata.generated_images || {}) as Record<string, string>;
     const generatedVideos = (metadata.generated_videos || {}) as Record<string, string>;
+    const generatedVideoAudioUrls = (metadata.generated_video_audio_urls || {}) as Record<string, string>;
+    const generatedVideoAudioFlags = (metadata.generated_video_audio_flags || {}) as Record<string, boolean>;
     const generatedMG = (metadata.generated_motion_graphics || {}) as Record<string, string>;
     const avScriptShots = allShotsRaw;
     
@@ -147,6 +149,8 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
       const key = `shot-${idx}`;
       const imageUrl = generatedImages[key];
       const videoUrl = generatedVideos[key];
+      const normalizedAudioUrl = generatedVideoAudioUrls[key];
+      const hasAudio = generatedVideoAudioFlags[key];
       const url = videoUrl || imageUrl;
       const mgCode = generatedMG[key];
       const trim = trimsByShot.get(idx);
@@ -156,6 +160,8 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
         // MG shots have remotion_code instead of a media URL — treat as completed
         generation_status: (url || mgCode) ? 'completed' : 'failed',
         media_url: url,
+        has_audio: hasAudio,
+        normalized_audio_url: normalizedAudioUrl,
         visual_prompt: (shot.visual_prompt as string) || (shot.summary as string) || '',
         remotion_code: mgCode,
         // Apply clip trim data if available

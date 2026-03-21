@@ -48,7 +48,7 @@ function toLocalMediaFile(media: MediaFile): LocalMediaFile {
     id: media.id,
     name: media.name,
     type: media.type,
-    path: media.s3Url, // Use public S3 URL
+    path: media.type === 'audio' ? (media.normalizedAudioUrl || media.s3Url) : media.s3Url,
     size: media.size,
     lastModified: new Date(media.createdAt).getTime(),
     thumbnail: media.thumbnail || "",
@@ -58,6 +58,14 @@ function toLocalMediaFile(media: MediaFile): LocalMediaFile {
     width: media.width || undefined,
     height: media.height || undefined,
     source: media.source || 'upload',
+    audioNormalizationStatus: media.audioNormalizationStatus,
+    hasEmbeddedAudio: media.hasEmbeddedAudio,
+    normalizedAudioUrl: media.normalizedAudioUrl,
+    originalLufs: media.originalLufs,
+    normalizedLufs: media.normalizedLufs,
+    truePeakDbtp: media.truePeakDbtp,
+    audioNormalizationError: media.audioNormalizationError,
+    audioNormalizedAt: media.audioNormalizedAt,
   };
 }
 

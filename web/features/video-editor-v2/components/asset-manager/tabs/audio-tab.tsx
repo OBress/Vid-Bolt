@@ -33,6 +33,8 @@ import { useMediaAdaptors } from "../../../contexts/media-adaptor-context";
 import { useLocalMedia } from "../../../contexts/local-media-context";
 import { startMediaDrag, endDrag } from "../../../stores/video-editor-store";
 import { StandardAudio } from "../../../types/media-adaptors";
+import type { AudioNormalizationMetadata } from "@/lib/services/audio-normalization-metadata";
+import { getNormalizationBlockReason } from "../../../utils/audio-normalization";
 
 // ==========================================
 // TYPES
@@ -40,7 +42,7 @@ import { StandardAudio } from "../../../types/media-adaptors";
 
 type AudioFilter = "all" | "music" | "sfx" | "uploads";
 
-interface AudioItem {
+interface AudioItem extends AudioNormalizationMetadata {
   id: string;
   type: "music" | "sfx";
   name: string;
@@ -127,17 +129,23 @@ const AudioListItem: React.FC<AudioListItemProps> = ({
   onDragStart,
   onDragEnd,
 }) => {
+  const blockReason = getNormalizationBlockReason({
+    ...item,
+    type: "audio",
+  });
+
   return (
     <div
       className={cn(
         "flex items-center gap-2 p-2 rounded-md",
         "bg-muted/30 hover:bg-muted/50 transition-colors",
-        "cursor-grab active:cursor-grabbing",
+        blockReason ? "cursor-not-allowed opacity-60" : "cursor-grab active:cursor-grabbing",
         isPlaying && "ring-1 ring-primary bg-primary/5"
       )}
-      draggable
-      onDragStart={onDragStart}
+      draggable={!blockReason}
+      onDragStart={blockReason ? undefined : onDragStart}
       onDragEnd={onDragEnd}
+      title={blockReason || undefined}
     >
       {/* Play/Pause Button */}
       <Button
@@ -413,6 +421,13 @@ export const AudioTab: React.FC = () => {
           duration: file.duration || 0,
           isUserUpload: true,
           _isLocalMedia: true,
+          audioNormalizationStatus: file.audioNormalizationStatus,
+          normalizedAudioUrl: file.normalizedAudioUrl,
+          originalLufs: file.originalLufs,
+          normalizedLufs: file.normalizedLufs,
+          truePeakDbtp: file.truePeakDbtp,
+          audioNormalizationError: file.audioNormalizationError,
+          audioNormalizedAt: file.audioNormalizedAt,
         };
       })
       .filter((item) => item.src); // Filter out items without a valid src

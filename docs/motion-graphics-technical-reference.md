@@ -332,9 +332,9 @@ Scans code for icon usage (informational — all icons are injected on client):
 ```mermaid
 flowchart TD
     A["AI-Generated Code"] --> B["stripMarkdownFences()"]
-    B --> C["extractComponentBody()"]
+    B --> C["normalizeMotionGraphicCode()"]
     C --> D["preprocessCode()"]
-    D -->|"Math auto-fixes"| E["Wrap in DynamicAnimation"]
+    D -->|"Math auto-fixes"| E["Canonical DynamicAnimation Source"]
     E --> F{"Worker Available?"}
     F -->|Yes| G["Babel Web Worker"]
     F -->|No| H["Babel Main Thread"]
@@ -345,16 +345,17 @@ flowchart TD
 
 ### Code Extraction
 
-`extractComponentBody()` strips the AI output down to just the function body:
+`normalizeMotionGraphicCode()` accepts either a component body or a full TSX module and emits canonical source that always defines `DynamicAnimation`:
 
 1. Removes `// ICONS:` comments
 2. Removes ALL import statements (6 import patterns handled)
-3. Extracts the body from `export const X = () => { BODY };`
-4. Preserves helper functions/constants defined before the export
+3. Removes redundant `export default ...` syntax
+4. Extracts module-style components like `export const X = () => { ... }` or `const X = () => { ... }; export default X;`
+5. Preserves helper functions/constants defined before the component
 
 ### Preprocessing
 
-`preprocessCode()` applies auto-fixes before Babel:
+`preprocessCode()` applies auto-fixes before Babel and only wraps true body-only snippets:
 
 - Bare Math function calls → prefixed with `Math.` (e.g., `floor()` → `Math.floor()`)
 - Handles 15 Math functions: `floor`, `ceil`, `round`, `abs`, `min`, `max`, `sin`, `cos`, `tan`, `sqrt`, `pow`, `atan2`, `asin`, `acos`

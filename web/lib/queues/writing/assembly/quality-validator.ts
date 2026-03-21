@@ -11,6 +11,7 @@ import type {
   ResearchDossier,
   AssetRegistry,
   ScriptGenre,
+  ScriptStyleConfig,
 } from '../types';
 import { BANNED_PHRASES } from '../config';
 import { findBannedPhrases } from '../utils';
@@ -27,6 +28,7 @@ export interface ValidationOptions {
   spine: Spine;
   dossier: ResearchDossier | null;
   assetRegistry: AssetRegistry;
+  styleConfig?: ScriptStyleConfig;
 }
 
 // ============================================================================
@@ -39,7 +41,7 @@ export interface ValidationOptions {
 export async function validateQuality(
   options: ValidationOptions
 ): Promise<QualityValidation> {
-  const { genre, script, expandedBeats, spine, dossier, assetRegistry } = options;
+  const { genre, script, expandedBeats, spine, dossier, assetRegistry, styleConfig } = options;
 
   // Run validations in parallel
   const [
@@ -54,7 +56,7 @@ export async function validateQuality(
     validateConsistency(script, assetRegistry, expandedBeats),
     validateEngagement(script, spine, expandedBeats),
     validateCompleteness(expandedBeats, spine, dossier),
-    validateAntiFiller(script, genre),
+    validateAntiFiller(script, genre, styleConfig),
     Promise.resolve(validateVisualAnimatability(script)),
   ]);
 
@@ -270,12 +272,16 @@ async function validateCompleteness(
  */
 async function validateAntiFiller(
   script: string,
-  genre: ScriptGenre
+  genre: ScriptGenre,
+  styleConfig?: ScriptStyleConfig
 ): Promise<{ passed: boolean; flaggedSections: string[] }> {
   const flaggedSections: string[] = [];
 
   // Check for banned phrases
-  const bannedPhrases = BANNED_PHRASES[genre];
+  const bannedPhrases = [
+    ...(BANNED_PHRASES[genre] || []),
+    ...(styleConfig?.customBannedPhrases || []),
+  ];
   const foundBanned = findBannedPhrases(script, bannedPhrases);
   
   for (const phrase of foundBanned) {

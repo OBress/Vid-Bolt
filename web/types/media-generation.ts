@@ -94,7 +94,7 @@ export interface EnhancedShot extends ShotEvent {
   /** Error message if image editing failed */
   editedImageError?: string;
   
-  // === Video (LTX-2) ===
+  // === Video (LTX-2.3) ===
   /** URL of generated video */
   videoUrl?: string;
   /** GPU API job ID for video generation */

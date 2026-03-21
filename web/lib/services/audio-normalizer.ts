@@ -25,8 +25,14 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { writeFile, readFile, unlink, mkdtemp } from 'fs/promises';
 import { tmpdir } from 'os';
-import { join } from 'path';
-import { uploadAudioBuffer, getS3Client, getBucketName, getPublicBaseUrl } from './r2-storage';
+import { join, parse } from 'path';
+import {
+  uploadAudioBuffer,
+  getS3Client,
+  getBucketName,
+  getPublicBaseUrl,
+  getPublicUrl,
+} from './r2-storage';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 
 const execFileAsync = promisify(execFile);
@@ -107,6 +113,24 @@ export interface NormalizationResult {
   /** Processing time in milliseconds */
   processingTimeMs: number;
   /** Reason normalization was skipped, if applicable */
+  skipReason?: string;
+}
+
+export interface StoredNormalizationResult extends NormalizationResult {
+  key: string;
+  url: string;
+  contentType: string;
+}
+
+export interface VideoAudioExtractionResult {
+  hasEmbeddedAudio: boolean;
+  normalized: boolean;
+  processingTimeMs: number;
+  normalizedAudioKey?: string;
+  normalizedAudioUrl?: string;
+  originalLufs?: number | null;
+  normalizedLufs?: number | null;
+  truePeakDbtp?: number | null;
   skipReason?: string;
 }
 
@@ -447,6 +471,131 @@ export async function downloadAudioFromUrl(url: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
+/**
+ * Download external audio, normalize it, and upload the result to an owned R2
+ * key. The uploaded file is always written, even when normalization is skipped,
+ * so callers always receive an owned URL for timeline use.
+ */
+export async function normalizeExternalAudioToR2(
+  sourceUrl: string,
+  outputR2Key: string,
+  options: NormalizationOptions = {},
+): Promise<StoredNormalizationResult> {
+  const sourceBuffer = await downloadAudioFromUrl(sourceUrl);
+  const inputFormat = options.inputFormat || inferFormatFromPath(sourceUrl, 'mp3');
+  const outputFormat = options.outputFormat || inputFormat || 'mp3';
+  const result = await normalizeAudio(sourceBuffer, {
+    ...options,
+    inputFormat,
+    outputFormat,
+  });
+
+  const contentType = getContentType(outputFormat);
+  await uploadAudioBuffer(result.buffer, outputR2Key, contentType);
+
+  return {
+    ...result,
+    key: outputR2Key,
+    url: getPublicUrl(outputR2Key),
+    contentType,
+  };
+}
+
+/**
+ * Extract the first audio stream from a video stored in R2, normalize it, and
+ * upload the normalized result to a dedicated R2 key.
+ */
+export async function extractAndNormalizeVideoAudioFromR2(
+  videoUrl: string,
+  outputR2Key: string,
+  options: NormalizationOptions = {},
+): Promise<VideoAudioExtractionResult> {
+  const startTime = Date.now();
+
+  if (!(await isFFmpegAvailable())) {
+    return {
+      hasEmbeddedAudio: false,
+      normalized: false,
+      processingTimeMs: Date.now() - startTime,
+      skipReason: 'FFmpeg not available',
+    };
+  }
+
+  const sourceKey = extractKeyFromR2Url(videoUrl);
+  const sourceBuffer = await downloadFromR2(sourceKey);
+  const sourceExt = inferFormatFromPath(sourceKey, 'mp4');
+  const outputFormat = options.outputFormat || 'mp3';
+  const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;
+
+  const tempDir = await mkdtemp(join(tmpdir(), 'video-audio-extract-'));
+  const inputPath = join(tempDir, `input.${sourceExt}`);
+  const extractedPath = join(tempDir, `extracted.${outputFormat}`);
+
+  try {
+    await writeFile(inputPath, sourceBuffer);
+
+    const hasEmbeddedAudio = await videoHasAudioStream(inputPath);
+    if (!hasEmbeddedAudio) {
+      return {
+        hasEmbeddedAudio: false,
+        normalized: false,
+        processingTimeMs: Date.now() - startTime,
+        skipReason: 'Video has no embedded audio stream',
+      };
+    }
+
+    const outputCodecArgs = getOutputCodecArgs(outputFormat);
+    await execFileAsync(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-y',
+        '-i',
+        inputPath,
+        '-vn',
+        '-ac',
+        '2',
+        '-ar',
+        String(sampleRate),
+        ...outputCodecArgs,
+        extractedPath,
+      ],
+      {
+        timeout: 120000,
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    );
+
+    const extractedBuffer = await readFile(extractedPath);
+    const normalizedResult = await normalizeAudio(extractedBuffer, {
+      ...options,
+      inputFormat: outputFormat,
+      outputFormat,
+      sampleRate,
+    });
+
+    await uploadAudioBuffer(
+      normalizedResult.buffer,
+      outputR2Key,
+      getContentType(outputFormat),
+    );
+
+    return {
+      hasEmbeddedAudio: true,
+      normalized: normalizedResult.normalized,
+      processingTimeMs: Date.now() - startTime,
+      normalizedAudioKey: outputR2Key,
+      normalizedAudioUrl: getPublicUrl(outputR2Key),
+      originalLufs: normalizedResult.originalLufs,
+      normalizedLufs: normalizedResult.normalizedLufs,
+      truePeakDbtp: normalizedResult.originalTruePeak,
+      skipReason: normalizedResult.skipReason,
+    };
+  } finally {
+    await cleanupTempFiles(tempDir, [inputPath, extractedPath]);
+  }
+}
+
 // ============================================================================
 // Internal Helpers
 // ============================================================================
@@ -537,6 +686,18 @@ function getContentType(format: string): string {
   return types[format.toLowerCase()] || 'application/octet-stream';
 }
 
+function inferFormatFromPath(pathOrUrl: string, fallback: string): string {
+  try {
+    const pathname = pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')
+      ? new URL(pathOrUrl).pathname
+      : pathOrUrl;
+    const ext = parse(pathname).ext.replace(/^\./, '').toLowerCase();
+    return ext || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 /**
  * Extract the R2 storage key from a public R2 URL.
  * strips the R2_PUBLIC_URL base to get the key path.
@@ -581,6 +742,36 @@ async function downloadFromR2(key: string): Promise<Buffer> {
   }
 
   return Buffer.concat(chunks);
+}
+
+async function videoHasAudioStream(inputPath: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'a:0',
+        '-show_entries',
+        'stream=codec_name',
+        '-of',
+        'json',
+        inputPath,
+      ],
+      {
+        timeout: 15000,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+
+    const parsed = JSON.parse(stdout) as { streams?: Array<{ codec_name?: string }> };
+    return Array.isArray(parsed.streams) && parsed.streams.length > 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[AudioNormalizer] ffprobe audio-stream detection failed: ${message}`);
+    return false;
+  }
 }
 
 /**

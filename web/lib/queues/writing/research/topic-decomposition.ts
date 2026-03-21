@@ -70,7 +70,8 @@ export async function decomposeTopicIntoQuestions(
   topic: string,
   angle: string | undefined,
   isDeepResearch: boolean = false,
-  useValyu: boolean = false
+  useValyu: boolean = false,
+  model?: string,
 ): Promise<ResearchQuestion[]> {
   // VALYU OPTIMIZATION: Generate fewer, broader questions for Valyu's semantic search
   const valyuGuidance = useValyu ? `
@@ -118,7 +119,8 @@ Generate ${questionCount} questions covering all categories. ${useValyu ? 'Prior
     const response = await generateJSON<TopicDecomposition>(
       userId,
       UNIVERSAL_PROMPTS.topicDecomposition,
-      userPrompt
+      userPrompt,
+      model ? { model } : undefined
     );
 
     // Validate and normalize the response

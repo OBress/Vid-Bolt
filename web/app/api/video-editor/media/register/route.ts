@@ -8,6 +8,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { mediaNormalizationQueue } from "@/lib/queues/queues";
+import { getInitialAudioNormalizationStatus } from "@/lib/services/audio-normalization-metadata";
+import { mapVideoEditorMediaRow } from "@/lib/services/video-editor-media";
 
 // Service role client for database operations
 function getServiceClient() {
@@ -74,6 +77,7 @@ export async function POST(request: NextRequest) {
       name,
       type,
       size,
+      audio_normalization_status: getInitialAudioNormalizationStatus(type),
     };
 
     // Add optional fields only if provided
@@ -101,23 +105,44 @@ export async function POST(request: NextRequest) {
       `[VideoEditorMedia] Registered media: ${media.id} (user: ${user.id})`
     );
 
+    if (type === "audio" || type === "video") {
+      try {
+        await mediaNormalizationQueue.add(
+          "normalize-media",
+          {
+            mediaId: media.id,
+            userId: user.id,
+            projectId: media.project_id,
+            s3Key: media.s3_key,
+            s3Url: media.s3_url,
+            type: media.type,
+            name: media.name,
+          },
+          {
+            jobId: `media-normalization-${media.id}`,
+          }
+        );
+      } catch (queueError) {
+        const message =
+          queueError instanceof Error ? queueError.message : "Queue enqueue failed";
+        console.error("[VideoEditorMedia] Failed to enqueue normalization:", queueError);
+
+        await serviceClient
+          .from("video_editor_media")
+          .update({
+            audio_normalization_status: "failed",
+            audio_normalization_error: message,
+          })
+          .eq("id", media.id);
+
+        media.audio_normalization_status = "failed";
+        media.audio_normalization_error = message;
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      media: {
-        id: media.id,
-        userId: media.user_id,
-        projectId: media.project_id,
-        s3Key: media.s3_key,
-        s3Url: media.s3_url,
-        name: media.name,
-        type: media.type,
-        size: media.size,
-        duration: media.duration,
-        thumbnail: media.thumbnail,
-        width: media.width,
-        height: media.height,
-        createdAt: media.created_at,
-      },
+      media: mapVideoEditorMediaRow(media),
     });
   } catch (error) {
     console.error("[VideoEditorMedia] Error registering media:", error);

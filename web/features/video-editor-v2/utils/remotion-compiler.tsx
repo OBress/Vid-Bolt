@@ -34,6 +34,8 @@
  *    - Returns: { code, metadata }
  * 4. Frontend receives code + metadata
  * 5. Frontend compiles with this compiler:
+ *    - Normalizes body-only snippets and full TSX modules into canonical
+ *      `DynamicAnimation` source
  *    - Compiles with Babel
  *    - Injects ALL lucide-react icons into scope
  *    - Injects Remotion APIs, shapes, transitions
@@ -44,6 +46,10 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import React from 'react';
+import {
+  normalizeMotionGraphicCode,
+  stripMarkdownFences,
+} from '@/lib/utils/motion-graphics-code-normalizer';
 import { babelWorker, preloadBabelWorker, isWorkerCompilationAvailable } from './babel-compiler-worker';
 
 // Lazy-loaded Babel for fallback (only loaded if worker fails)
@@ -240,71 +246,16 @@ export interface CompilationOptions {
 // ============================================================
 
 /**
- * Strip imports and extract ONLY the body from an AI-generated component.
- * 
- * This is the key to reliable compilation - extract just what's inside the
- * arrow function, then wrap it ourselves with a known-good wrapper.
- * 
- * Input:  export const SubscribeAnimation = () => { const frame = useCurrentFrame(); return <div/>; };
- * Output: const frame = useCurrentFrame(); return <div/>;
+ * Extract the renderable body from AI-generated motion-graphics code.
+ *
+ * The runtime accepts either body-only snippets or full TSX modules. Module
+ * inputs are normalized before we pull out the component body.
  */
 function extractComponentBody(code: string): string {
-  let cleaned = code;
-
-  // Step 1: Remove ICONS comment (added by backend for icon injection)
-  // Format: // ICONS: Bell, Heart, Star
-  cleaned = cleaned.replace(/^\/\/\s*ICONS:.*$/m, '');
-  
-  // Step 2: Remove ALL import statements (various formats)
-  cleaned = cleaned.replace(/import\s+type\s*\{[\s\S]*?\}\s*from\s*["'][^"']+["'];?/g, '');
-  cleaned = cleaned.replace(/import\s+\w+\s*,\s*\{[\s\S]*?\}\s*from\s*["'][^"']+["'];?/g, '');
-  cleaned = cleaned.replace(/import\s*\{[\s\S]*?\}\s*from\s*["'][^"']+["'];?/g, '');
-  cleaned = cleaned.replace(/import\s+\*\s+as\s+\w+\s+from\s*["'][^"']+["'];?/g, '');
-  cleaned = cleaned.replace(/import\s+\w+\s+from\s*["'][^"']+["'];?/g, '');
-  cleaned = cleaned.replace(/import\s*["'][^"']+["'];?/g, '');
-
-  cleaned = cleaned.trim();
-
-  // Step 2: Extract the BODY from "export const MyAnimation = () => { BODY };"
-  // This regex captures:
-  //   $1 = any helper code before the export (functions, constants)
-  //   $2 = the body inside the arrow function's braces
-  const match = cleaned.match(
-    /^([\s\S]*?)export\s+const\s+\w+\s*=\s*\(\s*\)\s*=>\s*\{([\s\S]*)\};?\s*$/
-  );
-
-  if (match) {
-    const helpers = match[1].trim();
-    const body = match[2].trim();
-    console.log('[Compiler] Successfully extracted component body');
-    return helpers ? `${helpers}\n\n${body}` : body;
-  }
-
-  // Fallback: Try without 'export' keyword
-  const noExportMatch = cleaned.match(
-    /^([\s\S]*?)const\s+\w+\s*=\s*\(\s*\)\s*=>\s*\{([\s\S]*)\};?\s*$/
-  );
-
-  if (noExportMatch) {
-    const helpers = noExportMatch[1].trim();
-    const body = noExportMatch[2].trim();
-    console.log('[Compiler] Extracted component body (no export keyword)');
-    return helpers ? `${helpers}\n\n${body}` : body;
-  }
-
-  // If no pattern matches, the code might already be just a body
-  console.warn('[Compiler] Could not extract body pattern, using code as-is');
-  return cleaned;
+  return normalizeMotionGraphicCode(code).componentBody;
 }
 
-/**
- * Strip markdown code fences from code
- */
-export function stripMarkdownFences(code: string): string {
-  let cleaned = code.replace(/^```(?:tsx|typescript|jsx|javascript)?\s*\n?/gm, '');
-  cleaned = cleaned.replace(/\n?```\s*$/gm, '');
-  return cleaned.trim();
-}
+export { stripMarkdownFences };
 
 /**
  * Extract recommended duration from AI-generated code comment.
@@ -322,14 +273,11 @@ export function extractRecommendedDuration(code: string): number | null {
 }
 
 /**
- * Extract the BODY of a component from AI-generated code.
- * Exported for use by the generation hook.
- * 
- * This delegates to the internal extractComponentBody function which
- * follows the same approach as the template-prompt-to-motion-graphics project.
+ * Normalize AI-generated motion-graphics code into canonical source that
+ * always defines `DynamicAnimation`.
  */
 export function extractComponentCode(code: string): string {
-  return extractComponentBody(code);
+  return normalizeMotionGraphicCode(code).normalizedCode;
 }
 
 /**
@@ -372,11 +320,11 @@ export function extractIconsFromCode(code: string): string[] {
 // ============================================================
 
 /**
- * Pre-process code: extract component body and apply auto-fixes
+ * Pre-process code: normalize body/module input and apply auto-fixes.
  */
-function preprocessCode(code: string): { componentBody: string; wrappedSource: string } {
-  // Extract component body (strips imports)
-  let componentBody = extractComponentBody(code);
+function preprocessCode(code: string): { componentBody: string; normalizedSource: string } {
+  const normalized = normalizeMotionGraphicCode(code);
+  let componentBody = normalized.componentBody;
   
   // Auto-fix common errors: bare Math function calls
   const mathFunctions = [
@@ -419,11 +367,39 @@ function preprocessCode(code: string): { componentBody: string; wrappedSource: s
     componentBody = componentBody.replace(/\bframe\.([\w]+)/g, 'TIMING.$1');
     console.log('[Compiler] Auto-fixed: renamed duplicate "frame" object to "TIMING"');
   }
+
+  // Legacy template-lane quote cards accidentally referenced `overlayMode`
+  // inside the generated component body without defining it. Infer the value
+  // from the already-inlined root background so previously saved projects
+  // render without regeneration.
+  const overlayModeReferenced = /\boverlayMode\b/.test(componentBody);
+  const overlayModeDeclared = /\b(?:const|let|var)\s+overlayMode\b/.test(
+    `${normalized.helperCode}\n${componentBody}`,
+  );
+  if (overlayModeReferenced && !overlayModeDeclared) {
+    const inferredOverlayMode = /background:\s*['"]transparent['"]/.test(componentBody)
+      ? 'video'
+      : 'standalone';
+    componentBody = `const overlayMode = ${JSON.stringify(inferredOverlayMode)};\n${componentBody}`;
+    console.warn(
+      `[Compiler] Auto-fixed: injected missing overlayMode="${inferredOverlayMode}" for legacy motion graphic`,
+    );
+  }
   
-  // Wrap in a function component
-  const wrappedSource = `const DynamicAnimation = () => {\n${componentBody}\n};`;
-  
-  return { componentBody, wrappedSource };
+  if (normalized.sourceKind === 'module') {
+    console.log('[Compiler] Normalized module-style motion graphic source');
+  }
+
+  const helperCode = normalized.helperCode.trim();
+  const componentParams = normalized.componentParams.trim();
+  const normalizedSource = [
+    helperCode,
+    `const DynamicAnimation = (${componentParams}) => {\n${componentBody}\n};`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  return { componentBody, normalizedSource };
 }
 
 /**
@@ -775,20 +751,20 @@ export async function compileCodeAsync(
 
   try {
     // Pre-process the code
-    const { wrappedSource } = preprocessCode(code);
+    const { normalizedSource } = preprocessCode(code);
 
     let transpiledCode: string;
 
     // Try worker-based compilation first
     if (isWorkerCompilationAvailable()) {
       try {
-        transpiledCode = await babelWorker.transpile(wrappedSource);
+        transpiledCode = await babelWorker.transpile(normalizedSource);
         console.log('[Compiler] ✓ Transpiled using Web Worker');
       } catch (workerError) {
         console.warn('[Compiler] Worker failed, falling back to main thread:', workerError);
         // Fall through to fallback
         const Babel = await loadBabelFallback();
-        const result = Babel.transform(wrappedSource, {
+        const result = Babel.transform(normalizedSource, {
           presets: ['react', 'typescript'],
           filename: 'dynamic-animation.tsx',
         });
@@ -800,7 +776,7 @@ export async function compileCodeAsync(
     } else {
       // No worker support, use fallback
       const Babel = await loadBabelFallback();
-      const result = Babel.transform(wrappedSource, {
+      const result = Babel.transform(normalizedSource, {
         presets: ['react', 'typescript'],
         filename: 'dynamic-animation.tsx',
       });
@@ -836,8 +812,8 @@ export function compileCode(code: string, options: CompilationOptions = {}): Com
   // If Babel is already loaded, use it
   if (BabelModule) {
     try {
-      const { wrappedSource } = preprocessCode(code);
-      const result = BabelModule.transform(wrappedSource, {
+      const { normalizedSource } = preprocessCode(code);
+      const result = BabelModule.transform(normalizedSource, {
         presets: ['react', 'typescript'],
         filename: 'dynamic-animation.tsx',
       });

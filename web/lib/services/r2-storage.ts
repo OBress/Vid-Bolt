@@ -47,6 +47,7 @@ export const STORAGE_PATHS = {
     SOUND_EFFECTS: 'audio/sound-effects',
     BACKGROUND_MUSIC: 'audio/background-music',
     STOCK: 'audio/stock',
+    VIDEO_EMBEDDED: 'audio/video-embedded',
   },
   IMAGES: {
     REFERENCE: {
@@ -69,6 +70,7 @@ export const STORAGE_PATHS = {
     MEDIA: 'video-editor/media',           // User's media library
     THUMBNAILS: 'video-editor/thumbnails', // Generated thumbnails
     PROJECTS: 'video-editor/projects',     // Project-specific media
+    AUDIO: 'video-editor/audio',           // Derived/normalized editor audio
   },
 } as const;
 
@@ -557,6 +559,30 @@ export function generateVideoEditorThumbnailKey(
     return `${STORAGE_PATHS.VIDEO_EDITOR.PROJECTS}/${userId}/${projectId}/thumbnails/${uuid}.${extension}`;
   }
   return `${STORAGE_PATHS.VIDEO_EDITOR.THUMBNAILS}/${userId}/${uuid}.${extension}`;
+}
+
+/**
+ * Generate storage key for derived editor audio (normalized uploads,
+ * extracted embedded video audio, and externally ingested audio).
+ *
+ * Path format:
+ *   video-editor/media/{userId}/audio/{basename}.{ext}
+ *   video-editor/projects/{userId}/{projectId}/audio/{basename}.{ext}
+ */
+export function generateVideoEditorDerivedAudioKey(
+  userId: string,
+  projectId: string | null,
+  basename: string,
+  extension: string = 'mp3'
+): string {
+  const safeBase = basename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safeExt = extension.replace(/[^a-zA-Z0-9]/g, '') || 'mp3';
+
+  if (projectId) {
+    return `${STORAGE_PATHS.VIDEO_EDITOR.PROJECTS}/${userId}/${projectId}/audio/${safeBase}.${safeExt}`;
+  }
+
+  return `${STORAGE_PATHS.VIDEO_EDITOR.MEDIA}/${userId}/audio/${safeBase}.${safeExt}`;
 }
 
 // ============================================================================

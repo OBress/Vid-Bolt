@@ -12,6 +12,7 @@ import {
 } from "../../ui/dialog";
 import { UnifiedTabs } from "../shared/unified-tabs";
 import { startMediaDrag, endDrag } from "../../../stores/video-editor-store";
+import { getNormalizationBlockReason } from "../../../utils/audio-normalization";
 
 /**
  * User Media Gallery Component
@@ -114,6 +115,14 @@ export function LocalMediaGallery({
   // Add media to timeline - memoized to prevent recreation
   const handleAddToTimeline = useCallback(() => {
     if (selectedFile && onSelectMedia) {
+      const blockReason = getNormalizationBlockReason({
+        ...selectedFile,
+        type: selectedFile.type,
+      });
+      if (blockReason) {
+        window.alert(blockReason);
+        return;
+      }
       onSelectMedia(selectedFile);
       setPreviewOpen(false);
     }
@@ -121,6 +130,16 @@ export function LocalMediaGallery({
 
   // Handle drag start for timeline integration
   const handleDragStart = useCallback((file: any) => (e: React.DragEvent) => {
+    const blockReason = getNormalizationBlockReason({
+      ...file,
+      type: file.type,
+    });
+    if (blockReason) {
+      e.preventDefault();
+      window.alert(blockReason);
+      return;
+    }
+
     // Extract duration from file if available
     const fileDuration = file.duration;
     const defaultDuration = file.type === "video" ? 5 : file.type === "audio" ? 5 : 5; // Default to 5 seconds
@@ -293,6 +312,11 @@ export function LocalMediaGallery({
 
   // Render media item - memoized to prevent recreation
   const renderMediaItem = useCallback((file: any) => {
+    const blockReason = getNormalizationBlockReason({
+      ...file,
+      type: file.type,
+    });
+
     // Get the best quality thumbnail URL
     const getThumbnailUrl = () => {
       if (file.type === "image") {
@@ -313,8 +337,8 @@ export function LocalMediaGallery({
           hover:border-primary transition-all 
           bg-card shadow-sm hover:shadow-md"
         onClick={() => handleMediaSelect(file)}
-        draggable={true}
-        onDragStart={handleDragStart(file)}
+        draggable={!blockReason}
+        onDragStart={blockReason ? undefined : handleDragStart(file)}
         onDragEnd={handleDragEnd}
       >
         {/* Thumbnail container - fixed aspect ratio with proper overflow handling */}
@@ -414,6 +438,16 @@ export function LocalMediaGallery({
         {file.source === 'generated' && (
           <div className="absolute top-2 left-2 bg-primary/90 text-primary-foreground text-[9px] font-semibold px-1.5 py-0.5 rounded shadow-sm">
             AI
+          </div>
+        )}
+        {blockReason && (
+          <div
+            className="absolute inset-x-0 bottom-0 bg-amber-500/90 text-[9px] font-semibold text-black px-2 py-1"
+            title={blockReason}
+          >
+            {file.audioNormalizationStatus === 'failed'
+              ? 'Audio normalization failed'
+              : 'Normalizing audio...'}
           </div>
         )}
       </div>

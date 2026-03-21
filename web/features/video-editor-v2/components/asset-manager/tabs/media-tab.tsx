@@ -55,6 +55,11 @@ import {
 import { startMediaDrag, endDrag } from "../../../stores/video-editor-store";
 import { useDevToolsMediaStore } from "@/lib/stores/devtools-media-store"; // [DEVTOOLS-MEDIA] - Remove when no longer needed
 import { VideoThumbnailPreview } from "../../../hooks/use-video-thumbnail";
+import type { AudioNormalizationMetadata } from "@/lib/services/audio-normalization-metadata";
+import {
+  getNormalizationBlockReason,
+  getNormalizedAudioUrl,
+} from "../../../utils/audio-normalization";
 
 // ==========================================
 // TYPES
@@ -62,7 +67,7 @@ import { VideoThumbnailPreview } from "../../../hooks/use-video-thumbnail";
 
 type MediaFilter = "all" | "images" | "videos" | "audio" | "uploads" | "ai";
 
-interface MediaItem {
+interface MediaItem extends Partial<AudioNormalizationMetadata> {
   id: string;
   type: "image" | "video" | "audio";
   src: string;
@@ -181,6 +186,10 @@ const MediaGridItem: React.FC<MediaGridItemProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const blockReason = getNormalizationBlockReason({
+    ...item,
+    type: item.type,
+  });
 
 
 
@@ -273,16 +282,21 @@ const MediaGridItem: React.FC<MediaGridItemProps> = ({
   const content = (
     <div
       onClick={handleClick}
-      draggable={!isSelectionMode}
-      onDragStart={isSelectionMode ? undefined : handleDragStart}
-      onDragEnd={isSelectionMode ? undefined : handleDragEnd}
+      draggable={!isSelectionMode && !blockReason}
+      onDragStart={isSelectionMode || blockReason ? undefined : handleDragStart}
+      onDragEnd={isSelectionMode || blockReason ? undefined : handleDragEnd}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
+      title={blockReason || item.name}
       className={cn(
         "group flex flex-col rounded overflow-hidden",
         "bg-neutral-900/50 border border-neutral-800",
         "transition-all duration-150",
-        isSelectionMode ? "cursor-pointer" : "cursor-grab active:cursor-grabbing",
+        isSelectionMode
+          ? "cursor-pointer"
+          : blockReason
+            ? "cursor-not-allowed opacity-80"
+            : "cursor-grab active:cursor-grabbing",
         isSelected 
           ? "border-primary bg-primary/5" 
           : "hover:border-neutral-700 hover:bg-neutral-800/50",
@@ -387,6 +401,16 @@ const MediaGridItem: React.FC<MediaGridItemProps> = ({
             <span className="text-[9px] text-white font-medium">LIVE</span>
           </div>
         )}
+        {blockReason && (
+          <div
+            className="absolute inset-x-0 bottom-0 bg-amber-500/90 text-[9px] font-semibold text-black px-2 py-1"
+            title={blockReason}
+          >
+            {item.audioNormalizationStatus === "failed"
+              ? "Audio normalization failed"
+              : "Normalizing audio..."}
+          </div>
+        )}
       </div>
 
       {/* Info Panel */}
@@ -423,7 +447,7 @@ const MediaGridItem: React.FC<MediaGridItemProps> = ({
         {content}
       </ContextMenuTrigger>
       <ContextMenuContent className="w-44">
-        <ContextMenuItem onClick={onAddToTimeline}>
+        <ContextMenuItem disabled={!!blockReason} onClick={onAddToTimeline}>
           <Plus className="mr-2 h-4 w-4" />
           <span>Add to Timeline</span>
         </ContextMenuItem>
@@ -563,6 +587,14 @@ export const MediaTab: React.FC = () => {
           _isLocalMedia: true,
           width: file.width,
           height: file.height,
+          audioNormalizationStatus: file.audioNormalizationStatus,
+          hasEmbeddedAudio: file.hasEmbeddedAudio,
+          normalizedAudioUrl: file.normalizedAudioUrl,
+          originalLufs: file.originalLufs,
+          normalizedLufs: file.normalizedLufs,
+          truePeakDbtp: file.truePeakDbtp,
+          audioNormalizationError: file.audioNormalizationError,
+          audioNormalizedAt: file.audioNormalizedAt,
         };
       })
       .filter((item) => item.src); // Filter out items without a valid src
@@ -885,6 +917,14 @@ export const MediaTab: React.FC = () => {
 
   // Handle item click (add to timeline)
   const handleItemClick = useCallback((item: MediaItem) => {
+    const blockReason = getNormalizationBlockReason({
+      ...item,
+      type: item.type,
+    });
+    if (blockReason) {
+      window.alert(blockReason);
+      return;
+    }
     console.log("Add to timeline:", item);
     // Preview functionality could be added here
   }, []);
@@ -892,6 +932,22 @@ export const MediaTab: React.FC = () => {
   // Handle drag start for timeline integration
   const handleDragStart = useCallback(
     (item: MediaItem) => (e: React.DragEvent) => {
+      const blockReason = getNormalizationBlockReason({
+        ...item,
+        type: item.type,
+      });
+      if (blockReason) {
+        e.preventDefault();
+        window.alert(blockReason);
+        return;
+      }
+
+      const normalizedAudioUrl = getNormalizedAudioUrl({
+        ...item,
+        type: item.type,
+      });
+      const mediaSrc =
+        item.type === "audio" ? (normalizedAudioUrl || item.src) : item.src;
       const duration = item.duration || 5; // Default 5 seconds
 
       // Set drag data in dataTransfer for cross-component communication
@@ -902,9 +958,16 @@ export const MediaTab: React.FC = () => {
         duration,
         data: {
           ...item,
-          src: item.src,
+          src: mediaSrc,
+          originalUrl: item.src,
+          file: mediaSrc,
           thumbnail: item.thumbnail,
           _isLocalMedia: item._isLocalMedia || false,
+          normalizedAudioUrl: normalizedAudioUrl || item.normalizedAudioUrl || null,
+          audioNormalizationStatus:
+            item.audioNormalizationStatus ||
+            (item.type === "image" ? "not_applicable" : undefined),
+          hasEmbeddedAudio: item.hasEmbeddedAudio,
         },
       };
 
@@ -914,7 +977,7 @@ export const MediaTab: React.FC = () => {
       // Use unified video-editor-store for drag state
       startMediaDrag(
         item.type as 'video' | 'image' | 'audio',
-        item.src,
+        mediaSrc,
         {
           duration,
           name: item.name,

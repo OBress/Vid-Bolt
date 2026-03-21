@@ -3,6 +3,10 @@ import { useVideoEditorStore, getTypedState } from "../../../stores/video-editor
 import { calculateIntelligentAssetSize, getAssetDimensions } from "../../../utils/asset-sizing";
 import { LocalMediaGallery } from "./local-media-gallery";
 import { DEFAULT_IMAGE_DURATION_FRAMES, IMAGE_DURATION_PERCENTAGE } from "../../../constants";
+import {
+  getNormalizationBlockReason,
+  getNormalizedAudioUrl,
+} from "../../../utils/audio-normalization";
 
 /**
  * LocalMediaPanel Component
@@ -104,8 +108,21 @@ export const LocalMediaPanel: React.FC = () => {
     const createdClipIds: string[] = [];
 
     if (file.type === "video") {
+      const blockReason = getNormalizationBlockReason({
+        ...file,
+        type: 'video',
+      });
+      if (blockReason) {
+        window.alert(blockReason);
+        return;
+      }
+
       // Like Premiere Pro: separate video and audio but link them together
       const duration = file.duration || 6.67; // Default to ~160 frames at 24fps
+      const normalizedVideoAudioUrl = getNormalizedAudioUrl({
+        ...file,
+        type: 'video',
+      });
       
       // Create video clip (without volume control)
       const videoClipId = addClip({
@@ -135,6 +152,10 @@ export const LocalMediaPanel: React.FC = () => {
           src: mediaSrc,
           originalUrl: mediaSrc,
           content: file.thumbnail || "",
+          audioSourceMode: 'separate_normalized',
+          audioNormalizationStatus: file.audioNormalizationStatus ?? 'completed',
+          normalizedAudioUrl: normalizedVideoAudioUrl,
+          hasEmbeddedAudio: file.hasEmbeddedAudio ?? false,
         },
       });
       
@@ -142,41 +163,46 @@ export const LocalMediaPanel: React.FC = () => {
         createdClipIds.push(videoClipId);
         
         // Create linked audio clip on audio track
-        const audioClipId = addClip({
-          trackId: audioTrackId,
-          startTime: currentTime,
-          duration,
-          type: 'audio',
-          sourceId: mediaSrc,
-          label: `${file.name} (Audio)` || 'Audio',
-          transform: {
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
-            rotation: 0,
-            opacity: 1,
-            zIndex: 0,
-          },
-          media: {
-            mediaStartTime: 0,
-            mediaDuration: duration,
-            speed: 1,
-            volume: 1,
-          },
-          linkedClipId: videoClipId, // Link to video clip
-          data: {
-            src: mediaSrc,
-            originalUrl: mediaSrc,
-          },
-        });
-        
-        if (audioClipId) {
-          createdClipIds.push(audioClipId);
+        if (normalizedVideoAudioUrl) {
+          const audioClipId = addClip({
+            trackId: audioTrackId,
+            startTime: currentTime,
+            duration,
+            type: 'audio',
+            sourceId: normalizedVideoAudioUrl,
+            label: `${file.name} (Audio)` || 'Audio',
+            transform: {
+              x: 0,
+              y: 0,
+              width: 0,
+              height: 0,
+              rotation: 0,
+              opacity: 1,
+              zIndex: 0,
+            },
+            media: {
+              mediaStartTime: 0,
+              mediaDuration: duration,
+              speed: 1,
+              volume: 1,
+            },
+            linkedClipId: videoClipId, // Link to video clip
+            data: {
+              src: normalizedVideoAudioUrl,
+              originalUrl: normalizedVideoAudioUrl,
+              normalizedAudioUrl: normalizedVideoAudioUrl,
+              audioNormalizationStatus: 'completed',
+              requiresNormalizedAudio: true,
+            },
+          });
           
-          // Update video clip to link back to audio
-          const updateClip = useVideoEditorStore.getState().updateClip;
-          updateClip(videoClipId, { linkedClipId: audioClipId });
+          if (audioClipId) {
+            createdClipIds.push(audioClipId);
+            
+            // Update video clip to link back to audio
+            const updateClip = useVideoEditorStore.getState().updateClip;
+            updateClip(videoClipId, { linkedClipId: audioClipId });
+          }
         }
       }
     } else if (file.type === "image") {
@@ -226,14 +252,27 @@ export const LocalMediaPanel: React.FC = () => {
         createdClipIds.push(imageClipId);
       }
     } else if (file.type === "audio") {
+      const blockReason = getNormalizationBlockReason({
+        ...file,
+        type: 'audio',
+      });
+      if (blockReason) {
+        window.alert(blockReason);
+        return;
+      }
+
       const duration = file.duration || 6.67; // Default to ~160 frames at 24fps
+      const normalizedAudioUrl = getNormalizedAudioUrl({
+        ...file,
+        type: 'audio',
+      }) || mediaSrc;
       
       const audioClipId = addClip({
         trackId: audioTrackId,
         startTime: currentTime,
         duration,
         type: 'audio',
-        sourceId: mediaSrc,
+        sourceId: normalizedAudioUrl,
         label: file.name || 'Audio',
         transform: {
           x: 0,
@@ -251,8 +290,11 @@ export const LocalMediaPanel: React.FC = () => {
           volume: 1,
         },
         data: {
-          src: mediaSrc,
+          src: normalizedAudioUrl,
           originalUrl: mediaSrc,
+          normalizedAudioUrl,
+          audioNormalizationStatus: file.audioNormalizationStatus ?? 'completed',
+          requiresNormalizedAudio: true,
         },
       });
       

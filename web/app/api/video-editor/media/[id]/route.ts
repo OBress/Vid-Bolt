@@ -8,7 +8,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
-import { deleteFile } from "@/lib/services/r2-storage";
+import { deleteFiles } from "@/lib/services/r2-storage";
+import { getVideoEditorMediaDeletionKeys } from "@/lib/services/video-editor-media";
 
 // Service role client for database operations
 function getServiceClient() {
@@ -68,7 +69,8 @@ export async function DELETE(
 
     // 4. Delete from R2 storage
     try {
-      await deleteFile(media.s3_key);
+      const keysToDelete = getVideoEditorMediaDeletionKeys(media);
+      await deleteFiles(keysToDelete);
     } catch (r2Error) {
       console.warn(
         `[VideoEditorMedia] Failed to delete from R2: ${media.s3_key}`,

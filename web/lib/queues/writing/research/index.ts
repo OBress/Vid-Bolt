@@ -44,6 +44,8 @@ export interface ResearchOptions {
   angle?: string;
   /** Optional source preferences */
   sourcePreferences?: string;
+  /** OpenRouter model for research-side LLM transforms */
+  openrouterModel?: string;
   /** Use Valyu AI instead of OpenRouter for research */
   useValyu?: boolean;
   /** Progress callback for long-running Valyu research */
@@ -111,6 +113,7 @@ export async function executeResearchPhase(
     researchToggle, 
     angle, 
     sourcePreferences,
+    openrouterModel,
     useValyu = false,
     onProgress,
   } = options;
@@ -144,7 +147,14 @@ export async function executeResearchPhase(
       console.log('[Research] Step 1: Skipping decomposition - DeepResearch handles internally');
     } else {
       console.log('[Research] Step 1: Decomposing topic into questions...');
-      questions = await decomposeTopicIntoQuestions(userId, topic, angle, isDeepResearch, useValyu);
+      questions = await decomposeTopicIntoQuestions(
+        userId,
+        topic,
+        angle,
+        isDeepResearch,
+        useValyu,
+        openrouterModel,
+      );
       console.log(`[Research] Generated ${questions.length} research questions`);
     }
 
@@ -162,6 +172,7 @@ export async function executeResearchPhase(
         questions,
         researchToggle: researchToggle as 'full',
         sourcePreferences,
+        openrouterModel,
         onProgress,
       });
     } else {
@@ -170,7 +181,7 @@ export async function executeResearchPhase(
         userId,
         topic,
         questions,
-        { isDeepResearch, sourcePreferences }
+        { isDeepResearch, sourcePreferences, model: openrouterModel }
       );
     }
     
@@ -182,7 +193,8 @@ export async function executeResearchPhase(
       userId,
       topic,
       researchToggle,
-      extractedFacts
+      extractedFacts,
+      openrouterModel,
     );
     console.log(`[Research] Dossier complete. Confidence: ${dossier.metadata.overallConfidence}%`);
 

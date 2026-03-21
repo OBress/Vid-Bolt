@@ -176,7 +176,7 @@ export function stageToStep(stage: string): PipelineStep {
     shot_creation: 5,
     production: 6,
     scene_review: 6,
-    video: 6,
+    video: 7,
     editor: 7,
     edit: 7,
     export: 8,

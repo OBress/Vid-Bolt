@@ -249,6 +249,43 @@ export function validateRenderProps(
         `Overlay ${overlay.id} has a blob: URL — must be uploaded to R2 first`
       );
     }
+
+    const data = (overlay as any).data;
+    const status = data?.audioNormalizationStatus as string | undefined;
+    const normalizedAudioUrl = data?.normalizedAudioUrl as string | undefined;
+    const requiresNormalizedAudio = data?.requiresNormalizedAudio === true;
+    const audioSourceMode = data?.audioSourceMode as string | undefined;
+
+    if (
+      overlay.type === 'sound' &&
+      requiresNormalizedAudio &&
+      (status === 'pending' || status === 'processing' || status === 'failed')
+    ) {
+      issues.push(
+        `Overlay ${overlay.id} audio is not render-ready (status: ${status})`
+      );
+    }
+
+    if (
+      overlay.type === 'sound' &&
+      normalizedAudioUrl &&
+      src &&
+      src !== normalizedAudioUrl
+    ) {
+      issues.push(
+        `Overlay ${overlay.id} is using a raw audio URL instead of its normalized audio URL`
+      );
+    }
+
+    if (
+      overlay.type === 'video' &&
+      audioSourceMode === 'separate_normalized' &&
+      (((overlay as any).styles?.volume ?? 0) > 0)
+    ) {
+      issues.push(
+        `Overlay ${overlay.id} enables embedded video audio even though it should use linked normalized audio`
+      );
+    }
   }
 
   return issues;

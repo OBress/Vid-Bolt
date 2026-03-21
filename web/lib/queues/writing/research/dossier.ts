@@ -35,7 +35,8 @@ export async function assembleDossier(
   userId: string,
   topic: string,
   researchToggle: ResearchToggle,
-  extractedFacts: ExtractedFacts
+  extractedFacts: ExtractedFacts,
+  model?: string,
 ): Promise<ResearchDossier> {
   // Deduplicate and sort facts
   const dedupedFacts = deduplicateFacts(extractedFacts.facts);
@@ -51,7 +52,7 @@ export async function assembleDossier(
   // Identify theories/interpretations if we have enough data
   let theories: Theory[] = [];
   if (researchToggle === 'full' && sortedFacts.length >= 10) {
-    theories = await identifyTheories(userId, topic, sortedFacts);
+    theories = await identifyTheories(userId, topic, sortedFacts, model);
   }
 
   // Convert gaps to proper format
@@ -136,7 +137,8 @@ function identifyConflicts(facts: VerifiedFact[]): ResearchDossier['conflicts'] 
 async function identifyTheories(
   userId: string,
   topic: string,
-  facts: VerifiedFact[]
+  facts: VerifiedFact[],
+  model?: string,
 ): Promise<Theory[]> {
   const factSummary = facts
     .slice(0, 20) // Limit to prevent token overflow
@@ -168,7 +170,8 @@ Only include theories that are actually represented in the research. Don't inven
     const response = await generateJSON<{ theories: Theory[] }>(
       userId,
       UNIVERSAL_PROMPTS.dossierAssembly,
-      userPrompt
+      userPrompt,
+      model ? { model } : undefined
     );
 
     return (response.theories || []).map((t, i) => ({

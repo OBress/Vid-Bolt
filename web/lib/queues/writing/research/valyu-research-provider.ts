@@ -47,6 +47,7 @@ export interface ValyuResearchOptions {
   questions?: ResearchQuestion[]; // Optional - not used for DeepResearch (it handles decomposition internally)
   researchToggle: 'full';
   sourcePreferences?: string;
+  openrouterModel?: string;
   onProgress?: (status: string, elapsedMs: number) => void;
 }
 
@@ -63,7 +64,7 @@ export interface ValyuResearchOptions {
 export async function performValyuResearch(
   options: ValyuResearchOptions
 ): Promise<ExtractedFacts> {
-  const { userId, topic, questions, researchToggle, sourcePreferences, onProgress } = options;
+  const { userId, topic, questions, researchToggle, sourcePreferences, openrouterModel, onProgress } = options;
 
   console.log(`[ValyuResearch] Starting ${researchToggle} research for: "${topic.substring(0, 50)}..."`);
   console.log(`[ValyuResearch] Questions to answer: ${questions?.length ?? 0} (DeepResearch handles decomposition internally)`);
@@ -71,7 +72,7 @@ export async function performValyuResearch(
   switch (researchToggle) {
     case 'full':
       // Full research uses DeepResearch for maximum information extraction
-      return performDeepModeResearch(userId, topic, sourcePreferences, onProgress);
+      return performDeepModeResearch(userId, topic, sourcePreferences, openrouterModel, onProgress);
   }
 }
 
@@ -89,6 +90,7 @@ async function performDeepModeResearch(
   userId: string,
   topic: string,
   sourcePreferences?: string,
+  openrouterModel?: string,
   onProgress?: (status: string, elapsedMs: number) => void
 ): Promise<ExtractedFacts> {
   console.log('[ValyuResearch] Starting DeepResearch (single-query mode)...');
@@ -107,7 +109,7 @@ async function performDeepModeResearch(
   });
 
   // Transform to ExtractedFacts (pass userId for LLM fallback extraction)
-  return transformDeepResearchToFacts(result, topic, userId);
+  return transformDeepResearchToFacts(result, topic, userId, openrouterModel);
 }
 
 // ============================================================================
@@ -207,7 +209,8 @@ Prioritize academic sources, major news outlets, and official sources.
 async function transformDeepResearchToFacts(
   result: ValyuDeepResearchResult,
   topic: string,
-  userId?: string
+  userId?: string,
+  openrouterModel?: string,
 ): Promise<ExtractedFacts> {
   const facts: VerifiedFact[] = [];
   const quotes: AttributableQuote[] = [];
@@ -281,7 +284,8 @@ async function transformDeepResearchToFacts(
         userId,
         topic,
         rawSourceContent,
-        allCitations
+        allCitations,
+        openrouterModel,
       );
       
       console.log(`[ValyuResearch:Transform] LLM fallback extracted ${extractedData.facts.length} facts, ${extractedData.quotes.length} quotes`);
@@ -480,7 +484,8 @@ async function transformDeepResearchToFacts(
 async function _transformSearchResultsToFacts(
   userId: string,
   results: ValyuSearchResult[],
-  topic: string
+  topic: string,
+  openrouterModel?: string,
 ): Promise<ExtractedFacts> {
   const allCitations: SourceCitation[] = [];
   const rawSourceContent: string[] = [];
@@ -510,7 +515,13 @@ async function _transformSearchResultsToFacts(
   console.log(`[ValyuResearch:Transform] Search -> ${allCitations.length} sources gathered`);
 
   // Use LLM to extract facts from the gathered sources
-  const extractedData = await extractFactsFromValyuSources(userId, topic, rawSourceContent, allCitations);
+  const extractedData = await extractFactsFromValyuSources(
+    userId,
+    topic,
+    rawSourceContent,
+    allCitations,
+    openrouterModel,
+  );
   
   console.log(`[ValyuResearch:Transform] LLM extracted ${extractedData.facts.length} facts, ${extractedData.quotes.length} quotes`);
 
@@ -536,7 +547,8 @@ async function extractFactsFromValyuSources(
   userId: string,
   topic: string,
   rawSourceContent: string[],
-  citations: SourceCitation[]
+  citations: SourceCitation[],
+  openrouterModel?: string,
 ): Promise<{
   facts: VerifiedFact[];
   quotes: AttributableQuote[];
@@ -683,7 +695,7 @@ Extract ALL relevant information from these sources. Return as JSON:
       userId,
       systemPrompt,
       userPrompt,
-      { model: 'google/gemini-3-flash-preview' } // Use cheaper model for extraction
+      { model: openrouterModel || 'google/gemini-3-flash-preview' }
     );
 
     // Build citation lookup

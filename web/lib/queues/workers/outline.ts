@@ -120,6 +120,7 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
           researchToggle: input.researchToggle,
           angle: input.angle,
           sourcePreferences: input.sourcePreferences,
+          openrouterModel: input.openrouterModel,
           useValyu: true, // Enable Valyu for V2 fields (narrative, keyDevelopments, entitiesV2)
           onProgress: async (_status: string, elapsedMs: number) => {
             // Update progress_percent from 1-24% over ~10 minutes during research
@@ -217,6 +218,7 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
           angle: input.angle,
           mustInclude: input.mustInclude,
           mustAvoid: input.mustAvoid,
+          openrouterModel: input.openrouterModel,
         });
 
         await completeStep(taskId, stepId);

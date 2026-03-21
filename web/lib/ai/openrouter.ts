@@ -802,6 +802,7 @@ export async function generateJSONWithWebSearch<T = unknown>(
   systemPrompt: string,
   userPrompt: string,
   options: {
+    model?: string;
     maxResults?: number;
     searchContextSize?: "low" | "medium" | "high";
   } = {}
@@ -815,6 +816,7 @@ export async function generateJSONWithWebSearch<T = unknown>(
       { role: "user", content: userPrompt },
     ],
     {
+      model: options.model,
       webSearch: true,
       webSearchContextSize: options.searchContextSize || "medium",
       temperature: 0.3,

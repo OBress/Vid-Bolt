@@ -1,6 +1,7 @@
 import type { PropertyKeyframes } from './keyframes';
 import type { AudioEffect } from './audio-effects';
 import type { MotionGraphicsOverlay } from './motion-graphics';
+import type { AudioNormalizationMetadata } from '@/lib/services/audio-normalization-metadata';
 
 /**
  * Overlay types for Remotion rendering
@@ -741,7 +742,7 @@ export interface ImageOverlay extends BaseOverlay {
 }
 
 // Local media file interface
-export interface LocalMediaFile {
+export interface LocalMediaFile extends AudioNormalizationMetadata {
   id: string;
   name: string;
   type: "video" | "image" | "audio";

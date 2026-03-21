@@ -28,6 +28,8 @@ import { CostTracker } from '@/lib/queues/cost-tracker';
 import { withGpuLock } from '@/lib/queues/gpu-lock';
 import { emitVideoItemComplete } from '@/lib/queues/video-completion-emitter';
 import { getShotNeighborContext } from '@/lib/services/shot-context';
+import { extractAndNormalizeVideoAudioFromR2 } from '@/lib/services/audio-normalizer';
+import { generateMediaKey, STORAGE_PATHS } from '@/lib/services/r2-storage';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -58,6 +60,23 @@ export interface VideoGenJobData {
 // ============================================================================
 
 const LOG_PREFIX = '[VideoGen]';
+
+function getResolvedPromptForShot(
+  metadata: Record<string, unknown>,
+  shot: Record<string, unknown>,
+): string {
+  const shotKey = `shot-${shot.segment_index as number}`;
+  const resolvedPrompts = (metadata.resolved_prompts || {}) as Record<string, string>;
+  const assetEntries = ((((metadata.asset_manifest || {}) as Record<string, unknown>).entries) || []) as Array<Record<string, unknown>>;
+  const assetEntry = assetEntries.find(entry => (entry.segment_index as number) === (shot.segment_index as number));
+
+  return resolvedPrompts[shotKey]
+    || (assetEntry?.visual_prompt as string | undefined)
+    || (shot.visual_prompt as string | undefined)
+    || (shot.visual_description as string | undefined)
+    || (shot.summary as string | undefined)
+    || `Video for segment ${shot.segment_index as number}`;
+}
 
 export const videoGenProcessor: Processor<VideoGenJobData> = async (
   job: Job<VideoGenJobData>
@@ -104,9 +123,16 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
       // Get keyframe images from the image-gen worker's output
       const generatedImages = (metadata.generated_images || {}) as Record<string, string>;
 
-      // Filter to only video shots
+      // Filter to only video-led shots, honoring visual_treatment when available.
       let videoShots = allShots.filter(
-        (s: Record<string, unknown>) => (s.media_type as string) === 'video'
+        (s: Record<string, unknown>) => {
+          const visualTreatment = s.visual_treatment as string | undefined;
+          const mediaType = s.media_type as string;
+          if (visualTreatment) {
+            return visualTreatment === 'ai_video';
+          }
+          return mediaType === 'video';
+        }
       );
 
       // Support both single-shot and batch retries
@@ -174,7 +200,7 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         }
 
         // Build the visual prompt — simplify if verifier flagged prompt complexity as the issue
-        const fullPrompt = (s.visual_prompt as string) || (s.summary as string) || `Video for segment ${segmentIndex}`;
+        const fullPrompt = getResolvedPromptForShot(metadata, s);
         let visualPrompt: string;
         if (shouldSimplify) {
           // Strip to first sentence only — removes complex lighting/mood/camera details
@@ -272,9 +298,36 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
       console.log(`${LOG_PREFIX} Step 4: Persisting video results...`);
 
       const videoResults: Record<string, string> = {};
+      const videoAudioUrls: Record<string, string> = {};
+      const videoAudioFlags: Record<string, boolean> = {};
       for (const r of gpuResult.results) {
         if (r.generation_status === 'completed') {
           videoResults[`shot-${r.shot_index}`] = r.media_url;
+
+          const derivedAudioKey = generateMediaKey(
+            userId,
+            videoId,
+            STORAGE_PATHS.AUDIO.VIDEO_EMBEDDED,
+            `shot_${r.shot_index}.mp3`
+          );
+
+          try {
+            const extracted = await extractAndNormalizeVideoAudioFromR2(
+              r.media_url,
+              derivedAudioKey,
+              { outputFormat: 'mp3' }
+            );
+
+            videoAudioFlags[`shot-${r.shot_index}`] = extracted.hasEmbeddedAudio;
+            if (extracted.normalizedAudioUrl) {
+              videoAudioUrls[`shot-${r.shot_index}`] = extracted.normalizedAudioUrl;
+            }
+          } catch (audioError) {
+            console.warn(
+              `${LOG_PREFIX} Shot ${r.shot_index}: embedded audio extraction failed`,
+              audioError
+            );
+          }
         }
       }
 
@@ -282,6 +335,15 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
       // The merge_video_metadata RPC does a shallow JSONB merge (||),
       // so we need to fetch existing videos for the merge if retrying.
       let mergedVideos = videoResults;
+      let mergedVideoAudioUrls = videoAudioUrls;
+      let mergedVideoAudioFlags = videoAudioFlags;
+      let mergedImages = { ...generatedImages, ...gpuResult.keyframeImages };
+      let mergedImageProvenance = {
+        ...((metadata.generated_image_provenance || {}) as Record<string, string>),
+        ...Object.fromEntries(
+          Object.keys(gpuResult.keyframeImages).map(key => [key, 'video_keyframe'])
+        ),
+      };
       if (isRetry) {
         const { data: existingData } = await supabase
           .from('video_projects')
@@ -290,14 +352,31 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           .single();
         const existingMeta = (existingData?.metadata || {}) as Record<string, unknown>;
         const existingVideos = (existingMeta.generated_videos || {}) as Record<string, string>;
+        const existingVideoAudioUrls = (existingMeta.generated_video_audio_urls || {}) as Record<string, string>;
+        const existingVideoAudioFlags = (existingMeta.generated_video_audio_flags || {}) as Record<string, boolean>;
+        const existingImages = (existingMeta.generated_images || {}) as Record<string, string>;
+        const existingImageProvenance = (existingMeta.generated_image_provenance || {}) as Record<string, string>;
         mergedVideos = { ...existingVideos, ...videoResults };
+        mergedVideoAudioUrls = { ...existingVideoAudioUrls, ...videoAudioUrls };
+        mergedVideoAudioFlags = { ...existingVideoAudioFlags, ...videoAudioFlags };
+        mergedImages = { ...existingImages, ...gpuResult.keyframeImages };
+        mergedImageProvenance = {
+          ...existingImageProvenance,
+          ...Object.fromEntries(
+            Object.keys(gpuResult.keyframeImages).map(key => [key, 'video_keyframe'])
+          ),
+        };
       }
 
       // Atomic merge — prevents race with concurrent metadata writes
       await supabase.rpc('merge_video_metadata', {
         p_video_id: videoId,
         p_updates: {
+          generated_images: mergedImages,
+          generated_image_provenance: mergedImageProvenance,
           generated_videos: mergedVideos,
+          generated_video_audio_urls: mergedVideoAudioUrls,
+          generated_video_audio_flags: mergedVideoAudioFlags,
           video_gen_stats: gpuResult.stats,
         },
       });

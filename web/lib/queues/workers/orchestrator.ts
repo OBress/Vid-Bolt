@@ -43,6 +43,10 @@ import type {
   GCMEntity,
 } from '@/lib/types/closed-loop';
 import { getShotNeighborContextForMG } from '@/lib/services/shot-context';
+import type {
+  MotionGraphicsAssetBundleItem,
+  PersistentMotionGraphicState,
+} from '@/types/video';
 
 // Entity reference shape used by the verifier and image-edit workers
 interface EntityReference {
@@ -60,6 +64,217 @@ function toEntityReferences(entities: GCMEntity[]): EntityReference[] {
       referenceUrl: e.reference_url,
       description: e.text_description,
     }));
+}
+
+type MotionGraphicShotLike = {
+  segment_index: number;
+  media_type: string;
+  text: string;
+  summary: string;
+  visual_description?: string;
+  visual_elements?: string[];
+  stock_search_query?: string;
+  image_edit_instruction?: string;
+  mg_asset_bundle?: MotionGraphicsAssetBundleItem[];
+};
+
+type AssetManifestEntryLike = {
+  segment_index: number;
+  source: 'stock' | 'ai_image' | 'ai_video' | 'motiongraphic';
+  visual_prompt?: string;
+  stock_url?: string;
+  stock_metadata?: {
+    id?: string;
+    thumbnailUrl?: string;
+    description?: string;
+    similarity?: number;
+  };
+};
+
+const MG_MATCH_STOP_WORDS = new Set([
+  'about',
+  'after',
+  'again',
+  'along',
+  'also',
+  'between',
+  'during',
+  'from',
+  'have',
+  'into',
+  'just',
+  'more',
+  'over',
+  'their',
+  'them',
+  'they',
+  'this',
+  'those',
+  'through',
+  'under',
+  'using',
+  'when',
+  'where',
+  'with',
+]);
+
+function tokenizeForAssetMatch(text: string | undefined): string[] {
+  if (!text) return [];
+
+  const words = text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map(word => word.trim())
+    .filter(word => word.length >= 4 && !MG_MATCH_STOP_WORDS.has(word));
+
+  return [...new Set(words)].slice(0, 24);
+}
+
+function scoreAssetBundleCandidate(
+  shotTokens: string[],
+  candidate: Pick<MotionGraphicsAssetBundleItem, 'label' | 'description' | 'usage'>
+): number {
+  if (shotTokens.length === 0) return 0;
+
+  const haystack = [candidate.label, candidate.description, candidate.usage]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (!haystack) return 0;
+
+  return shotTokens.reduce((score, token) => {
+    if (haystack.includes(token)) return score + 3;
+    if (token.length > 6 && haystack.includes(token.slice(0, -1))) return score + 1;
+    return score;
+  }, 0);
+}
+
+function inferBundleAssetKind(
+  url: string,
+  fallbackSource: MotionGraphicsAssetBundleItem['source'],
+  contextText?: string
+): MotionGraphicsAssetBundleItem['asset_kind'] {
+  if (url.startsWith('placeholder://')) return 'placeholder';
+  if (/\.(mp4|mov|webm)(\?|$)/i.test(url)) {
+    return fallbackSource === 'reference' ? 'video_context' : 'video';
+  }
+
+  const context = (contextText || '').toLowerCase();
+  if (/\b(document|memo|report|file|dossier|paper|article|record)\b/.test(context)) return 'document';
+  if (/\b(logo|brand|wordmark)\b/.test(context)) return 'logo';
+  if (/\b(portrait|headshot|person|face)\b/.test(context)) return 'portrait';
+  if (/\b(screenshot|ui|screen)\b/.test(context)) return 'screenshot';
+  if (/\b(diagram|chart|blueprint|process)\b/.test(context)) return 'diagram';
+  if (fallbackSource === 'stock') return 'stock';
+  if (fallbackSource === 'reference') return 'reference';
+  return 'image';
+}
+
+function dedupeMotionGraphicsAssetBundle(
+  items: MotionGraphicsAssetBundleItem[]
+): MotionGraphicsAssetBundleItem[] {
+  const seen = new Set<string>();
+  const deduped: MotionGraphicsAssetBundleItem[] = [];
+
+  for (const item of items) {
+    const key = item.url || item.id;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+
+  return deduped;
+}
+
+function buildMotionGraphicsAssetBundle(params: {
+  shot: MotionGraphicShotLike;
+  assetEntry?: AssetManifestEntryLike;
+  referenceKit: MotionGraphicsAssetBundleItem[];
+  placeholders: MotionGraphicsAssetBundleItem[];
+  generatedImages: Record<string, string>;
+  generatedVideos: Record<string, string>;
+}): MotionGraphicsAssetBundleItem[] {
+  const { shot, assetEntry, referenceKit, placeholders, generatedImages, generatedVideos } = params;
+  const shotKey = `shot-${shot.segment_index}`;
+  const baseBundle = [...(shot.mg_asset_bundle || [])];
+  const shotTokens = tokenizeForAssetMatch(
+    [
+      shot.visual_description,
+      shot.summary,
+      shot.text,
+      shot.stock_search_query,
+      assetEntry?.visual_prompt,
+    ].filter(Boolean).join(' ')
+  );
+
+  const bundle: MotionGraphicsAssetBundleItem[] = [...baseBundle];
+
+  const sameShotImageUrl = generatedImages[shotKey];
+  if (sameShotImageUrl) {
+    bundle.push({
+      id: `${shotKey}-generated-image`,
+      url: sameShotImageUrl,
+      asset_kind: 'image',
+      label: `Shot ${shot.segment_index + 1} keyframe`,
+      usage: shot.image_edit_instruction ? 'edited image source' : 'primary keyframe',
+      description: shot.visual_description || shot.summary || shot.text,
+      source: 'generated',
+      source_shot_index: shot.segment_index,
+    });
+  }
+
+  const sameShotVideoUrl = generatedVideos[shotKey];
+  if (sameShotVideoUrl && (shot.visual_elements || []).includes('remotion_video_manipulation')) {
+    bundle.push({
+      id: `${shotKey}-video-context`,
+      url: sameShotVideoUrl,
+      asset_kind: 'video_context',
+      label: `Shot ${shot.segment_index + 1} base video`,
+      usage: 'context-only base layer',
+      description: 'Underlying base video for overlay timing and positioning context',
+      source: 'generated',
+      source_shot_index: shot.segment_index,
+    });
+  }
+
+  if (assetEntry?.stock_url) {
+    bundle.push({
+      id: assetEntry.stock_metadata?.id || `${shotKey}-stock`,
+      url: assetEntry.stock_url,
+      asset_kind: 'stock',
+      label: `Shot ${shot.segment_index + 1} stock reference`,
+      usage: shot.media_type === 'motiongraphic' ? 'documentary reference asset' : 'stock source',
+      description: assetEntry.stock_metadata?.description || assetEntry.visual_prompt || shot.summary,
+      source: 'stock',
+      source_shot_index: shot.segment_index,
+    });
+  }
+
+  const rankedReferenceKit = referenceKit
+    .map((item, index) => ({
+      item,
+      index,
+      score: scoreAssetBundleCandidate(shotTokens, item),
+    }))
+    .filter(candidate => candidate.score > 0 || candidate.index < 2)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, 4)
+    .map(({ item }, matchedIndex) => ({
+      ...item,
+      id: item.id || `${shotKey}-reference-${matchedIndex}`,
+      asset_kind: inferBundleAssetKind(
+        item.url,
+        item.source || 'reference',
+        [item.label, item.description, item.usage].filter(Boolean).join(' ')
+      ),
+      source: item.source || 'reference',
+    }));
+
+  bundle.push(...rankedReferenceKit);
+  bundle.push(...placeholders);
+
+  return dedupeMotionGraphicsAssetBundle(bundle).slice(0, 8);
 }
 
 // ============================================================================
@@ -752,6 +967,7 @@ async function executeProductionPhase(
     summary: string;
     visual_description?: string;
     visual_elements?: string[];
+    stock_search_query?: string;
     start_seconds: number;
     end_seconds: number;
     duration_seconds: number;
@@ -762,7 +978,24 @@ async function executeProductionPhase(
     narrative_beat?: string;
     scene_id?: string;
     image_edit_instruction?: string;
+    image_count?: number;
+    mg_mode?: 'template' | 'freeform';
+    template_type?: import('@/types/video').MotionGraphicsTemplateType;
+    mg_asset_bundle?: MotionGraphicsAssetBundleItem[];
+    visual_treatment?: import('@/lib/types/closed-loop').VisualTreatment;
+    persistent_graphic_id?: string;
+    persistent_graphic_type?: import('@/types/video').PersistentGraphicType;
+    graphic_state_patch?: import('@/types/video').GraphicStatePatch;
   }>;
+
+  const persistentMotionGraphics = (metadata.persistent_motion_graphics || {}) as Record<string, PersistentMotionGraphicState>;
+  const assetManifestEntries = ((((metadata.asset_manifest || {}) as Record<string, unknown>).entries) || []) as AssetManifestEntryLike[];
+  const assetManifestByShot = new Map<number, AssetManifestEntryLike>(
+    assetManifestEntries.map(entry => [entry.segment_index, entry])
+  );
+  const existingGeneratedImages = (metadata.generated_images || {}) as Record<string, string>;
+  const existingGeneratedVideos = (metadata.generated_videos || {}) as Record<string, string>;
+  const referenceKit = ((jobData.creativeManifest.reference_kit || []) as MotionGraphicsAssetBundleItem[]).slice(0, 12);
 
   // Global word timestamps for millisecond-precision MG animation timing
   const allWordTimestamps = (metadata.word_timestamps || []) as Array<{
@@ -805,26 +1038,46 @@ async function executeProductionPhase(
   let mgFailed = 0;
   const mgSwitchedToVideo = new Set<number>(); // MG shots that failed → will be generated as AI video
 
-  // Separate shot types
-  // Only stock shots with confirmed scraped URLs stay as images; AI "image" shots → video pipeline
-  const scrapedStock = (metadata.scraped_stock_images || {}) as Record<string, string>;
-  const imageShots = shots.filter(s =>
-    s.media_type === 'stock' && scrapedStock[`shot-${s.segment_index}`]
-  );
-  const allVideoShots = shots.filter(s =>
-    s.media_type === 'video' ||
-    (s.media_type === 'image') ||
-    (s.media_type === 'stock' && !scrapedStock[`shot-${s.segment_index}`])
-  );
+  const resolveVisualTreatment = (shot: typeof shots[number]) =>
+    shot.visual_treatment || (
+      shot.media_type === 'stock'
+        ? 'stock'
+        : shot.media_type === 'image'
+          ? 'ai_image'
+          : shot.media_type === 'video'
+            ? 'ai_video'
+            : 'hybrid'
+    );
 
-  // Separate I2V shots from the batch — they depend on the previous shot's output
-  // and must be processed sequentially after the batch completes
+  // Separate shot types
+  const scrapedStock = (metadata.scraped_stock_images || {}) as Record<string, string>;
+  const stockImageShots = shots.filter(s => {
+    const treatment = resolveVisualTreatment(s);
+    return (treatment === 'stock' || treatment === 'archival') &&
+      !!scrapedStock[`shot-${s.segment_index}`];
+  });
+  const imageShots = shots.filter(s => {
+    const treatment = resolveVisualTreatment(s);
+    return treatment === 'ai_image' || s.media_type === 'image';
+  });
+  const allVideoShots = shots.filter(s => {
+    const treatment = resolveVisualTreatment(s);
+    if (treatment === 'ai_video') return true;
+    if ((treatment === 'stock' || treatment === 'archival') && !scrapedStock[`shot-${s.segment_index}`]) {
+      return true;
+    }
+    return !s.visual_treatment && s.media_type === 'video';
+  });
   const i2vShots = allVideoShots.filter(s => s.synthesis_mode === 'I2V' && s.angle_change);
   const videoShots = allVideoShots.filter(s => !(s.synthesis_mode === 'I2V' && s.angle_change));
   if (i2vShots.length > 0) {
     console.log(`${LOG_PREFIX} Separated ${i2vShots.length} I2V shots for sequential processing after batch`);
   }
-  const mgShots = shots.filter(s => s.media_type === 'motiongraphic');
+  const mgShots = shots.filter(s =>
+    s.media_type === 'motiongraphic' ||
+    resolveVisualTreatment(s) === 'mg_template' ||
+    resolveVisualTreatment(s) === 'hybrid'
+  );
 
   // -----------------------------------------------------------------------
   // PARALLEL EXECUTION: GPU pipeline + MG Pass 1 (CPU)
@@ -832,14 +1085,25 @@ async function executeProductionPhase(
 
   // MG Pass 1: Run on CPU with placeholder assets (non-blocking)
   const mgPass1Promise = (async () => {
-    if (mgShots.length === 0) return new Map<number, string>();
+    if (mgShots.length === 0) {
+      return {
+        results: new Map<number, string>(),
+        persistentState: persistentMotionGraphics,
+      };
+    }
 
     const { generateMotionGraphic, buildPlaceholderAssets } = await import(
       '@/lib/services/motion-graphics/pipeline-motion-graphics'
     );
+    const { getRecommendedPlaceholderCount, inferTemplateType } = await import(
+      '@/lib/services/motion-graphics/strategy'
+    );
     const { getOpenRouterApiKey } = await import('@/lib/services/api-keys');
     const apiKey = await getOpenRouterApiKey(jobData.userId);
     const mgResults = new Map<number, string>();
+    const persistentStateMap = new Map<string, PersistentMotionGraphicState>(
+      Object.entries(persistentMotionGraphics)
+    );
 
     // Build style context from creative manifest for MG visual consistency
     // NOTE: LoRA is NOT included here — LoRA is for GPU image diffusion, not Remotion code gen
@@ -873,7 +1137,6 @@ async function executeProductionPhase(
 
       // Build a rich prompt from actual shot data (summary, narration, visual description)
       // Include neighbor context so MG animations complement surrounding shots
-      const mgShotIndex = mgShots.indexOf(shot);
       const neighborCtxForMG = getShotNeighborContextForMG(shots as any[], shots.indexOf(shot));
 
       const mgPrompt = [
@@ -885,7 +1148,62 @@ async function executeProductionPhase(
       ].filter(Boolean).join('');
 
       const finalPrompt = mgPrompt || `Motion graphic for shot ${shot.segment_index}`;
-      const placeholders = buildPlaceholderAssets(shot.segment_index, 2);
+      const recommendedTemplateType = shot.template_type || inferTemplateType({
+        prompt: shot.visual_description || shot.summary || '',
+        routingTags: (shot.visual_elements || []) as import('@/types/video').RoutingTag[],
+        imageCount: shot.image_count || 1,
+        requestedMode: shot.mg_mode,
+        requestedTemplateType: shot.template_type,
+        persistentGraphicType: shot.persistent_graphic_type,
+      });
+      const placeholderCount = getRecommendedPlaceholderCount(
+        recommendedTemplateType,
+        shot.image_count || 1
+      );
+      const placeholders = buildPlaceholderAssets(shot.segment_index, placeholderCount);
+      const placeholderBundle: MotionGraphicsAssetBundleItem[] = placeholders.map((asset, index) => ({
+        id: `shot-${shot.segment_index}-placeholder-${index}`,
+        url: asset.url,
+        asset_kind: 'placeholder',
+        label: asset.description,
+        usage: asset.suggestedUsage,
+        description: asset.description,
+        source: 'placeholder',
+        source_shot_index: shot.segment_index,
+      }));
+      const mgAssetBundle = buildMotionGraphicsAssetBundle({
+        shot,
+        assetEntry: assetManifestByShot.get(shot.segment_index),
+        referenceKit,
+        placeholders: placeholderBundle,
+        generatedImages: existingGeneratedImages,
+        generatedVideos: existingGeneratedVideos,
+      });
+      shot.mg_asset_bundle = mgAssetBundle;
+      const imageAssetsForGeneration = mgAssetBundle.map((asset, index) => ({
+        url: asset.url,
+        description: asset.description || asset.label || `Motion graphics asset ${index + 1}`,
+        suggestedUsage: asset.usage || 'general',
+      }));
+      const persistentGraphic = shot.persistent_graphic_id && shot.persistent_graphic_type
+        ? {
+            id: shot.persistent_graphic_id,
+            type: shot.persistent_graphic_type,
+            statePatch: shot.graphic_state_patch,
+            previousState: persistentStateMap.get(shot.persistent_graphic_id),
+          }
+        : undefined;
+      const contextHint = (shot.visual_elements || []).includes('remotion_overlay')
+        ? 'text/graphics overlay'
+        : (shot.visual_elements || []).includes('remotion_image_manipulation')
+          ? 'image manipulation with Ken Burns/montage'
+          : (shot.visual_elements || []).includes('remotion_video_manipulation')
+            ? 'video annotation/overlay'
+            : shot.template_type
+              ? `documentary template: ${shot.template_type}`
+              : undefined;
+      let activeMode = shot.mg_mode;
+      let activeTemplate = shot.template_type || recommendedTemplateType;
 
       // Attempt 1: Full generation with rich prompt
       let success = false;
@@ -898,13 +1216,23 @@ async function executeProductionPhase(
           videoId,
           apiKey,
           model: 'google/gemini-3-flash-preview',
-          imageAssets: placeholders,
+          imageAssets: imageAssetsForGeneration,
           narrationText: shot.text || shot.summary,
           routingTags: (shot.visual_elements || []) as import('@/types/video').RoutingTag[],
+          contextHint,
+          mgMode: activeMode,
+          templateType: activeTemplate,
+          mgAssetBundle,
+          persistentGraphic,
         });
 
         if (result.success && result.remotionCode) {
           mgResults.set(shot.segment_index, result.remotionCode);
+          activeMode = result.mgMode || activeMode;
+          activeTemplate = result.templateType || activeTemplate;
+          if (persistentGraphic?.id && result.persistentGraphicState) {
+            persistentStateMap.set(persistentGraphic.id, result.persistentGraphicState);
+          }
           mgCompleted++;
           success = true;
         } else {
@@ -926,14 +1254,24 @@ async function executeProductionPhase(
             videoId,
             apiKey,
             model: 'google/gemini-3-flash-preview',
-            imageAssets: placeholders,
+            imageAssets: imageAssetsForGeneration,
             narrationText: shot.text || shot.summary,
             routingTags: (shot.visual_elements || []) as import('@/types/video').RoutingTag[],
+            contextHint,
+            mgMode: activeMode,
+            templateType: activeTemplate,
+            mgAssetBundle,
+            persistentGraphic,
             previousQCFeedback: lastError,
           });
 
           if (retryResult.success && retryResult.remotionCode) {
             mgResults.set(shot.segment_index, retryResult.remotionCode);
+            activeMode = retryResult.mgMode || activeMode;
+            activeTemplate = retryResult.templateType || activeTemplate;
+            if (persistentGraphic?.id && retryResult.persistentGraphicState) {
+              persistentStateMap.set(persistentGraphic.id, retryResult.persistentGraphicState);
+            }
             mgCompleted++;
             success = true;
           } else {
@@ -945,9 +1283,9 @@ async function executeProductionPhase(
         }
       }
 
-      // Attempt 3: Simplified prompt (clean animated text, less likely to produce invalid code)
-      if (!success) {
-        console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index}: retrying with simplified prompt`);
+      // Attempt 3: Switch freeform -> deterministic template lane when supported
+      if (!success && activeMode !== 'template') {
+        console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index}: switching to template lane`);
         try {
           const retryResult = await generateMotionGraphic({
             prompt: finalPrompt,
@@ -956,30 +1294,82 @@ async function executeProductionPhase(
             videoId,
             apiKey,
             model: 'google/gemini-3-flash-preview',
-            imageAssets: placeholders,
+            imageAssets: imageAssetsForGeneration,
+            narrationText: shot.text || shot.summary,
+            routingTags: (shot.visual_elements || []) as import('@/types/video').RoutingTag[],
+            contextHint,
+            mgMode: 'template',
+            templateType: activeTemplate,
+            mgAssetBundle,
+            persistentGraphic,
+            previousQCFeedback: lastError,
+          });
+
+          if (retryResult.success && retryResult.remotionCode) {
+            mgResults.set(shot.segment_index, retryResult.remotionCode);
+            activeMode = retryResult.mgMode || 'template';
+            activeTemplate = retryResult.templateType || activeTemplate;
+            if (persistentGraphic?.id && retryResult.persistentGraphicState) {
+              persistentStateMap.set(persistentGraphic.id, retryResult.persistentGraphicState);
+            }
+            mgCompleted++;
+            success = true;
+          } else {
+            lastError = retryResult.error || 'Template retry failed';
+          }
+        } catch (retryErr) {
+          lastError = retryErr instanceof Error ? retryErr.message : 'Unknown error';
+          console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index} template retry failed:`, retryErr);
+        }
+      }
+
+      // Attempt 4: Simplify within the chosen template lane before giving up
+      if (!success) {
+        console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index}: retrying with simplified template`);
+        try {
+          const retryResult = await generateMotionGraphic({
+            prompt: finalPrompt,
+            duration: shot.duration_seconds,
+            shotIndex: shot.segment_index,
+            videoId,
+            apiKey,
+            model: 'google/gemini-3-flash-preview',
+            imageAssets: imageAssetsForGeneration,
+            narrationText: shot.text || shot.summary,
+            routingTags: (shot.visual_elements || []) as import('@/types/video').RoutingTag[],
+            contextHint,
+            mgMode: 'template',
+            templateType: activeTemplate,
+            mgAssetBundle,
+            persistentGraphic,
+            previousQCFeedback: lastError,
             simplifiedRetry: true,
           });
 
           if (retryResult.success && retryResult.remotionCode) {
             mgResults.set(shot.segment_index, retryResult.remotionCode);
+            if (persistentGraphic?.id && retryResult.persistentGraphicState) {
+              persistentStateMap.set(persistentGraphic.id, retryResult.persistentGraphicState);
+            }
             mgCompleted++;
             success = true;
           }
         } catch (retryErr) {
-          console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index} simplified retry failed:`, retryErr);
+          console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index} simplified template retry failed:`, retryErr);
         }
       }
 
-      // Attempt 4 REMOVED: Static fallback (getStaticRemotionFallback) has been
-      // removed — a bad MG is worse than no MG. Instead, switch to AI video.
       if (!success) {
         mgSwitchedToVideo.add(shot.segment_index);
-        console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index}: all 3 attempts failed — switching to AI video`);
+        console.warn(`${LOG_PREFIX} MG shot ${shot.segment_index}: all MG attempts failed — switching to AI video`);
         mgFailed++;
       }
     }
 
-    return mgResults;
+    return {
+      results: mgResults,
+      persistentState: Object.fromEntries(persistentStateMap),
+    };
   })();
 
   // GPU Pipeline: Images → Videos (sequential VRAM modes, with verification)
@@ -997,6 +1387,32 @@ async function executeProductionPhase(
       Math.max(60_000, durationSeconds * 10 * 1_000 * MAX_VERIFY_ATTEMPTS);
 
     console.log(`${LOG_PREFIX} Timeouts: image=${IMAGE_GEN_TIMEOUT_MS}ms, video=computed per-shot (1:10 ratio × ${MAX_VERIFY_ATTEMPTS} attempts)`);
+
+    // --- STOCK-LED IMAGES ---
+    if (stockImageShots.length > 0) {
+      const stockGeneratedImages: Record<string, string> = {};
+      const stockImageProvenance: Record<string, string> = {};
+      for (const shot of stockImageShots) {
+        const shotKey = `shot-${shot.segment_index}`;
+        const stockUrl = scrapedStock[shotKey];
+        if (!stockUrl) continue;
+        stockGeneratedImages[shotKey] = stockUrl;
+        stockImageProvenance[shotKey] = 'stock_source';
+        generatedAssets.set(`placeholder://shot-${shot.segment_index}/asset-0`, stockUrl);
+      }
+
+      if (Object.keys(stockGeneratedImages).length > 0) {
+        await supabase.rpc('merge_video_metadata', {
+          p_video_id: videoId,
+          p_updates: {
+            generated_images: stockGeneratedImages,
+            generated_image_provenance: stockImageProvenance,
+          },
+        });
+        imagesCompleted += Object.keys(stockGeneratedImages).length;
+        console.log(`${LOG_PREFIX} Registered ${Object.keys(stockGeneratedImages).length} stock-led image shots`);
+      }
+    }
 
     // --- IMAGES ---
     for (const shot of imageShots) {
@@ -1034,7 +1450,7 @@ async function executeProductionPhase(
       }
 
       // Granular per-image progress (band: 30–50%)
-      const imgTotal = imageShots.length;
+      const imgTotal = imageShots.length + stockImageShots.length;
       const imgDone = imagesCompleted + imagesFailed;
       await updateTaskStatus(taskId, {
         current_step: `Phase IV: Images ${imgDone}/${imgTotal}...`,
@@ -1042,8 +1458,9 @@ async function executeProductionPhase(
       });
     }
 
-    const imageStatusText = imageShots.length > 0
-      ? `Images done (${imagesCompleted}/${imageShots.length}). Harmonizing scenes...`
+    const totalImageShots = imageShots.length + stockImageShots.length;
+    const imageStatusText = totalImageShots > 0
+      ? `Images done (${imagesCompleted}/${totalImageShots}). Harmonizing scenes...`
       : 'Generating videos...';
     await updateTaskStatus(taskId, {
       current_step: `Phase IV: ${imageStatusText}`,
@@ -1053,53 +1470,55 @@ async function executeProductionPhase(
     // --- SCENE HARMONIZATION (proactive image editing) ---
     // After all keyframe images are generated, harmonize visual consistency
     // across thematically related shots before they're used as video keyframes.
-    if (imagesCompleted >= 2) {
-      try {
-        const { harmonizeSceneImages } = await import('@/lib/services/scene-harmonizer');
-        // Fetch current generated_images from metadata
-        const { data: freshProject } = await supabase
-          .from('video_projects')
-          .select('metadata')
-          .eq('id', videoId)
-          .single();
-        const freshMeta = (freshProject?.metadata || {}) as Record<string, unknown>;
-        const currentGenImages = (freshMeta.generated_images || {}) as Record<string, string>;
+    try {
+      const { harmonizeSceneImages } = await import('@/lib/services/scene-harmonizer');
+      // Fetch current generated_images from metadata
+      const { data: freshProject } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+      const freshMeta = (freshProject?.metadata || {}) as Record<string, unknown>;
+      const currentGenImages = (freshMeta.generated_images || {}) as Record<string, string>;
 
-        if (Object.keys(currentGenImages).length >= 2) {
-          console.log(`${LOG_PREFIX} Running scene harmonization on ${Object.keys(currentGenImages).length} images...`);
-          await updateTaskStatus(taskId, {
-            current_step: 'Phase IV: Harmonizing visual consistency across scenes...',
-            progress_percent: 50,
+      if (Object.keys(currentGenImages).length >= 2) {
+        console.log(`${LOG_PREFIX} Running scene harmonization on ${Object.keys(currentGenImages).length} images...`);
+        await updateTaskStatus(taskId, {
+          current_step: 'Phase IV: Harmonizing visual consistency across scenes...',
+          progress_percent: 50,
+        });
+
+        const harmResult = await harmonizeSceneImages(
+          jobData.userId,
+          videoId,
+          shots as any,
+          currentGenImages,
+          (msg) => console.log(`${LOG_PREFIX} ${msg}`),
+        );
+
+        // Merge harmonized image URLs back into metadata
+        if (harmResult.harmonized > 0) {
+          const mergedImages = { ...currentGenImages, ...harmResult.updatedImages };
+          const harmonizedProvenance = Object.fromEntries(
+            Object.keys(harmResult.updatedImages).map(key => [key, 'harmonized'])
+          );
+          await supabase.rpc('merge_video_metadata', {
+            p_video_id: videoId,
+            p_updates: {
+              generated_images: mergedImages,
+              generated_image_provenance: harmonizedProvenance,
+            },
           });
 
-          const harmResult = await harmonizeSceneImages(
-            jobData.userId,
-            videoId,
-            shots as any,
-            currentGenImages,
-            (msg) => console.log(`${LOG_PREFIX} ${msg}`),
-          );
-
-          // Merge harmonized image URLs back into metadata
-          if (harmResult.harmonized > 0) {
-            const mergedImages = { ...currentGenImages, ...harmResult.updatedImages };
-            await supabase
-              .from('video_projects')
-              .update({
-                metadata: { ...freshMeta, generated_images: mergedImages },
-              })
-              .eq('id', videoId);
-
-            console.log(`${LOG_PREFIX} Scene harmonization: ${harmResult.harmonized} images updated, ` +
-              `${harmResult.skipped} skipped, ${harmResult.sequences} sequences`);
-          } else {
-            console.log(`${LOG_PREFIX} Scene harmonization: no shots needed harmonizing`);
-          }
+          console.log(`${LOG_PREFIX} Scene harmonization: ${harmResult.harmonized} images updated, ` +
+            `${harmResult.skipped} skipped, ${harmResult.sequences} sequences`);
+        } else {
+          console.log(`${LOG_PREFIX} Scene harmonization: no shots needed harmonizing`);
         }
-      } catch (harmErr) {
-        // Non-fatal: harmonization is a best-effort enhancement
-        console.warn(`${LOG_PREFIX} Scene harmonization error (non-fatal):`, harmErr);
       }
+    } catch (harmErr) {
+      // Non-fatal: harmonization is a best-effort enhancement
+      console.warn(`${LOG_PREFIX} Scene harmonization error (non-fatal):`, harmErr);
     }
 
     // --- CREATIVE IMAGE EDITING ---
@@ -1158,9 +1577,15 @@ async function executeProductionPhase(
 
       // Persist edited images (overwrite keyframes with edited versions)
       if (Object.keys(editedImages).length > 0) {
+        const editedProvenance = Object.fromEntries(
+          Object.keys(editedImages).map(key => [key, 'creative_edit'])
+        );
         await supabase.rpc('merge_video_metadata', {
           p_video_id: videoId,
-          p_updates: { generated_images: editedImages },
+          p_updates: {
+            generated_images: editedImages,
+            generated_image_provenance: editedProvenance,
+          },
         });
         console.log(`${LOG_PREFIX} Persisted ${Object.keys(editedImages).length} creatively edited images`);
       }
@@ -1496,6 +1921,7 @@ async function executeProductionPhase(
                 p_video_id: videoId,
                 p_updates: {
                   generated_images: { [`shot-${shotIdx}`]: i2vResult.startFrameUrl },
+                  generated_image_provenance: { [`shot-${shotIdx}`]: 'i2v_start_frame' },
                 },
               });
 
@@ -1567,10 +1993,12 @@ async function executeProductionPhase(
   })();
 
   // Wait for both GPU and MG Pass 1 to complete
-  const [mgPass1Results, generatedAssets] = await Promise.all([
+  const [mgPass1Bundle, generatedAssets] = await Promise.all([
     mgPass1Promise,
     gpuPipelinePromise,
   ]);
+  const mgPass1Results = mgPass1Bundle.results;
+  const updatedPersistentMotionGraphics = mgPass1Bundle.persistentState;
 
   // Cancellation checkpoint: after GPU + MG pipelines complete, before persistence
   await checkCancelled(taskId);
@@ -1587,7 +2015,10 @@ async function executeProductionPhase(
     // Atomic merge — prevents race with concurrent GPU pipeline metadata writes
     await supabase.rpc('merge_video_metadata', {
       p_video_id: videoId,
-      p_updates: { generated_motion_graphics: mgCodeMap },
+      p_updates: {
+        generated_motion_graphics: mgCodeMap,
+        persistent_motion_graphics: updatedPersistentMotionGraphics,
+      },
     });
 
     console.log(`${LOG_PREFIX} MG Pass 1: persisted ${mgPass1Results.size} Remotion compositions`);
@@ -1698,8 +2129,10 @@ async function executeProductionPhase(
       const mgAssetMap: Record<string, string> = {};
       const availableAssets = [...assetEntries]; // clone to avoid cross-shot interference
 
-      for (let i = 0; i < 2; i++) {
-        const placeholderKey = `placeholder://shot-${shotIdx}/asset-${i}`;
+      const placeholderMatches = [...pass1Code.matchAll(new RegExp(`placeholder://shot-${shotIdx}/asset-(\\d+)`, 'g'))];
+      const placeholderKeys = [...new Set(placeholderMatches.map((match) => match[0]))];
+
+      for (const placeholderKey of placeholderKeys) {
         if (availableAssets.length === 0) break;
 
         // Find the asset closest to this MG shot's segment index

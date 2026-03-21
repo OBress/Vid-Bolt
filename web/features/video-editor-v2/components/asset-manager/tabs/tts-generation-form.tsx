@@ -63,6 +63,11 @@ interface TtsResult {
   duration: number;
   mimeType: string;
   wordTimestamps?: Array<{ word: string; start_seconds: number; end_seconds: number }>;
+  audioNormalizationStatus?: 'completed';
+  normalizedAudioUrl?: string | null;
+  originalLufs?: number | null;
+  normalizedLufs?: number | null;
+  truePeakDbtp?: number | null;
 }
 
 // ============================================================================
@@ -205,11 +210,25 @@ export const TtsGenerationForm: React.FC = () => {
   // Drag to timeline
   const handleDragStart = useCallback((e: React.DragEvent) => {
     if (!result) return;
-    startMediaDrag('audio', result.url, {
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/json', JSON.stringify({
+      isNewItem: true,
+      type: 'audio',
+      label: `TTS - ${ttsForm.voiceId}`,
+      duration: result.duration,
+      data: {
+        src: result.normalizedAudioUrl || result.url,
+        originalUrl: result.url,
+        normalizedAudioUrl: result.normalizedAudioUrl || result.url,
+        audioNormalizationStatus: result.audioNormalizationStatus || 'completed',
+        name: `TTS - ${ttsForm.voiceId}`,
+      },
+    }));
+
+    startMediaDrag('audio', result.normalizedAudioUrl || result.url, {
       name: `TTS - ${ttsForm.voiceId}`,
       duration: result.duration,
     });
-    e.dataTransfer.effectAllowed = 'copy';
   }, [result, ttsForm.voiceId]);
 
   const handleDragEnd = useCallback(() => {

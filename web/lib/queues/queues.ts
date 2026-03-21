@@ -127,6 +127,9 @@ export const videoRenderQueue = createQueue('video-render', {
 /** AI-driven edit assembly (chunked EDL generation) */
 export const editAssemblyQueue = createQueue('edit-assembly-workflow');
 
+/** Video editor media normalization (uploads and derived audio) */
+export const mediaNormalizationQueue = createQueue('media-normalization');
+
 /** Closed-loop orchestrator (Phase I→V pipeline coordinator) */
 export const orchestratorQueue = createQueue('orchestrator', {
   defaultJobOptions: {
@@ -208,6 +211,7 @@ export const allQueues = [
   gpuShutdownCheckQueue,
   videoRenderQueue,
   editAssemblyQueue,
+  mediaNormalizationQueue,
   orchestratorQueue,
   shotPlannerQueue,
   assetScoutQueue,

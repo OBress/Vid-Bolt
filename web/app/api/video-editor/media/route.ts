@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { mapVideoEditorMediaRow } from "@/lib/services/video-editor-media";
 
 // Service role client for database operations
 function getServiceClient() {
@@ -66,22 +67,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Transform to camelCase for frontend
-    const media = (mediaList || []).map((item: any) => ({
-      id: item.id,
-      userId: item.user_id,
-      projectId: item.project_id,
-      s3Key: item.s3_key,
-      s3Url: item.s3_url,
-      name: item.name,
-      type: item.type,
-      size: item.size,
-      duration: item.duration,
-      thumbnail: item.thumbnail,
-      width: item.width,
-      height: item.height,
-      createdAt: item.created_at,
-      source: 'upload' as const,
-    }));
+    const media = (mediaList || []).map((item: any) => mapVideoEditorMediaRow(item));
 
     // 5. Optionally include generated project media from video_projects.metadata
     const generatedMedia: any[] = [];
@@ -96,12 +82,16 @@ export async function GET(request: NextRequest) {
         const meta = project.metadata as Record<string, any>;
         const genImages = (meta.generated_images || {}) as Record<string, string>;
         const genVideos = (meta.generated_videos || {}) as Record<string, string>;
+        const genVideoAudioUrls = (meta.generated_video_audio_urls || {}) as Record<string, string>;
+        const genVideoAudioFlags = (meta.generated_video_audio_flags || {}) as Record<string, boolean>;
 
         // Convert generated videos to media items
         for (const [key, url] of Object.entries(genVideos)) {
           if (!url) continue;
           const shotMatch = key.match(/shot-(\d+)/);
           const shotNum = shotMatch ? parseInt(shotMatch[1]) : 0;
+          const normalizedAudioUrl = genVideoAudioUrls[key] || null;
+          const hasAudio = genVideoAudioFlags[key];
           generatedMedia.push({
             id: `gen-video-${key}`,
             userId: user.id,
@@ -115,6 +105,19 @@ export async function GET(request: NextRequest) {
             thumbnail: null,
             width: null,
             height: null,
+            audioNormalizationStatus:
+              hasAudio === false
+                ? 'completed'
+                : normalizedAudioUrl
+                  ? 'completed'
+                  : 'pending',
+            hasEmbeddedAudio: hasAudio ?? null,
+            normalizedAudioUrl,
+            originalLufs: null,
+            normalizedLufs: null,
+            truePeakDbtp: null,
+            audioNormalizationError: null,
+            audioNormalizedAt: null,
             createdAt: meta.edl_generated_at || new Date().toISOString(),
             source: 'generated',
           });
@@ -138,6 +141,14 @@ export async function GET(request: NextRequest) {
             thumbnail: url,
             width: null,
             height: null,
+            audioNormalizationStatus: 'not_applicable',
+            hasEmbeddedAudio: false,
+            normalizedAudioUrl: null,
+            originalLufs: null,
+            normalizedLufs: null,
+            truePeakDbtp: null,
+            audioNormalizationError: null,
+            audioNormalizedAt: null,
             createdAt: meta.edl_generated_at || new Date().toISOString(),
             source: 'generated',
           });

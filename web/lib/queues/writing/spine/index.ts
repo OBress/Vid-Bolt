@@ -35,6 +35,7 @@ export interface SpineGenerationOptions {
   angle?: string;
   mustInclude?: string[];
   mustAvoid?: string[];
+  openrouterModel?: string;
 }
 
 export interface SpineGenerationResult {
@@ -77,7 +78,7 @@ export async function generateSpine(
     durationDecision,
     dossier,
     genreTemplate,
-    { angle, mustInclude, mustAvoid }
+    { angle, mustInclude, mustAvoid, openrouterModel: options.openrouterModel }
   );
 
   console.log(`[Spine] Generated ${beatSpecs.length} beat specifications`);
@@ -135,7 +136,12 @@ async function generateBeatSpecs(
   durationDecision: DurationDecision,
   dossier: ResearchDossier | null,
   genreTemplate: GenreTemplate,
-  options: { angle?: string; mustInclude?: string[]; mustAvoid?: string[] }
+  options: {
+    angle?: string;
+    mustInclude?: string[];
+    mustAvoid?: string[];
+    openrouterModel?: string;
+  }
 ): Promise<BeatSpec[]> {
   // Build context from dossier
   const dossierContext = dossier ? 
@@ -195,7 +201,8 @@ Determine the optimal number of sections based on the story's natural structure.
     const response = await generateJSON<{ beats: BeatSpec[] }>(
       userId,
       UNIVERSAL_PROMPTS.spineGeneration,
-      userPrompt
+      userPrompt,
+      options.openrouterModel ? { model: options.openrouterModel } : undefined
     );
 
     return response.beats.map((b, i) => ({

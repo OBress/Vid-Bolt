@@ -14,7 +14,6 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   callGpuBatchImageGenerate,
   callGpuBatchVideoGenerate,
-  callGpuCancelBatch,
   callGpuGetMode,
   callGpuSwitchMode,
   forceUpdateGpuActivity,
@@ -32,7 +31,7 @@ import {
   getKeyFromUrl,
   STORAGE_PATHS,
 } from '@/lib/services/r2-storage';
-import { waitForWebhookResult, abortAllListenersForPrefix } from '@/lib/queues/webhook-listener';
+import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
 import { CancellationError, checkCancelled } from '@/lib/queues/cancellation';
 
 // ============================================================================
@@ -79,8 +78,8 @@ const POST_SWITCH_DELAY_MS = 5_000;
 
 export interface ShotForGpuGeneration {
   segment_index: number;
-  /** Media type from ShotPart1: 'video' or 'motiongraphic' */
-  media_type: 'video' | 'motiongraphic';
+  /** Media type from the routed shot plan */
+  media_type: 'video' | 'motiongraphic' | 'image';
   visual_prompt: string;
   duration_seconds?: number;
   /** Start frame image URL for video generation (keyframe) */
@@ -110,6 +109,7 @@ export interface GpuGenerationResult {
 
 export interface BatchGpuGenerationResult {
   results: GpuGenerationResult[];
+  keyframeImages: Record<string, string>;
   stats: {
     imagesGenerated: number;
     imagesFailed: number;
@@ -305,6 +305,7 @@ export async function processGpuBatchGeneration(
 ): Promise<BatchGpuGenerationResult> {
   const logPrefix = '[GPU-Batch]';
   const results: GpuGenerationResult[] = [];
+  const keyframeImages: Record<string, string> = {};
   
   const stats = {
     imagesGenerated: 0,
@@ -372,7 +373,7 @@ export async function processGpuBatchGeneration(
     }
     console.log(`${logPrefix} Complete: ${stats.imagesGenerated} images, ${stats.videosGenerated} videos generated`);
     console.log(`${logPrefix} Failed: ${stats.imagesFailed} images, ${stats.videosFailed} videos`);
-    return { results, stats };
+    return { results, keyframeImages, stats };
   }
 
   onProgress?.(`Generating ${allShotsForImages.length} keyframe images...`, 20);
@@ -422,6 +423,7 @@ export async function processGpuBatchGeneration(
   for (const kr of keyframeResults) {
     if (kr.generation_status === 'completed' && kr.media_url) {
       keyframeMap.set(kr.shot_index, kr.media_url);
+      keyframeImages[`shot-${kr.shot_index}`] = kr.media_url;
     }
   }
   console.log(`${logPrefix} Keyframe images generated: ${keyframeMap.size}/${videoShots.length} for video shots`);
@@ -512,7 +514,7 @@ export async function processGpuBatchGeneration(
   console.log(`${logPrefix} Complete: ${stats.imagesGenerated} images, ${stats.videosGenerated} videos generated`);
   console.log(`${logPrefix} Failed: ${stats.imagesFailed} images, ${stats.videosFailed} videos`);
 
-  return { results, stats };
+  return { results, keyframeImages, stats };
 }
 
 // ============================================================================

@@ -156,6 +156,7 @@ function mapTasksToSteps(
       // The video/closed-loop task covers steps 5-6
       map[5] = task;
       map[6] = task;
+      map[7] = task;
     } else if (task.id === video.export_task_id) {
       map[8] = task; // Export is step 8
     }
@@ -170,6 +171,7 @@ function mapTasksToSteps(
     if (!map[5] && task.type === 'closed_loop') {
       map[5] = task;
       if (!map[6]) map[6] = task;
+      if (!map[7]) map[7] = task;
     }
     if (!map[7] && task.type === 'edit_assembly') {
       map[7] = task;
@@ -213,10 +215,69 @@ function getStepStatus(
   currentStepNum: number,
   meta: Record<string, unknown>
 ): StepStatus {
-  if (meta.generationError && step === currentStepNum) return 'error';
-  if (step < currentStepNum) return 'complete';
-  if (step === currentStepNum) return 'in-progress';
+  const artifactStepNum = getArtifactStep(meta);
+  const effectiveStepNum = Math.max(currentStepNum, artifactStepNum);
+
+  if (step < effectiveStepNum) return 'complete';
+  if (step > effectiveStepNum) return 'not-reached';
+
+  if (meta.generationError && !isStepArtifactComplete(step, meta)) return 'error';
+  if (isStepArtifactComplete(step, meta)) return 'complete';
+
+  if (step === 6 && hasGeneratedMedia(meta)) return 'complete';
+  if (step === 7 && hasEditorArtifacts(meta)) return 'complete';
+
+  if (step === currentStepNum || step === effectiveStepNum) return 'in-progress';
   return 'not-reached';
+}
+
+function hasGeneratedMedia(meta: Record<string, unknown>): boolean {
+  return getGeneratedMediaCount(meta) > 0;
+}
+
+function hasEditorArtifacts(meta: Record<string, unknown>): boolean {
+  return !!meta.edl || !!meta.agentEdl || !!meta.editor_state;
+}
+
+function getGeneratedMediaCount(meta: Record<string, unknown>): number {
+  return Object.keys((meta.generated_videos || {}) as object).length +
+    Object.keys((meta.generated_images || {}) as object).length +
+    Object.keys((meta.generated_motion_graphics || {}) as object).length;
+}
+
+function isStepArtifactComplete(
+  step: PipelineStep,
+  meta: Record<string, unknown>
+): boolean {
+  switch (step) {
+    case 1:
+      return !!meta.outlineOutput;
+    case 2:
+      return Array.isArray(meta.stockMediaResults) || !!meta.stockMediaResults;
+    case 3:
+      return !!meta.scriptOutput || !!meta.universalScriptOutput || !!meta.script;
+    case 4:
+      return !!meta.audioUrl || !!meta.audio_url || getAudioChunks(meta).length > 0;
+    case 5:
+      return !!meta.shot_plan || !!meta.av_script_part1 || !!meta.avScriptPart1Output;
+    case 6:
+      return hasGeneratedMedia(meta);
+    case 7:
+      return hasEditorArtifacts(meta);
+    case 8:
+      return !!meta.renderUrl || !!meta.renderJobId;
+    default:
+      return false;
+  }
+}
+
+function getArtifactStep(meta: Record<string, unknown>): PipelineStep {
+  for (const step of [...ALL_STEPS].reverse()) {
+    if (isStepArtifactComplete(step, meta)) {
+      return step;
+    }
+  }
+  return 1;
 }
 
 // ============================================================================
@@ -378,6 +439,9 @@ function extractStepOutputs(
         totalMediaCount: Object.keys(genVideos).length +
           Object.keys(genImages).length +
           Object.keys(genMG).length,
+        generated_image_provenance: meta.generated_image_provenance || null,
+        resolved_prompts_count: Object.keys((meta.resolved_prompts || {}) as object).length,
+        planner_diagnostics: getNestedValue(meta, 'shot_plan.metadata.planner_diagnostics') || null,
         // Scraped stock images (from asset-scout)
         scraped_stock_count: Object.keys((meta.scraped_stock_images || {}) as object).length,
         video_gen_stats: meta.video_gen_stats || null,
@@ -535,6 +599,23 @@ function extractStepPrompts(
           });
         }
       }
+      if (prompts.length === 0 && meta.resolved_prompts && typeof meta.resolved_prompts === 'object') {
+        const promptEntries = Object.entries(meta.resolved_prompts as Record<string, string>).slice(0, 10);
+        for (const [shotKey, prompt] of promptEntries) {
+          prompts.push({
+            id: `resolved-${shotKey}`,
+            label: `${shotKey} Visual Prompt`,
+            userPrompt: prompt,
+          });
+        }
+        const totalResolved = Object.keys(meta.resolved_prompts as Record<string, string>).length;
+        if (totalResolved > 10) {
+          prompts.push({
+            id: 'resolved-prompt-overflow',
+            label: `... and ${totalResolved - 10} more resolved prompts`,
+          });
+        }
+      }
       break;
     }
     case 7: {
@@ -621,7 +702,7 @@ function getRelevantPhases(step: PipelineStep): string[] {
     case 4: return ['audio_generation', 'audio_processing'];
     case 5: return ['shot_planning']; // Phase from closed-loop
     case 6: return ['image_generation', 'video_generation', 'compositing'];
-    case 7: return ['edit_assembly', 'preprocessing', 'writing', 'compositing', 'postprocessing', 'encoding'];
+    case 7: return ['edit_assembly', 'assembly', 'preprocessing', 'writing', 'compositing', 'postprocessing', 'encoding'];
     case 8: return ['encoding', 'uploading'];
     default: return [];
   }
@@ -1011,28 +1092,43 @@ function computeEdlHealth(
   meta: Record<string, unknown>
 ): Record<string, unknown> | null {
   const agentEdl = meta.agentEdl as Record<string, unknown> | undefined;
-  if (!agentEdl?.tracks) return null;
+  const tracks = Array.isArray(agentEdl?.tracks)
+    ? agentEdl.tracks as Array<Record<string, unknown>>
+    : [];
+  const flatClips = Array.isArray(agentEdl?.clips)
+    ? agentEdl.clips as Array<Record<string, unknown>>
+    : [];
 
-  const tracks = agentEdl.tracks as Array<Record<string, unknown>>;
+  if (tracks.length === 0 && flatClips.length === 0) return null;
+
+  const clips = flatClips.length > 0
+    ? flatClips
+    : tracks.flatMap(track => ((track.clips || []) as Array<Record<string, unknown>>));
   let totalClips = 0;
   let totalDuration = 0;
   let clipsOver10s = 0;
   const longClips: Array<{ track: string; start: number; duration: number }> = [];
 
-  for (const track of tracks) {
-    const clips = (track.clips || []) as Array<Record<string, unknown>>;
-    for (const clip of clips) {
-      totalClips++;
-      const dur = (clip.duration as number) || 0;
-      totalDuration += dur;
-      if (dur > 10) {
-        clipsOver10s++;
-        longClips.push({
-          track: (track.id as string) || 'unknown',
-          start: (clip.startTime as number) || 0,
-          duration: dur,
-        });
-      }
+  for (const clip of clips) {
+    totalClips++;
+    const dur = (clip.duration as number) || 0;
+    totalDuration += dur;
+    if (dur > 10) {
+      clipsOver10s++;
+      longClips.push({
+        track: (clip.trackId as string) || 'unknown',
+        start: (clip.startTime as number) || 0,
+        duration: dur,
+      });
+    }
+  }
+
+  if (flatClips.length > 0) {
+    const mainTrackDuration = flatClips
+      .filter(clip => (clip.trackId as string) === 'main-video')
+      .reduce((sum, clip) => sum + (((clip.duration as number) || 0)), 0);
+    if (mainTrackDuration > 0) {
+      totalDuration = mainTrackDuration;
     }
   }
 
@@ -1048,6 +1144,14 @@ function computeEdlHealth(
     duration_vs_audio_diff_s: Math.round((totalDuration - audioTotal) * 100) / 100,
     clips_over_10s: clipsOver10s,
     long_clips: longClips.length > 0 ? longClips : undefined,
-    tracks_count: tracks.length,
+    tracks_count: tracks.length || uniqueTrackCount(flatClips),
   };
+}
+
+function uniqueTrackCount(clips: Array<Record<string, unknown>>): number {
+  return new Set(
+    clips
+      .map(clip => clip.trackId as string | undefined)
+      .filter((trackId): trackId is string => !!trackId)
+  ).size;
 }

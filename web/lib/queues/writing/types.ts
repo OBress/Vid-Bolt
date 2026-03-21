@@ -143,6 +143,8 @@ export interface UniversalScriptInput {
   protagonistGender?: 'male' | 'female' | 'any';
   /** OpenRouter model to use for generation */
   openrouterModel?: string;
+  /** Quality/review model to use for scoring and rewrites */
+  qualityReviewModel?: string;
   /** Content category/niche */
   contentNiche?: string;
 
@@ -161,10 +163,10 @@ export interface ScriptStyleConfig {
   customWordReplacements?: Record<string, string[]>;
   /** Per-phase system prompt overrides (prepended to default prompts) */
   systemPromptOverrides?: {
-    research?: string;
-    spine?: string;
     expansion?: string;
     quality?: string;
+    rewrite?: string;
+    transition?: string;
   };
   /** Custom engagement timing for spine generation */
   engagementTiming?: {

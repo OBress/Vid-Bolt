@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   Settings2,
   ScrollText,
-  MessageSquarePlus,
   Clock,
   Brain,
   ChevronRight,
@@ -27,6 +26,13 @@ import { cn } from "@/lib/utils";
 import { useProjectSettings } from "@/hooks/use-project-settings";
 import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
 import { ModelSelector } from "./ModelSelector";
+import {
+  normalizeResearchDepth,
+  parseLineList,
+  parseWordReplacementMap,
+  stringifyLineList,
+  stringifyWordReplacementMap,
+} from "@/lib/script-config";
 import type {
   ScriptPOV,
   ScriptGender,
@@ -65,6 +71,27 @@ export function ScriptTab({ projectId }: { projectId?: string }) {
     qualityReviewModel: "google/gemini-3-pro-preview",
     contentNiche: "entertainment",
     favoriteModels: [],
+  };
+  const normalizedResearchDepth = normalizeResearchDepth(script.researchDepth);
+  const advanced = script.advanced || {};
+  const systemPrompts = advanced.systemPrompts || {};
+  const bannedPhrasesText = stringifyLineList(advanced.bannedPhrases);
+  const wordReplacementsText = stringifyWordReplacementMap(
+    advanced.wordReplacements,
+  );
+
+  const updateAdvancedSettings = (
+    partial: NonNullable<typeof script.advanced>,
+  ) => {
+    updateSettings({
+      script: {
+        ...script,
+        advanced: {
+          ...(script.advanced || {}),
+          ...partial,
+        },
+      },
+    });
   };
 
   // Favorite models (stored in script settings)
@@ -163,27 +190,125 @@ export function ScriptTab({ projectId }: { projectId?: string }) {
               </p>
             </div>
 
-            {/* System Prompts - Coming Soon */}
-            <div className="space-y-2 opacity-50">
+            <div className="space-y-4">
               <Label className="text-xs text-neutral-400 uppercase font-bold tracking-wider">
-                Custom System Prompts
+                Writing Prompt Overrides
               </Label>
-              <div className="p-6 bg-black/20 border border-neutral-800 rounded-lg text-center">
-                <MessageSquarePlus className="w-8 h-8 text-neutral-700 mx-auto mb-2" />
-                <p className="text-sm text-neutral-500">
-                  Custom system prompts coming soon
-                </p>
-                <p className="text-[10px] text-neutral-600 mt-1">
-                  Configure custom prompts for research, spine generation, and
-                  expansion phases.
-                </p>
+              <p className="text-[10px] text-neutral-500 italic">
+                These layer on top of the built-in genre preset. Leave blank to
+                use the default behavior.
+              </p>
+              <div className="grid grid-cols-1 gap-4">
+                {(
+                  [
+                    {
+                      key: "expansion",
+                      label: "Expansion Prompt",
+                      placeholder:
+                        "Add voice, pacing, or structure guidance for section writing.",
+                    },
+                    {
+                      key: "quality",
+                      label: "Quality Review Prompt",
+                      placeholder:
+                        "Add extra scoring criteria or quality standards.",
+                    },
+                    {
+                      key: "rewrite",
+                      label: "Rewrite Prompt",
+                      placeholder:
+                        "Guide how low-scoring sections should be rewritten.",
+                    },
+                    {
+                      key: "transition",
+                      label: "Transition Prompt",
+                      placeholder:
+                        "Set the style for smoothing transitions between sections.",
+                    },
+                  ] as const
+                ).map((promptField) => (
+                  <div key={promptField.key} className="space-y-2">
+                    <Label className="text-[11px] text-neutral-400 uppercase font-bold tracking-wider">
+                      {promptField.label}
+                    </Label>
+                    <Textarea
+                      placeholder={promptField.placeholder}
+                      className="bg-black/40 border-neutral-800 min-h-[88px]"
+                      value={systemPrompts[promptField.key] || ""}
+                      onChange={(e) =>
+                        updateAdvancedSettings({
+                          ...advanced,
+                          systemPrompts: {
+                            ...systemPrompts,
+                            [promptField.key]: e.target.value || undefined,
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                ))}
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-neutral-400 uppercase font-bold tracking-wider">
+                Custom Banned Phrases
+              </Label>
+              <Textarea
+                placeholder={`One per line, for example:\nLet's dive in\nNeedless to say`}
+                className="bg-black/40 border-neutral-800 min-h-[96px] font-mono text-xs"
+                value={bannedPhrasesText}
+                onChange={(e) =>
+                  updateAdvancedSettings({
+                    ...advanced,
+                    bannedPhrases: parseLineList(e.target.value),
+                  })
+                }
+              />
+              <p className="text-[10px] text-neutral-500 italic">
+                Applied on top of the active genre defaults during script
+                generation and validation.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-neutral-400 uppercase font-bold tracking-wider">
+                Word Replacements
+              </Label>
+              <Textarea
+                placeholder={`One rule per line, for example:\ntransformative => major, meaningful, significant\noptimize => improve, tighten, refine`}
+                className="bg-black/40 border-neutral-800 min-h-[120px] font-mono text-xs"
+                value={wordReplacementsText}
+                onChange={(e) =>
+                  updateAdvancedSettings({
+                    ...advanced,
+                    wordReplacements: parseWordReplacementMap(e.target.value),
+                  })
+                }
+              />
+              <p className="text-[10px] text-neutral-500 italic">
+                Format each rule as `word =&gt; alternative 1, alternative 2`.
+              </p>
             </div>
           </CardContent>
         </Card>
       </div>
     );
   }
+
+  const researchOptions = [
+    { value: "off", label: "Off", desc: "No research" },
+    { value: "full", label: "Full", desc: "Comprehensive" },
+  ] as const;
+
+  const updateResearchDepth = (value: ResearchDepth) => {
+    updateSettings({
+      script: {
+        ...script,
+        researchDepth: value,
+      },
+    });
+  };
 
   // Main Settings View
   return (
@@ -417,27 +542,13 @@ export function ScriptTab({ projectId }: { projectId?: string }) {
           Research Depth
         </Label>
         <div className="grid grid-cols-4 gap-2">
-          {(
-            [
-              { value: "off", label: "Off", desc: "No research" },
-              { value: "light", label: "Light", desc: "Quick verify" },
-              { value: "full", label: "Full", desc: "Standard" },
-              { value: "deep", label: "Deep", desc: "Current events" },
-            ] as const
-          ).map((option) => (
+          {researchOptions.map((option) => (
             <button
               key={option.value}
-              onClick={() =>
-                updateSettings({
-                  script: {
-                    ...script,
-                    researchDepth: option.value as ResearchDepth,
-                  },
-                })
-              }
+              onClick={() => updateResearchDepth(option.value as ResearchDepth)}
               className={cn(
                 "p-3 rounded-xl text-center transition-all border",
-                script.researchDepth === option.value
+                normalizedResearchDepth === option.value
                   ? "bg-orange-500/20 border-orange-500/50 text-white"
                   : "bg-neutral-900/40 border-neutral-800 text-neutral-500 hover:border-neutral-700"
               )}

@@ -9,6 +9,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { generateSpeech, isInworldConfigured } from '@/lib/services/inworld-tts';
+import { normalizeAudio } from '@/lib/services/audio-normalizer';
+
+function getFormatFromMimeType(mimeType: string): string {
+  switch (mimeType) {
+    case 'audio/mpeg':
+      return 'mp3';
+    case 'audio/wav':
+    case 'audio/x-wav':
+      return 'wav';
+    case 'audio/ogg':
+      return 'ogg';
+    default:
+      return 'mp3';
+  }
+}
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies();
@@ -59,28 +74,54 @@ export async function POST(request: NextRequest) {
       temperature: temperature ?? 1.0,
     });
 
+    const format = getFormatFromMimeType(result.mimeType);
+    const normalizedAudio = await normalizeAudio(result.audioBuffer, {
+      inputFormat: format,
+      outputFormat: format,
+    });
+
+    const normalizationCompleted =
+      normalizedAudio.normalized ||
+      normalizedAudio.skipReason === 'Already within tolerance';
+
+    if (!normalizationCompleted) {
+      throw new Error(
+        normalizedAudio.skipReason || 'Audio normalization failed for generated speech',
+      );
+    }
+
     // Upload to R2
     const { uploadAudioBuffer, generateTtsKey, isR2Configured } = await import('@/lib/services/r2-storage');
 
     if (!isR2Configured()) {
       // Return as base64 data URL if R2 is not configured
-      const base64 = result.audioBuffer.toString('base64');
+      const base64 = normalizedAudio.buffer.toString('base64');
       return NextResponse.json({
         url: `data:${result.mimeType};base64,${base64}`,
         duration: result.durationSeconds,
         mimeType: result.mimeType,
         wordTimestamps: result.wordTimestamps,
+        audioNormalizationStatus: 'completed',
+        normalizedAudioUrl: null,
+        originalLufs: normalizedAudio.originalLufs,
+        normalizedLufs: normalizedAudio.normalizedLufs,
+        truePeakDbtp: normalizedAudio.originalTruePeak,
       });
     }
 
     const key = generateTtsKey(user.id, `editor-${Date.now()}`, 0);
-    const uploadResult = await uploadAudioBuffer(result.audioBuffer, key, result.mimeType);
+    const uploadResult = await uploadAudioBuffer(normalizedAudio.buffer, key, result.mimeType);
 
     return NextResponse.json({
       url: uploadResult.url,
       duration: result.durationSeconds,
       mimeType: result.mimeType,
       wordTimestamps: result.wordTimestamps,
+      audioNormalizationStatus: 'completed',
+      normalizedAudioUrl: uploadResult.url,
+      originalLufs: normalizedAudio.originalLufs,
+      normalizedLufs: normalizedAudio.normalizedLufs,
+      truePeakDbtp: normalizedAudio.originalTruePeak,
     });
   } catch (error) {
     console.error('[TTS Generate] Error:', error);

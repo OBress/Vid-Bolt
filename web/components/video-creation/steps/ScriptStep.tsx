@@ -24,12 +24,21 @@ import {
   PencilOff,
 } from "lucide-react";
 import { createBrowserClient } from "@supabase/ssr";
+import { useProjectSettings } from "@/hooks/use-project-settings";
+import {
+  DEFAULT_QUALITY_MODEL,
+  DEFAULT_WRITING_MODEL,
+  parseLineList,
+  parseWordReplacementMap,
+  stringifyLineList,
+  stringifyWordReplacementMap,
+} from "@/lib/script-config";
 
 // ============================================================================
 // TYPES
 // ============================================================================
 
-type ViewState = "progress" | "output";
+type ViewState = "config" | "progress" | "output";
 
 interface OutlineOutput {
   researchDossier?: any;
@@ -78,23 +87,46 @@ interface ScriptOutput {
     type: string;
     summary: string;
   }>;
+  effectiveConfig?: ScriptConfig;
+}
+
+interface ScriptConfig {
+  topic: string;
+  genre: string;
+  angle?: string;
+  toneStyle?: string;
+  targetAudience?: string;
+  pov?: "1st" | "2nd" | "3rd";
+  protagonistGender?: "male" | "female" | "any";
+  openrouterModel?: string;
+  qualityReviewModel?: string;
+  contentNiche?: string;
+  styleConfig?: {
+    customBannedPhrases?: string[];
+    customWordReplacements?: Record<string, string[]>;
+    systemPromptOverrides?: {
+      expansion?: string;
+      quality?: string;
+      rewrite?: string;
+      transition?: string;
+    };
+  };
 }
 
 interface ScriptStepProps {
   videoId: string;
   projectId: string;
   outlineData: OutlineOutput | null;
-  outlineConfig?: {
-    topic: string;
-    genre: string;
-    angle?: string;
-  } | null;
+  outlineConfig?: ScriptConfig | null;
+  initialScriptConfig?: ScriptConfig | null;
   initialScriptOutput?: ScriptOutput | null;
   isLoading?: boolean; // Auto-trigger flag from parent
   taskId?: string | null; // Task ID from parent for auto-generation
   onComplete: (script: string, output: ScriptOutput) => void;
   onSave: (script: string) => void;
   onScriptGenerated?: (script: string, output: ScriptOutput) => void;
+  onScriptConfigChange?: (config: any) => void;
+  onTaskStarted?: (taskId: string, config: ScriptConfig) => void;
   onBack: () => void;
   isLocked?: boolean;
   lockedMessage?: string;
@@ -173,32 +205,38 @@ export const ScriptStep = memo(
         videoId,
         projectId,
         outlineData,
-        outlineConfig: _outlineConfig,
+        outlineConfig,
+        initialScriptConfig,
         initialScriptOutput,
         isLoading: isLoadingProp,
         taskId: taskIdProp,
         onComplete,
         onSave,
         onScriptGenerated,
-        onBack: _onBack,
+        onScriptConfigChange: _onScriptConfigChange,
+        onTaskStarted,
+        onBack,
         isLocked: _isLocked,
         lockedMessage: _lockedMessage,
       },
       ref,
     ) => {
-      // Determine initial view: output if we have script, otherwise progress (auto-start will trigger generation)
+      const { settings: projectSettings, loading: settingsLoading } =
+        useProjectSettings(projectId);
+
       const [view, setView] = useState<ViewState>(() => {
         if (initialScriptOutput) return "output";
-        return "progress"; // Always go to progress - auto-start will trigger generation
+        if (taskIdProp || isLoadingProp) return "progress";
+        return "config";
       });
 
       const [taskId, setTaskId] = useState<string | null>(taskIdProp || null);
       const [taskStatus, setTaskStatus] = useState<string>(
-        initialScriptOutput ? "completed" : "idle",
+        initialScriptOutput ? "completed" : taskIdProp ? "pending" : "idle",
       );
       const [progress, setProgress] = useState(0);
       const [currentStep, setCurrentStep] = useState<string | null>(null);
-      const [_error, setError] = useState<string | null>(null);
+      const [error, setError] = useState<string | null>(null);
       const [output, setOutput] = useState<ScriptOutput | null>(
         initialScriptOutput || null,
       );
@@ -233,6 +271,50 @@ export const ScriptStep = memo(
         null,
       );
 
+      const configSource = initialScriptConfig || outlineConfig;
+      const initialStyleConfig = configSource?.styleConfig;
+      const initialProjectAdvanced = projectSettings?.script?.advanced;
+
+      const [toneStyle, setToneStyle] = useState(
+        configSource?.toneStyle || "",
+      );
+      const [targetAudience, setTargetAudience] = useState(
+        configSource?.targetAudience || "",
+      );
+      const [pov, setPov] = useState<"1st" | "2nd" | "3rd">(
+        configSource?.pov || "1st",
+      );
+      const [protagonistGender, setProtagonistGender] = useState<
+        "male" | "female" | "any"
+      >(configSource?.protagonistGender || "any");
+      const [openrouterModel, setOpenrouterModel] = useState(
+        configSource?.openrouterModel || DEFAULT_WRITING_MODEL,
+      );
+      const [qualityReviewModel, setQualityReviewModel] = useState(
+        configSource?.qualityReviewModel || DEFAULT_QUALITY_MODEL,
+      );
+      const [contentNiche, setContentNiche] = useState(
+        configSource?.contentNiche || "",
+      );
+      const [expansionPrompt, setExpansionPrompt] = useState(
+        initialStyleConfig?.systemPromptOverrides?.expansion || "",
+      );
+      const [qualityPrompt, setQualityPrompt] = useState(
+        initialStyleConfig?.systemPromptOverrides?.quality || "",
+      );
+      const [rewritePrompt, setRewritePrompt] = useState(
+        initialStyleConfig?.systemPromptOverrides?.rewrite || "",
+      );
+      const [transitionPrompt, setTransitionPrompt] = useState(
+        initialStyleConfig?.systemPromptOverrides?.transition || "",
+      );
+      const [bannedPhrasesText, setBannedPhrasesText] = useState(
+        stringifyLineList(initialStyleConfig?.customBannedPhrases),
+      );
+      const [wordReplacementsText, setWordReplacementsText] = useState(
+        stringifyWordReplacementMap(initialStyleConfig?.customWordReplacements),
+      );
+
       const supabase = createBrowserClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -242,8 +324,150 @@ export const ScriptStep = memo(
       useEffect(() => {
         if (output?.finalScript) {
           setEditingScript(output.finalScript);
+          setOriginalScript(output.finalScript);
+          setHasUnsavedChanges(false);
         }
       }, [output]);
+
+      useEffect(() => {
+        if (configSource) {
+          setToneStyle(configSource.toneStyle || "");
+          setTargetAudience(configSource.targetAudience || "");
+          setPov(configSource.pov || "1st");
+          setProtagonistGender(configSource.protagonistGender || "any");
+          setOpenrouterModel(
+            configSource.openrouterModel || DEFAULT_WRITING_MODEL,
+          );
+          setQualityReviewModel(
+            configSource.qualityReviewModel || DEFAULT_QUALITY_MODEL,
+          );
+          setContentNiche(configSource.contentNiche || "");
+          setExpansionPrompt(
+            configSource.styleConfig?.systemPromptOverrides?.expansion || "",
+          );
+          setQualityPrompt(
+            configSource.styleConfig?.systemPromptOverrides?.quality || "",
+          );
+          setRewritePrompt(
+            configSource.styleConfig?.systemPromptOverrides?.rewrite || "",
+          );
+          setTransitionPrompt(
+            configSource.styleConfig?.systemPromptOverrides?.transition || "",
+          );
+          setBannedPhrasesText(
+            stringifyLineList(configSource.styleConfig?.customBannedPhrases),
+          );
+          setWordReplacementsText(
+            stringifyWordReplacementMap(
+              configSource.styleConfig?.customWordReplacements,
+            ),
+          );
+        }
+      }, [configSource]);
+
+      useEffect(() => {
+        if (!settingsLoading && projectSettings && !configSource) {
+          setToneStyle(projectSettings.script?.toneStyle || "");
+          setTargetAudience(projectSettings.script?.targetAudience || "");
+          setPov(projectSettings.script?.pov || "1st");
+          setProtagonistGender(projectSettings.script?.protagonistGender || "any");
+          setOpenrouterModel(
+            projectSettings.script?.openrouterModel || DEFAULT_WRITING_MODEL,
+          );
+          setQualityReviewModel(
+            projectSettings.script?.qualityReviewModel || DEFAULT_QUALITY_MODEL,
+          );
+          setContentNiche(
+            projectSettings.script?.contentNiche ||
+              projectSettings.basic_info?.contentNiche ||
+              "",
+          );
+          setExpansionPrompt(
+            initialProjectAdvanced?.systemPrompts?.expansion || "",
+          );
+          setQualityPrompt(initialProjectAdvanced?.systemPrompts?.quality || "");
+          setRewritePrompt(initialProjectAdvanced?.systemPrompts?.rewrite || "");
+          setTransitionPrompt(
+            initialProjectAdvanced?.systemPrompts?.transition || "",
+          );
+          setBannedPhrasesText(
+            stringifyLineList(initialProjectAdvanced?.bannedPhrases),
+          );
+          setWordReplacementsText(
+            stringifyWordReplacementMap(initialProjectAdvanced?.wordReplacements),
+          );
+        }
+      }, [configSource, initialProjectAdvanced, projectSettings, settingsLoading]);
+
+      const buildScriptOverrides = useCallback(() => {
+        const systemPrompts = {
+          expansion: expansionPrompt.trim() || undefined,
+          quality: qualityPrompt.trim() || undefined,
+          rewrite: rewritePrompt.trim() || undefined,
+          transition: transitionPrompt.trim() || undefined,
+        };
+
+        const advanced = {
+          systemPrompts,
+          bannedPhrases: parseLineList(bannedPhrasesText),
+          wordReplacements: parseWordReplacementMap(wordReplacementsText),
+        };
+
+        return {
+          toneStyle: toneStyle.trim() || undefined,
+          targetAudience: targetAudience.trim() || undefined,
+          pov,
+          protagonistGender,
+          openrouterModel,
+          qualityReviewModel,
+          contentNiche: contentNiche.trim() || undefined,
+          advanced:
+            advanced.bannedPhrases ||
+            advanced.wordReplacements ||
+            Object.values(systemPrompts).some(Boolean)
+              ? advanced
+              : undefined,
+        };
+      }, [
+        bannedPhrasesText,
+        contentNiche,
+        expansionPrompt,
+        openrouterModel,
+        pov,
+        protagonistGender,
+        qualityPrompt,
+        qualityReviewModel,
+        rewritePrompt,
+        targetAudience,
+        toneStyle,
+        transitionPrompt,
+        wordReplacementsText,
+      ]);
+
+      const buildEffectiveScriptConfig = useCallback((): ScriptConfig => {
+        const overrides = buildScriptOverrides();
+        const advanced = overrides.advanced;
+
+        return {
+          topic: outlineConfig?.topic || configSource?.topic || "",
+          genre: outlineConfig?.genre || configSource?.genre || "documentary",
+          angle: outlineConfig?.angle || configSource?.angle,
+          toneStyle: overrides.toneStyle,
+          targetAudience: overrides.targetAudience,
+          pov: overrides.pov,
+          protagonistGender: overrides.protagonistGender,
+          openrouterModel: overrides.openrouterModel,
+          qualityReviewModel: overrides.qualityReviewModel,
+          contentNiche: overrides.contentNiche,
+          styleConfig: advanced
+            ? {
+                customBannedPhrases: advanced.bannedPhrases,
+                customWordReplacements: advanced.wordReplacements,
+                systemPromptOverrides: advanced.systemPrompts,
+              }
+            : undefined,
+        };
+      }, [buildScriptOverrides, configSource, outlineConfig]);
 
       // Sync external taskId prop with internal state (for auto-generation from parent)
       // Guard: don't override the output view if we already have a completed script
@@ -257,50 +481,6 @@ export const ScriptStep = memo(
         // Note: initialScriptOutput deliberately omitted from deps to avoid re-triggering
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [taskIdProp, taskId]);
-
-      // Note: isLoading sync removed - no longer needed since we default to progress view
-
-      // AUTO-START: If we're in progress view without a task, automatically trigger script generation
-      const hasAutoStarted = useRef(false);
-      useEffect(() => {
-        if (
-          view === "progress" &&
-          !hasAutoStarted.current &&
-          outlineData?.spine &&
-          !initialScriptOutput &&
-          !taskId &&
-          !isLoadingProp &&
-          !isStarting
-        ) {
-          console.log("[Step3] Auto-starting script generation");
-          hasAutoStarted.current = true;
-          setIsStarting(true);
-          setProgress(0);
-          
-          fetch("/api/process/script-writing", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ videoId }),
-          })
-            .then((res) => res.json())
-            .then((data) => {
-              if (data.taskId) {
-                console.log("[Step3] Script task created:", data.taskId);
-                setTaskId(data.taskId);
-                setTaskStatus("pending");
-              } else {
-                console.error("[Step3] Failed to create script task:", data);
-                setError(data.error || "Failed to start script generation");
-              }
-              setIsStarting(false);
-            })
-            .catch((err) => {
-              console.error("[Step3] Script generation failed:", err);
-              setError("Failed to start script generation");
-              setIsStarting(false);
-            });
-        }
-      }, [view, outlineData, initialScriptOutput, taskId, isLoadingProp, isStarting, videoId]);
 
       // Click outside to exit edit mode (but not when clicking AI Rewrite or Beat Outline)
       useEffect(() => {
@@ -362,7 +542,9 @@ export const ScriptStep = memo(
             }
 
             if (outputData?.output_data) {
-              const newOutput = outputData.output_data as ScriptOutput;
+              const newOutput = outputData.output_data as ScriptOutput & {
+                effectiveConfig?: ScriptConfig;
+              };
               setOutput(newOutput);
               setView("output");
               setTaskStatus("completed");
@@ -373,10 +555,11 @@ export const ScriptStep = memo(
             }
           } else if (statusData.status === "failed") {
             setError(statusData.error_message || "Task failed");
-            // Stay on progress view with error displayed
+            setTaskId(null);
+            setView("config");
           }
         },
-        [supabase],
+        [onScriptGenerated, supabase],
       );
 
       // Polling effect
@@ -392,11 +575,14 @@ export const ScriptStep = memo(
         return () => clearInterval(interval);
       }, [view, taskId, fetchTaskStatus]);
 
-      const _startGeneration = async () => {
+      const startGeneration = async () => {
         if (!outlineData?.spine) {
           setError("Outline data is missing. Please complete Step 1 first.");
           return;
         }
+
+        const scriptOverrides = buildScriptOverrides();
+        const scriptConfig = buildEffectiveScriptConfig();
 
         // Immediately switch to progress view for instant feedback
         setError(null);
@@ -405,10 +591,20 @@ export const ScriptStep = memo(
         setView("progress");
 
         try {
+          await fetch(`/api/videos/${videoId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              metadata: {
+                scriptConfig,
+              },
+            }),
+          });
+
           const response = await fetch("/api/process/script-writing", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ videoId }),
+            body: JSON.stringify({ videoId, scriptOverrides }),
           });
 
           const data = await response.json();
@@ -419,9 +615,10 @@ export const ScriptStep = memo(
 
           setTaskId(data.taskId);
           setTaskStatus("pending");
+          onTaskStarted?.(data.taskId, scriptConfig);
         } catch (err) {
           setError(err instanceof Error ? err.message : "Unknown error");
-          // Stay on progress view with error displayed
+          setView("config");
         } finally {
           setIsStarting(false);
         }
@@ -730,6 +927,264 @@ export const ScriptStep = memo(
         return idx >= 0 ? idx : 0;
       };
 
+      if (view === "config") {
+        const canGenerate = !!outlineData?.spine && !isStarting;
+
+        return (
+          <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold tracking-tight">
+                Configure Script Generation
+              </h2>
+              <p className="text-sm text-neutral-500">
+                Start from your project defaults, then override this run without
+                changing the whole project.
+              </p>
+            </div>
+
+            {error && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                {error}
+              </div>
+            )}
+
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
+              <div className="space-y-6 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                      Tone Style
+                    </span>
+                    <Textarea
+                      value={toneStyle}
+                      onChange={(e) => setToneStyle(e.target.value)}
+                      placeholder="Conversational, cinematic, deadpan, urgent..."
+                      className="min-h-[100px] border-neutral-800 bg-neutral-950/60"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                      Target Audience
+                    </span>
+                    <Textarea
+                      value={targetAudience}
+                      onChange={(e) => setTargetAudience(e.target.value)}
+                      placeholder="Curious beginners, movie fans, investors..."
+                      className="min-h-[100px] border-neutral-800 bg-neutral-950/60"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <label className="space-y-2">
+                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                      POV
+                    </span>
+                    <select
+                      value={pov}
+                      onChange={(e) =>
+                        setPov(e.target.value as "1st" | "2nd" | "3rd")
+                      }
+                      className="h-10 w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-white"
+                    >
+                      <option value="1st">First Person</option>
+                      <option value="2nd">Second Person</option>
+                      <option value="3rd">Third Person</option>
+                    </select>
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                      Narrator Gender
+                    </span>
+                    <select
+                      value={protagonistGender}
+                      onChange={(e) =>
+                        setProtagonistGender(
+                          e.target.value as "male" | "female" | "any",
+                        )
+                      }
+                      className="h-10 w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-white"
+                    >
+                      <option value="any">Any</option>
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                    </select>
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                      Content Niche
+                    </span>
+                    <input
+                      value={contentNiche}
+                      onChange={(e) => setContentNiche(e.target.value)}
+                      placeholder="History, finance, true crime..."
+                      className="h-10 w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-white placeholder:text-neutral-500"
+                    />
+                  </label>
+                  <label className="space-y-2 xl:col-span-2">
+                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                      Writing Model
+                    </span>
+                    <input
+                      value={openrouterModel}
+                      onChange={(e) => setOpenrouterModel(e.target.value)}
+                      placeholder={DEFAULT_WRITING_MODEL}
+                      className="h-10 w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-white placeholder:text-neutral-500"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                      Review Model
+                    </span>
+                    <input
+                      value={qualityReviewModel}
+                      onChange={(e) => setQualityReviewModel(e.target.value)}
+                      placeholder={DEFAULT_QUALITY_MODEL}
+                      className="h-10 w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-white placeholder:text-neutral-500"
+                    />
+                  </label>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">
+                      Prompt Overrides
+                    </h3>
+                    <p className="text-xs text-neutral-500">
+                      These layer on top of the built-in genre preset for this
+                      run only.
+                    </p>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="space-y-2">
+                      <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                        Expansion
+                      </span>
+                      <Textarea
+                        value={expansionPrompt}
+                        onChange={(e) => setExpansionPrompt(e.target.value)}
+                        placeholder="Guide the beat writing voice or pacing..."
+                        className="min-h-[120px] border-neutral-800 bg-neutral-950/60"
+                      />
+                    </label>
+                    <label className="space-y-2">
+                      <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                        Quality Review
+                      </span>
+                      <Textarea
+                        value={qualityPrompt}
+                        onChange={(e) => setQualityPrompt(e.target.value)}
+                        placeholder="Tighten what the reviewer should care about..."
+                        className="min-h-[120px] border-neutral-800 bg-neutral-950/60"
+                      />
+                    </label>
+                    <label className="space-y-2">
+                      <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                        Rewrite
+                      </span>
+                      <Textarea
+                        value={rewritePrompt}
+                        onChange={(e) => setRewritePrompt(e.target.value)}
+                        placeholder="Extra rewrite constraints or style guardrails..."
+                        className="min-h-[120px] border-neutral-800 bg-neutral-950/60"
+                      />
+                    </label>
+                    <label className="space-y-2">
+                      <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                        Transition
+                      </span>
+                      <Textarea
+                        value={transitionPrompt}
+                        onChange={(e) => setTransitionPrompt(e.target.value)}
+                        placeholder="How adjacent sections should flow into each other..."
+                        className="min-h-[120px] border-neutral-800 bg-neutral-950/60"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                      Banned Phrases
+                    </span>
+                    <Textarea
+                      value={bannedPhrasesText}
+                      onChange={(e) => setBannedPhrasesText(e.target.value)}
+                      placeholder={"One phrase per line\nor comma-separated"}
+                      className="min-h-[140px] border-neutral-800 bg-neutral-950/60"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                      Word Replacements
+                    </span>
+                    <Textarea
+                      value={wordReplacementsText}
+                      onChange={(e) => setWordReplacementsText(e.target.value)}
+                      placeholder={"word => option one, option two"}
+                      className="min-h-[140px] border-neutral-800 bg-neutral-950/60 font-mono text-xs"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5">
+                <div className="space-y-3">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-orange-500/20 bg-orange-500/10 px-3 py-1 text-[10px] font-mono uppercase tracking-[0.2em] text-orange-300">
+                    Script Run
+                  </div>
+                  <h3 className="text-lg font-semibold text-white">
+                    {outlineConfig?.topic || "Untitled Video"}
+                  </h3>
+                  <div className="space-y-2 text-sm text-neutral-400">
+                    <div>Genre: {outlineConfig?.genre || "documentary"}</div>
+                    <div>Angle: {outlineConfig?.angle || "Project default"}</div>
+                    <div>
+                      Beats: {outlineData?.spine?.beats?.length || 0} planned
+                    </div>
+                    <div>
+                      Models: {openrouterModel || DEFAULT_WRITING_MODEL} /{" "}
+                      {qualityReviewModel || DEFAULT_QUALITY_MODEL}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4 text-xs text-neutral-500">
+                  Project defaults are loaded automatically
+                  {settingsLoading ? " while settings finish syncing." : "."}
+                  These overrides apply only to this script run.
+                </div>
+
+                <div className="flex flex-col gap-3 pt-2">
+                  <Button
+                    onClick={startGeneration}
+                    disabled={!canGenerate}
+                    className="h-11 bg-orange-500 text-white hover:bg-orange-400"
+                  >
+                    {isStarting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Starting Script Job
+                      </>
+                    ) : (
+                      "Generate Script"
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={onBack}
+                    className="h-11 border-neutral-800 bg-transparent text-neutral-300 hover:bg-neutral-800/60 hover:text-white"
+                  >
+                    Back To Outline
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       // =========================================================================
       // RENDER: PROGRESS VIEW
       // =========================================================================
@@ -819,6 +1274,19 @@ export const ScriptStep = memo(
                 })}
               </div>
             </div>
+
+            {error && (
+              <div className="w-full max-w-md rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-left text-sm text-red-200">
+                <div className="mb-3">{error}</div>
+                <Button
+                  variant="outline"
+                  onClick={() => setView("config")}
+                  className="border-red-500/30 bg-transparent text-red-100 hover:bg-red-500/10"
+                >
+                  Adjust Config
+                </Button>
+              </div>
+            )}
 
             <p className="text-xs text-neutral-600 font-mono">
               Connected to AI workflow...
@@ -1004,6 +1472,13 @@ export const ScriptStep = memo(
                     <span>{wordCount} words</span>
                     <span>~{estimatedDuration} min read</span>
                   </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => setView("config")}
+                    className="h-7 border-neutral-800 bg-transparent px-3 text-xs text-neutral-300 hover:bg-neutral-800/70 hover:text-white"
+                  >
+                    Adjust Config
+                  </Button>
                   {hasUnsavedChanges && (
                     <Button
                       onClick={handleSave}

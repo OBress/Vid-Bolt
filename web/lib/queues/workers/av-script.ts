@@ -776,11 +776,14 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
               const imageAssets: Array<{ url: string; description: string; suggestedUsage: string }> = [];
               const gpuMedia = generatedMedia.find(m => m.shot_index === shotIndex);
               if (gpuMedia?.media_url && !gpuMedia.media_url.startsWith('remotion://')) {
+                const isVideoOverlay = routingTags.includes('remotion_video_manipulation') && gpuMedia.media_type === 'video';
                 imageAssets.push({
                   url: gpuMedia.media_url,
                   description: detailedPrompt,
-                  suggestedUsage: gpuMedia.media_type === 'video'
-                    ? 'Use as the main video background with <OffthreadVideo src={url} />'
+                  suggestedUsage: isVideoOverlay
+                    ? 'Context-only reference: the editor already places the base video underneath this overlay, so do not render the video again inside the motion graphic.'
+                    : gpuMedia.media_type === 'video'
+                    ? 'Use as supporting media only if this is a standalone MG composition; avoid re-rendering base video for hybrid overlays.'
                     : 'Use as the main background image, apply slow Ken Burns zoom-in over the duration',
                 });
               }

@@ -6,8 +6,12 @@
  */
 
 import { apiRequest } from '@/lib/api-client';
+import type {
+  AudioNormalizationMetadata,
+  AudioNormalizationStatus,
+} from '@/lib/services/audio-normalization-metadata';
 
-export interface MediaFile {
+export interface MediaFile extends AudioNormalizationMetadata {
   id: string;
   userId: string;
   projectId: string | null;
@@ -23,6 +27,13 @@ export interface MediaFile {
   createdAt: string;
   /** 'upload' for user uploads, 'generated' for pipeline-generated media */
   source?: 'upload' | 'generated';
+}
+
+export interface IngestedAudioAsset extends AudioNormalizationMetadata {
+  url: string;
+  key: string;
+  contentType: string;
+  audioNormalizationStatus: AudioNormalizationStatus;
 }
 
 export interface UploadProgress {
@@ -136,6 +147,27 @@ export async function registerMedia(data: {
   }
 
   return response.media;
+}
+
+export async function ingestExternalAudio(data: {
+  sourceUrl: string;
+  projectId?: string;
+  filename?: string;
+}): Promise<IngestedAudioAsset> {
+  const response = await apiRequest<{
+    success: boolean;
+    error?: string;
+    asset: IngestedAudioAsset;
+  }>('/api/video-editor/audio/ingest', {
+    method: 'POST',
+    body: data,
+  });
+
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to ingest audio');
+  }
+
+  return response.asset;
 }
 
 /**

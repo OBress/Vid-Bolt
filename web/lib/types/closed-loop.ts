@@ -13,6 +13,12 @@
  */
 
 import { z } from 'zod';
+import {
+  MG_ASSET_KINDS,
+  MOTION_GRAPHICS_MODES,
+  MOTION_GRAPHICS_TEMPLATE_TYPES,
+  PERSISTENT_GRAPHIC_TYPES,
+} from '@/types/video';
 
 // ============================================================================
 // ENUMS
@@ -83,6 +89,50 @@ export type VerifierVerdict = z.infer<typeof VerifierVerdict>;
 
 export const FailureType = z.enum(['recoverable', 'fundamental']);
 export type FailureType = z.infer<typeof FailureType>;
+
+export const VisualTreatment = z.enum([
+  'stock',
+  'archival',
+  'mg_template',
+  'ai_image',
+  'ai_video',
+  'hybrid',
+]);
+export type VisualTreatment = z.infer<typeof VisualTreatment>;
+
+export const MotionGraphicsMode = z.enum(MOTION_GRAPHICS_MODES);
+export type MotionGraphicsMode = z.infer<typeof MotionGraphicsMode>;
+
+export const MotionGraphicsTemplateType = z.enum(MOTION_GRAPHICS_TEMPLATE_TYPES);
+export type MotionGraphicsTemplateType = z.infer<typeof MotionGraphicsTemplateType>;
+
+export const PersistentGraphicType = z.enum(PERSISTENT_GRAPHIC_TYPES);
+export type PersistentGraphicType = z.infer<typeof PersistentGraphicType>;
+
+export const MotionGraphicsAssetKind = z.enum(MG_ASSET_KINDS);
+export type MotionGraphicsAssetKind = z.infer<typeof MotionGraphicsAssetKind>;
+
+export const MotionGraphicsAssetBundleItem = z.object({
+  id: z.string(),
+  url: z.string(),
+  asset_kind: MotionGraphicsAssetKind,
+  label: z.string().optional(),
+  usage: z.string().optional(),
+  description: z.string().optional(),
+  source: z.enum(['generated', 'stock', 'reference', 'placeholder']).optional(),
+  source_shot_index: z.number().int().optional(),
+});
+export type MotionGraphicsAssetBundleItem = z.infer<typeof MotionGraphicsAssetBundleItem>;
+
+export const GraphicStatePatch = z.object({
+  headline: z.string().optional(),
+  notes: z.array(z.string()).optional(),
+  add_labels: z.array(z.string()).optional(),
+  remove_labels: z.array(z.string()).optional(),
+  focus_label: z.string().optional(),
+  status: z.enum(['introduced', 'updated', 'revealed', 'resolved']).optional(),
+});
+export type GraphicStatePatch = z.infer<typeof GraphicStatePatch>;
 
 // ============================================================================
 // MESSAGE ENVELOPE
@@ -211,6 +261,8 @@ export type VideoCreativeOverrides = z.infer<typeof VideoCreativeOverrides>;
  */
 export const CreativeManifest = z.object({
   project_id: z.string().uuid(),
+  quality_mode: z.enum(['draft', 'production']).optional(),
+  premium_video_fallback: z.enum(['off', 'on_failure']).optional(),
   style: z.object({
     visual_style: z.string().default('cinematic, documentary'),
     color_palette: z.array(z.string()).default([]),
@@ -271,6 +323,8 @@ export const CreativeManifest = z.object({
   master_creative_prompt: z.string().optional(),
   /** Video-specific creative direction prompt */
   video_creative_prompt: z.string().optional(),
+  /** Narrow project-scoped reference kit for MG composition and overlays */
+  reference_kit: z.array(MotionGraphicsAssetBundleItem).optional(),
   /** Per-worker prompt overrides from user settings */
   worker_prompt_overrides: z.record(z.string(), z.string()).optional(),
   /** Model selection from project settings — passed through to workers */
@@ -317,6 +371,8 @@ export const PlannedShot = z.object({
   visual_elements: z.array(z.string()).default([]),
   /** AI visual description */
   visual_description: z.string().optional(),
+  /** Higher-level media treatment decision for this shot */
+  visual_treatment: VisualTreatment.optional(),
   /** Sound effects for this shot */
   sound_effects: z.array(z.object({
     type: z.string(),
@@ -332,6 +388,12 @@ export const PlannedShot = z.object({
   image_count: z.number().int().default(1),
   /** MG composition tier */
   mg_tier: z.enum(['self-contained', 'reference-overlay', 'composite']).optional(),
+  /** Template vs freeform MG generation lane */
+  mg_mode: MotionGraphicsMode.optional(),
+  /** Deterministic template type for template-lane MG generation */
+  template_type: MotionGraphicsTemplateType.optional(),
+  /** Explicit asset bundle for deterministic MG templates */
+  mg_asset_bundle: z.array(MotionGraphicsAssetBundleItem).optional(),
   /** Scene grouping ID — shots sharing a scene_id maintain visual continuity */
   scene_id: z.string().optional(),
   /** Narrative purpose of this shot (director-level beat classification) */
@@ -346,6 +408,18 @@ export const PlannedShot = z.object({
    *  Examples: "add a clown mask to the statue", "highlight the data points in red",
    *  "make the background darker and more dramatic", "add rain effects" */
   image_edit_instruction: z.string().optional(),
+  /** Stable reusable graphic ID when a board/map/timeline should evolve across shots */
+  persistent_graphic_id: z.string().optional(),
+  /** Reusable graphic family/type */
+  persistent_graphic_type: PersistentGraphicType.optional(),
+  /** Delta to apply to the reusable graphic at this shot */
+  graphic_state_patch: GraphicStatePatch.optional(),
+  /** Derived continuity cluster for same-world / same-setting shot runs */
+  scene_cluster_id: z.string().optional(),
+  /** Derived connected documentary breakdown progression */
+  breakdown_sequence_id: z.string().optional(),
+  /** Role inside a connected documentary breakdown progression */
+  breakdown_role: z.enum(['macro', 'mid', 'micro', 'detail']).optional(),
 });
 export type PlannedShot = z.infer<typeof PlannedShot>;
 
@@ -370,6 +444,14 @@ export const ShotPlan = z.object({
       end_seconds: z.number(),
       description: z.string(),
     })).optional(),
+    planner_diagnostics: z.object({
+      fallback_scene_count: z.number().int().optional(),
+      fallback_scene_ids: z.array(z.string()).optional(),
+      scene_cluster_count: z.number().int().optional(),
+      breakdown_sequence_count: z.number().int().optional(),
+      linked_entity_count: z.number().int().optional(),
+      linked_shot_count: z.number().int().optional(),
+    }).optional(),
   }),
 });
 export type ShotPlan = z.infer<typeof ShotPlan>;

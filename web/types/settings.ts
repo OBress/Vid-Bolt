@@ -10,10 +10,10 @@ export type ResearchDepth = 'deep' | 'full' | 'light' | 'off';
 export interface ScriptAdvancedSettings {
   /** Custom system prompts for each generation phase */
   systemPrompts?: {
-    research?: string;
-    spine?: string;
     expansion?: string;
     quality?: string;
+    rewrite?: string;
+    transition?: string;
   };
   /** Custom banned phrases to avoid in scripts */
   bannedPhrases?: string[];

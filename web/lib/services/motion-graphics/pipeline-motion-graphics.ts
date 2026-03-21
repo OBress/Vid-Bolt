@@ -14,7 +14,17 @@
 
 import { motionGraphicsService, type GenerationRequest } from './motion-graphics-service';
 import { validateCode, transpileCheck, stripMarkdownFences } from './code-validator';
-import type { RoutingTag } from '@/types/video';
+import { generateTemplateMotionGraphic } from './template-lane';
+import { inferTemplateType, resolveMotionGraphicsMode } from './strategy';
+import type {
+  GraphicStatePatch,
+  MotionGraphicsAssetBundleItem,
+  MotionGraphicsMode,
+  MotionGraphicsTemplateType,
+  PersistentGraphicType,
+  PersistentMotionGraphicState,
+  RoutingTag,
+} from '@/types/video';
 
 // ============================================================
 // TYPES
@@ -50,6 +60,19 @@ export interface PipelineGenerationRequest {
   contextHint?: string;
   /** Narration text spoken during this shot — used for timing visual elements */
   narrationText?: string;
+  /** Explicit MG generation lane override */
+  mgMode?: MotionGraphicsMode;
+  /** Explicit deterministic template type */
+  templateType?: MotionGraphicsTemplateType;
+  /** Rich asset bundle for template lane and image-driven MG */
+  mgAssetBundle?: MotionGraphicsAssetBundleItem[];
+  /** Persistent reusable-graphic context for stateful boards/maps/timelines */
+  persistentGraphic?: {
+    id: string;
+    type: PersistentGraphicType;
+    statePatch?: GraphicStatePatch;
+    previousState?: PersistentMotionGraphicState;
+  };
   /** QC feedback from a previous failed attempt */
   previousQCFeedback?: string;
   /** If true, generate a simplified fallback animation */
@@ -68,6 +91,12 @@ export interface PipelineGenerationResult {
   durationFrames?: number;
   /** Icons used in the animation */
   usedIcons?: string[];
+  /** Generation lane actually used */
+  mgMode?: MotionGraphicsMode;
+  /** Template selected when mgMode=template */
+  templateType?: MotionGraphicsTemplateType;
+  /** Updated reusable-graphic state */
+  persistentGraphicState?: PersistentMotionGraphicState;
 }
 
 // ============================================================
@@ -124,6 +153,7 @@ export function buildEnrichedMGPrompt(
     parts.push('\n⚠️ The <AbsoluteFill> ROOT MUST have style={{ background: "transparent" }}. NO EXCEPTIONS.');
     parts.push('\n⚠️ Any solid/opaque background on the root element will COMPLETELY BLOCK the video beneath it.');
     parts.push('\n⚠️ VERIFY: no top-level container has an opaque backgroundColor. Only inner elements (text labels, badges, etc.) may have solid backgrounds.');
+    parts.push('\n⚠️ The base video already exists beneath your overlay in the editor timeline. Do NOT re-render the same video inside the motion graphic.');
     parts.push('\n- Design elements that COMPLEMENT the underlying video, not compete with it');
     parts.push('\n- Use semi-transparent backgrounds behind text for readability (e.g., rgba(0,0,0,0.6))');
     parts.push('\n');
@@ -153,7 +183,10 @@ export function buildEnrichedMGPrompt(
       parts.push(`   Usage: ${asset.suggestedUsage}`);
     });
 
-    parts.push('\n\nIMPORTANT: These are real, accessible R2 URLs. Use Remotion\'s <Img src={url} /> component to render them. Do NOT create placeholder images or use dummy URLs. Import Img from "remotion" at the top of your component.');
+    parts.push('\n\nIMPORTANT: These are real, accessible URLs. Use them deliberately.');
+    parts.push('\n- For image compositions, use <Img src={url} /> and build the layout around the provided assets.');
+    parts.push('\n- For video-overlay shots, treat any provided video URL as CONTEXT ONLY unless explicitly told otherwise — the editor already places the base video underneath the overlay.');
+    parts.push('\n- Do NOT create placeholder images or dummy URLs.');
   }
 
   return parts.join('');
@@ -301,15 +334,66 @@ export async function generateMotionGraphic(
   const {
     prompt,
     duration,
+    shotIndex,
     apiKey,
     model,
     routingTags = [],
     imageAssets = [],
     contextHint,
     narrationText,
+    mgMode,
+    templateType,
+    mgAssetBundle,
+    persistentGraphic,
     previousQCFeedback,
     simplifiedRetry = false,
   } = request;
+
+  const resolvedMode = resolveMotionGraphicsMode({
+    prompt,
+    routingTags,
+    contextHint,
+    requestedMode: mgMode,
+    requestedTemplateType: templateType,
+    imageCount: Math.max(imageAssets.length, mgAssetBundle?.length || 0),
+    persistentGraphicType: persistentGraphic?.type,
+  });
+
+  const resolvedTemplateType = inferTemplateType({
+    prompt,
+    routingTags,
+    contextHint,
+    requestedMode: mgMode,
+    requestedTemplateType: templateType,
+    imageCount: Math.max(imageAssets.length, mgAssetBundle?.length || 0),
+    persistentGraphicType: persistentGraphic?.type,
+  });
+
+  if (resolvedMode === 'template') {
+    const templateResult = await generateTemplateMotionGraphic({
+      prompt,
+      duration,
+      shotIndex,
+      apiKey,
+      model,
+      routingTags,
+      contextHint,
+      narrationText,
+      imageAssets,
+      requestedMode: resolvedMode,
+      requestedTemplateType: resolvedTemplateType,
+      mgAssetBundle,
+      persistentGraphic,
+      simplifiedRetry,
+    });
+
+    return {
+      ...templateResult,
+      mgMode: templateResult.mgMode,
+      templateType: templateResult.templateType,
+      persistentGraphicState: templateResult.persistentGraphicState,
+    };
+  }
 
   // Build the final prompt
   let finalPrompt: string;
@@ -406,19 +490,23 @@ Keep the content relevant to the narration above, but simplify the visual execut
   try {
     await motionGraphicsService.streamGeneration(sendSSE, apiKey, generationRequest);
   } catch (err) {
-    console.error(`[PipelineMG] Shot ${request.shotIndex}: Stream error:`, err);
+    console.error(`[PipelineMG] Shot ${shotIndex}: Stream error:`, err);
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Generation stream failed',
+      mgMode: resolvedMode,
+      templateType: resolvedTemplateType,
     };
   }
 
   // Check for stream errors
   if (streamError) {
-    console.error(`[PipelineMG] Shot ${request.shotIndex}: Generation error:`, streamError);
+    console.error(`[PipelineMG] Shot ${shotIndex}: Generation error:`, streamError);
     return {
       success: false,
       error: streamError,
+      mgMode: resolvedMode,
+      templateType: resolvedTemplateType,
     };
   }
 
@@ -427,6 +515,8 @@ Keep the content relevant to the narration above, but simplify the visual execut
     return {
       success: false,
       error: 'No code was generated',
+      mgMode: resolvedMode,
+      templateType: resolvedTemplateType,
     };
   }
 
@@ -439,7 +529,7 @@ Keep the content relevant to the narration above, but simplify the visual execut
   // colliding with `const frame = useCurrentFrame()`.
   // Rename to TIMING (matching prompt examples the AI references).
   if (/const\s+frame\s*=\s*useCurrentFrame\(\)/.test(codeToCheck) && /const\s+frame\s*=\s*\{/.test(codeToCheck)) {
-    console.log(`[PipelineMG] Shot ${request.shotIndex}: Detected "const frame = {}" collision — auto-renaming to TIMING`);
+    console.log(`[PipelineMG] Shot ${shotIndex}: Detected "const frame = {}" collision — auto-renaming to TIMING`);
     codeToCheck = codeToCheck.replace(/const\s+frame\s*=\s*\{/, 'const TIMING = {');
     const timingObjMatch = codeToCheck.match(/const\s+TIMING\s*=\s*\{([^}]*)\}/);
     if (timingObjMatch) {
@@ -451,11 +541,13 @@ Keep the content relevant to the narration above, but simplify the visual execut
   }
 
   if (!validation.isValid) {
-    console.warn(`[PipelineMG] Shot ${request.shotIndex}: Code validation failed:`, validation.errors);
+    console.warn(`[PipelineMG] Shot ${shotIndex}: Code validation failed:`, validation.errors);
     return {
       success: false,
       remotionCode: cleanCode, // Return code anyway for debugging
       error: `Code validation failed: ${validation.errors.join('; ')}`,
+      mgMode: resolvedMode,
+      templateType: resolvedTemplateType,
     };
   }
 
@@ -463,15 +555,17 @@ Keep the content relevant to the narration above, but simplify the visual execut
   // This is the #1 reason MG generation "succeeds" but fails at render time.
   const syntaxResult = transpileCheck(codeToCheck);
   if (!syntaxResult.valid) {
-    console.warn(`[PipelineMG] Shot ${request.shotIndex}: ❌ Babel check failed: ${syntaxResult.error}`);
+    console.warn(`[PipelineMG] Shot ${shotIndex}: ❌ Babel check failed: ${syntaxResult.error}`);
     return {
       success: false,
       remotionCode: codeToCheck,
       error: `Syntax error: ${syntaxResult.error}`,
+      mgMode: resolvedMode,
+      templateType: resolvedTemplateType,
     };
   }
 
-  console.log(`[PipelineMG] Shot ${request.shotIndex}: ✅ Generation complete (${cleanCode.length} chars, ${skills.length} skills)`);
+  console.log(`[PipelineMG] Shot ${shotIndex}: ✅ Generation complete (${cleanCode.length} chars, ${skills.length} skills)`);
 
   return {
     success: true,
@@ -479,6 +573,8 @@ Keep the content relevant to the narration above, but simplify the visual execut
     skills,
     durationFrames,
     usedIcons,
+    mgMode: resolvedMode,
+    templateType: resolvedTemplateType,
   };
 }
 

@@ -48,6 +48,13 @@ export interface BeatExpansionContext {
   dossier: ResearchDossier | null;
   bannedPhrases: string[];
   genre: ScriptGenre;
+  toneStyle?: string;
+  targetAudience?: string;
+  pov?: '1st' | '2nd' | '3rd';
+  protagonistGender?: 'male' | 'female' | 'any';
+  contentNiche?: string;
+  openrouterModel?: string;
+  qualityReviewModel?: string;
   /** Full spine for video skeleton context */
   spine: Spine;
   /** All previously expanded beats for continuity */
@@ -56,6 +63,8 @@ export interface BeatExpansionContext {
   enableQualityReview?: boolean;
   /** User system prompt override (prepended — sets tone/persona) */
   expansionSystemPrompt?: string;
+  qualityPromptOverride?: string;
+  rewritePromptOverride?: string;
 }
 
 // ============================================================================
@@ -103,7 +112,8 @@ export async function expandSingleBeat(
   const response = await generateText(
     context.userId,
     systemPrompt,
-    prompt
+    prompt,
+    context.openrouterModel ? { model: context.openrouterModel } : undefined
   );
 
   let narration = response.content.trim();
@@ -132,6 +142,8 @@ export async function expandSingleBeat(
       previousBeatsContext,
       continuityState,
       genre,
+      qualityReviewModel: context.qualityReviewModel,
+      qualityPromptOverride: context.qualityPromptOverride,
     };
 
     let reviewResult = await reviewBeatQuality(reviewContext);
@@ -146,7 +158,17 @@ export async function expandSingleBeat(
         narration,
         reviewResult,
         previousBeatsContext,
-        continuityState
+        continuityState,
+        {
+          genre,
+          toneStyle: context.toneStyle,
+          targetAudience: context.targetAudience,
+          pov: context.pov,
+          protagonistGender: context.protagonistGender,
+          contentNiche: context.contentNiche,
+          model: context.qualityReviewModel,
+          rewritePromptOverride: context.rewritePromptOverride,
+        }
       );
       
       wordCount = countWords(narration);
@@ -211,7 +233,20 @@ function buildEnhancedBeatPrompt(
   targetWords: number,
   writingContext: WritingContext
 ): string {
-  const { beat, previousBeatEnding, continuityState, relevantAssets, dossier, bannedPhrases } = context;
+  const {
+    beat,
+    previousBeatEnding,
+    continuityState,
+    relevantAssets,
+    dossier,
+    bannedPhrases,
+    genre,
+    toneStyle,
+    targetAudience,
+    pov,
+    protagonistGender,
+    contentNiche,
+  } = context;
 
   // Build research references section
   let researchSection = '';
@@ -261,7 +296,21 @@ function buildEnhancedBeatPrompt(
     engagementInstructions += '\nPATTERN INTERRUPT: Change tone/energy to re-engage viewers.';
   }
 
+  const styleContext = [
+    `GENRE: ${genre}`,
+    toneStyle ? `TONE STYLE: ${toneStyle}` : null,
+    targetAudience ? `TARGET AUDIENCE: ${targetAudience}` : null,
+    pov ? `NARRATION POV: ${pov}` : null,
+    protagonistGender ? `PROTAGONIST/NARRATOR GENDER PREFERENCE: ${protagonistGender}` : null,
+    contentNiche ? `CONTENT NICHE: ${contentNiche}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
   return `Write narration for this beat.
+
+ACTIVE FORMAT:
+${styleContext}
 
 BEAT SPECIFICATION:
 ${beat.contentSummary}

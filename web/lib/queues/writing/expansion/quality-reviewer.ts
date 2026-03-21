@@ -73,13 +73,32 @@ export interface BeatReviewContext {
   previousBeatsContext: string;
   continuityState: ContinuityState;
   genre: ScriptGenre;
+  qualityReviewModel?: string;
+  qualityPromptOverride?: string;
+}
+
+export interface RewriteOptions {
+  genre: ScriptGenre;
+  toneStyle?: string;
+  targetAudience?: string;
+  pov?: '1st' | '2nd' | '3rd';
+  protagonistGender?: 'male' | 'female' | 'any';
+  contentNiche?: string;
+  model?: string;
+  rewritePromptOverride?: string;
+}
+
+export interface BatchRatingOptions {
+  genre: ScriptGenre;
+  model?: string;
+  qualityPromptOverride?: string;
 }
 
 // ============================================================================
 // QUALITY REVIEW PROMPTS
 // ============================================================================
 
-const QUALITY_REVIEW_SYSTEM_PROMPT = `You are an elite script quality reviewer for premium YouTube documentary content.
+const QUALITY_REVIEW_SYSTEM_PROMPT = `You are an elite script quality reviewer for premium YouTube scripts.
 Score this beat on a 1-10 scale. Be RUTHLESSLY STRICT - only truly exceptional writing scores 8+.
 
 ## SCORING DIMENSIONS (each 1-10):
@@ -115,11 +134,11 @@ Scan for these overused AI words - they MUST be replaced:
 - Examples of dead zones: abstract reasoning, philosophical musings, generic statements about "society" or "the world"
 - Good writing gives every sentence a visual: a person, a place, an object, a number, an action
 
-## DOCUMENTARY-SPECIFIC CHECKS:
-- Are facts properly attributed (not just stated without source)?
+## FORMAT-SPECIFIC CHECKS:
+- Does it fit the active format and viewer expectation for the requested genre?
 - Is there concrete detail or just vague generalities?
 - Does it sound like it's written for the EAR (spoken aloud) not the eye?
-- Are contractions used naturally?
+- Are contractions used naturally when appropriate?
 
 ## NATURAL LANGUAGE CHECKLIST:
 - Sentence length variety (mix of 5-8, 12-18, and 20-25 word sentences)
@@ -145,7 +164,7 @@ Return ONLY valid JSON (no markdown):
   "rewriteGuidance": "Specific instructions for what to fix"
 }`;
 
-const REWRITE_SYSTEM_PROMPT = `You are a senior documentary script editor with 20 years of experience improving scripts.
+const REWRITE_SYSTEM_PROMPT = `You are a senior YouTube script editor with 20 years of experience improving scripts.
 
 ## YOUR MISSION:
 Fix this beat that failed quality review while maintaining its core content and impact.
@@ -166,12 +185,76 @@ Fix this beat that failed quality review while maintaining its core content and 
 ## NATURAL LANGUAGE REQUIREMENTS:
 - Write for the EAR, not the eye
 - Use specific details, not vague generalities
-- Attribute facts naturally ("Court documents show...", "According to investigators...")
+- Attribute facts naturally when the genre uses researched claims
 - Be conversational but authoritative
 
 ## OUTPUT:
 Return ONLY the rewritten narration text.
 No explanations. No markdown. No headers. Just the improved script.`;
+
+function getGenreStyleNotes(genre: ScriptGenre): string {
+  switch (genre) {
+    case 'documentary':
+      return 'Prioritize sourced claims, causal clarity, and spoken-narration flow.';
+    case 'educational':
+      return 'Prioritize clarity, teachability, and smooth concept-to-concept progression.';
+    case 'tutorial':
+      return 'Prioritize step order, practical clarity, and actionable instructions without fluff.';
+    case 'news':
+      return 'Prioritize timeliness, attribution, precision, and a neutral, concise delivery.';
+    case 'opinion_essay':
+      return 'Prioritize a clear thesis, persuasive logic, and a distinct but credible point of view.';
+    case 'historical_fiction':
+      return 'Prioritize immersive scene writing, period texture, and emotional continuity.';
+    case 'narrative_fiction':
+      return 'Prioritize scene momentum, character voice, and narrative tension.';
+    default:
+      return 'Match the requested genre and keep the writing natural, specific, and engaging.';
+  }
+}
+
+function buildNarrationStyleContext(options: {
+  toneStyle?: string;
+  targetAudience?: string;
+  pov?: '1st' | '2nd' | '3rd';
+  protagonistGender?: 'male' | 'female' | 'any';
+  contentNiche?: string;
+}): string {
+  const lines = [
+    options.toneStyle ? `Tone/style: ${options.toneStyle}` : null,
+    options.targetAudience ? `Target audience: ${options.targetAudience}` : null,
+    options.pov ? `Narration POV: ${options.pov}` : null,
+    options.protagonistGender ? `Narrator/protagonist gender preference: ${options.protagonistGender}` : null,
+    options.contentNiche ? `Content niche: ${options.contentNiche}` : null,
+  ].filter(Boolean);
+
+  return lines.length > 0 ? lines.join('\n') : 'No extra style constraints.';
+}
+
+function buildQualityReviewSystemPrompt(
+  genre: ScriptGenre,
+  override?: string,
+): string {
+  const basePrompt = `${QUALITY_REVIEW_SYSTEM_PROMPT}
+
+ACTIVE GENRE: ${genre}
+GENRE NOTES: ${getGenreStyleNotes(genre)}`;
+
+  return override ? `${override}\n\n${basePrompt}` : basePrompt;
+}
+
+function buildRewriteSystemPrompt(
+  options: RewriteOptions,
+): string {
+  const basePrompt = `${REWRITE_SYSTEM_PROMPT}
+
+ACTIVE GENRE: ${options.genre}
+GENRE NOTES: ${getGenreStyleNotes(options.genre)}`;
+
+  return options.rewritePromptOverride
+    ? `${options.rewritePromptOverride}\n\n${basePrompt}`
+    : basePrompt;
+}
 
 
 // ============================================================================
@@ -184,14 +267,23 @@ No explanations. No markdown. No headers. Just the improved script.`;
 export async function reviewBeatQuality(
   context: BeatReviewContext
 ): Promise<QualityReviewResult> {
-  const { userId, beatNarration, beatIndex, previousBeatsContext, continuityState, genre } = context;
+  const {
+    userId,
+    beatNarration,
+    beatIndex,
+    previousBeatsContext,
+    continuityState,
+    genre,
+    qualityReviewModel,
+    qualityPromptOverride,
+  } = context;
 
   // Build user prompt with context
   const userPrompt = buildReviewPrompt(beatNarration, beatIndex, previousBeatsContext, continuityState, genre);
 
   try {
     const config: OpenRouterConfig = {
-      model: QUALITY_REVIEW_MODEL,
+      model: qualityReviewModel || QUALITY_REVIEW_MODEL,
       temperature: 0.3, // Low temp for consistent scoring
       responseFormat: {
         type: 'json_schema',
@@ -246,7 +338,7 @@ export async function reviewBeatQuality(
 
     const response = await generateJSON<QualityReviewResult>(
       userId,
-      QUALITY_REVIEW_SYSTEM_PROMPT,
+      buildQualityReviewSystemPrompt(genre, qualityPromptOverride),
       userPrompt,
       config
     );
@@ -290,26 +382,28 @@ export async function rewriteBeat(
   originalNarration: string,
   reviewResult: QualityReviewResult,
   previousBeatsContext: string,
-  continuityState: ContinuityState
+  continuityState: ContinuityState,
+  options: RewriteOptions
 ): Promise<string> {
   // Build rewrite prompt
   const userPrompt = buildRewritePrompt(
     originalNarration,
     reviewResult,
     previousBeatsContext,
-    continuityState
+    continuityState,
+    options
   );
 
   try {
     const config: OpenRouterConfig = {
-      model: QUALITY_REVIEW_MODEL,
+      model: options.model || QUALITY_REVIEW_MODEL,
       temperature: 0.7, // Higher temp for creative rewriting
       maxTokens: 4096,
     };
 
     const response = await generateText(
       userId,
-      REWRITE_SYSTEM_PROMPT,
+      buildRewriteSystemPrompt(options),
       userPrompt,
       config
     );
@@ -441,6 +535,12 @@ function buildReviewPrompt(
 
   return `Review this beat (Beat ${beatIndex + 1}) for quality:
 
+=== ACTIVE GENRE ===
+${genre}
+
+=== GENRE-SPECIFIC REVIEW GOALS ===
+${getGenreStyleNotes(genre)}
+
 === BEAT TO REVIEW ===
 ${beatNarration}
 
@@ -463,7 +563,8 @@ function buildRewritePrompt(
   originalNarration: string,
   reviewResult: QualityReviewResult,
   previousBeatsContext: string,
-  continuityState: ContinuityState
+  continuityState: ContinuityState,
+  options: RewriteOptions
 ): string {
   const issuesList = reviewResult.issues
     .map(i => `- [${i.severity.toUpperCase()}] ${i.description}`)
@@ -475,6 +576,15 @@ function buildRewritePrompt(
 
   return `=== ORIGINAL BEAT ===
 ${originalNarration}
+
+=== ACTIVE GENRE ===
+${options.genre}
+
+=== STYLE TARGET ===
+${buildNarrationStyleContext(options)}
+
+=== GENRE-SPECIFIC WRITING NOTES ===
+${getGenreStyleNotes(options.genre)}
 
 === QUALITY SCORE: ${reviewResult.score}/10 ===
 
@@ -525,7 +635,8 @@ export interface BatchRatingResult {
  */
 export async function batchRateBeats(
   userId: string,
-  beats: Array<{ beatIndex: number; narration: string }>
+  beats: Array<{ beatIndex: number; narration: string }>,
+  options: BatchRatingOptions
 ): Promise<BatchRatingResult> {
   console.log(`[BatchRating] Rating ${beats.length} beats in single call...`);
 
@@ -535,6 +646,8 @@ export async function batchRateBeats(
     .join('\n\n');
 
   const systemPrompt = `You are a script quality rater. Rate each section on a 1-10 scale based on:
+- Active genre: ${options.genre}
+- Genre expectations: ${getGenreStyleNotes(options.genre)}
 - Natural language (no AI-isms like "delve", "tapestry", "unprecedented", "journey")  
 - Engagement (keeps viewer watching)
 - Flow (smooth transitions, varied sentences)
@@ -552,7 +665,7 @@ Return a scores array with exactly ${beats.length} numbers.`;
 
   try {
     const config: OpenRouterConfig = {
-      model: BATCH_RATING_MODEL,
+      model: options.model || BATCH_RATING_MODEL,
       temperature: 0.1,
       maxTokens: 512,
       responseFormat: {
@@ -577,7 +690,9 @@ Return a scores array with exactly ${beats.length} numbers.`;
 
     const response = await generateJSON<{ scores: number[] }>(
       userId,
-      systemPrompt,
+      options.qualityPromptOverride
+        ? `${options.qualityPromptOverride}\n\n${systemPrompt}`
+        : systemPrompt,
       userPrompt,
       config
     );
@@ -619,7 +734,8 @@ const REWRITE_THRESHOLD = 7; // Rewrite sections scoring below this
 export async function rewriteLowScorers(
   userId: string,
   beats: Array<{ beatIndex: number; narration: string; qualityScore?: number }>,
-  continuityState: ContinuityState
+  continuityState: ContinuityState,
+  options: RewriteOptions
 ): Promise<Array<{ beatIndex: number; narration: string; qualityScore: number; wasRewritten: boolean }>> {
   const results = [...beats].map(b => ({ ...b, qualityScore: b.qualityScore ?? 6, wasRewritten: false }));
   
@@ -642,7 +758,8 @@ export async function rewriteLowScorers(
         userId,
         section.narration,
         section.qualityScore,
-        continuityState
+        continuityState,
+        options
       );
       
       // Update the result
@@ -670,6 +787,7 @@ async function rewriteSingleSection(
   narration: string,
   score: number,
   continuityState: ContinuityState,
+  options: RewriteOptions,
   additionalGuidance?: string,
   prevBeatContext?: string,
   nextBeatContext?: string,
@@ -679,7 +797,13 @@ async function rewriteSingleSection(
     nextBeatContext ? `=== NEXT PARAGRAPH (ensure smooth transition into) ===\n${nextBeatContext}` : '',
   ].filter(Boolean).join('\n\n');
 
-  const systemPrompt = `You are an expert script editor. Improve this documentary script section.
+  const systemPrompt = `You are an expert script editor. Improve this ${options.genre} script section.
+
+ACTIVE STYLE TARGET:
+${buildNarrationStyleContext(options)}
+
+GENRE NOTES:
+${getGenreStyleNotes(options.genre)}
 
 ISSUES TO FIX (scored ${score}/10):
 - Remove AI-isms: delve, tapestry, intricate, unprecedented, journey, nestled, realm
@@ -708,14 +832,16 @@ ${continuityState.usedPhrases?.slice(0, 10).join(', ') || 'None'}
 Write the improved version:`;
 
   const config: OpenRouterConfig = {
-    model: QUALITY_REVIEW_MODEL, // gemini-3-pro
+    model: options.model || QUALITY_REVIEW_MODEL,
     temperature: 0.7,
     maxTokens: 4096,
   };
 
   const response = await generateText(
     userId,
-    systemPrompt,
+    options.rewritePromptOverride
+      ? `${options.rewritePromptOverride}\n\n${systemPrompt}`
+      : systemPrompt,
     userPrompt,
     config
   );
@@ -736,8 +862,10 @@ Write the improved version:`;
 export async function enforceStyleConstraints(
   userId: string,
   beats: ExpandedBeat[],
+  genre: ScriptGenre,
   styleConfig: ScriptStyleConfig,
-  continuityState: ContinuityState
+  continuityState: ContinuityState,
+  model?: string,
 ): Promise<void> {
   let totalRewrites = 0;
 
@@ -746,7 +874,7 @@ export async function enforceStyleConstraints(
 
     // 1. Check user-custom banned phrases (deterministic string scan)
     const bannedIssues = styleConfig.customBannedPhrases?.length
-      ? checkBannedPhrases(beat.narration, 'documentary', styleConfig.customBannedPhrases)
+      ? checkBannedPhrases(beat.narration, genre, styleConfig.customBannedPhrases)
           // Only flag issues from user's custom list (not genre defaults)
           .filter(issue => 
             styleConfig.customBannedPhrases!.some(p => 
@@ -780,6 +908,10 @@ export async function enforceStyleConstraints(
         beat.narration,
         beat.qualityScore ?? 7,
         continuityState,
+        {
+          genre,
+          model,
+        },
         guidance,
         prevContext,
         nextContext,

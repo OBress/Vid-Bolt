@@ -538,16 +538,30 @@ function InlineNumberInput({
 // AUDIO GENERATION RESULT (draggable)
 // ============================================================================
 
-function AudioResultPreview({ result }: { result: { url: string; prompt: string } }) {
+function AudioResultPreview({
+  result,
+}: {
+  result: {
+    url: string;
+    prompt: string;
+    durationSeconds?: number;
+    audioNormalizationStatus?: 'completed';
+    normalizedAudioUrl?: string | null;
+  };
+}) {
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
+      const audioUrl = result.normalizedAudioUrl || result.url;
       const dragData = {
         isNewItem: true,
         type: 'audio',
         label: 'AI Generated Music',
-        duration: 30,
+        duration: result.durationSeconds || 30,
         data: {
-          src: result.url,
+          src: audioUrl,
+          originalUrl: result.url,
+          normalizedAudioUrl: audioUrl,
+          audioNormalizationStatus: result.audioNormalizationStatus || 'completed',
           isAiGenerated: true,
         },
       };
@@ -555,8 +569,8 @@ function AudioResultPreview({ result }: { result: { url: string; prompt: string 
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('application/json', JSON.stringify(dragData));
 
-      startMediaDrag('audio', result.url, {
-        duration: 30,
+      startMediaDrag('audio', audioUrl, {
+        duration: result.durationSeconds || 30,
         name: 'AI Generated Music',
       });
     },
@@ -745,6 +759,10 @@ function SfxSearchForm() {
       duration: result.duration,
       data: {
         src: result.file,
+        file: result.file,
+        name: result.title,
+        filename: `${result.title}.mp3`,
+        artist: result.artist,
         thumbnail: result.thumbnail,
         isFreesound: true,
       },

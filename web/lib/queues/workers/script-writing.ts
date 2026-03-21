@@ -59,6 +59,13 @@ export interface ScriptWritingJobData {
     topic: string;
     genre: ScriptGenre;
     angle?: string;
+    toneStyle?: string;
+    targetAudience?: string;
+    pov?: '1st' | '2nd' | '3rd';
+    protagonistGender?: 'male' | 'female' | 'any';
+    openrouterModel?: string;
+    qualityReviewModel?: string;
+    contentNiche?: string;
     /** User's style customization (from project settings advanced) */
     styleConfig?: ScriptStyleConfig;
   };
@@ -81,6 +88,7 @@ export interface ScriptWritingOutput {
     assetType: 'character' | 'location' | 'object';
     context: string;
   }>;
+  effectiveConfig: ScriptWritingJobData['config'];
 }
 
 // ============================================================================
@@ -170,6 +178,13 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
           dossier: outlineData.researchDossier || null,
           assetRegistry: outlineData.assetRegistry,
           angle: config.angle,
+          toneStyle: config.toneStyle,
+          targetAudience: config.targetAudience,
+          pov: config.pov,
+          protagonistGender: config.protagonistGender,
+          contentNiche: config.contentNiche,
+          openrouterModel: config.openrouterModel,
+          qualityReviewModel: config.qualityReviewModel,
           styleConfig: config.styleConfig,
           onProgress: expansionProgress,
         });
@@ -221,6 +236,8 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
           assetRegistry: outlineData.assetRegistry,
           dossier: outlineData.researchDossier || null,
           durationDecision: outlineData.durationDecision,
+          qualityReviewModel: config.qualityReviewModel,
+          styleConfig: config.styleConfig,
           onProgress: assemblyProgress,
         });
 
@@ -269,6 +286,7 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
           context: callout.context,
         }))
       ),
+      effectiveConfig: config,
     };
 
     // Create the full universal script output for compatibility
@@ -345,6 +363,7 @@ export const scriptWritingProcessor: Processor<ScriptWritingJobData> = async (
         script_content: finalScript,
         metadata: {
           ...existingMetadata,
+          scriptConfig: config,
           scriptOutput: output,
           universalScriptOutput: fullOutput, // For backward compatibility
         },

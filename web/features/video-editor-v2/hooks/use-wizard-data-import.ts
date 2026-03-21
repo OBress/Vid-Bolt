@@ -70,10 +70,22 @@ function rewriteR2Url(url: string): string {
   return url;
 }
 
+function inferRenderableMediaType(url: string | undefined): 'image' | 'video' {
+  const normalized = (url || '').toLowerCase();
+  return /\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(normalized) ? 'image' : 'video';
+}
+
 /** Determine the visual clip type from a shot event. */
 function getVisualClipType(
   shot: ShotEvent,
-  mediaMap: Map<number, { url: string | undefined; type: 'image' | 'video' | 'motion-graphics'; remotionCode?: string; usedIcons?: string[] }>,
+  mediaMap: Map<number, {
+    url: string | undefined;
+    type: 'image' | 'video' | 'motion-graphics';
+    remotionCode?: string;
+    usedIcons?: string[];
+    normalizedAudioUrl?: string;
+    hasAudio?: boolean;
+  }>,
 ): ClipType {
   const media = mediaMap.get(shot.segment_index);
   if (media) return media.type;
@@ -89,8 +101,22 @@ function getVisualClipType(
 /** Build a shot_index → media info map, rewriting R2 URLs and preserving MG type/code. */
 function buildMediaUrlMap(
   generatedMedia?: GeneratedMedia[],
-): Map<number, { url: string | undefined; type: 'image' | 'video' | 'motion-graphics'; remotionCode?: string; usedIcons?: string[] }> {
-  const map = new Map<number, { url: string | undefined; type: 'image' | 'video' | 'motion-graphics'; remotionCode?: string; usedIcons?: string[] }>();
+): Map<number, {
+  url: string | undefined;
+  type: 'image' | 'video' | 'motion-graphics';
+  remotionCode?: string;
+  usedIcons?: string[];
+  normalizedAudioUrl?: string;
+  hasAudio?: boolean;
+}> {
+  const map = new Map<number, {
+    url: string | undefined;
+    type: 'image' | 'video' | 'motion-graphics';
+    remotionCode?: string;
+    usedIcons?: string[];
+    normalizedAudioUrl?: string;
+    hasAudio?: boolean;
+  }>();
   if (!generatedMedia) return map;
   for (const media of generatedMedia) {
     // Accept any media that has a URL OR remotion code — don't require generation_status === 'completed'
@@ -110,6 +136,9 @@ function buildMediaUrlMap(
       // but preserve the remotionCode/usedIcons for the rendering pipeline.
       const isRemotionMarker = media.media_url?.startsWith('remotion://');
       const url = isRemotionMarker ? undefined : (media.media_url ? rewriteR2Url(media.media_url) : undefined);
+      const normalizedAudioUrl = media.normalized_audio_url
+        ? rewriteR2Url(media.normalized_audio_url)
+        : undefined;
       
       if (isRemotionMarker || media.remotion_code) {
         console.log(`[WizardDataImport] Shot ${media.shot_index} uses Remotion code (no static URL) | remotion_code length=${media.remotion_code?.length ?? 0}`);
@@ -120,15 +149,24 @@ function buildMediaUrlMap(
       // Only keep 'motion-graphics' type if the clip actually has remotion_code
       // (i.e., it should be dynamically rendered via Remotion/CompositionRenderer).
       let effectiveType = type;
+      if (type === 'motion-graphics' && url && media.remotion_code) {
+        effectiveType = inferRenderableMediaType(media.media_url || url);
+        console.log(`[WizardDataImport] Shot ${media.shot_index}: Hybrid MG with base media + remotion_code -> base type '${effectiveType}'`);
+      }
       if (type === 'motion-graphics' && url && !media.remotion_code) {
         // Detect whether the pre-rendered file is an image or video based on extension
-        const urlLower = (media.media_url || '').toLowerCase();
-        const isImageFile = /\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(urlLower);
-        effectiveType = isImageFile ? 'image' : 'video';
+        effectiveType = inferRenderableMediaType(media.media_url || url);
         console.log(`[WizardDataImport] Shot ${media.shot_index}: Pre-rendered MG with real URL → retyped as '${effectiveType}'`);
       }
       
-      map.set(media.shot_index, { url, type: effectiveType, remotionCode: media.remotion_code, usedIcons: media.used_icons });
+      map.set(media.shot_index, {
+        url,
+        type: effectiveType,
+        remotionCode: media.remotion_code,
+        usedIcons: media.used_icons,
+        normalizedAudioUrl,
+        hasAudio: media.has_audio,
+      });
     }
   }
   console.log(`[WizardDataImport] buildMediaUrlMap: ${map.size}/${generatedMedia.length} shots have URLs or code`);
@@ -563,6 +601,9 @@ export function importWizardDataToStore(options: WizardData): boolean {
         data: {
           text: chunk.text,
           chapterNumber: chunk.chapterNumber,
+          normalizedAudioUrl: audioSrc,
+          audioNormalizationStatus: 'completed',
+          requiresNormalizedAudio: true,
         },
         createdAt: now,
         updatedAt: now,
@@ -717,12 +758,17 @@ export function importWizardDataToStore(options: WizardData): boolean {
             : undefined;
           // Use transparent placeholder when URL is undefined/empty (e.g. remotion markers).
           // Motion graphics clips don't need a real media URL — they render via Remotion code.
-          const src = resolvedMedia?.url ?? transparentPng;
           const mgType = clipTypeRaw === 'motion-graphics' || clipTypeRaw === 'motiongraphic';
+          const shouldRenderAsMotionGraphics = mgType && !!resolvedMedia?.remotionCode;
           // Use media URL map type as source of truth — it already handles retyping
           // pre-rendered MG clips (with real video URLs but no remotion_code) as 'video'.
           // Only fall back to agent EDL type if media map has no entry.
-          const clipType: ClipType = resolvedMedia?.type as ClipType || (mgType ? 'motion-graphics' : clipTypeRaw as ClipType);
+          const clipType: ClipType = shouldRenderAsMotionGraphics
+            ? 'motion-graphics'
+            : (resolvedMedia?.type as ClipType || (mgType ? 'motion-graphics' : clipTypeRaw as ClipType));
+          const src = clipType === 'motion-graphics'
+            ? transparentPng
+            : (resolvedMedia?.url ?? transparentPng);
 
           // ── Dedup check: skip duplicate shot placements ──────────────
           const isOnOverlaysTrackRaw = trackId === 'overlays';
@@ -858,6 +904,15 @@ export function importWizardDataToStore(options: WizardData): boolean {
               contentType: shot?.content_type,
               visualPrompt: shot?.visual_prompt || shot?.text,
               text: shot?.text,
+              ...(clipType === 'video' ? {
+                audioSourceMode: 'separate_normalized',
+                normalizedAudioUrl: resolvedMedia?.normalizedAudioUrl,
+                hasEmbeddedAudio: resolvedMedia?.hasAudio ?? false,
+                audioNormalizationStatus:
+                  resolvedMedia?.hasAudio === false || resolvedMedia?.normalizedAudioUrl
+                    ? 'completed'
+                    : 'pending',
+              } : {}),
               // Preserve Remotion MG code for rendering
               ...(resolvedMedia?.remotionCode && { remotionCode: resolvedMedia.remotionCode }),
               ...(resolvedMedia?.usedIcons && { usedIcons: resolvedMedia.usedIcons }),
@@ -888,10 +943,13 @@ export function importWizardDataToStore(options: WizardData): boolean {
 
       console.log(`[WizardDataImport] Built ${Object.keys(clipsToAdd).length - audioClipIds.length} visual/text clips from agent EDL`);
 
-      // ─── Video Audio: Create muted audio clips for video sources ─────
-      // These let users unmute individual video audio if desired
+      // ─── Video Audio: Create normalized linked audio clips for video sources ─────
       const videoClipEntries = Object.values(clipsToAdd).filter(
-        c => c.type === 'video' && c.media?.src && c.media.src !== transparentPng
+        c =>
+          c.type === 'video' &&
+          c.media?.src &&
+          c.media.src !== transparentPng &&
+          !!c.data?.normalizedAudioUrl
       );
       if (videoClipEntries.length > 0) {
         // Create a dedicated audio track for video audio
@@ -913,7 +971,7 @@ export function importWizardDataToStore(options: WizardData): boolean {
 
         let videoAudioCount = 0;
         for (const videoClip of videoClipEntries) {
-          const mediaSrc = videoClip.media?.src || '';
+          const mediaSrc = videoClip.data?.normalizedAudioUrl || '';
           if (!mediaSrc) continue;
           const audioClipId = generateId('clip');
           clipsToAdd[audioClipId] = {
@@ -930,9 +988,16 @@ export function importWizardDataToStore(options: WizardData): boolean {
             media: {
               src: mediaSrc,
               speed: 1,
-              volume: 0, // Muted by default
+              volume: 1,
               mediaStartTime: 0,
               mediaDuration: videoClip.duration,
+            },
+            data: {
+              src: mediaSrc,
+              originalUrl: mediaSrc,
+              normalizedAudioUrl: mediaSrc,
+              audioNormalizationStatus: 'completed',
+              requiresNormalizedAudio: true,
             },
             createdAt: now,
             updatedAt: now,
@@ -941,7 +1006,7 @@ export function importWizardDataToStore(options: WizardData): boolean {
           videoClip.linkedClipId = audioClipId;
           videoAudioCount++;
         }
-        console.log(`[WizardDataImport] Built ${videoAudioCount} muted video audio clips`);
+        console.log(`[WizardDataImport] Built ${videoAudioCount} normalized video audio clips`);
       }
 
       // ─── Background Music: Import music clips from agent EDL ─────
@@ -1178,6 +1243,15 @@ export function importWizardDataToStore(options: WizardData): boolean {
             contentType: shot.content_type,
             visualPrompt: shot.visual_prompt || shot.text,
             text: shot.text,
+            ...(clipType === 'video' ? {
+              audioSourceMode: 'separate_normalized',
+              normalizedAudioUrl: resolvedMedia?.normalizedAudioUrl,
+              hasEmbeddedAudio: resolvedMedia?.hasAudio ?? false,
+              audioNormalizationStatus:
+                resolvedMedia?.hasAudio === false || resolvedMedia?.normalizedAudioUrl
+                  ? 'completed'
+                  : 'pending',
+            } : {}),
             // Preserve Remotion MG code for rendering
             ...(resolvedMedia?.remotionCode && { remotionCode: resolvedMedia.remotionCode }),
             ...(resolvedMedia?.usedIcons && { usedIcons: resolvedMedia.usedIcons }),
@@ -1190,6 +1264,68 @@ export function importWizardDataToStore(options: WizardData): boolean {
       }
 
       console.log(`[WizardDataImport] Built ${shotList.length} visual clips (legacy path)`);
+
+      const legacyVideoClipEntries = Object.values(clipsToAdd).filter(
+        c =>
+          c.type === 'video' &&
+          c.media?.src &&
+          c.media.src !== transparentPng &&
+          !!c.data?.normalizedAudioUrl
+      );
+
+      if (legacyVideoClipEntries.length > 0) {
+        const legacyVideoAudioTrackId = generateId('track');
+        tracksToAdd[legacyVideoAudioTrackId] = {
+          id: legacyVideoAudioTrackId,
+          type: 'audio',
+          name: 'Video Audio',
+          order: Object.keys(tracksToAdd).length,
+          group: 'audio',
+          locked: false,
+          visible: true,
+          muted: false,
+          allowOverlap: false,
+          createdAt: now,
+          updatedAt: now,
+        };
+        trackOrderToAdd.push(legacyVideoAudioTrackId);
+
+        for (const videoClip of legacyVideoClipEntries) {
+          const mediaSrc = videoClip.data?.normalizedAudioUrl || '';
+          if (!mediaSrc) continue;
+
+          const audioClipId = generateId('clip');
+          clipsToAdd[audioClipId] = {
+            id: audioClipId,
+            trackId: legacyVideoAudioTrackId,
+            startTime: videoClip.startTime,
+            duration: videoClip.duration,
+            type: 'audio',
+            sourceId: mediaSrc,
+            label: `${videoClip.label || 'Video'} (audio)`,
+            linkedClipId: videoClip.id,
+            transform: { x: 0, y: 0, width: 0, height: 0, rotation: 0, opacity: 1 },
+            media: {
+              src: mediaSrc,
+              speed: 1,
+              volume: 1,
+              mediaStartTime: 0,
+              mediaDuration: videoClip.duration,
+            },
+            data: {
+              src: mediaSrc,
+              originalUrl: mediaSrc,
+              normalizedAudioUrl: mediaSrc,
+              audioNormalizationStatus: 'completed',
+              requiresNormalizedAudio: true,
+            },
+            createdAt: now,
+            updatedAt: now,
+          };
+
+          videoClip.linkedClipId = audioClipId;
+        }
+      }
 
       // ─── Legacy EDL Phase ───────────────────────────────────
       if (edl) {

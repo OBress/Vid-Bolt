@@ -2100,7 +2100,16 @@ CREATE TABLE IF NOT EXISTS "public"."video_editor_media" (
     "thumbnail" "text",
     "width" integer,
     "height" integer,
+    "audio_normalization_status" "text" DEFAULT 'pending'::"text",
+    "has_embedded_audio" boolean,
+    "normalized_audio_url" "text",
+    "original_lufs" double precision,
+    "normalized_lufs" double precision,
+    "true_peak_dbtp" double precision,
+    "audio_normalization_error" "text",
+    "audio_normalized_at" timestamp with time zone,
     "created_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "video_editor_media_audio_normalization_status_check" CHECK (("audio_normalization_status" = ANY (ARRAY['pending'::"text", 'processing'::"text", 'completed'::"text", 'failed'::"text", 'not_applicable'::"text"]))),
     CONSTRAINT "video_editor_media_type_check" CHECK (("type" = ANY (ARRAY['video'::"text", 'image'::"text", 'audio'::"text"])))
 );
 

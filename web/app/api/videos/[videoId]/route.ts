@@ -187,6 +187,14 @@ export async function GET(
               // keep original
             }
           }
+          if (m.normalized_audio_url && (m.normalized_audio_url.includes('X-Amz-') || m.normalized_audio_url.includes('r2.cloudflarestorage.com'))) {
+            try {
+              const key = getKeyFromUrl(m.normalized_audio_url);
+              m = { ...m, normalized_audio_url: getPublicUrl(key) };
+            } catch {
+              // keep original
+            }
+          }
           // Sanitize media_items URLs (multi-image shots)
           if (m.media_items && Array.isArray(m.media_items)) {
             m.media_items = m.media_items.map((item: any) => {
