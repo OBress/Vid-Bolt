@@ -916,10 +916,15 @@ async function processVideoBatch(
   // Calculate timeout based on total video content duration (not just count)
   const totalVideoDuration = shots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0);
   const avgDuration = totalVideoDuration / shots.length;
+  // Add MODE_SWITCH_TIMEOUT_MS to account for the image→video mode switch that
+  // occurs BEFORE video generation begins. Webhook listeners start counting
+  // immediately, but the GPU doesn't produce videos until after the switch.
+  // Without this buffer, individual webhooks can timeout before the orchestrator's
+  // overall batch timeout, causing the entire batch to fail on the last item.
   const timeout = calculateTimeout('video_generation', items.length, {
     avgDurationSec: avgDuration,
     totalVideoDurationSec: totalVideoDuration,
-  });
+  }) + MODE_SWITCH_TIMEOUT_MS;
   
   // Force-update GPU activity before long webhook wait to prevent VM shutdown
   forceUpdateGpuActivity().catch(() => {});
