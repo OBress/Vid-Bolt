@@ -11,11 +11,14 @@ import {
   Folder,
   CalendarDays,
   BarChart3,
+  Download,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState, useMemo, useCallback } from "react";
-import { MonthlyStatement } from "../actions";
+import { MonthlyStatement, exportYearCsv } from "../actions";
+import { toast } from "sonner";
 
 interface MonthSelectorProps {
   statements: MonthlyStatement[];
@@ -101,6 +104,31 @@ export function MonthSelector({
     });
   }, []);
 
+  const [exportingYear, setExportingYear] = useState<number | null>(null);
+
+  const handleExportCsv = useCallback(async (year: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      setExportingYear(year);
+      const csv = await exportYearCsv(year);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `financials_${year}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${year} financials to CSV`);
+    } catch (err) {
+      console.error("CSV export error:", err);
+      toast.error("Failed to export CSV");
+    } finally {
+      setExportingYear(null);
+    }
+  }, []);
+
   return (
     <div className="flex flex-col gap-1 w-full">
       {/* Overview Tab */}
@@ -152,6 +180,21 @@ export function MonthSelector({
                   <Folder className="w-4 h-4 shrink-0" />
                 )}
                 <span className="flex-1 text-left">{group.year}</span>
+                <button
+                  onClick={(e) => handleExportCsv(group.year, e)}
+                  disabled={exportingYear === group.year}
+                  className={cn(
+                    "p-1 rounded-md transition-all duration-150 hover:bg-muted",
+                    exportingYear === group.year && "opacity-50 cursor-wait"
+                  )}
+                  title={`Export ${group.year} as CSV`}
+                >
+                  {exportingYear === group.year ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5 text-muted-foreground hover:text-primary" />
+                  )}
+                </button>
                 <span
                   className={cn(
                     "text-[10px] font-medium px-1.5 py-0.5 rounded-full",

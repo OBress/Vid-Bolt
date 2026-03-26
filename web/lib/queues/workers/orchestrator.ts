@@ -606,7 +606,7 @@ Severity guidelines: "major" = fundamental plan errors that would produce unwatc
   ], {
     model: REFLECTION_MODEL,
     temperature: 0.1,
-    maxTokens: 2048,
+    maxTokens: 65536,
     xTitle: 'Vid-Bolt Shot Plan Reflection',
     responseFormat: {
       type: 'json_schema',
@@ -1935,7 +1935,9 @@ async function executeProductionPhase(
                 loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
               }, { attempts: 1 });
 
-              const i2vTimeout = Math.max(120_000, (i2vShot.duration_seconds || 5) * 12 * 1_000 * 2);
+              // Include mode switch buffer for consistency — GPU may need to
+              // re-enter video_generation mode if it was briefly switched away
+              const i2vTimeout = Math.max(120_000, (i2vShot.duration_seconds || 5) * 12 * 1_000 * 2) + 180_000;
               const i2vGenResult = await i2vGenJob.waitUntilFinished(
                 i2vQueueEvents,
                 i2vTimeout
@@ -2037,10 +2039,12 @@ async function executeProductionPhase(
     // destroying all videos from the main batch and prior iterations.
     const mgVideoResults: Record<string, string> = {};
     
+    // Reuse cached QueueEvents to avoid leaking Redis connections per MG shot
+    const mgVideoQueue = new Queue('video-gen', { connection: getRedisConnection() });
+    const mgVideoQueueEvents = await getQueueEvents('video-gen');
+
     for (const shot of switchedShots) {
       try {
-        const mgVideoQueue = new Queue('video-gen', { connection: getRedisConnection() });
-        const mgVideoQueueEvents = new QueueEvents('video-gen', { connection: getRedisConnection() });
         
         const genJob = await mgVideoQueue.add(`mg-to-video-${shot.segment_index}`, {
           taskId,
@@ -2220,7 +2224,10 @@ async function executeAssemblyPhase(
       .select('metadata')
       .eq('id', videoId)
       .single();
-    const shots = (meta?.metadata as any)?.av_script_part1?.shots;
+    // Read from shot_plan.shots (closed-loop pipeline), fall back to
+    // av_script_part1.shots (legacy) for correct timeout calculation
+    const shots = (meta?.metadata as any)?.shot_plan?.shots
+      || (meta?.metadata as any)?.av_script_part1?.shots;
     if (Array.isArray(shots)) shotCount = shots.length;
   } catch { /* use fallback */ }
   // Dynamic timeout: generous bounds for large videos (30 min max for hour-long content)
@@ -2759,14 +2766,19 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
         const generatedVideoUrls = (projMeta.generated_videos || {}) as Record<string, string>;
 
         // Collect video shots with their generated URLs
+        // Use segment_index (not array index) for correct video URL lookup
+        // when shot plans have non-contiguous indices (mixed media types)
         const videoShots = allShots
-          .map((shot, i) => ({
-            shotIndex: i,
-            mediaUrl: generatedVideoUrls[`shot-${i}`] || '',
-            description: String(shot.description || shot.summary || ''),
-            durationSeconds: Number(shot.duration_seconds) || 0, // 0 = skip in trimmer if missing
-          }))
-          .filter(s => s.mediaUrl); // Already read from generated_videos, so all have video type
+          .map((shot) => {
+            const segIdx = Number(shot.segment_index ?? shot.index);
+            return {
+              shotIndex: segIdx,
+              mediaUrl: generatedVideoUrls[`shot-${segIdx}`] || '',
+              description: String(shot.description || shot.summary || ''),
+              durationSeconds: Number(shot.duration_seconds) || 0,
+            };
+          })
+          .filter(s => s.mediaUrl && !isNaN(s.shotIndex));
 
         if (videoShots.length > 0) {
           await trimAllClips(videoId, videoShots, userId, {

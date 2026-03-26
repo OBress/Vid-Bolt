@@ -817,7 +817,7 @@ async function invokeImageGenerationAgent(
     userId,
     IMAGE_GENERATION_SYSTEM_PROMPT,
     `Generate an image prompt for this shot:\n\n${formattedContext}`,
-    { maxTokens: 2048 }
+    { maxTokens: 65536 }
   );
   
   return result;
@@ -834,7 +834,7 @@ async function invokeImageEditingAgent(
     userId,
     IMAGE_EDITING_SYSTEM_PROMPT,
     `Edit this image: ${inputImageUrl}\n\nContext:\n${formattedContext}`,
-    { maxTokens: 2048 }
+    { maxTokens: 65536 }
   );
   
   return result;
@@ -851,7 +851,7 @@ async function invokeVideoCreationAgent(
     userId,
     VIDEO_CREATION_SYSTEM_PROMPT,
     `Create motion for this keyframe: ${inputImageUrl}\n\nContext:\n${formattedContext}`,
-    { maxTokens: 2048 }
+    { maxTokens: 65536 }
   );
   
   return result;
@@ -867,7 +867,7 @@ async function invokeMotionGraphicPromptAgent(
     userId,
     MOTION_GRAPHIC_PROMPT_SYSTEM_PROMPT,
     `Design a motion graphic composition:\n\n${formattedContext}`,
-    { maxTokens: 4096 }
+    { maxTokens: 65536 }
   );
   
   return result;
@@ -885,7 +885,7 @@ async function invokeRemotionCodeAgent(
     userId,
     REMOTION_CODE_SYSTEM_PROMPT,
     `Convert this composition spec to Remotion code:\n\n${JSON.stringify(compositionSpec, null, 2)}`,
-    { maxTokens: 16384 }
+    { maxTokens: 65536 }
   );
   
   // Log the generated code for debugging

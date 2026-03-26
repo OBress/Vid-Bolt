@@ -390,6 +390,7 @@ export default function ProjectPage({
                             progress={video.progress_percent}
                             stage={video.current_stage}
                             updatedAt={video.updated_at}
+                            createdAt={video.created_at}
                             currentStep={video.current_step}
                             thumbnailUrl={
                               (video.metadata as any)?.thumbnail_url

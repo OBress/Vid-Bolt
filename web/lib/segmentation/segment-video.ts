@@ -228,7 +228,7 @@ Example:
   const response = await callOpenRouter(userId, messages, {
     model: SCENE_DETECTION_MODEL,
     temperature: 0.2,
-    maxTokens: 16384,
+    maxTokens: 65536,
   });
 
   const result = parseSceneAnalysisResponse(response.content);
@@ -542,7 +542,7 @@ EXCLUSIONS:
   const response = await callOpenRouter(userId, messages, {
     model: SCENE_DETECTION_MODEL,
     temperature: 0.2,
-    maxTokens: 16384,
+    maxTokens: 65536,
   });
 
   const result = parseSceneAnalysisResponse(response.content);
@@ -762,7 +762,7 @@ EXCLUSIONS:
   const response = await callOpenRouter(userId, messages, {
     model: SCENE_DETECTION_MODEL,
     temperature: 0.2,
-    maxTokens: 16384,
+    maxTokens: 65536,
   });
 
   const result = parseSceneAnalysisResponse(response.content);
@@ -893,7 +893,7 @@ If no scenes match, return an empty scenes array.`;
   const response = await callOpenRouter(userId, messages, {
     model: SCENE_DETECTION_MODEL,
     temperature: 0.2,
-    maxTokens: 16384,
+    maxTokens: 65536,
   });
 
   const result = parseSceneAnalysisResponse(response.content);

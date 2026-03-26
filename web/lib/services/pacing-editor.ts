@@ -123,7 +123,7 @@ For each issue, suggest a specific adjustment. If the pacing is well-crafted wit
   ], {
     model: PACING_MODEL,
     temperature: 0.1,
-    maxTokens: 4096,
+    maxTokens: 65536,
     xTitle: 'Vid-Bolt Pacing Editor',
     responseFormat: {
       type: 'json_schema',

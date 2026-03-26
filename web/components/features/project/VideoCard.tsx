@@ -39,6 +39,7 @@ interface VideoCardProps {
   thumbnailSvg?: string;
   duration?: string;
   updatedAt?: string;
+  createdAt?: string;
   currentStep?: string | null;
   onClick: () => void;
   onDelete?: (videoId: string) => void;
@@ -102,6 +103,7 @@ export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
       thumbnailSvg,
       duration,
       updatedAt,
+      createdAt,
       currentStep,
       onClick,
       onDelete,
@@ -392,6 +394,11 @@ export const VideoCard = forwardRef<HTMLDivElement, VideoCardProps>(
               <span className="text-neutral-500">({progress}%)</span>
             )}
           </div>
+          {createdAt && (
+            <div className="text-[10px] text-neutral-600">
+              {new Date(createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+            </div>
+          )}
         </div>
       </div>
     );

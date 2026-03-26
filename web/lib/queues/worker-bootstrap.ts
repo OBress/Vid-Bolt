@@ -540,6 +540,20 @@ async function stopWorkers(): Promise<void> {
     }
   }));
   
+  // Release all GPU locks before closing Redis to prevent orphaned locks
+  try {
+    const redis = getRedisConnection();
+    const gpuLockKeys = await redis.keys('gpu-lock:*');
+    for (const key of gpuLockKeys) {
+      await redis.del(key);
+    }
+    if (gpuLockKeys.length > 0) {
+      console.log(`[WorkerBootstrap] Released ${gpuLockKeys.length} GPU lock(s) during shutdown`);
+    }
+  } catch (lockErr) {
+    console.warn('[WorkerBootstrap] GPU lock release during shutdown failed:', lockErr);
+  }
+
   // Close all queues
   await closeAllQueues();
   
@@ -683,6 +697,23 @@ async function cleanupStaleTasks(): Promise<void> {
       console.log(`[WorkerBootstrap] Redis cleanup complete: removed ${totalRemoved} stale job(s) total`);
     } else {
       console.log('[WorkerBootstrap] No stale Redis jobs found');
+    }
+
+    // Release any orphaned GPU locks from the previous worker process.
+    // On fresh boot, no workers are running, so any GPU lock is definitively
+    // orphaned from a crashed/killed previous process.
+    try {
+      const lockRedis = getRedisConnection();
+      const gpuLockKeys = await lockRedis.keys('gpu-lock:*');
+      for (const key of gpuLockKeys) {
+        await lockRedis.del(key);
+        console.log(`[WorkerBootstrap] Released orphaned GPU lock: ${key}`);
+      }
+      if (gpuLockKeys.length > 0) {
+        console.log(`[WorkerBootstrap] Cleaned up ${gpuLockKeys.length} orphaned GPU lock(s)`);
+      }
+    } catch (lockErr) {
+      console.warn('[WorkerBootstrap] GPU lock cleanup error:', lockErr);
     }
   } catch (err) {
     // Non-blocking: stale task cleanup should never prevent workers from starting

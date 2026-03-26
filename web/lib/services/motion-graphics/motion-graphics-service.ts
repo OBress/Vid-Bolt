@@ -78,7 +78,7 @@ async function callOpenRouter(
     {
       model,
       temperature: options.temperature ?? 0.7,
-      maxTokens: options.maxTokens ?? 8192,
+      maxTokens: options.maxTokens ?? 65536,
       xTitle: 'Vid-Bolt Motion Graphics',
       responseFormat: options.responseFormat as any,
     }
@@ -106,7 +106,7 @@ async function* streamOpenRouter(
     {
       model,
       temperature: options.temperature ?? 0.7,
-      maxTokens: options.maxTokens ?? 32000,
+      maxTokens: options.maxTokens ?? 65536,
       xTitle: 'Vid-Bolt Motion Graphics',
     }
   );
@@ -274,7 +274,7 @@ class MotionGraphicsService {
         { role: 'user', content: prompt },
       ], {
         temperature: 0.7,
-        maxTokens: 2048,
+        maxTokens: 65536,
         responseFormat: { type: 'json_object' },
       });
 
@@ -315,7 +315,7 @@ class MotionGraphicsService {
         { role: 'user', content: planningInput },
       ], {
         temperature: 0.7,
-        maxTokens: 8000,
+        maxTokens: 65536,
         responseFormat: { type: 'json_object' },
       });
 
@@ -644,7 +644,7 @@ class MotionGraphicsService {
 
       for await (const content of streamOpenRouter(apiKey, model, messages, {
         temperature: 0.7,
-        maxTokens: 32000,
+        maxTokens: 65536,
       })) {
         accumulatedCode += content;
         sendSSE({
@@ -723,7 +723,7 @@ class MotionGraphicsService {
         { role: 'user', content: editPrompt },
       ], {
         temperature: 0.3,
-        maxTokens: 32000,
+        maxTokens: 65536,
       });
 
       const result = this.parseAIJson<{
@@ -749,7 +749,7 @@ class MotionGraphicsService {
               { role: 'user', content: fallbackPrompt },
             ], {
               temperature: 0.3,
-              maxTokens: 32000,
+              maxTokens: 65536,
             });
 
             const fallbackResult = this.parseAIJson<{

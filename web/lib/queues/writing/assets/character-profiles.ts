@@ -175,7 +175,7 @@ Generate a comprehensive profile. Return as JSON:
     userId,
     UNIVERSAL_PROMPTS.characterProfile,
     userPrompt,
-    { maxTokens: 4096 } // Explicit token limit to ensure complete JSON response
+    { maxTokens: 65536 } // Explicit token limit to ensure complete JSON response
   );
 
   return {

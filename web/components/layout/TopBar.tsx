@@ -1,12 +1,13 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Bell, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getActiveLabel } from "@/app/command-center/navigation";
 import { useMediaProjects } from "@/hooks/use-media-projects";
 import { useMemo } from "react";
 import { TaskStatusButton } from "@/components/features/tasks/TaskStatusButton";
+import { NotificationButton } from "@/components/features/notifications/NotificationButton";
 import { useNavigationStore } from "@/store/use-navigation-store";
 import { VMStatus } from "@/components/layout/VMStatus";
 import { GpuHoursIndicator } from "@/components/layout/GpuHoursIndicator";
@@ -86,13 +87,7 @@ export function TopBar() {
           <GpuHoursIndicator />
         </div>
         <TaskStatusButton />
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-neutral-400 hover:text-orange-500"
-        >
-          <Bell className="w-4 h-4" />
-        </Button>
+        <NotificationButton />
       </div>
     </div>
   );

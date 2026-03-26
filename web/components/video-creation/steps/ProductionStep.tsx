@@ -210,11 +210,23 @@ export function ProductionStep({
     }
   }, [taskId]);
 
-  const handleRetry = useCallback(() => {
+  const handleRetry = useCallback(async () => {
+    // Cancel any existing task before retrying to prevent duplicate pipelines
+    if (taskId) {
+      try {
+        await fetch(`/api/tasks/${taskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "cancelled" }),
+        });
+      } catch (err) {
+        console.warn("[ProductionStep] Failed to cancel previous task before retry:", err);
+      }
+    }
     setErrorMessage(null);
     setTaskId(null);
     handleStart();
-  }, [handleStart]);
+  }, [handleStart, taskId]);
 
   // =========================================================================
   // Render

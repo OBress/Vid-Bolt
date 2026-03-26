@@ -412,7 +412,7 @@ async function generateChunkShots(
       visual_elements?: import('@/types/video').RoutingTag[];
       sound_effects?: import('@/types/video').SoundEffect[];
     }>;
-  }>(userId, systemPrompt, userPrompt, { maxTokens: 16384 });
+  }>(userId, systemPrompt, userPrompt, { maxTokens: 65536 });
   
   // Merge AI responses with segment data
   const shots: ChunkShotResult[] = context.currentSegments.map((segment, i) => {

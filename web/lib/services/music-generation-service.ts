@@ -265,7 +265,11 @@ async function waitForModeReady(
 }
 
 /**
- * Ensure GPU is in audio_creation VRAM mode for ACE-Step 1.5
+ * Ensure GPU is in audio_creation VRAM mode for ACE-Step 1.5.
+ * 
+ * Includes retry-with-backoff for 503 errors ("Cannot change VRAM mode while
+ * jobs are queued or processing") to handle GPU contention from concurrent
+ * video generation pipelines.
  */
 async function ensureAudioMode(): Promise<boolean> {
   const currentMode = await callGpuGetMode();
@@ -275,20 +279,48 @@ async function ensureAudioMode(): Promise<boolean> {
     return true;
   }
 
-  console.log(`${LOG_PREFIX} Switching to audio_creation mode...`);
-  const switchResult = await callGpuSetVramMode('audio_creation');
+  // Retry parameters for GPU contention (503 = busy with other jobs)
+  const MAX_MODE_SWITCH_RETRIES = 10;
+  const MODE_SWITCH_RETRY_DELAY_MS = 30_000; // 30s between retries (~5 min max)
 
-  if (!switchResult.success) {
+  for (let attempt = 1; attempt <= MAX_MODE_SWITCH_RETRIES; attempt++) {
+    console.log(`${LOG_PREFIX} Switching to audio_creation mode (attempt ${attempt}/${MAX_MODE_SWITCH_RETRIES})...`);
+    const switchResult = await callGpuSetVramMode('audio_creation');
+
+    if (switchResult.success) {
+      const ready = await waitForModeReady('audio_creation');
+      if (ready) {
+        console.log(`${LOG_PREFIX} Mode switch complete, stabilizing for ${POST_SWITCH_DELAY_MS / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, POST_SWITCH_DELAY_MS));
+      }
+      return ready;
+    }
+
+    // Check if the error is a 503 (GPU busy) — retry with backoff
+    const is503 = switchResult.error?.includes('503') || switchResult.error?.includes('jobs are queued');
+    if (is503 && attempt < MAX_MODE_SWITCH_RETRIES) {
+      console.warn(
+        `${LOG_PREFIX} GPU busy (503) — waiting ${MODE_SWITCH_RETRY_DELAY_MS / 1000}s before retry ` +
+        `(${attempt}/${MAX_MODE_SWITCH_RETRIES}): ${switchResult.error}`
+      );
+      await new Promise(resolve => setTimeout(resolve, MODE_SWITCH_RETRY_DELAY_MS));
+
+      // Re-check if mode was switched by another process while we waited
+      const recheck = await callGpuGetMode();
+      if (recheck.success && recheck.data?.mode === 'audio_creation' && !recheck.data.is_switching) {
+        console.log(`${LOG_PREFIX} Mode switched by another process while waiting — ready`);
+        return true;
+      }
+      continue;
+    }
+
+    // Non-503 error or max retries exhausted
     console.error(`${LOG_PREFIX} Failed to initiate mode switch: ${switchResult.error}`);
     return false;
   }
 
-  const ready = await waitForModeReady('audio_creation');
-  if (ready) {
-    console.log(`${LOG_PREFIX} Mode switch complete, stabilizing for ${POST_SWITCH_DELAY_MS / 1000}s...`);
-    await new Promise(resolve => setTimeout(resolve, POST_SWITCH_DELAY_MS));
-  }
-  return ready;
+  console.error(`${LOG_PREFIX} Mode switch failed after ${MAX_MODE_SWITCH_RETRIES} retries`);
+  return false;
 }
 
 // Maximum segments per LLM call to maintain output quality
@@ -486,7 +518,7 @@ Maintain timbral continuity with previous segments.`;
       context.userId,
       MUSIC_DIRECTOR_SYSTEM_PROMPT,
       userPrompt,
-      { maxTokens: 8192 }
+      { maxTokens: 65536 }
     );
 
     if (!batchResult.segments?.length) {

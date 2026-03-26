@@ -304,7 +304,7 @@ async function callVisionModel(
   ], {
     model: config?.model || VERIFICATION_MODEL,
     temperature: config?.temperature ?? 0.2,
-    maxTokens: config?.maxTokens ?? 2048,
+    maxTokens: config?.maxTokens ?? 65536,
     xTitle: 'Vid-Bolt Verifier',
     responseFormat: VERIFIER_JSON_SCHEMA,
   });
@@ -447,7 +447,7 @@ async function performMetaReview(
     ], {
       model: META_REVIEW_MODEL,
       temperature: 0.1,
-      maxTokens: 2048,
+      maxTokens: 65536,
       xTitle: 'Vid-Bolt Verifier Meta-Review',
     });
 

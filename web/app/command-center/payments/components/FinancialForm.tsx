@@ -42,11 +42,13 @@ import {
   getProofUploadUrl,
 } from "../actions";
 import { PaymentUploadModal } from "./PaymentUploadModal";
+import { CreditCard } from "lucide-react";
 
 interface FinancialFormProps {
   currentDate: string;
   initialStatement?: MonthlyStatement;
   defaultCosts?: CostItem[];
+  stripeCosts?: number;
 }
 
 const COMMON_COSTS = [
@@ -79,7 +81,7 @@ function StatusBadge({ status }: { status: PaymentStatus }) {
 }
 
 /* ─── Main Form ─── */
-export function FinancialForm({ currentDate, initialStatement, defaultCosts = [] }: FinancialFormProps) {
+export function FinancialForm({ currentDate, initialStatement, defaultCosts = [], stripeCosts = 0 }: FinancialFormProps) {
   // State
   const [revenue, setRevenue] = useState<string | number>(
     initialStatement?.total_revenue !== undefined ? initialStatement.total_revenue : ""
@@ -106,7 +108,8 @@ export function FinancialForm({ currentDate, initialStatement, defaultCosts = []
   const status: PaymentStatus = initialStatement?.status || "draft";
   const commissionRate = initialStatement?.commission_rate || 0.1;
   
-  const totalCosts = costs.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const userCosts = costs.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const totalCosts = userCosts + stripeCosts;
   const revenueNum = Number(revenue) || 0;
   const profit = Math.max(0, revenueNum - totalCosts); 
   const commission = profit * commissionRate;
@@ -434,8 +437,24 @@ export function FinancialForm({ currentDate, initialStatement, defaultCosts = []
               )}
             </div>
           ))}
+
+          {/* Stripe costs — auto-injected, read-only */}
+          {stripeCosts > 0 && (
+            <div className="flex gap-3 items-center p-3 rounded-lg bg-blue-500/5 border border-blue-500/10">
+              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-500/10 shrink-0">
+                <CreditCard className="w-4 h-4 text-blue-500" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium">Stripe - GPU Rendering Hours</p>
+                <p className="text-[11px] text-muted-foreground">Auto-calculated from purchases</p>
+              </div>
+              <div className="w-28 text-right">
+                <span className="text-sm font-semibold text-red-500 tabular-nums">${stripeCosts.toFixed(2)}</span>
+              </div>
+            </div>
+          )}
           
-          {costs.length > 0 && (
+          {(costs.length > 0 || stripeCosts > 0) && (
             <>
               <Separator className="my-1" />
               <div className="flex justify-between items-center text-sm font-semibold px-3">

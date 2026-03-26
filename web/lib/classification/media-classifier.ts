@@ -824,7 +824,7 @@ export async function classifyAndValidateImage(
 
     const response = await callOpenRouter(userId, messages, {
       ...CLASSIFICATION_CONFIG,
-      maxTokens: 2048,
+      maxTokens: 65536,
     });
 
     const result = parseJsonResponse<{

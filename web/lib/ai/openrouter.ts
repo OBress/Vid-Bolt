@@ -143,7 +143,7 @@ export interface OpenRouterResponse {
 const DEFAULT_CONFIG: OpenRouterConfig = {
   model: "google/gemini-3-flash-preview",
   temperature: 0.7,
-  maxTokens: 8192,
+  maxTokens: 65536,
   topP: 0.95,
   maxRetries: 3,
   xTitle: "Vid-Bolt",
@@ -156,7 +156,7 @@ export const QUALITY_REVIEW_MODEL = "google/gemini-3-pro-preview";
 export const QUALITY_REVIEW_CONFIG: Partial<OpenRouterConfig> = {
   model: QUALITY_REVIEW_MODEL,
   temperature: 0.3,
-  maxTokens: 4096,
+  maxTokens: 65536,
 };
 
 // ============================================================================

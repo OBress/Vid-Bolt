@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { startOfMonth, format } from "date-fns";
-import { getMonthlyStatements } from "./actions";
+import { getMonthlyStatements, getStripeCostsForMonth } from "./actions";
 import { FinancialForm } from "./components/FinancialForm";
 import { FinancialOverview } from "./components/FinancialOverview";
 import { MonthSelector } from "./components/MonthSelector";
@@ -51,6 +51,9 @@ export default async function PaymentsPage({
       }));
     }
   }
+
+  // Fetch Stripe GPU costs for the selected month (includes carry-over)
+  const stripeCosts = isOverview ? 0 : await getStripeCostsForMonth(selectedMonth);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -113,6 +116,7 @@ export default async function PaymentsPage({
                   currentDate={selectedMonth}
                   initialStatement={initialStatement}
                   defaultCosts={defaultCosts}
+                  stripeCosts={stripeCosts}
                 />
               )}
             </Suspense>

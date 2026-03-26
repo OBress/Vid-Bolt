@@ -128,7 +128,7 @@ export async function classifySceneBatch(
     userPrompt,
     { 
       temperature: 0.4, // Slightly higher for more diverse queries
-      maxTokens: 16384 // Much larger for comprehensive output
+      maxTokens: 65536 // Much larger for comprehensive output
     }
   );
   

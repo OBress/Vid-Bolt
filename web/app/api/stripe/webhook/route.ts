@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
       const session = event.data.object;
       const userId = session.metadata?.user_id;
       const hours = parseInt(session.metadata?.hours || "0", 10);
+      const amountCents = session.amount_total ?? null;
 
       if (!userId || !hours) {
         console.error("[Stripe Webhook] Missing metadata:", { userId, hours });
@@ -58,7 +59,7 @@ export async function POST(request: NextRequest) {
       }
 
       console.log(
-        `[Stripe Webhook] Processing purchase: ${hours} hours for user ${userId}, session ${session.id}`
+        `[Stripe Webhook] Processing purchase: ${hours} hours ($${((amountCents ?? 0) / 100).toFixed(2)}) for user ${userId}, session ${session.id}`
       );
 
       try {
@@ -69,6 +70,7 @@ export async function POST(request: NextRequest) {
           p_user_id: userId,
           p_hours: hours,
           p_stripe_session_id: session.id,
+          p_amount_cents: amountCents,
         });
 
         if (error) {

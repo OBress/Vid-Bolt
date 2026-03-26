@@ -398,7 +398,7 @@ export async function rewriteBeat(
     const config: OpenRouterConfig = {
       model: options.model || QUALITY_REVIEW_MODEL,
       temperature: 0.7, // Higher temp for creative rewriting
-      maxTokens: 4096,
+      maxTokens: 65536,
     };
 
     const response = await generateText(
@@ -834,7 +834,7 @@ Write the improved version:`;
   const config: OpenRouterConfig = {
     model: options.model || QUALITY_REVIEW_MODEL,
     temperature: 0.7,
-    maxTokens: 4096,
+    maxTokens: 65536,
   };
 
   const response = await generateText(

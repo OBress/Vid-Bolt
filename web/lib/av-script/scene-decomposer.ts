@@ -18,7 +18,6 @@
  */
 
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 import { generateJSON, QUALITY_REVIEW_MODEL } from '@/lib/ai/openrouter';
 import type { CreativeManifest } from '@/lib/types/closed-loop';
 
@@ -72,20 +71,16 @@ export interface WordTimestamp {
 // JSON SCHEMA (for constrained decoding)
 // ============================================================================
 
-const SCENE_DECOMPOSITION_JSON_SCHEMA = zodToJsonSchema(
-  SceneDecompositionOutput as any,
-  { name: 'scene_decomposition', target: 'openApi3' }
-);
-
-// Extract just the schema part for OpenRouter's responseFormat
 function getResponseFormat() {
-  const schema = SCENE_DECOMPOSITION_JSON_SCHEMA;
+  const schema = z.toJSONSchema(SceneDecompositionOutput);
+  // Strip $schema metadata — OpenRouter only wants the structural schema
+  const { $schema: _, ...structuralSchema } = schema as Record<string, unknown>;
   return {
     type: 'json_schema' as const,
     json_schema: {
       name: 'scene_decomposition',
       strict: true,
-      schema: (schema as any).definitions?.scene_decomposition || schema,
+      schema: structuralSchema,
     },
   };
 }
@@ -388,7 +383,7 @@ export async function decomposeIntoScenes(
           model,
           responseFormat,
           temperature: 0.4,
-          maxTokens: 4096,
+          maxTokens: 65536,
           maxRetries: 1, // Let our own retry loop handle retries
         }
       );

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 import type {
   GraphicStatePatch,
@@ -207,17 +206,14 @@ function toAssetBundle(request: TemplateLaneRequest): MotionGraphicsAssetBundleI
 }
 
 function responseFormat() {
-  const schema = zodToJsonSchema(TemplateSpecSchema as any, {
-    name: 'motion_graphics_template_spec',
-    target: 'openApi3',
-  });
-
+  const schema = z.toJSONSchema(TemplateSpecSchema);
+  const { $schema: _, ...structuralSchema } = schema as Record<string, unknown>;
   return {
     type: 'json_schema' as const,
     json_schema: {
       name: 'motion_graphics_template_spec',
       strict: true,
-      schema: (schema as any).definitions?.motion_graphics_template_spec || schema,
+      schema: structuralSchema,
     },
   };
 }
@@ -282,7 +278,7 @@ Template families:
     {
       model: request.model || 'google/gemini-3-flash-preview',
       temperature: 0.1,
-      maxTokens: 1800,
+      maxTokens: 65536,
       xTitle: 'Vid-Bolt MG Templates',
       responseFormat: responseFormat() as any,
     },

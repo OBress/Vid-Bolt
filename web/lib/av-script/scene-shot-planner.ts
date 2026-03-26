@@ -17,7 +17,6 @@
  */
 
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 import { generateJSON, QUALITY_REVIEW_MODEL } from '@/lib/ai/openrouter';
 import { NarrativeBeat } from '@/lib/types/closed-loop';
 import {
@@ -125,19 +124,15 @@ export interface EnrichedPlannedShot {
 // JSON SCHEMA (for constrained decoding)
 // ============================================================================
 
-const SCENE_SHOT_PLAN_JSON_SCHEMA = zodToJsonSchema(
-  SceneShotPlanOutput as any,
-  { name: 'scene_shot_plan', target: 'openApi3' }
-);
-
 function getResponseFormat() {
-  const schema = SCENE_SHOT_PLAN_JSON_SCHEMA;
+  const schema = z.toJSONSchema(SceneShotPlanOutput);
+  const { $schema: _, ...structuralSchema } = schema as Record<string, unknown>;
   return {
     type: 'json_schema' as const,
     json_schema: {
       name: 'scene_shot_plan',
       strict: true,
-      schema: (schema as any).definitions?.scene_shot_plan || schema,
+      schema: structuralSchema,
     },
   };
 }
@@ -542,7 +537,7 @@ export async function planSceneShots(
           model,
           responseFormat,
           temperature: 0.5,
-          maxTokens: 4096,
+          maxTokens: 65536,
           maxRetries: 1,
         }
       );

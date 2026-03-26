@@ -353,7 +353,7 @@ Respond with a JSON array of objects with keys: index (1-based number from the l
     const response = await callOpenRouter(userId, messages, {
       model: 'google/gemini-3-flash-preview',
       temperature: 0.3,
-      maxTokens: 8192,
+      maxTokens: 65536,
     });
 
     // Parse the response

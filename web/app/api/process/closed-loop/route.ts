@@ -91,6 +91,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // =========================================================================
+    // DUPLICATE PIPELINE GUARD
+    // =========================================================================
+    // Prevent parallel orchestrators for the same video. If a running/pending
+    // closed-loop task already exists, return its ID instead of creating a
+    // duplicate. This prevents double-clicks, Retry-without-cancel, and
+    // network retries from spawning competing pipelines.
+    const { data: existingTasks } = await supabase
+      .from("tasks")
+      .select("id, status")
+      .eq("type", "closed_loop")
+      .eq("user_id", user.id)
+      .in("status", ["pending", "running"])
+      .filter("input_data->>videoId", "eq", videoId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (existingTasks && existingTasks.length > 0) {
+      const existing = existingTasks[0];
+      console.log(
+        `[Closed-Loop API] Duplicate prevented: video ${videoId} already has active task ${existing.id} (status: ${existing.status})`
+      );
+      return NextResponse.json({
+        success: true,
+        taskId: existing.id,
+        jobId: existing.id,
+        deduplicated: true,
+      });
+    }
+
     const metadata = (video.metadata || {}) as Record<string, any>;
     const outlineConfig = metadata?.outlineConfig;
 
