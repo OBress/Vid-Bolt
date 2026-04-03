@@ -18,6 +18,7 @@ export type VramMode =
   | "image_editing"
   | "video_generation"
   | "audio_creation"
+  | "segmentation"
   | "all";
 
 // ============================================================================
@@ -140,6 +141,187 @@ export interface SoundEffectGenerateRequest {
   /** Duration in seconds (1-30), default 5 */
   duration_seconds?: number;
   seed?: number;
+  save_url: string;
+  webhook_url?: string;
+  item_id?: string;
+  webhook_secret?: string;
+}
+
+export interface SegmentPromptObject {
+  label: string;
+  text: string;
+}
+
+export interface SegmentAnimationConfig {
+  mode?: "transition" | "draw" | "pulse" | "reveal" | "loop" | "stagger";
+  start?: Record<string, number | number[]>;
+  end?: Record<string, number | number[]>;
+  easing?:
+    | "linear"
+    | "ease_in"
+    | "ease_out"
+    | "ease_in_out"
+    | "ease_in_cubic"
+    | "ease_out_cubic"
+    | "ease_in_out_cubic"
+    | "ease_out_back"
+    | "ease_out_elastic"
+    | "ease_out_bounce";
+  delay?: number;
+  duration?: number;
+  cycles?: number;
+  direction?: "left" | "right" | "top" | "bottom" | "radial";
+  stagger_delay?: number;
+}
+
+/** Composable visual operation for the segmentation effects pipeline. */
+export interface SegmentOperation {
+  type:
+    | "select"
+    | "blur"
+    | "pixelate"
+    | "redact"
+    | "color_overlay"
+    | "color_grade"
+    | "opacity"
+    | "replace_color"
+    | "remove_background"
+    | "replace_background"
+    | "greenscreen"
+    | "outline"
+    | "bounding_box"
+    | "spotlight"
+    | "bokeh"
+    | "glow"
+    | "shadow"
+    | "vignette"
+    | "grayscale"
+    | "invert"
+    | "sharpen"
+    | "sepia"
+    | "posterize"
+    | "edge_detect"
+    | "emboss"
+    | "noise"
+    | "sketch"
+    | "duotone"
+    | "halftone"
+    | "glitch"
+    | "motion_blur"
+    | "glass"
+    | "feather"
+    | "zoom"
+    | "pan";
+  animation?: SegmentAnimationConfig;
+  target?: "mask" | "background" | "all" | "center" | number[];
+  object_index?: number;
+  object_label?: string;
+  object_labels?: string[];
+  object_id?: number;
+  object_ids?: number[];
+  strength?: number;
+  block_size?: number;
+  color?: number[];
+  brightness?: number;
+  contrast?: number;
+  saturation?: number;
+  value?: number;
+  hue_shift?: number;
+  saturation_scale?: number;
+  image_url?: string;
+  thickness?: number;
+  progress?: number;
+  darkness?: number;
+  radius?: number;
+  intensity?: number;
+  offset?: number[];
+  amount?: number;
+  levels?: number;
+  noise_type?: "gaussian" | "grain";
+  detail?: number;
+  color_dark?: number[];
+  color_light?: number[];
+  dot_size?: number;
+  rgb_shift?: number;
+  seed?: number;
+  angle?: number;
+  scale?: number;
+}
+
+export interface SegmentMetadata {
+  object_count?: number;
+  width?: number;
+  height?: number;
+  boxes?: number[][];
+  scores?: number[];
+  output_type?: "masks_json" | "image";
+  output_format?: "masks_json" | "video";
+  tracked_ids?: number[];
+  frame_count?: number;
+  duration_seconds?: number;
+  fps?: number;
+  model_version?: string;
+  labels?: string[];
+  prompt_to_obj_ids?: Record<string, number[]>;
+  object_id_to_prompt_label?: Record<string, string>;
+}
+
+/** Request body for POST /api/v1/segment/image (v0.9.1) */
+export interface ImageSegmentRequest {
+  job_id: string;
+  input_image_url: string;
+  text_prompt?: string;
+  point_prompts?: number[][];
+  box_prompts?: number[][];
+  box_prompts_labeled?: { box: number[]; label: boolean }[];
+  object_prompts?: SegmentPromptObject[];
+  confidence_threshold?: number;
+  max_objects?: number;
+  output_type?: "masks_json" | "image";
+  operations?: SegmentOperation[];
+  save_url: string;
+  webhook_url?: string;
+  item_id?: string;
+  webhook_secret?: string;
+}
+
+/** Request body for POST /api/v1/segment/video (v0.9.1) */
+export interface VideoSegmentRequest {
+  job_id: string;
+  input_video_url: string;
+  text_prompt?: string;
+  text_prompts?: string[];
+  point_prompts?: number[][];
+  point_labels?: number[];
+  box_prompts?: number[][];
+  box_labels?: number[];
+  object_prompts?: SegmentPromptObject[];
+  prompt_frame_index?: number;
+  propagation_direction?: "forward" | "backward" | "both";
+  confidence_threshold?: number;
+  include_tracking_metadata?: boolean;
+  output_format?: "masks_json" | "video";
+  operations?: SegmentOperation[];
+  max_frames?: number;
+  save_url: string;
+  webhook_url?: string;
+  item_id?: string;
+  webhook_secret?: string;
+}
+
+export interface AnimateSegmentRequest {
+  job_id: string;
+  input_image_url: string;
+  text_prompt?: string;
+  point_prompts?: number[][];
+  box_prompts?: number[][];
+  box_prompts_labeled?: { box: number[]; label: boolean }[];
+  object_prompts?: SegmentPromptObject[];
+  confidence_threshold?: number;
+  max_objects?: number;
+  duration_seconds?: number;
+  fps?: number;
+  operations: SegmentOperation[];
   save_url: string;
   webhook_url?: string;
   item_id?: string;
@@ -801,6 +983,296 @@ export async function callGpuSoundEffectGenerate(
   }
 
   // Error response
+  const errorResponse = response as GPUApiErrorResponse;
+  return {
+    success: false,
+    errorCode: errorResponse.error_code,
+    errorMessage: errorResponse.error_message,
+    debug,
+  };
+}
+
+// ============================================================================
+// IMAGE SEGMENTATION
+// ============================================================================
+
+export interface ImageSegmentResult {
+  success: boolean;
+  publicUrl?: string;
+  generationTime?: number;
+  isAsync?: boolean;
+  jobId?: string;
+  objectCount?: number;
+  width?: number;
+  height?: number;
+  boxes?: number[][];
+  scores?: number[];
+  outputType?: "masks_json" | "image";
+  modelVersion?: string;
+  labels?: string[];
+  promptToObjectIds?: Record<string, number[]>;
+  objectIdToPromptLabel?: Record<string, string>;
+  metadata?: SegmentMetadata;
+  errorCode?: string;
+  errorMessage?: string;
+  debug: {
+    request: ImageSegmentRequest;
+    response: unknown;
+    statusCode: number;
+    gpuApiUrl: string;
+  };
+  finalJob?: JobInfo;
+}
+
+/**
+ * Segment objects in an image via the GPU API using SAM 3.
+ */
+export async function callGpuImageSegment(
+  request: ImageSegmentRequest
+): Promise<ImageSegmentResult> {
+  const { response, rawRequest, rawResponse, statusCode } = await callGpuApi(
+    "/api/v1/segment/image",
+    request
+  );
+
+  const debug = {
+    request: rawRequest,
+    response: rawResponse,
+    statusCode,
+    gpuApiUrl: getGpuApiUrl(),
+  };
+
+  if (response.status === "completed") {
+    const successResp = response as GPUApiSuccessResponse;
+    const metadata = getSegmentMetadata(rawResponse);
+    return {
+      success: true,
+      publicUrl: successResp.save_url,
+      generationTime: successResp.generation_time,
+      objectCount: metadata?.object_count,
+      width: metadata?.width,
+      height: metadata?.height,
+      boxes: metadata?.boxes,
+      scores: metadata?.scores,
+      outputType: metadata?.output_type,
+      modelVersion: metadata?.model_version,
+      labels: metadata?.labels,
+      promptToObjectIds: metadata?.prompt_to_obj_ids,
+      objectIdToPromptLabel: metadata?.object_id_to_prompt_label,
+      metadata,
+      debug,
+    };
+  }
+
+  // Handle 202 Accepted (async job accepted)
+  if (
+    statusCode === 202 &&
+    (response.status === "pending" || response.status === "processing" || response.status === "queued")
+  ) {
+    const asyncResponse = response as GPUApiAsyncJobResponse;
+    return {
+      success: true,
+      isAsync: true,
+      jobId: asyncResponse.job_id,
+      debug,
+    };
+  }
+
+  // Error response
+  const errorResponse = response as GPUApiErrorResponse;
+  return {
+    success: false,
+    errorCode: errorResponse.error_code,
+    errorMessage: errorResponse.error_message,
+    debug,
+  };
+}
+
+// ============================================================================
+// VIDEO SEGMENTATION / OBJECT TRACKING
+// ============================================================================
+
+export interface VideoSegmentResult {
+  success: boolean;
+  publicUrl?: string;
+  generationTime?: number;
+  isAsync?: boolean;
+  jobId?: string;
+  frameCount?: number;
+  objectCount?: number;
+  durationSeconds?: number;
+  fps?: number;
+  trackedIds?: number[];
+  modelVersion?: string;
+  labels?: string[];
+  promptToObjectIds?: Record<string, number[]>;
+  objectIdToPromptLabel?: Record<string, string>;
+  metadata?: SegmentMetadata;
+  errorCode?: string;
+  errorMessage?: string;
+  debug: {
+    request: VideoSegmentRequest;
+    response: unknown;
+    statusCode: number;
+    gpuApiUrl: string;
+  };
+  finalJob?: JobInfo;
+}
+
+export interface AnimateSegmentResult {
+  success: boolean;
+  publicUrl?: string;
+  generationTime?: number;
+  isAsync?: boolean;
+  jobId?: string;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+  fps?: number;
+  frameCount?: number;
+  objectCount?: number;
+  modelVersion?: string;
+  labels?: string[];
+  promptToObjectIds?: Record<string, number[]>;
+  objectIdToPromptLabel?: Record<string, string>;
+  metadata?: SegmentMetadata;
+  errorCode?: string;
+  errorMessage?: string;
+  debug: {
+    request: AnimateSegmentRequest;
+    response: unknown;
+    statusCode: number;
+    gpuApiUrl: string;
+  };
+  finalJob?: JobInfo;
+}
+
+function getSegmentMetadata(rawResponse: unknown): SegmentMetadata | undefined {
+  if (!rawResponse || typeof rawResponse !== "object") return undefined;
+
+  const metadata = (rawResponse as { metadata?: SegmentMetadata }).metadata;
+  if (!metadata || typeof metadata !== "object") return undefined;
+
+  return metadata;
+}
+
+/**
+ * Track and segment objects across video frames via the GPU API using SAM 3.
+ */
+export async function callGpuVideoSegment(
+  request: VideoSegmentRequest
+): Promise<VideoSegmentResult> {
+  const { response, rawRequest, rawResponse, statusCode } = await callGpuApi(
+    "/api/v1/segment/video",
+    request
+  );
+
+  const debug = {
+    request: rawRequest,
+    response: rawResponse,
+    statusCode,
+    gpuApiUrl: getGpuApiUrl(),
+  };
+
+  if (response.status === "completed") {
+    const successResp = response as GPUApiSuccessResponse;
+    const metadata = getSegmentMetadata(rawResponse);
+    return {
+      success: true,
+      publicUrl: successResp.save_url,
+      generationTime: successResp.generation_time,
+      frameCount: metadata?.frame_count,
+      objectCount: metadata?.object_count,
+      durationSeconds: metadata?.duration_seconds,
+      fps: metadata?.fps,
+      trackedIds: metadata?.tracked_ids,
+      modelVersion: metadata?.model_version,
+      labels: metadata?.labels,
+      promptToObjectIds: metadata?.prompt_to_obj_ids,
+      objectIdToPromptLabel: metadata?.object_id_to_prompt_label,
+      metadata,
+      debug,
+    };
+  }
+
+  // Handle 202 Accepted (async job accepted)
+  if (
+    statusCode === 202 &&
+    (response.status === "pending" || response.status === "processing" || response.status === "queued")
+  ) {
+    const asyncResponse = response as GPUApiAsyncJobResponse;
+    return {
+      success: true,
+      isAsync: true,
+      jobId: asyncResponse.job_id,
+      debug,
+    };
+  }
+
+  // Error response
+  const errorResponse = response as GPUApiErrorResponse;
+  return {
+    success: false,
+    errorCode: errorResponse.error_code,
+    errorMessage: errorResponse.error_message,
+    debug,
+  };
+}
+
+// ============================================================================
+// ANIMATED SEGMENTATION
+// ============================================================================
+
+export async function callGpuAnimateSegment(
+  request: AnimateSegmentRequest
+): Promise<AnimateSegmentResult> {
+  const { response, rawRequest, rawResponse, statusCode } = await callGpuApi(
+    "/api/v1/segment/animate",
+    request
+  );
+
+  const debug = {
+    request: rawRequest,
+    response: rawResponse,
+    statusCode,
+    gpuApiUrl: getGpuApiUrl(),
+  };
+
+  if (response.status === "completed") {
+    const successResp = response as GPUApiSuccessResponse;
+    const metadata = getSegmentMetadata(rawResponse);
+    return {
+      success: true,
+      publicUrl: successResp.save_url,
+      generationTime: successResp.generation_time,
+      width: metadata?.width,
+      height: metadata?.height,
+      durationSeconds: metadata?.duration_seconds,
+      fps: metadata?.fps,
+      frameCount: metadata?.frame_count,
+      objectCount: metadata?.object_count,
+      modelVersion: metadata?.model_version,
+      labels: metadata?.labels,
+      promptToObjectIds: metadata?.prompt_to_obj_ids,
+      objectIdToPromptLabel: metadata?.object_id_to_prompt_label,
+      metadata,
+      debug,
+    };
+  }
+
+  if (
+    statusCode === 202 &&
+    (response.status === "pending" || response.status === "processing" || response.status === "queued")
+  ) {
+    const asyncResponse = response as GPUApiAsyncJobResponse;
+    return {
+      success: true,
+      isAsync: true,
+      jobId: asyncResponse.job_id,
+      debug,
+    };
+  }
+
   const errorResponse = response as GPUApiErrorResponse;
   return {
     success: false,
@@ -1582,11 +2054,20 @@ export interface WebhookPayload {
   batch_id: string | null;
   status: 'completed' | 'failed' | 'cancelled';
   completed_at: number;
-  generation_type: 'image_generation' | 'image_editing' | 'video_generation';
+  generation_type:
+    | 'image_generation'
+    | 'image_editing'
+    | 'video_generation'
+    | 'audio_creation'
+    | 'segmentation'
+    | 'image_segmentation'
+    | 'video_segmentation'
+    | 'animated_segmentation'
+    | string;
   result?: {
     save_url: string;
     generation_time: number;
-    metadata?: Record<string, unknown>;
+    metadata?: SegmentMetadata;
   };
   error_message?: string;
   error_code?: string;

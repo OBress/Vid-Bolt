@@ -28,6 +28,7 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   Copy,
   ExternalLink,
   Activity,
@@ -44,7 +45,14 @@ import {
   ArrowLeft,
   Music,
   Volume2,
+  Scissors,
+  GalleryHorizontalEnd,
 } from "lucide-react";
+import {
+  SegmentOperationsBuilder,
+  SEGMENT_OPERATION_CATEGORIES,
+  type SegOp,
+} from "@/components/features/dev/SegmentOperationsBuilder";
 
 // ============================================================================
 // TYPES
@@ -89,12 +97,27 @@ interface TestResult {
   inputImageUrl?: string;
   durationSeconds?: number;
   fps?: number;
+  segmentationDataUrl?: string;
+  objectCount?: number;
+  width?: number;
+  height?: number;
+  scores?: number[];
+  boxes?: number[][];
+  frameCount?: number;
+  trackedIds?: number[];
+  outputType?: string;
+  outputFormat?: string;
+  modelVersion?: string;
+  labels?: string[];
+  promptToObjectIds?: Record<string, number[]>;
+  objectIdToPromptLabel?: Record<string, string>;
+  metadata?: Record<string, unknown>;
   debug?: DebugInfo;
   finalJob?: any;
 }
 
 type TestStatus = "idle" | "loading" | "success" | "error";
-type TabType = "system" | "mode" | "image" | "image-edit" | "video" | "music" | "sfx" | "loras";
+type TabType = "system" | "mode" | "image" | "image-edit" | "video" | "music" | "sfx" | "segment" | "loras";
 type AspectRatio = "16:9" | "9:16";
 type FPS = 8 | 12 | 16 | 24 | 30;
 type ApiMode = "mock" | "real";
@@ -103,10 +126,11 @@ type VramMode =
   | "image_editing"
   | "video_generation"
   | "audio_creation"
+  | "segmentation"
   | "all";
 
 // Job tracking types for queue panel
-type JobType = "image" | "image-edit" | "video" | "ltx2" | "ltx2-interpolate" | "music" | "sfx";
+type JobType = "image" | "image-edit" | "video" | "ltx2" | "ltx2-interpolate" | "music" | "sfx" | "segment-image" | "segment-video" | "segment-animate";
 type QueueFilter =
   | "all"
   | "queued"
@@ -205,6 +229,347 @@ interface ModeData {
   switching_progress?: number | null;
 }
 
+interface CapabilitySection {
+  title: string;
+  items: string[];
+}
+
+const SEGMENTATION_CAPABILITY_SECTIONS: CapabilitySection[] = [
+  {
+    title: "Prompt Modes",
+    items: [
+      "Image: text_prompt, point_prompts, box_prompts, box_prompts_labeled, object_prompts",
+      "Video: text_prompt, text_prompts, object_prompts",
+      "Animate: text_prompt, point_prompts, box_prompts, box_prompts_labeled, object_prompts",
+      "Video point_prompts and box_prompts only apply in legacy single text_prompt mode",
+    ],
+  },
+  {
+    title: "Outputs",
+    items: [
+      "Image: masks_json or processed image",
+      "Video: masks_json or processed video",
+      "Animate: processed MP4 video",
+      "Video masks_json can include tracking metadata with mask, box, score, and label",
+    ],
+  },
+  {
+    title: "Selectors",
+    items: [
+      "Target mask, background, or all",
+      "Select by object_label or object_labels union",
+      "Video select by stable object_id or object_ids",
+      "Fallback object_index targeting is still available",
+    ],
+  },
+  {
+    title: "Effects",
+    items: [
+      "Blur, pixelate, redact, color overlay, color grade, opacity, replace color",
+      "Remove background, replace background, greenscreen",
+      "Outline, bounding box, spotlight, bokeh, glow, shadow, vignette",
+      "Grayscale, invert, sharpen, sepia, posterize, edge detect, emboss, noise, sketch",
+      "Duotone, halftone, glitch, motion blur, glass, feather",
+      "Animation contexts: zoom and pan",
+    ],
+  },
+  {
+    title: "Animation",
+    items: [
+      "transition, draw, pulse, reveal, loop, stagger",
+      "Structured controls for easing, timing, cycles, reveal direction, stagger delay",
+      "Structured start/end controls for documented numeric parameters, zoom scale, and pan/shadow offsets",
+    ],
+  },
+  {
+    title: "Prompt Builders",
+    items: [
+      "Point, box, and labeled-box prompts are editable with form controls instead of raw JSON arrays",
+      "Video point_labels and box_labels are exposed as positive/negative toggles",
+      "Named object prompts connect directly to per-object select operations and returned mappings",
+    ],
+  },
+];
+
+function safeParseJson<T>(value: string, fallback: T): T {
+  if (!value.trim()) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function PointPromptBuilder({
+  value,
+  onChange,
+  labelValue,
+  onLabelChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  labelValue?: string;
+  onLabelChange?: (value: string) => void;
+}) {
+  const points = safeParseJson<number[][]>(value, []);
+  const labels = safeParseJson<number[]>(labelValue ?? "", []);
+  const rowCount = Math.max(points.length, onLabelChange ? labels.length : 0);
+  const rows = Array.from({ length: rowCount }, (_, index) => ({
+    x: points[index]?.[0] ?? 0,
+    y: points[index]?.[1] ?? 0,
+    label: labels[index] ?? 1,
+  }));
+
+  const updateRows = (nextRows: typeof rows) => {
+    onChange(nextRows.length ? JSON.stringify(nextRows.map((row) => [row.x, row.y])) : "");
+    if (onLabelChange) {
+      onLabelChange(nextRows.length ? JSON.stringify(nextRows.map((row) => row.label ?? 1)) : "");
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      {rows.length === 0 && (
+        <p className="text-xs text-neutral-500">No point prompts added yet.</p>
+      )}
+      {rows.map((row, index) => (
+        <div key={index} className="flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 p-2">
+          <Input
+            type="number"
+            value={row.x}
+            onChange={(e) => {
+              const nextRows = [...rows];
+              nextRows[index] = { ...row, x: parseFloat(e.target.value) || 0 };
+              updateRows(nextRows);
+            }}
+            className="bg-neutral-900 border-neutral-600 text-xs h-7"
+            placeholder="x"
+          />
+          <Input
+            type="number"
+            value={row.y}
+            onChange={(e) => {
+              const nextRows = [...rows];
+              nextRows[index] = { ...row, y: parseFloat(e.target.value) || 0 };
+              updateRows(nextRows);
+            }}
+            className="bg-neutral-900 border-neutral-600 text-xs h-7"
+            placeholder="y"
+          />
+          {onLabelChange && (
+            <div className="flex gap-1">
+              {[1, 0].map((label) => (
+                <button
+                  key={label}
+                  onClick={() => {
+                    const nextRows = [...rows];
+                    nextRows[index] = { ...row, label };
+                    updateRows(nextRows);
+                  }}
+                  className={`px-2 py-1 rounded text-[10px] border transition-colors ${
+                    row.label === label
+                      ? "bg-cyan-600 text-white border-cyan-500"
+                      : "bg-neutral-900 text-neutral-400 border-neutral-700 hover:text-white"
+                  }`}
+                >
+                  {label === 1 ? "Positive" : "Negative"}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={() => updateRows(rows.filter((_, rowIndex) => rowIndex !== index))}
+            className="p-1 text-neutral-500 hover:text-red-400 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ))}
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => updateRows([...rows, { x: 0, y: 0, label: 1 }])}
+        className="border-dashed border-neutral-600 text-neutral-300"
+      >
+        <Plus className="w-3.5 h-3.5 mr-1.5" />
+        Add Point
+      </Button>
+    </div>
+  );
+}
+
+function BoxPromptBuilder({
+  value,
+  onChange,
+  fieldLabels,
+  labelValue,
+  onLabelChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  fieldLabels: [string, string, string, string];
+  labelValue?: string;
+  onLabelChange?: (value: string) => void;
+}) {
+  const boxes = safeParseJson<number[][]>(value, []);
+  const labels = safeParseJson<number[]>(labelValue ?? "", []);
+  const rowCount = Math.max(boxes.length, onLabelChange ? labels.length : 0);
+  const rows = Array.from({ length: rowCount }, (_, index) => ({
+    values: boxes[index] ?? [0, 0, 0, 0],
+    label: labels[index] ?? 1,
+  }));
+
+  const updateRows = (nextRows: typeof rows) => {
+    onChange(nextRows.length ? JSON.stringify(nextRows.map((row) => row.values)) : "");
+    if (onLabelChange) {
+      onLabelChange(nextRows.length ? JSON.stringify(nextRows.map((row) => row.label ?? 1)) : "");
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      {rows.length === 0 && (
+        <p className="text-xs text-neutral-500">No box prompts added yet.</p>
+      )}
+      {rows.map((row, index) => (
+        <div key={index} className="rounded-lg border border-neutral-700 bg-neutral-800 p-2 space-y-2">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            {fieldLabels.map((label, valueIndex) => (
+              <div key={label}>
+                <label className="text-[10px] text-neutral-500 block mb-0.5">{label}</label>
+                <Input
+                  type="number"
+                  value={row.values[valueIndex] ?? 0}
+                  onChange={(e) => {
+                    const nextRows = [...rows];
+                    const nextValues = [...row.values];
+                    nextValues[valueIndex] = parseFloat(e.target.value) || 0;
+                    nextRows[index] = { ...row, values: nextValues };
+                    updateRows(nextRows);
+                  }}
+                  className="bg-neutral-900 border-neutral-600 text-xs h-7"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            {onLabelChange ? (
+              <div className="flex gap-1">
+                {[1, 0].map((label) => (
+                  <button
+                    key={label}
+                    onClick={() => {
+                      const nextRows = [...rows];
+                      nextRows[index] = { ...row, label };
+                      updateRows(nextRows);
+                    }}
+                    className={`px-2 py-1 rounded text-[10px] border transition-colors ${
+                      row.label === label
+                        ? "bg-cyan-600 text-white border-cyan-500"
+                        : "bg-neutral-900 text-neutral-400 border-neutral-700 hover:text-white"
+                    }`}
+                  >
+                    {label === 1 ? "Positive" : "Negative"}
+                  </button>
+                ))}
+              </div>
+            ) : <div />}
+            <button
+              onClick={() => updateRows(rows.filter((_, rowIndex) => rowIndex !== index))}
+              className="p-1 text-neutral-500 hover:text-red-400 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      ))}
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => updateRows([...rows, { values: [0, 0, 0, 0], label: 1 }])}
+        className="border-dashed border-neutral-600 text-neutral-300"
+      >
+        <Plus className="w-3.5 h-3.5 mr-1.5" />
+        Add Box
+      </Button>
+    </div>
+  );
+}
+
+function LabeledBoxPromptBuilder({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const rows = safeParseJson<{ box: number[]; label: boolean }[]>(value, []);
+
+  const updateRows = (nextRows: { box: number[]; label: boolean }[]) => {
+    onChange(nextRows.length ? JSON.stringify(nextRows) : "");
+  };
+
+  return (
+    <div className="space-y-2">
+      {rows.length === 0 && (
+        <p className="text-xs text-neutral-500">No labeled box prompts added yet.</p>
+      )}
+      {rows.map((row, index) => (
+        <div key={index} className="rounded-lg border border-neutral-700 bg-neutral-800 p-2 space-y-2">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            {["X1", "Y1", "X2", "Y2"].map((label, valueIndex) => (
+              <div key={label}>
+                <label className="text-[10px] text-neutral-500 block mb-0.5">{label}</label>
+                <Input
+                  type="number"
+                  value={row.box[valueIndex] ?? 0}
+                  onChange={(e) => {
+                    const nextRows = [...rows];
+                    const nextBox = [...row.box];
+                    nextBox[valueIndex] = parseFloat(e.target.value) || 0;
+                    nextRows[index] = { ...row, box: nextBox };
+                    updateRows(nextRows);
+                  }}
+                  className="bg-neutral-900 border-neutral-600 text-xs h-7"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-neutral-500">Include</span>
+              <Switch
+                checked={row.label}
+                onCheckedChange={(checked) => {
+                  const nextRows = [...rows];
+                  nextRows[index] = { ...row, label: checked };
+                  updateRows(nextRows);
+                }}
+              />
+              <span className="text-xs text-neutral-500">{row.label ? "Positive" : "Negative"}</span>
+            </div>
+            <button
+              onClick={() => updateRows(rows.filter((_, rowIndex) => rowIndex !== index))}
+              className="p-1 text-neutral-500 hover:text-red-400 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      ))}
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => updateRows([...rows, { box: [0, 0, 0, 0], label: true }])}
+        className="border-dashed border-neutral-600 text-neutral-300"
+      >
+        <Plus className="w-3.5 h-3.5 mr-1.5" />
+        Add Labeled Box
+      </Button>
+    </div>
+  );
+}
+
 // ============================================================================
 // COMPONENT
 // ============================================================================
@@ -301,6 +666,59 @@ export function GPUApiTester({
   const [sfxResult, setSfxResult] = useState<TestResult | null>(null);
   const [sfxDebugExpanded, setSfxDebugExpanded] = useState(false);
 
+  // Segmentation State (SAM 3 v0.9.1)
+  const [segMode, setSegMode] = useState<"image" | "video" | "animate">("image");
+  // Image seg
+  const [segImageUrl, setSegImageUrl] = useState("");
+  const [segPromptMode, setSegPromptMode] = useState<"simple" | "objects">("simple");
+  const [segTextPrompt, setSegTextPrompt] = useState("segment all objects");
+  const [segObjectPrompts, setSegObjectPrompts] = useState<{ label: string; text: string }[]>([]);
+  const [segPointPrompts, setSegPointPrompts] = useState("");
+  const [segBoxPrompts, setSegBoxPrompts] = useState("");
+  const [segBoxPromptsLabeled, setSegBoxPromptsLabeled] = useState("");
+  const [segConfidenceThreshold, setSegConfidenceThreshold] = useState(0.5);
+  const [segMaxObjects, setSegMaxObjects] = useState(100);
+  const [segOutputType, setSegOutputType] = useState<"masks_json" | "image">("masks_json");
+  const [segOperations, setSegOperations] = useState<SegOp[]>([]);
+  // Video seg
+  const [segVideoPromptMode, setSegVideoPromptMode] = useState<"text" | "texts" | "objects">("text");
+  const [segVideoUrl, setSegVideoUrl] = useState("");
+  const [segVideoTextPrompt, setSegVideoTextPrompt] = useState("track the person");
+  const [segVideoTextPrompts, setSegVideoTextPrompts] = useState<string[]>(["person"]);
+  const [segVideoPointPrompts, setSegVideoPointPrompts] = useState("");
+  const [segVideoPointLabels, setSegVideoPointLabels] = useState("");
+  const [segVideoBoxPrompts, setSegVideoBoxPrompts] = useState("");
+  const [segVideoBoxLabels, setSegVideoBoxLabels] = useState("");
+  const [segVideoObjectPrompts, setSegVideoObjectPrompts] = useState<{ label: string; text: string }[]>([]);
+  const [segVideoPromptFrameIndex, setSegVideoPromptFrameIndex] = useState(0);
+  const [segVideoPropagationDirection, setSegVideoPropagationDirection] = useState<"forward" | "backward" | "both">("forward");
+  const [segVideoConfidenceThreshold, setSegVideoConfidenceThreshold] = useState(0.5);
+  const [segVideoOutputFormat, setSegVideoOutputFormat] = useState<"masks_json" | "video">("masks_json");
+  const [segVideoOperations, setSegVideoOperations] = useState<SegOp[]>([]);
+  const [segVideoIncludeTrackingMetadata, setSegVideoIncludeTrackingMetadata] = useState(true);
+  const [segMaxFrames, setSegMaxFrames] = useState(300);
+  // Common
+  const [segStatus, setSegStatus] = useState<TestStatus>("idle");
+  const [segResult, setSegResult] = useState<TestResult | null>(null);
+  const [segDebugExpanded, setSegDebugExpanded] = useState(false);
+  const [segCapabilityDirectoryOpen, setSegCapabilityDirectoryOpen] = useState(true);
+  const [segAdvancedOpen, setSegAdvancedOpen] = useState(false);
+  const [segVideoAdvancedOpen, setSegVideoAdvancedOpen] = useState(false);
+  // Animate seg
+  const [segAnimateImageUrl, setSegAnimateImageUrl] = useState("");
+  const [segAnimatePromptMode, setSegAnimatePromptMode] = useState<"simple" | "objects">("simple");
+  const [segAnimateTextPrompt, setSegAnimateTextPrompt] = useState("person");
+  const [segAnimateObjectPrompts, setSegAnimateObjectPrompts] = useState<{ label: string; text: string }[]>([]);
+  const [segAnimatePointPrompts, setSegAnimatePointPrompts] = useState("");
+  const [segAnimateBoxPrompts, setSegAnimateBoxPrompts] = useState("");
+  const [segAnimateBoxPromptsLabeled, setSegAnimateBoxPromptsLabeled] = useState("");
+  const [segAnimateConfidenceThreshold, setSegAnimateConfidenceThreshold] = useState(0.5);
+  const [segAnimateMaxObjects, setSegAnimateMaxObjects] = useState(100);
+  const [segAnimateDuration, setSegAnimateDuration] = useState(3);
+  const [segAnimateFps, setSegAnimateFps] = useState(30);
+  const [segAnimateOperations, setSegAnimateOperations] = useState<SegOp[]>([]);
+  const [segAnimateAdvancedOpen, setSegAnimateAdvancedOpen] = useState(false);
+
   // Prompt Enhancement State
   const [imageEnhancing, setImageEnhancing] = useState(false);
   const [editEnhancing, setEditEnhancing] = useState(false);
@@ -326,6 +744,22 @@ export function GPUApiTester({
 
   // Clear storage state
   const [clearingStorage, setClearingStorage] = useState(false);
+
+  // Media Gallery state
+  interface GalleryMedia {
+    key: string;
+    url: string;
+    type: 'image' | 'video' | 'audio' | 'json' | 'unknown';
+    size: number;
+    lastModified: string;
+    filename: string;
+  }
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryLoading, setGalleryLoading] = useState(false);
+  const [galleryImages, setGalleryImages] = useState<GalleryMedia[]>([]);
+  const [galleryVideos, setGalleryVideos] = useState<GalleryMedia[]>([]);
+  const [galleryAudio, setGalleryAudio] = useState<GalleryMedia[]>([]);
+  const [galleryFilter, setGalleryFilter] = useState<'all' | 'image' | 'video' | 'audio'>('all');
 
   // Ref to always have latest trackedJobs for polling
   const trackedJobsRef = useRef<Map<string, TrackedJob>>(trackedJobs);
@@ -1599,6 +2033,274 @@ export function GPUApiTester({
       setSfxStatus("error");
     }
   };
+
+  const handleLoadGallery = async () => {
+    setGalleryLoading(true);
+    try {
+      const response = await fetch("/api/gpu-api/test/media");
+      const data = await response.json();
+      if (data.success) {
+        setGalleryImages(data.data.images || []);
+        setGalleryVideos(data.data.videos || []);
+        setGalleryAudio(data.data.audio || []);
+      }
+    } catch (err) {
+      console.error("Failed to load gallery:", err);
+    } finally {
+      setGalleryLoading(false);
+    }
+  };
+
+  const handleOpenGallery = () => {
+    setGalleryOpen(true);
+    handleLoadGallery();
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handleTestSegmentImage = async () => {
+    setSegStatus("loading");
+    setSegResult(null);
+
+    try {
+      // Parse prompt JSONs
+      let parsedPoints: number[][] | undefined;
+      let parsedBoxes: number[][] | undefined;
+      let parsedBoxesLabeled: { box: number[]; label: boolean }[] | undefined;
+
+      if (segPointPrompts.trim()) {
+        try { parsedPoints = JSON.parse(segPointPrompts); }
+        catch { throw new Error("Invalid point prompts JSON. Expected: [[x1,y1], [x2,y2]]"); }
+      }
+      if (segBoxPrompts.trim()) {
+        try { parsedBoxes = JSON.parse(segBoxPrompts); }
+        catch { throw new Error("Invalid box prompts JSON. Expected: [[x1,y1,x2,y2]]"); }
+      }
+      if (segBoxPromptsLabeled.trim()) {
+        try { parsedBoxesLabeled = JSON.parse(segBoxPromptsLabeled); }
+        catch { throw new Error("Invalid labeled box prompts JSON. Expected: [{box:[x1,y1,x2,y2],label:true}]"); }
+      }
+
+      // Strip internal `id` and `animation` (if not animate mode) from operations before sending
+      const cleanOps = segOutputType === "image" && segOperations.length > 0
+        ? segOperations.map(({ id, animation, ...rest }) => rest)
+        : undefined;
+
+      // Build prompt fields based on mode
+      const isObjectMode = segPromptMode === "objects" && segObjectPrompts.length > 0;
+
+      const response = await fetch("/api/gpu-api/test/segment-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inputImageUrl: segImageUrl,
+          textPrompt: isObjectMode ? undefined : (segTextPrompt.trim() || undefined),
+          objectPrompts: isObjectMode ? segObjectPrompts : undefined,
+          pointPrompts: parsedPoints,
+          boxPrompts: parsedBoxes,
+          boxPromptsLabeled: parsedBoxesLabeled,
+          confidenceThreshold: segConfidenceThreshold,
+          maxObjects: segMaxObjects,
+          outputType: segOutputType,
+          operations: cleanOps,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to start segmentation");
+
+      const result = await pollForResult(data.taskId, (update) =>
+        setSegResult(update),
+      );
+      setSegResult(result);
+      setSegStatus(result.success ? "success" : "error");
+      setSegDebugExpanded(!result.success);
+    } catch (err) {
+      setSegResult({
+        success: false,
+        type: "image_segmentation",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+      setSegStatus("error");
+    }
+  };
+
+  const handleTestSegmentVideo = async () => {
+    setSegStatus("loading");
+    setSegResult(null);
+
+    try {
+      // Parse prompt JSONs
+      let parsedPoints: number[][] | undefined;
+      let parsedPointLabels: number[] | undefined;
+      let parsedBoxes: number[][] | undefined;
+      let parsedBoxLabels: number[] | undefined;
+
+      if (segVideoPointPrompts.trim()) {
+        try { parsedPoints = JSON.parse(segVideoPointPrompts); }
+        catch { throw new Error("Invalid point prompts JSON. Expected: [[x1,y1], [x2,y2]]"); }
+      }
+      if (segVideoPointLabels.trim()) {
+        try { parsedPointLabels = JSON.parse(segVideoPointLabels); }
+        catch { throw new Error("Invalid point labels JSON. Expected: [1, 0, 1]"); }
+      }
+      if (segVideoBoxPrompts.trim()) {
+        try { parsedBoxes = JSON.parse(segVideoBoxPrompts); }
+        catch { throw new Error("Invalid box prompts JSON. Expected: [[x,y,w,h]]"); }
+      }
+      if (segVideoBoxLabels.trim()) {
+        try { parsedBoxLabels = JSON.parse(segVideoBoxLabels); }
+        catch { throw new Error("Invalid box labels JSON. Expected: [1, 0]"); }
+      }
+
+      if (segVideoPromptMode !== "text" && (parsedPoints?.length || parsedBoxes?.length)) {
+        throw new Error("Point and box prompts are only supported with the legacy single text prompt video mode.");
+      }
+
+      // Strip internal `id` from operations before sending
+      const cleanOps = segVideoOutputFormat === "video" && segVideoOperations.length > 0
+        ? segVideoOperations.map(({ id, ...rest }) => rest)
+        : undefined;
+
+      const cleanTextPrompts = segVideoTextPrompts.map((prompt) => prompt.trim()).filter(Boolean);
+      const cleanObjectPrompts = segVideoObjectPrompts
+        .map((prompt) => ({ label: prompt.label.trim(), text: prompt.text.trim() }))
+        .filter((prompt) => prompt.label && prompt.text);
+
+      const response = await fetch("/api/gpu-api/test/segment-video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inputVideoUrl: segVideoUrl,
+          textPrompt: segVideoPromptMode === "text" ? (segVideoTextPrompt.trim() || undefined) : undefined,
+          textPrompts: segVideoPromptMode === "texts" ? cleanTextPrompts : undefined,
+          objectPrompts: segVideoPromptMode === "objects" ? cleanObjectPrompts : undefined,
+          pointPrompts: segVideoPromptMode === "text" ? parsedPoints : undefined,
+          pointLabels: segVideoPromptMode === "text" ? parsedPointLabels : undefined,
+          boxPrompts: segVideoPromptMode === "text" ? parsedBoxes : undefined,
+          boxLabels: segVideoPromptMode === "text" ? parsedBoxLabels : undefined,
+          promptFrameIndex: segVideoPromptFrameIndex,
+          propagationDirection: segVideoPropagationDirection,
+          confidenceThreshold: segVideoConfidenceThreshold,
+          includeTrackingMetadata: segVideoOutputFormat === "masks_json" ? segVideoIncludeTrackingMetadata : undefined,
+          outputFormat: segVideoOutputFormat,
+          operations: cleanOps,
+          maxFrames: segMaxFrames,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to start video segmentation");
+
+      const result = await pollForResult(data.taskId, (update) =>
+        setSegResult(update),
+      );
+      setSegResult(result);
+      setSegStatus(result.success ? "success" : "error");
+      setSegDebugExpanded(!result.success);
+    } catch (err) {
+      setSegResult({
+        success: false,
+        type: "video_segmentation",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+      setSegStatus("error");
+    }
+  };
+
+  const handleTestSegmentAnimate = async () => {
+    setSegStatus("loading");
+    setSegResult(null);
+
+    try {
+      let parsedPoints: number[][] | undefined;
+      let parsedBoxes: number[][] | undefined;
+      let parsedBoxesLabeled: { box: number[]; label: boolean }[] | undefined;
+
+      if (segAnimatePointPrompts.trim()) {
+        try { parsedPoints = JSON.parse(segAnimatePointPrompts); }
+        catch { throw new Error("Invalid point prompts JSON"); }
+      }
+      if (segAnimateBoxPrompts.trim()) {
+        try { parsedBoxes = JSON.parse(segAnimateBoxPrompts); }
+        catch { throw new Error("Invalid box prompts JSON"); }
+      }
+      if (segAnimateBoxPromptsLabeled.trim()) {
+        try { parsedBoxesLabeled = JSON.parse(segAnimateBoxPromptsLabeled); }
+        catch { throw new Error("Invalid labeled box prompts JSON"); }
+      }
+
+      // Strip internal `id` from operations, keep `animation`
+      const cleanOps = segAnimateOperations.map(({ id, ...rest }) => rest);
+      const isAnimateObjectMode = segAnimatePromptMode === "objects";
+      const cleanObjectPrompts = segAnimateObjectPrompts
+        .map((prompt) => ({ label: prompt.label.trim(), text: prompt.text.trim() }))
+        .filter((prompt) => prompt.label && prompt.text);
+
+      const response = await fetch("/api/gpu-api/test/segment-animate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inputImageUrl: segAnimateImageUrl,
+          textPrompt: isAnimateObjectMode ? undefined : (segAnimateTextPrompt.trim() || undefined),
+          objectPrompts: isAnimateObjectMode ? cleanObjectPrompts : undefined,
+          pointPrompts: parsedPoints,
+          boxPrompts: parsedBoxes,
+          boxPromptsLabeled: parsedBoxesLabeled,
+          confidenceThreshold: segAnimateConfidenceThreshold,
+          maxObjects: segAnimateMaxObjects,
+          durationSeconds: segAnimateDuration,
+          fps: segAnimateFps,
+          operations: cleanOps,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to start animated segmentation");
+
+      const result = await pollForResult(data.taskId, (update) =>
+        setSegResult(update),
+      );
+      setSegResult(result);
+      setSegStatus(result.success ? "success" : "error");
+      setSegDebugExpanded(!result.success);
+    } catch (err) {
+      setSegResult({
+        success: false,
+        type: "animated_segmentation",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+      setSegStatus("error");
+    }
+  };
+
+  const selectSegVideoPromptMode = (mode: "text" | "texts" | "objects") => {
+    setSegVideoPromptMode(mode);
+    if (mode !== "text") {
+      setSegVideoPointPrompts("");
+      setSegVideoPointLabels("");
+      setSegVideoBoxPrompts("");
+      setSegVideoBoxLabels("");
+    }
+    if (mode === "texts" && segVideoTextPrompts.length === 0) {
+      setSegVideoTextPrompts([""]);
+    }
+    if (mode === "objects" && segVideoObjectPrompts.length === 0) {
+      setSegVideoObjectPrompts([{ label: "object1", text: "" }]);
+    }
+  };
+
+  const selectSegAnimatePromptMode = (mode: "simple" | "objects") => {
+    setSegAnimatePromptMode(mode);
+    if (mode === "objects" && segAnimateObjectPrompts.length === 0) {
+      setSegAnimateObjectPrompts([{ label: "object1", text: "" }]);
+    }
+  };
+
   const handleReset = (tab: TabType) => {
     switch (tab) {
       case "image":
@@ -1621,12 +2323,31 @@ export function GPUApiTester({
         setSfxStatus("idle");
         setSfxResult(null);
         break;
+      case "segment":
+        setSegStatus("idle");
+        setSegResult(null);
+        break;
     }
   };
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
   };
+
+  const getPreviewSrc = (result: TestResult) => {
+    if (result.r2Key) {
+      return `/api/gpu-api/test/media-proxy?key=${encodeURIComponent(result.r2Key)}`;
+    }
+    return result.segmentationDataUrl;
+  };
+
+  const getUrlExtension = (url?: string) => {
+    if (!url) return "";
+    return url.split("?")[0].split(".").pop()?.toLowerCase() || "";
+  };
+
+  const isImageExtension = (ext: string) => ["png", "jpg", "jpeg", "webp", "gif"].includes(ext);
+  const isVideoExtension = (ext: string) => ["mp4", "webm", "mov"].includes(ext);
 
   // Don't render on server or when not open
   if (!mounted || !isOpen) return null;
@@ -2042,6 +2763,16 @@ export function GPUApiTester({
           <div className="flex items-center gap-2">
             {renderStatusBadge(imageStatus, imageResult)}
           </div>
+          {/* Media Gallery Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleOpenGallery}
+            className="border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
+          >
+            <GalleryHorizontalEnd className="w-4 h-4 mr-2" />
+            Gallery
+          </Button>
           {/* Clear R2 Storage Button */}
           <Button
             variant="outline"
@@ -2199,6 +2930,23 @@ export function GPUApiTester({
           {sfxStatus !== "idle" && (
             <span className="ml-2">
               {renderStatusBadge(sfxStatus, sfxResult)}
+            </span>
+          )}
+        </Button>
+
+        <Button
+          variant={activeTab === "segment" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setActiveTab("segment")}
+          className={
+            activeTab === "segment" ? "bg-cyan-600 hover:bg-cyan-700" : ""
+          }
+        >
+          <Scissors className="w-4 h-4 mr-2" />
+          SAM 3
+          {segStatus !== "idle" && (
+            <span className="ml-2">
+              {renderStatusBadge(segStatus, segResult)}
             </span>
           )}
         </Button>
@@ -2595,6 +3343,19 @@ export function GPUApiTester({
                         <Sparkles className="w-4 h-4 mr-2" />
                         All Models
                       </Button>
+                      <Button
+                        onClick={() => handleSetVramMode("segmentation")}
+                        disabled={vramMode === "segmentation" || modeSwitching}
+                        className={
+                          vramMode === "segmentation"
+                            ? "bg-cyan-600"
+                            : "bg-neutral-700 hover:bg-neutral-600"
+                        }
+                        size="sm"
+                      >
+                        <Scissors className="w-4 h-4 mr-2" />
+                        Segmentation
+                      </Button>
                     </div>
                     <div className="text-xs text-neutral-500 mt-2">
                       {vramMode === "image_generation" &&
@@ -2606,6 +3367,8 @@ export function GPUApiTester({
                       {vramMode === "audio_creation" &&
                         "ACE-Step 1.5 + AudioGen (~8GB VRAM)"}
                       {vramMode === "all" && "All models loaded (~40GB+ VRAM)"}
+                      {vramMode === "segmentation" &&
+                        "SAM 3 only (~4-10GB VRAM)"}
                       {!vramMode && "Select a VRAM mode"}
                     </div>
                   </div>
@@ -3773,6 +4536,1262 @@ export function GPUApiTester({
               </div>
             )}
 
+            {/* Segmentation Tab (SAM 3) */}
+            {activeTab === "segment" && (
+              <div className="space-y-6">
+                {/* Mode Toggle: Image vs Video vs Animate */}
+                <div className="flex gap-2 bg-neutral-900 p-1 rounded-lg">
+                  <button
+                    onClick={() => { setSegMode("image"); setSegResult(null); setSegStatus("idle"); }}
+                    className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      segMode === "image"
+                        ? "bg-cyan-600 text-white"
+                        : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+                    }`}
+                  >
+                    <Image className="w-4 h-4 mr-2 inline-block" />
+                    Image
+                  </button>
+                  <button
+                    onClick={() => { setSegMode("video"); setSegResult(null); setSegStatus("idle"); }}
+                    className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      segMode === "video"
+                        ? "bg-cyan-600 text-white"
+                        : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+                    }`}
+                  >
+                    <Video className="w-4 h-4 mr-2 inline-block" />
+                    Video
+                  </button>
+                  <button
+                    onClick={() => { setSegMode("animate"); setSegResult(null); setSegStatus("idle"); }}
+                    className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      segMode === "animate"
+                        ? "bg-purple-600 text-white"
+                        : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+                    }`}
+                  >
+                    <Sparkles className="w-4 h-4 mr-2 inline-block" />
+                    Animate
+                  </button>
+                </div>
+
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                  <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
+                    <Scissors className="w-4 h-4 text-cyan-400" />
+                    SAM 3.1 {segMode === "image" ? "Image Segmentation" : segMode === "video" ? "Video Object Tracking" : "Animated Segmentation"}
+                  </h3>
+
+                  <div className="mb-4">
+                    <button
+                      onClick={() => setSegCapabilityDirectoryOpen(!segCapabilityDirectoryOpen)}
+                      className="flex w-full items-center justify-between rounded-lg border border-neutral-700 bg-neutral-800/80 px-3 py-2 text-left transition-colors hover:bg-neutral-800"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-white">
+                          Segmentation Capability Directory
+                        </p>
+                        <p className="text-xs text-neutral-500">
+                          Front-end coverage for prompt modes, selectors, outputs, effects, and animation controls.
+                        </p>
+                      </div>
+                      {segCapabilityDirectoryOpen ? (
+                        <ChevronUp className="w-4 h-4 text-neutral-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-neutral-400" />
+                      )}
+                    </button>
+
+                    {segCapabilityDirectoryOpen && (
+                      <div className="mt-3 space-y-4 rounded-lg border border-neutral-700 bg-neutral-950/50 p-3">
+                        <div className="flex flex-wrap gap-2">
+                          <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-300">
+                            Current Mode: {segMode}
+                          </span>
+                          {segMode === "video" && (
+                            <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 text-[10px] uppercase tracking-wide text-indigo-300">
+                              Output: {segVideoOutputFormat}
+                            </span>
+                          )}
+                          {segMode === "image" && (
+                            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-300">
+                              Output: {segOutputType}
+                            </span>
+                          )}
+                          {segMode === "animate" && (
+                            <span className="rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-1 text-[10px] uppercase tracking-wide text-purple-300">
+                              Duration: {segAnimateDuration}s @ {segAnimateFps}fps
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                          {SEGMENTATION_CAPABILITY_SECTIONS.map((section) => (
+                            <div
+                              key={section.title}
+                              className="rounded-lg border border-neutral-800 bg-neutral-900/80 p-3"
+                            >
+                              <p className="text-xs font-medium uppercase tracking-wide text-neutral-300">
+                                {section.title}
+                              </p>
+                              <div className="mt-2 space-y-1.5">
+                                {section.items.map((item) => (
+                                  <p key={item} className="text-xs leading-relaxed text-neutral-500">
+                                    {item}
+                                  </p>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 p-3">
+                          <div className="flex items-center gap-2">
+                            <Layers className="w-4 h-4 text-cyan-400" />
+                            <p className="text-xs font-medium uppercase tracking-wide text-neutral-300">
+                              Operation Library
+                            </p>
+                          </div>
+                          <div className="mt-3 space-y-3">
+                            {(segMode === "animate" || (segMode === "video" && segVideoOutputFormat === "video")
+                              ? SEGMENT_OPERATION_CATEGORIES
+                              : SEGMENT_OPERATION_CATEGORIES.filter((category) => category.label !== "Camera (Animation)")
+                            ).map((category) => (
+                              <div key={category.label}>
+                                <p className="text-[10px] uppercase tracking-wide text-neutral-500">
+                                  {category.label}
+                                </p>
+                                <div className="mt-1 flex flex-wrap gap-1.5">
+                                  {category.ops.map((op) => (
+                                    <span
+                                      key={op.type}
+                                      className="rounded-full border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-300"
+                                      title={op.desc}
+                                    >
+                                      {op.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {segMode === "image" ? (
+                    <div className="space-y-4">
+                      {/* Input Image URL */}
+                      <div>
+                        <label className="text-sm text-neutral-400 block mb-1">
+                          Input Image URL <span className="text-red-400">*</span>
+                        </label>
+                        <Input
+                          value={segImageUrl}
+                          onChange={(e) => setSegImageUrl(e.target.value)}
+                          placeholder="https://example.com/image.jpg"
+                          className="bg-neutral-800 border-neutral-700"
+                        />
+                      </div>
+
+                      {/* Prompt Mode Toggle */}
+                      <div>
+                        <label className="text-sm text-neutral-400 block mb-2">
+                          Prompt Mode
+                        </label>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setSegPromptMode("simple")}
+                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                              segPromptMode === "simple"
+                                ? "bg-cyan-600 text-white"
+                                : "text-neutral-400 hover:text-white bg-neutral-800 border border-neutral-700"
+                            }`}
+                          >
+                            Simple Text
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSegPromptMode("objects");
+                              if (segObjectPrompts.length === 0) {
+                                setSegObjectPrompts([{ label: "object1", text: "" }]);
+                              }
+                            }}
+                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                              segPromptMode === "objects"
+                                ? "bg-amber-600 text-white"
+                                : "text-neutral-400 hover:text-white bg-neutral-800 border border-neutral-700"
+                            }`}
+                          >
+                            Named Objects
+                          </button>
+                        </div>
+                        <p className="text-xs text-neutral-500 mt-1">
+                          {segPromptMode === "simple"
+                            ? "Single text prompt — all detected objects get the same effects."
+                            : "Named prompts — target each object by label in the effects pipeline."}
+                        </p>
+                      </div>
+
+                      {/* Simple Text Prompt */}
+                      {segPromptMode === "simple" && (
+                        <div>
+                          <label className="text-sm text-neutral-400 block mb-1">
+                            Text Prompt
+                          </label>
+                          <Textarea
+                            value={segTextPrompt}
+                            onChange={(e) => setSegTextPrompt(e.target.value)}
+                            placeholder="e.g., segment all cars"
+                            className="bg-neutral-800 border-neutral-700 min-h-[60px]"
+                            rows={2}
+                          />
+                          <p className="text-xs text-neutral-500 mt-1">
+                            Segmentation prompts are passed through exactly as entered. At least one prompt type is required.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Named Object Prompts */}
+                      {segPromptMode === "objects" && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="text-sm text-neutral-400">
+                              Object Prompts
+                            </label>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-amber-400 hover:text-amber-300 hover:bg-amber-400/10"
+                              onClick={() => setSegObjectPrompts([...segObjectPrompts, { label: `object${segObjectPrompts.length + 1}`, text: "" }])}
+                            >
+                              <Plus className="w-3.5 h-3.5 mr-1" />
+                              <span className="text-xs">Add Object</span>
+                            </Button>
+                          </div>
+                          <div className="space-y-2">
+                            {segObjectPrompts.map((op, index) => (
+                              <div key={index} className="flex gap-2 items-start p-2.5 bg-neutral-800 rounded-lg border border-neutral-700">
+                                <div className="flex-shrink-0 w-24">
+                                  <label className="text-[10px] text-neutral-500 block mb-0.5">Label</label>
+                                  <Input
+                                    value={op.label}
+                                    onChange={(e) => {
+                                      const updated = [...segObjectPrompts];
+                                      updated[index] = { ...updated[index], label: e.target.value.replace(/\s+/g, '_').toLowerCase() };
+                                      setSegObjectPrompts(updated);
+                                    }}
+                                    placeholder="person"
+                                    className="bg-neutral-900 border-neutral-600 text-xs h-7 font-mono"
+                                  />
+                                </div>
+                                <div className="flex-1">
+                                  <label className="text-[10px] text-neutral-500 block mb-0.5">Detection Prompt</label>
+                                  <Input
+                                    value={op.text}
+                                    onChange={(e) => {
+                                      const updated = [...segObjectPrompts];
+                                      updated[index] = { ...updated[index], text: e.target.value };
+                                      setSegObjectPrompts(updated);
+                                    }}
+                                    placeholder="white man sitting in center"
+                                    className="bg-neutral-900 border-neutral-600 text-xs h-7"
+                                  />
+                                </div>
+                                <button
+                                  onClick={() => setSegObjectPrompts(segObjectPrompts.filter((_, i) => i !== index))}
+                                  className="mt-4 p-1 text-neutral-500 hover:text-red-400 transition-colors"
+                                  disabled={segObjectPrompts.length <= 1}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-xs text-neutral-500">
+                            Each object gets its own detection prompt. Use labels in the effects pipeline to apply different effects per object.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Advanced Prompts Toggle */}
+                      <button
+                        onClick={() => setSegAdvancedOpen(!segAdvancedOpen)}
+                        className="flex items-center gap-2 text-xs text-neutral-500 hover:text-neutral-300 transition-colors w-full py-1"
+                      >
+                        {segAdvancedOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                        Advanced Options (Point/Box Prompts, Thresholds)
+                      </button>
+
+                      {segAdvancedOpen && (
+                        <div className="space-y-4 pl-3 border-l-2 border-neutral-700">
+                          {/* Point Prompts */}
+                          <div className={segVideoPromptMode !== "text" ? "opacity-50 pointer-events-none" : ""}>
+                            <label className="text-sm text-neutral-400 block mb-1">
+                              Point Prompts
+                            </label>
+                            <PointPromptBuilder
+                              value={segPointPrompts}
+                              onChange={setSegPointPrompts}
+                            />
+                            <p className="text-xs text-neutral-500 mt-1">
+                              Add one or more [x, y] points without hand-editing JSON.
+                            </p>
+                          </div>
+
+                          {/* Box Prompts */}
+                          <div className={segVideoPromptMode !== "text" ? "opacity-50 pointer-events-none" : ""}>
+                            <label className="text-sm text-neutral-400 block mb-1">
+                              Box Prompts
+                            </label>
+                            <BoxPromptBuilder
+                              value={segBoxPrompts}
+                              onChange={setSegBoxPrompts}
+                              fieldLabels={["X1", "Y1", "X2", "Y2"]}
+                            />
+                            <p className="text-xs text-neutral-500 mt-1">
+                              Axis-aligned [x1, y1, x2, y2] boxes for positive selection.
+                            </p>
+                          </div>
+
+                          {/* Labeled Box Prompts */}
+                          <div>
+                            <label className="text-sm text-neutral-400 block mb-1">
+                              Labeled Box Prompts
+                            </label>
+                            <LabeledBoxPromptBuilder
+                              value={segBoxPromptsLabeled}
+                              onChange={setSegBoxPromptsLabeled}
+                            />
+                            <p className="text-xs text-neutral-500 mt-1">
+                              Include/exclude regions. label: true = include, false = exclude.
+                            </p>
+                          </div>
+
+                          {/* Confidence Threshold */}
+                          <div>
+                            <label className="text-sm text-neutral-400 block mb-1">
+                              Confidence Threshold: {segConfidenceThreshold.toFixed(2)}
+                            </label>
+                            <Slider
+                              value={[segConfidenceThreshold * 100]}
+                              onValueChange={([v]) => setSegConfidenceThreshold(v / 100)}
+                              min={0}
+                              max={100}
+                              step={1}
+                              className="py-2"
+                            />
+                          </div>
+
+                          {/* Max Objects */}
+                          <div>
+                            <label className="text-sm text-neutral-400 block mb-1">
+                              Max Objects: {segMaxObjects}
+                            </label>
+                            <Slider
+                              value={[segMaxObjects]}
+                              onValueChange={([v]) => setSegMaxObjects(v)}
+                              min={1}
+                              max={500}
+                              step={1}
+                              className="py-2"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Output Type */}
+                      <div>
+                        <label className="text-sm text-neutral-400 block mb-2">
+                          Output Type
+                        </label>
+                        <div className="flex gap-2">
+                          {(["masks_json", "image"] as const).map((ot) => (
+                            <button
+                              key={ot}
+                              onClick={() => setSegOutputType(ot)}
+                              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                                segOutputType === ot
+                                  ? "bg-cyan-600 text-white"
+                                  : "text-neutral-400 hover:text-white bg-neutral-800 border border-neutral-700"
+                              }`}
+                            >
+                              {ot === "masks_json" ? "Raw Masks (JSON)" : "Processed Image (PNG)"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Operations Builder (only for image output) */}
+                      {segOutputType === "image" && (
+                        <SegmentOperationsBuilder
+                          operations={segOperations}
+                          onChange={setSegOperations}
+                          objectLabels={segPromptMode === "objects" ? segObjectPrompts.map(p => p.label).filter(Boolean) : undefined}
+                        />
+                      )}
+
+                      {/* Actions */}
+                      <div className="flex gap-3">
+                        <Button
+                          onClick={handleTestSegmentImage}
+                          disabled={segStatus === "loading" || !segImageUrl.trim()}
+                          className="bg-cyan-600 hover:bg-cyan-700 flex-1"
+                        >
+                          {segStatus === "loading" ? (
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                          ) : (
+                            <Play className="w-4 h-4 mr-2" />
+                          )}
+                          Segment Image
+                        </Button>
+                        {segStatus !== "idle" && (
+                          <Button
+                            variant="outline"
+                            onClick={() => handleReset("segment")}
+                            className="border-neutral-700"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ) : segMode === "video" ? (
+                    <div className="space-y-4">
+                      {/* Input Video URL */}
+                      <div>
+                        <label className="text-sm text-neutral-400 block mb-1">
+                          Input Video URL <span className="text-red-400">*</span>
+                        </label>
+                        <Input
+                          value={segVideoUrl}
+                          onChange={(e) => setSegVideoUrl(e.target.value)}
+                          placeholder="https://example.com/video.mp4"
+                          className="bg-neutral-800 border-neutral-700"
+                        />
+                      </div>
+
+                      {/* Prompt Mode Toggle */}
+                      <div>
+                        <label className="text-sm text-neutral-400 block mb-2">
+                          Prompt Mode
+                        </label>
+                        <div className="flex gap-2 flex-wrap">
+                          <button
+                            onClick={() => selectSegVideoPromptMode("text")}
+                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                              segVideoPromptMode === "text"
+                                ? "bg-cyan-600 text-white"
+                                : "text-neutral-400 hover:text-white bg-neutral-800 border border-neutral-700"
+                            }`}
+                          >
+                            text_prompt
+                          </button>
+                          <button
+                            onClick={() => selectSegVideoPromptMode("texts")}
+                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                              segVideoPromptMode === "texts"
+                                ? "bg-indigo-600 text-white"
+                                : "text-neutral-400 hover:text-white bg-neutral-800 border border-neutral-700"
+                            }`}
+                          >
+                            text_prompts
+                          </button>
+                          <button
+                            onClick={() => selectSegVideoPromptMode("objects")}
+                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                              segVideoPromptMode === "objects"
+                                ? "bg-amber-600 text-white"
+                                : "text-neutral-400 hover:text-white bg-neutral-800 border border-neutral-700"
+                            }`}
+                          >
+                            object_prompts
+                          </button>
+                        </div>
+                        <p className="text-xs text-neutral-500 mt-1">
+                          Exactly one prompt mode is sent. Segmentation prompts are passed through without LLM rewriting.
+                        </p>
+                      </div>
+
+                      {segVideoPromptMode === "text" && (
+                        <div>
+                          <label className="text-sm text-neutral-400 block mb-1">
+                            Text Prompt
+                          </label>
+                          <Textarea
+                            value={segVideoTextPrompt}
+                            onChange={(e) => setSegVideoTextPrompt(e.target.value)}
+                            placeholder="e.g., yellow school bus"
+                            className="bg-neutral-800 border-neutral-700 min-h-[60px]"
+                            rows={2}
+                          />
+                          <p className="text-xs text-neutral-500 mt-1">
+                            Legacy single-prompt tracking mode. Point and box prompts are only available here.
+                          </p>
+                        </div>
+                      )}
+
+                      {segVideoPromptMode === "texts" && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="text-sm text-neutral-400">
+                              Text Prompts
+                            </label>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-400/10"
+                              onClick={() => setSegVideoTextPrompts([...segVideoTextPrompts, ""])}
+                            >
+                              <Plus className="w-3.5 h-3.5 mr-1" />
+                              <span className="text-xs">Add Prompt</span>
+                            </Button>
+                          </div>
+                          <div className="space-y-2">
+                            {segVideoTextPrompts.map((prompt, index) => (
+                              <div key={index} className="flex gap-2 items-center p-2.5 bg-neutral-800 rounded-lg border border-neutral-700">
+                                <Input
+                                  value={prompt}
+                                  onChange={(e) => {
+                                    const updated = [...segVideoTextPrompts];
+                                    updated[index] = e.target.value;
+                                    setSegVideoTextPrompts(updated);
+                                  }}
+                                  placeholder="person in blue jacket"
+                                  className="bg-neutral-900 border-neutral-600 text-xs"
+                                />
+                                <button
+                                  onClick={() => setSegVideoTextPrompts(segVideoTextPrompts.filter((_, i) => i !== index))}
+                                  className="p-1 text-neutral-500 hover:text-red-400 transition-colors"
+                                  disabled={segVideoTextPrompts.length <= 1}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-xs text-neutral-500">
+                            Multi-prompt tracking mode. Point and box prompts are disabled for this API mode.
+                          </p>
+                        </div>
+                      )}
+
+                      {segVideoPromptMode === "objects" && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="text-sm text-neutral-400">
+                              Object Prompts
+                            </label>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-amber-400 hover:text-amber-300 hover:bg-amber-400/10"
+                              onClick={() => setSegVideoObjectPrompts([...segVideoObjectPrompts, { label: `object${segVideoObjectPrompts.length + 1}`, text: "" }])}
+                            >
+                              <Plus className="w-3.5 h-3.5 mr-1" />
+                              <span className="text-xs">Add Object</span>
+                            </Button>
+                          </div>
+                          <div className="space-y-2">
+                            {segVideoObjectPrompts.map((op, index) => (
+                              <div key={index} className="flex gap-2 items-start p-2.5 bg-neutral-800 rounded-lg border border-neutral-700">
+                                <div className="flex-shrink-0 w-24">
+                                  <label className="text-[10px] text-neutral-500 block mb-0.5">Label</label>
+                                  <Input
+                                    value={op.label}
+                                    onChange={(e) => {
+                                      const updated = [...segVideoObjectPrompts];
+                                      updated[index] = { ...updated[index], label: e.target.value.replace(/\s+/g, '_').toLowerCase() };
+                                      setSegVideoObjectPrompts(updated);
+                                    }}
+                                    placeholder="person"
+                                    className="bg-neutral-900 border-neutral-600 text-xs h-7 font-mono"
+                                  />
+                                </div>
+                                <div className="flex-1">
+                                  <label className="text-[10px] text-neutral-500 block mb-0.5">Detection Prompt</label>
+                                  <Input
+                                    value={op.text}
+                                    onChange={(e) => {
+                                      const updated = [...segVideoObjectPrompts];
+                                      updated[index] = { ...updated[index], text: e.target.value };
+                                      setSegVideoObjectPrompts(updated);
+                                    }}
+                                    placeholder="person in blue jacket"
+                                    className="bg-neutral-900 border-neutral-600 text-xs h-7"
+                                  />
+                                </div>
+                                <button
+                                  onClick={() => setSegVideoObjectPrompts(segVideoObjectPrompts.filter((_, i) => i !== index))}
+                                  className="mt-4 p-1 text-neutral-500 hover:text-red-400 transition-colors"
+                                  disabled={segVideoObjectPrompts.length <= 1}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-xs text-neutral-500">
+                            Named tracking mode. Use labels in `select` operations or review returned object-id mappings in the result panel.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Advanced Prompts Toggle */}
+                      <button
+                        onClick={() => setSegVideoAdvancedOpen(!segVideoAdvancedOpen)}
+                        className="flex items-center gap-2 text-xs text-neutral-500 hover:text-neutral-300 transition-colors w-full py-1"
+                      >
+                        {segVideoAdvancedOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                        Advanced Options (Prompts, Frame Index, Thresholds)
+                      </button>
+
+                      {segVideoAdvancedOpen && (
+                        <div className="space-y-4 pl-3 border-l-2 border-neutral-700">
+                          {segVideoPromptMode !== "text" && (
+                            <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-md px-3 py-2">
+                              `point_prompts` and `box_prompts` are only supported with the legacy single `text_prompt` mode.
+                            </p>
+                          )}
+
+                          {/* Point Prompts + Labels */}
+                          <div>
+                            <div>
+                              <label className="text-sm text-neutral-400 block mb-1">
+                                Point Prompts
+                              </label>
+                              <PointPromptBuilder
+                                value={segVideoPointPrompts}
+                                onChange={setSegVideoPointPrompts}
+                                labelValue={segVideoPointLabels}
+                                onLabelChange={setSegVideoPointLabels}
+                              />
+                              <p className="text-xs text-neutral-500 mt-1">
+                                Positive and negative click prompts are exposed as toggles per point.
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Box Prompts + Labels */}
+                          <div>
+                            <div>
+                              <label className="text-sm text-neutral-400 block mb-1">
+                                Box Prompts
+                              </label>
+                              <BoxPromptBuilder
+                                value={segVideoBoxPrompts}
+                                onChange={setSegVideoBoxPrompts}
+                                fieldLabels={["X", "Y", "W", "H"]}
+                                labelValue={segVideoBoxLabels}
+                                onLabelChange={setSegVideoBoxLabels}
+                              />
+                              <p className="text-xs text-neutral-500 mt-1">
+                                Video boxes use [x, y, w, h] and expose positive/negative labels inline.
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Prompt Frame Index + Propagation Direction */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-sm text-neutral-400 block mb-1">
+                                Prompt Frame Index
+                              </label>
+                              <Input
+                                type="number"
+                                value={segVideoPromptFrameIndex}
+                                onChange={(e) => setSegVideoPromptFrameIndex(parseInt(e.target.value) || 0)}
+                                min={0}
+                                className="bg-neutral-800 border-neutral-700"
+                              />
+                              <p className="text-xs text-neutral-500 mt-1">Frame to apply prompts on</p>
+                            </div>
+                            <div>
+                              <label className="text-sm text-neutral-400 block mb-2">
+                                Propagation
+                              </label>
+                              <div className="flex gap-1">
+                                {(["forward", "backward", "both"] as const).map((dir) => (
+                                  <button
+                                    key={dir}
+                                    onClick={() => setSegVideoPropagationDirection(dir)}
+                                    className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                                      segVideoPropagationDirection === dir
+                                        ? "bg-cyan-600 text-white"
+                                        : "bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-700"
+                                    }`}
+                                  >
+                                    {dir}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Confidence Threshold */}
+                          <div>
+                            <label className="text-sm text-neutral-400 block mb-1">
+                              Confidence Threshold: {segVideoConfidenceThreshold.toFixed(2)}
+                            </label>
+                            <Slider
+                              value={[segVideoConfidenceThreshold * 100]}
+                              onValueChange={([v]) => setSegVideoConfidenceThreshold(v / 100)}
+                              min={0}
+                              max={100}
+                              step={1}
+                              className="py-2"
+                            />
+                          </div>
+
+                          {/* Max Frames */}
+                          <div>
+                            <label className="text-sm text-neutral-400 block mb-1">
+                              Max Frames: {segMaxFrames}
+                            </label>
+                            <Slider
+                              value={[segMaxFrames]}
+                              onValueChange={([v]) => setSegMaxFrames(v)}
+                              min={1}
+                              max={1000}
+                              step={10}
+                              className="py-2"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Output Format */}
+                      <div>
+                        <label className="text-sm text-neutral-400 block mb-2">
+                          Output Format
+                        </label>
+                        <div className="flex gap-2">
+                          {(["masks_json", "video"] as const).map((of_) => (
+                            <button
+                              key={of_}
+                              onClick={() => setSegVideoOutputFormat(of_)}
+                              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                                segVideoOutputFormat === of_
+                                  ? "bg-cyan-600 text-white"
+                                  : "text-neutral-400 hover:text-white bg-neutral-800 border border-neutral-700"
+                              }`}
+                            >
+                              {of_ === "masks_json" ? "Raw Masks (JSON)" : "Processed Video (MP4)"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {segVideoOutputFormat === "masks_json" && (
+                        <div className="flex items-center justify-between rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2">
+                          <div>
+                            <p className="text-sm text-neutral-300">Include Tracking Metadata</p>
+                            <p className="text-xs text-neutral-500">
+                              Return <code className="font-mono">{'{mask, box, score, label}'}</code> per tracked object instead of bare mask strings.
+                            </p>
+                          </div>
+                          <Switch
+                            checked={segVideoIncludeTrackingMetadata}
+                            onCheckedChange={setSegVideoIncludeTrackingMetadata}
+                          />
+                        </div>
+                      )}
+
+                      {/* Operations Builder (only for video output) */}
+                      {segVideoOutputFormat === "video" && (
+                        <SegmentOperationsBuilder
+                          operations={segVideoOperations}
+                          onChange={setSegVideoOperations}
+                          animationEnabled
+                          objectLabels={segVideoPromptMode === "objects" ? segVideoObjectPrompts.map((p) => p.label).filter(Boolean) : undefined}
+                          objectIdEnabled
+                        />
+                      )}
+
+                      {/* Actions */}
+                      <div className="flex gap-3">
+                        <Button
+                          onClick={handleTestSegmentVideo}
+                          disabled={segStatus === "loading" || !segVideoUrl.trim()}
+                          className="bg-cyan-600 hover:bg-cyan-700 flex-1"
+                        >
+                          {segStatus === "loading" ? (
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                          ) : (
+                            <Play className="w-4 h-4 mr-2" />
+                          )}
+                          Track Objects in Video
+                        </Button>
+                        {segStatus !== "idle" && (
+                          <Button
+                            variant="outline"
+                            onClick={() => handleReset("segment")}
+                            className="border-neutral-700"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    /* Animate Sub-Tab */
+                    <div className="space-y-4">
+                      {/* Input Image URL */}
+                      <div>
+                        <label className="text-sm text-neutral-400 block mb-1">
+                          Input Image URL <span className="text-red-400">*</span>
+                        </label>
+                        <Input
+                          value={segAnimateImageUrl}
+                          onChange={(e) => setSegAnimateImageUrl(e.target.value)}
+                          placeholder="https://example.com/image.jpg"
+                          className="bg-neutral-800 border-neutral-700"
+                        />
+                      </div>
+
+                      {/* Prompt Mode Toggle */}
+                      <div>
+                        <label className="text-sm text-neutral-400 block mb-2">
+                          Prompt Mode
+                        </label>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => selectSegAnimatePromptMode("simple")}
+                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                              segAnimatePromptMode === "simple"
+                                ? "bg-purple-600 text-white"
+                                : "text-neutral-400 hover:text-white bg-neutral-800 border border-neutral-700"
+                            }`}
+                          >
+                            Simple Text
+                          </button>
+                          <button
+                            onClick={() => selectSegAnimatePromptMode("objects")}
+                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                              segAnimatePromptMode === "objects"
+                                ? "bg-amber-600 text-white"
+                                : "text-neutral-400 hover:text-white bg-neutral-800 border border-neutral-700"
+                            }`}
+                          >
+                            Named Objects
+                          </button>
+                        </div>
+                        <p className="text-xs text-neutral-500 mt-1">
+                          Animated segmentation also uses deterministic prompt pass-through.
+                        </p>
+                      </div>
+
+                      {segAnimatePromptMode === "simple" && (
+                        <div>
+                          <label className="text-sm text-neutral-400 block mb-1">Text Prompt</label>
+                          <Input
+                            value={segAnimateTextPrompt}
+                            onChange={(e) => setSegAnimateTextPrompt(e.target.value)}
+                            placeholder="person, cat, car..."
+                            className="bg-neutral-800 border-neutral-700"
+                          />
+                        </div>
+                      )}
+
+                      {segAnimatePromptMode === "objects" && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="text-sm text-neutral-400">
+                              Object Prompts
+                            </label>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-amber-400 hover:text-amber-300 hover:bg-amber-400/10"
+                              onClick={() => setSegAnimateObjectPrompts([...segAnimateObjectPrompts, { label: `object${segAnimateObjectPrompts.length + 1}`, text: "" }])}
+                            >
+                              <Plus className="w-3.5 h-3.5 mr-1" />
+                              <span className="text-xs">Add Object</span>
+                            </Button>
+                          </div>
+                          <div className="space-y-2">
+                            {segAnimateObjectPrompts.map((op, index) => (
+                              <div key={index} className="flex gap-2 items-start p-2.5 bg-neutral-800 rounded-lg border border-neutral-700">
+                                <div className="flex-shrink-0 w-24">
+                                  <label className="text-[10px] text-neutral-500 block mb-0.5">Label</label>
+                                  <Input
+                                    value={op.label}
+                                    onChange={(e) => {
+                                      const updated = [...segAnimateObjectPrompts];
+                                      updated[index] = { ...updated[index], label: e.target.value.replace(/\s+/g, '_').toLowerCase() };
+                                      setSegAnimateObjectPrompts(updated);
+                                    }}
+                                    placeholder="person"
+                                    className="bg-neutral-900 border-neutral-600 text-xs h-7 font-mono"
+                                  />
+                                </div>
+                                <div className="flex-1">
+                                  <label className="text-[10px] text-neutral-500 block mb-0.5">Detection Prompt</label>
+                                  <Input
+                                    value={op.text}
+                                    onChange={(e) => {
+                                      const updated = [...segAnimateObjectPrompts];
+                                      updated[index] = { ...updated[index], text: e.target.value };
+                                      setSegAnimateObjectPrompts(updated);
+                                    }}
+                                    placeholder="person in white shirt"
+                                    className="bg-neutral-900 border-neutral-600 text-xs h-7"
+                                  />
+                                </div>
+                                <button
+                                  onClick={() => setSegAnimateObjectPrompts(segAnimateObjectPrompts.filter((_, i) => i !== index))}
+                                  className="mt-4 p-1 text-neutral-500 hover:text-red-400 transition-colors"
+                                  disabled={segAnimateObjectPrompts.length <= 1}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Duration & FPS */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm text-neutral-400 block mb-1">
+                            Duration: {segAnimateDuration}s
+                          </label>
+                          <Slider
+                            value={[segAnimateDuration * 10]}
+                            onValueChange={([v]) => setSegAnimateDuration(v / 10)}
+                            min={5}
+                            max={100}
+                            step={5}
+                            className="py-2"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm text-neutral-400 block mb-2">FPS</label>
+                          <div className="flex gap-1.5">
+                            {[8, 12, 15, 24, 30, 60].map((f) => (
+                              <button
+                                key={f}
+                                onClick={() => setSegAnimateFps(f)}
+                                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                                  segAnimateFps === f ? "bg-purple-600 text-white" : "bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-700"
+                                }`}
+                              >
+                                {f}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Advanced Options (collapsed) */}
+                      <button
+                        onClick={() => setSegAnimateAdvancedOpen(!segAnimateAdvancedOpen)}
+                        className="text-xs text-neutral-500 hover:text-neutral-300 flex items-center gap-1"
+                      >
+                        {segAnimateAdvancedOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                        Advanced Prompt Options
+                      </button>
+                      {segAnimateAdvancedOpen && (
+                        <div className="space-y-3 pl-2 border-l-2 border-neutral-800">
+                          <div>
+                            <label className="text-sm text-neutral-400 block mb-1">Point Prompts</label>
+                            <PointPromptBuilder
+                              value={segAnimatePointPrompts}
+                              onChange={setSegAnimatePointPrompts}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm text-neutral-400 block mb-1">Box Prompts</label>
+                            <BoxPromptBuilder
+                              value={segAnimateBoxPrompts}
+                              onChange={setSegAnimateBoxPrompts}
+                              fieldLabels={["X1", "Y1", "X2", "Y2"]}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm text-neutral-400 block mb-1">Labeled Box Prompts</label>
+                            <LabeledBoxPromptBuilder
+                              value={segAnimateBoxPromptsLabeled}
+                              onChange={setSegAnimateBoxPromptsLabeled}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm text-neutral-400 block mb-1">Confidence: {segAnimateConfidenceThreshold.toFixed(2)}</label>
+                            <Slider value={[segAnimateConfidenceThreshold * 100]} onValueChange={([v]) => setSegAnimateConfidenceThreshold(v / 100)} min={0} max={100} step={1} className="py-2" />
+                          </div>
+                          <div>
+                            <label className="text-sm text-neutral-400 block mb-1">Max Objects: {segAnimateMaxObjects}</label>
+                            <Slider value={[segAnimateMaxObjects]} onValueChange={([v]) => setSegAnimateMaxObjects(v)} min={1} max={500} step={1} className="py-2" />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Operations Builder (with animation enabled) */}
+                      <SegmentOperationsBuilder
+                        operations={segAnimateOperations}
+                        onChange={setSegAnimateOperations}
+                        animationEnabled
+                        objectLabels={segAnimatePromptMode === "objects" ? segAnimateObjectPrompts.map((p) => p.label).filter(Boolean) : undefined}
+                      />
+
+                      {/* Actions */}
+                      <div className="flex gap-3">
+                        <Button
+                          onClick={handleTestSegmentAnimate}
+                          disabled={segStatus === "loading" || !segAnimateImageUrl.trim() || segAnimateOperations.length === 0}
+                          className="bg-purple-600 hover:bg-purple-700 flex-1"
+                        >
+                          {segStatus === "loading" ? (
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                          ) : (
+                            <Play className="w-4 h-4 mr-2" />
+                          )}
+                          Animate Segmentation
+                        </Button>
+                        {segStatus !== "idle" && (
+                          <Button
+                            variant="outline"
+                            onClick={() => handleReset("segment")}
+                            className="border-neutral-700"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Segmentation Result */}
+                {segResult && (
+                  <div
+                    className={`p-4 rounded-lg border ${
+                      segResult.success
+                        ? "bg-cyan-950/20 border-cyan-700"
+                        : "bg-red-950 border-red-700"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-3">
+                      {segResult.success ? (
+                        <CheckCircle2 className="w-5 h-5 text-cyan-400" />
+                      ) : (
+                        <AlertCircle className="w-5 h-5 text-red-400" />
+                      )}
+                      <span className="text-sm font-medium text-white">
+                        {segResult.success ? "Segmentation Complete" : "Segmentation Failed"}
+                      </span>
+                    </div>
+
+                    {segResult.success && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                          {segResult.objectCount !== undefined && (
+                            <div className="bg-neutral-800 rounded-lg p-2 text-center">
+                              <p className="text-lg font-bold text-cyan-400">{segResult.objectCount}</p>
+                              <p className="text-xs text-neutral-500">Objects Found</p>
+                            </div>
+                          )}
+                          {segResult.frameCount !== undefined && (
+                            <div className="bg-neutral-800 rounded-lg p-2 text-center">
+                              <p className="text-lg font-bold text-cyan-400">{segResult.frameCount}</p>
+                              <p className="text-xs text-neutral-500">Frames Processed</p>
+                            </div>
+                          )}
+                          {segResult.generationTime !== undefined && (
+                            <div className="bg-neutral-800 rounded-lg p-2 text-center">
+                              <p className="text-lg font-bold text-cyan-400">{segResult.generationTime.toFixed(2)}s</p>
+                              <p className="text-xs text-neutral-500">Processing Time</p>
+                            </div>
+                          )}
+                          {segResult.trackedIds && segResult.trackedIds.length > 0 && (
+                            <div className="bg-neutral-800 rounded-lg p-2 text-center">
+                              <p className="text-lg font-bold text-cyan-400">{segResult.trackedIds.length}</p>
+                              <p className="text-xs text-neutral-500">Tracked IDs</p>
+                            </div>
+                          )}
+                          {segResult.durationSeconds !== undefined && (
+                            <div className="bg-neutral-800 rounded-lg p-2 text-center">
+                              <p className="text-lg font-bold text-cyan-400">{segResult.durationSeconds}s</p>
+                              <p className="text-xs text-neutral-500">Duration</p>
+                            </div>
+                          )}
+                          {segResult.fps !== undefined && (
+                            <div className="bg-neutral-800 rounded-lg p-2 text-center">
+                              <p className="text-lg font-bold text-cyan-400">{segResult.fps}</p>
+                              <p className="text-xs text-neutral-500">FPS</p>
+                            </div>
+                          )}
+                          {(segResult.width !== undefined || segResult.height !== undefined) && (
+                            <div className="bg-neutral-800 rounded-lg p-2 text-center">
+                              <p className="text-lg font-bold text-cyan-400">{segResult.width ?? "?"}×{segResult.height ?? "?"}</p>
+                              <p className="text-xs text-neutral-500">Resolution</p>
+                            </div>
+                          )}
+                          {segResult.modelVersion && (
+                            <div className="bg-neutral-800 rounded-lg p-2 text-center">
+                              <p className="text-sm font-bold text-cyan-400 break-all">{segResult.modelVersion}</p>
+                              <p className="text-xs text-neutral-500">Model Version</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {segResult.trackedIds && segResult.trackedIds.length > 0 && (
+                          <div className="bg-neutral-800 rounded-lg p-3">
+                            <p className="text-xs text-neutral-400 mb-2 font-medium">Tracked Object IDs</p>
+                            <div className="flex flex-wrap gap-2">
+                              {segResult.trackedIds.map((trackedId) => (
+                                <span key={trackedId} className="px-2 py-1 rounded text-xs font-mono bg-cyan-900/40 text-cyan-200">
+                                  {trackedId}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {segResult.labels && segResult.labels.length > 0 && (
+                          <div className="bg-neutral-800 rounded-lg p-3">
+                            <p className="text-xs text-neutral-400 mb-2 font-medium">Labels</p>
+                            <div className="flex flex-wrap gap-2">
+                              {segResult.labels.map((label) => (
+                                <span key={label} className="px-2 py-1 rounded text-xs font-mono bg-amber-900/40 text-amber-200">
+                                  {label}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {segResult.scores && segResult.scores.length > 0 && (
+                          <div className="bg-neutral-800 rounded-lg p-3">
+                            <p className="text-xs text-neutral-400 mb-2 font-medium">Confidence Scores</p>
+                            <div className="flex flex-wrap gap-2">
+                              {segResult.scores.map((score, i) => (
+                                <span
+                                  key={i}
+                                  className={`px-2 py-1 rounded text-xs font-mono ${
+                                    score > 0.8 ? "bg-green-900/50 text-green-300" :
+                                    score > 0.5 ? "bg-yellow-900/50 text-yellow-300" :
+                                    "bg-red-900/50 text-red-300"
+                                  }`}
+                                >
+                                  #{i + 1}: {(score * 100).toFixed(1)}%
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {segResult.promptToObjectIds && Object.keys(segResult.promptToObjectIds).length > 0 && (
+                          <div className="bg-neutral-800 rounded-lg p-3">
+                            <p className="text-xs text-neutral-400 mb-2 font-medium">Prompt → Object IDs</p>
+                            <div className="space-y-2">
+                              {Object.entries(segResult.promptToObjectIds).map(([promptLabel, ids]) => (
+                                <div key={promptLabel} className="flex items-center justify-between gap-3 text-xs">
+                                  <span className="text-neutral-300 font-mono break-all">{promptLabel}</span>
+                                  <span className="text-cyan-300 font-mono">{ids.join(", ") || "none"}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {segResult.objectIdToPromptLabel && Object.keys(segResult.objectIdToPromptLabel).length > 0 && (
+                          <div className="bg-neutral-800 rounded-lg p-3">
+                            <p className="text-xs text-neutral-400 mb-2 font-medium">Object ID → Prompt Label</p>
+                            <div className="space-y-2">
+                              {Object.entries(segResult.objectIdToPromptLabel).map(([objectId, promptLabel]) => (
+                                <div key={objectId} className="flex items-center justify-between gap-3 text-xs">
+                                  <span className="text-cyan-300 font-mono">{objectId}</span>
+                                  <span className="text-neutral-300 font-mono break-all">{promptLabel}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {segResult.segmentationDataUrl && (
+                          <div className="space-y-3">
+                            {isImageExtension(getUrlExtension(segResult.segmentationDataUrl)) && (
+                              <div className="relative rounded-lg overflow-hidden border border-neutral-700">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={getPreviewSrc(segResult)}
+                                  alt="Segmentation result"
+                                  className="w-full max-h-[400px] object-contain bg-neutral-900"
+                                />
+                              </div>
+                            )}
+                            {isVideoExtension(getUrlExtension(segResult.segmentationDataUrl)) && (
+                              <div className="relative rounded-lg overflow-hidden border border-neutral-700 bg-neutral-900">
+                                <video
+                                  src={getPreviewSrc(segResult)}
+                                  controls
+                                  className="w-full max-h-[400px]"
+                                />
+                              </div>
+                            )}
+                            <div className="flex gap-2 flex-wrap">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => copyToClipboard(segResult.segmentationDataUrl!)}
+                                className="border-neutral-700"
+                              >
+                                <Copy className="w-4 h-4 mr-2" />
+                                Copy URL
+                              </Button>
+                              <a
+                                href={segResult.segmentationDataUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="border-neutral-700"
+                                >
+                                  <ExternalLink className="w-4 h-4 mr-2" />
+                                  {isImageExtension(getUrlExtension(segResult.segmentationDataUrl))
+                                    ? 'View Image'
+                                    : isVideoExtension(getUrlExtension(segResult.segmentationDataUrl))
+                                      ? 'View Video'
+                                      : 'View JSON'}
+                                </Button>
+                              </a>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {!segResult.success && segResult.error && (
+                      <p className="text-sm text-red-300">{segResult.error}</p>
+                    )}
+
+                    {/* Debug section */}
+                    <button
+                      onClick={() => setSegDebugExpanded(!segDebugExpanded)}
+                      className="flex items-center gap-1 text-sm text-neutral-500 hover:text-neutral-400 mt-3"
+                    >
+                      {segDebugExpanded ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                      Debug Info
+                    </button>
+                    {segDebugExpanded && segResult.debug && (
+                      <pre className="mt-2 p-2 bg-neutral-950 rounded text-xs text-neutral-400 overflow-x-auto">
+                        {JSON.stringify(segResult.debug, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* LoRAs Tab */}
             {activeTab === "loras" && (
               <div className="space-y-6">
@@ -4261,6 +6280,158 @@ export function GPUApiTester({
           </div>
         )}
       </div>
+
+      {/* ================================================================= */}
+      {/* MEDIA GALLERY MODAL */}
+      {/* ================================================================= */}
+      <Dialog open={galleryOpen} onOpenChange={setGalleryOpen}>
+        <DialogContent className="bg-neutral-900 border-neutral-700 max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-white flex items-center gap-2">
+              <GalleryHorizontalEnd className="w-5 h-5 text-cyan-400" />
+              Generated Media Gallery
+            </DialogTitle>
+            <DialogDescription className="text-neutral-400">
+              Browse previously generated test media. Click &quot;Use in SAM 3&quot; to test segmentation.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Filter Tabs */}
+          <div className="flex gap-2 border-b border-neutral-800 pb-3">
+            {(['all', 'image', 'video', 'audio'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setGalleryFilter(f)}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  galleryFilter === f
+                    ? 'bg-cyan-600 text-white'
+                    : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+                }`}
+              >
+                {f === 'all' ? `All (${galleryImages.length + galleryVideos.length + galleryAudio.length})` :
+                 f === 'image' ? `Images (${galleryImages.length})` :
+                 f === 'video' ? `Videos (${galleryVideos.length})` :
+                 `Audio (${galleryAudio.length})`}
+              </button>
+            ))}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleLoadGallery}
+              disabled={galleryLoading}
+              className="ml-auto text-neutral-400"
+            >
+              {galleryLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            </Button>
+          </div>
+
+          {/* Gallery Content */}
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {galleryLoading && galleryImages.length === 0 && galleryVideos.length === 0 ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 animate-spin text-cyan-400 mr-3" />
+                <span className="text-neutral-400">Loading media...</span>
+              </div>
+            ) : (galleryImages.length + galleryVideos.length + galleryAudio.length) === 0 ? (
+              <div className="text-center py-12">
+                <GalleryHorizontalEnd className="w-10 h-10 text-neutral-600 mx-auto mb-3" />
+                <p className="text-neutral-400">No generated media found.</p>
+                <p className="text-neutral-500 text-sm mt-1">Generate some images or videos first!</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-1">
+                {/* Images */}
+                {(galleryFilter === 'all' || galleryFilter === 'image') && galleryImages.map((item) => (
+                  <div key={item.key} className="bg-neutral-800 rounded-lg overflow-hidden border border-neutral-700 group hover:border-cyan-600/50 transition-colors cursor-pointer" onClick={() => copyToClipboard(item.url)}>
+                    <div className="aspect-video relative bg-neutral-900">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`/api/gpu-api/test/media-proxy?key=${encodeURIComponent(item.key)}`}
+                        alt={item.filename}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-white/30 text-white text-xs h-7"
+                          onClick={(e) => { e.stopPropagation(); copyToClipboard(item.url); }}
+                        >
+                          <Copy className="w-3 h-3 mr-1" />
+                          Copy URL
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="p-2">
+                      <p className="text-xs text-neutral-300 truncate" title={item.filename}>{item.filename}</p>
+                      <p className="text-xs text-neutral-500">{formatFileSize(item.size)}</p>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Videos */}
+                {(galleryFilter === 'all' || galleryFilter === 'video') && galleryVideos.map((item) => (
+                  <div key={item.key} className="bg-neutral-800 rounded-lg overflow-hidden border border-neutral-700 group hover:border-teal-600/50 transition-colors cursor-pointer" onClick={() => copyToClipboard(item.url)}>
+                    <div className="aspect-video relative bg-neutral-900">
+                      <video
+                        src={`/api/gpu-api/test/media-proxy?key=${encodeURIComponent(item.key)}`}
+                        className="w-full h-full object-cover"
+                        muted
+                        loop
+                        preload="metadata"
+                        onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+                        onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+                      />
+                      <div className="absolute top-2 left-2">
+                        <span className="bg-teal-600/80 text-white text-[10px] px-1.5 py-0.5 rounded font-medium">VIDEO</span>
+                      </div>
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-white/30 text-white text-xs h-7"
+                          onClick={(e) => { e.stopPropagation(); copyToClipboard(item.url); }}
+                        >
+                          <Copy className="w-3 h-3 mr-1" />
+                          Copy URL
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="p-2">
+                      <p className="text-xs text-neutral-300 truncate" title={item.filename}>{item.filename}</p>
+                      <p className="text-xs text-neutral-500">{formatFileSize(item.size)}</p>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Audio */}
+                {(galleryFilter === 'all' || galleryFilter === 'audio') && galleryAudio.map((item) => (
+                  <div key={item.key} className="bg-neutral-800 rounded-lg overflow-hidden border border-neutral-700 p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Music className="w-4 h-4 text-amber-400 shrink-0" />
+                      <p className="text-xs text-neutral-300 truncate flex-1" title={item.filename}>{item.filename}</p>
+                    </div>
+                    <audio controls className="w-full h-8" src={item.url} />
+                    <div className="flex items-center justify-between mt-2">
+                      <p className="text-xs text-neutral-500">{formatFileSize(item.size)}</p>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-xs h-6 text-neutral-400"
+                        onClick={() => copyToClipboard(item.url)}
+                      >
+                        <Copy className="w-3 h-3 mr-1" />
+                        Copy
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ================================================================= */}
       {/* BATCH QUEUE MODAL */}

@@ -20,6 +20,7 @@ import {
   getPublicUrl
 } from '@/lib/services/r2-storage';
 import {
+  callGpuAnimateSegment,
   callGpuImageGenerate,
   callGpuImageEdit,
   callGpuLtx2Generate,
@@ -29,7 +30,7 @@ import {
   getImageDimensions,
   getVideoDimensions,
 } from '@/lib/services/gpu-api-service';
-import type { AspectRatio, FPS } from '@/lib/services/gpu-api-service';
+import type { AspectRatio, FPS, SegmentMetadata, SegmentOperation } from '@/lib/services/gpu-api-service';
 
 const PLACEHOLDER_IMAGE_URL = 'https://picsum.photos/1920/1080';
 
@@ -53,6 +54,7 @@ async function waitForJobCompletion(
   success: boolean;
   generationTime?: number;
   publicUrl?: string;
+  metadata?: SegmentMetadata;
   errorMessage?: string;
 }> {
   // Update status to indicate waiting
@@ -71,6 +73,7 @@ async function waitForJobCompletion(
         success: true,
         generationTime: webhookResult.result?.generation_time,
         publicUrl: webhookResult.result?.save_url,
+        metadata: webhookResult.result?.metadata as SegmentMetadata | undefined,
       };
     } else {
       return {
@@ -85,6 +88,49 @@ async function waitForJobCompletion(
       errorMessage: error instanceof Error ? error.message : 'Unknown error waiting for webhook',
     };
   }
+}
+
+function mergeSegmentMetadata<T extends { metadata?: SegmentMetadata }>(
+  result: T,
+  webhookMetadata?: SegmentMetadata
+): T & {
+  metadata?: SegmentMetadata;
+  objectCount?: number;
+  width?: number;
+  height?: number;
+  boxes?: number[][];
+  scores?: number[];
+  outputType?: string;
+  frameCount?: number;
+  trackedIds?: number[];
+  durationSeconds?: number;
+  fps?: number;
+  modelVersion?: string;
+  labels?: string[];
+  promptToObjectIds?: Record<string, number[]>;
+  objectIdToPromptLabel?: Record<string, string>;
+} {
+  const metadata = webhookMetadata || result.metadata;
+
+  return {
+    ...result,
+    metadata,
+    objectCount: (result as { objectCount?: number }).objectCount ?? metadata?.object_count,
+    width: (result as { width?: number }).width ?? metadata?.width,
+    height: (result as { height?: number }).height ?? metadata?.height,
+    boxes: (result as { boxes?: number[][] }).boxes ?? metadata?.boxes,
+    scores: (result as { scores?: number[] }).scores ?? metadata?.scores,
+    outputType: (result as { outputType?: string }).outputType ?? metadata?.output_type ?? metadata?.output_format,
+    frameCount: (result as { frameCount?: number }).frameCount ?? metadata?.frame_count,
+    trackedIds: (result as { trackedIds?: number[] }).trackedIds ?? metadata?.tracked_ids,
+    durationSeconds: (result as { durationSeconds?: number }).durationSeconds ?? metadata?.duration_seconds,
+    fps: (result as { fps?: number }).fps ?? metadata?.fps,
+    modelVersion: (result as { modelVersion?: string }).modelVersion ?? metadata?.model_version,
+    labels: (result as { labels?: string[] }).labels ?? metadata?.labels,
+    promptToObjectIds: (result as { promptToObjectIds?: Record<string, number[]> }).promptToObjectIds ?? metadata?.prompt_to_obj_ids,
+    objectIdToPromptLabel:
+      (result as { objectIdToPromptLabel?: Record<string, string> }).objectIdToPromptLabel ?? metadata?.object_id_to_prompt_label,
+  };
 }
 
 // ============================================================================
@@ -760,6 +806,391 @@ export const gpuSfxCreateProcessor: Processor<GpuSfxCreateJobData> = async (job:
     return { success: true, audioUrl: finalPublicUrl, generationTime: result.generationTime };
   } catch (error) {
     await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'sfx_generation', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
+    throw error;
+  }
+};
+
+// ============================================================================
+// IMAGE SEGMENTATION PROCESSOR (SAM 3)
+// ============================================================================
+
+export interface GpuSegmentImageJobData {
+  taskId: string;
+  userId: string;
+  inputImageUrl: string;
+  textPrompt?: string;
+  pointPrompts?: number[][];
+  boxPrompts?: number[][];
+  boxPromptsLabeled?: { box: number[]; label: boolean }[];
+  objectPrompts?: { label: string; text: string }[];
+  confidenceThreshold?: number;
+  maxObjects?: number;
+  outputType?: "masks_json" | "image";
+  operations?: SegmentOperation[];
+}
+
+export const gpuSegmentImageProcessor: Processor<GpuSegmentImageJobData> = async (job: Job<GpuSegmentImageJobData>) => {
+  const { taskId, userId, inputImageUrl, textPrompt, pointPrompts, boxPrompts, boxPromptsLabeled, objectPrompts, confidenceThreshold, maxObjects, outputType, operations } = job.data;
+  const supabase = getSupabaseServiceClient();
+
+  console.log(`[GPUApiTest] Starting image segmentation for task ${taskId} (output: ${outputType || 'masks_json'})`);
+
+  try {
+    if (!isR2Configured()) throw new Error('R2 storage is not configured.');
+
+    await updateTaskStatus(taskId, { status: 'running', current_phase: 'segmentation', current_step: 'Generating presigned URL...', progress_percent: 10 });
+
+    // Use PNG extension for image output, JSON for masks
+    const isImageOutput = outputType === 'image';
+    const ext = isImageOutput ? 'png' : 'json';
+    const contentType = isImageOutput ? 'image/png' : 'application/json';
+    const key = generateGpuTestKey(userId, 'segmentation', ext);
+    const { putUrl } = await generatePresignedPutUrl(key, contentType);
+
+    await updateTaskStatus(taskId, { current_step: 'Calling GPU API (SAM 3)...', progress_percent: 30 });
+
+    const gpuJobId = uuidv4();
+    const { callGpuImageSegment } = await import('@/lib/services/gpu-api-service');
+    let result = await callGpuImageSegment({
+      job_id: gpuJobId,
+      input_image_url: inputImageUrl,
+      text_prompt: textPrompt || undefined,
+      point_prompts: pointPrompts?.length ? pointPrompts : undefined,
+      box_prompts: boxPrompts?.length ? boxPrompts : undefined,
+      box_prompts_labeled: boxPromptsLabeled?.length ? boxPromptsLabeled as { box: number[]; label: boolean }[] : undefined,
+      object_prompts: objectPrompts?.length ? objectPrompts : undefined,
+      confidence_threshold: confidenceThreshold ?? undefined,
+      max_objects: maxObjects || undefined,
+      output_type: outputType || undefined,
+      operations: operations?.length ? operations as import('@/lib/services/gpu-api-service').SegmentOperation[] : undefined,
+      save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: taskId,
+      webhook_secret: getWebhookSecret(),
+    });
+
+    if (result.success && result.isAsync) {
+      const webhookResult = await waitForJobCompletion(taskId, 'Image segmentation', 300000);
+      result = mergeSegmentMetadata({ ...result, ...webhookResult }, webhookResult.metadata);
+    } else {
+      result = mergeSegmentMetadata(result);
+    }
+
+    const finalStatus = result.success ? 'completed' : 'failed';
+    const finalPublicUrl = result.success ? getPublicUrl(key) : undefined;
+
+    console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
+
+    const { error: updateError, data: updateData } = await supabase.from('tasks').update({
+      status: finalStatus,
+      current_step: result.success ? 'Complete' : 'Failed',
+      progress_percent: result.success ? 100 : 0,
+      completed_at: new Date().toISOString(),
+      output_data: {
+        success: result.success,
+        type: 'image_segmentation',
+        outputType: outputType || 'masks_json',
+        segmentationDataUrl: finalPublicUrl,
+        generationTime: result.generationTime,
+        objectCount: result.objectCount,
+        width: result.width,
+        height: result.height,
+        boxes: result.boxes,
+        scores: result.scores,
+        modelVersion: result.modelVersion,
+        labels: result.labels,
+        promptToObjectIds: result.promptToObjectIds,
+        objectIdToPromptLabel: result.objectIdToPromptLabel,
+        metadata: result.metadata,
+        inputImageUrl,
+        error: result.success ? undefined : result.errorMessage,
+        r2Key: key,
+      },
+    }).eq('id', taskId).select('id, status');
+
+    if (updateError) {
+      console.error(`[GPUApiTest] FAILED to update task ${taskId}:`, updateError);
+    } else {
+      console.log(`[GPUApiTest] Task ${taskId} updated successfully:`, updateData);
+    }
+
+    if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
+    return { success: true, segmentationDataUrl: finalPublicUrl, generationTime: result.generationTime };
+  } catch (error) {
+    await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'image_segmentation', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
+    throw error;
+  }
+};
+
+// ============================================================================
+// VIDEO SEGMENTATION / OBJECT TRACKING PROCESSOR (SAM 3)
+// ============================================================================
+
+export interface GpuSegmentVideoJobData {
+  taskId: string;
+  userId: string;
+  inputVideoUrl: string;
+  textPrompt?: string;
+  textPrompts?: string[];
+  pointPrompts?: number[][];
+  pointLabels?: number[];
+  boxPrompts?: number[][];
+  boxLabels?: number[];
+  objectPrompts?: { label: string; text: string }[];
+  promptFrameIndex?: number;
+  propagationDirection?: "forward" | "backward" | "both";
+  confidenceThreshold?: number;
+  includeTrackingMetadata?: boolean;
+  outputFormat?: "masks_json" | "video";
+  operations?: SegmentOperation[];
+  maxFrames?: number;
+}
+
+export const gpuSegmentVideoProcessor: Processor<GpuSegmentVideoJobData> = async (job: Job<GpuSegmentVideoJobData>) => {
+  const {
+    taskId,
+    userId,
+    inputVideoUrl,
+    textPrompt,
+    textPrompts,
+    pointPrompts,
+    pointLabels,
+    boxPrompts,
+    boxLabels,
+    objectPrompts,
+    promptFrameIndex,
+    propagationDirection,
+    confidenceThreshold,
+    includeTrackingMetadata,
+    outputFormat,
+    operations,
+    maxFrames,
+  } = job.data;
+  const supabase = getSupabaseServiceClient();
+
+  console.log(`[GPUApiTest] Starting video segmentation for task ${taskId} (output: ${outputFormat || 'masks_json'})`);
+
+  try {
+    if (!isR2Configured()) throw new Error('R2 storage is not configured.');
+
+    await updateTaskStatus(taskId, { status: 'running', current_phase: 'segmentation', current_step: 'Generating presigned URL...', progress_percent: 10 });
+
+    // Use MP4 extension for video output, JSON for masks
+    const isVideoOutput = outputFormat === 'video';
+    const ext = isVideoOutput ? 'mp4' : 'json';
+    const contentType = isVideoOutput ? 'video/mp4' : 'application/json';
+    const key = generateGpuTestKey(userId, 'segmentation', ext);
+    const { putUrl } = await generatePresignedPutUrl(key, contentType);
+
+    await updateTaskStatus(taskId, { current_step: 'Calling GPU API (SAM 3 Video)...', progress_percent: 30 });
+
+    const gpuJobId = uuidv4();
+    const { callGpuVideoSegment } = await import('@/lib/services/gpu-api-service');
+    let result = await callGpuVideoSegment({
+      job_id: gpuJobId,
+      input_video_url: inputVideoUrl,
+      text_prompt: textPrompt || undefined,
+      text_prompts: textPrompts?.length ? textPrompts : undefined,
+      point_prompts: pointPrompts?.length ? pointPrompts : undefined,
+      point_labels: pointLabels?.length ? pointLabels : undefined,
+      box_prompts: boxPrompts?.length ? boxPrompts : undefined,
+      box_labels: boxLabels?.length ? boxLabels : undefined,
+      object_prompts: objectPrompts?.length ? objectPrompts : undefined,
+      prompt_frame_index: promptFrameIndex ?? undefined,
+      propagation_direction: propagationDirection || undefined,
+      confidence_threshold: confidenceThreshold ?? undefined,
+      include_tracking_metadata: includeTrackingMetadata ?? undefined,
+      output_format: outputFormat || undefined,
+      operations: operations?.length ? operations as import('@/lib/services/gpu-api-service').SegmentOperation[] : undefined,
+      max_frames: maxFrames || undefined,
+      save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: taskId,
+      webhook_secret: getWebhookSecret(),
+    });
+
+    if (result.success && result.isAsync) {
+      const webhookResult = await waitForJobCompletion(taskId, 'Video segmentation', 600000);  // 10 min for video
+      result = mergeSegmentMetadata({ ...result, ...webhookResult }, webhookResult.metadata);
+    } else {
+      result = mergeSegmentMetadata(result);
+    }
+
+    const finalStatus = result.success ? 'completed' : 'failed';
+    const finalPublicUrl = result.success ? getPublicUrl(key) : undefined;
+
+    console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
+
+    const { error: updateError, data: updateData } = await supabase.from('tasks').update({
+      status: finalStatus,
+      current_step: result.success ? 'Complete' : 'Failed',
+      progress_percent: result.success ? 100 : 0,
+      completed_at: new Date().toISOString(),
+      output_data: {
+        success: result.success,
+        type: 'video_segmentation',
+        outputFormat: outputFormat || 'masks_json',
+        segmentationDataUrl: finalPublicUrl,
+        generationTime: result.generationTime,
+        frameCount: result.frameCount,
+        objectCount: result.objectCount,
+        durationSeconds: result.durationSeconds,
+        fps: result.fps,
+        trackedIds: result.trackedIds,
+        modelVersion: result.modelVersion,
+        labels: result.labels,
+        promptToObjectIds: result.promptToObjectIds,
+        objectIdToPromptLabel: result.objectIdToPromptLabel,
+        metadata: result.metadata,
+        inputVideoUrl,
+        error: result.success ? undefined : result.errorMessage,
+        r2Key: key,
+      },
+    }).eq('id', taskId).select('id, status');
+
+    if (updateError) {
+      console.error(`[GPUApiTest] FAILED to update task ${taskId}:`, updateError);
+    } else {
+      console.log(`[GPUApiTest] Task ${taskId} updated successfully:`, updateData);
+    }
+
+    if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
+    return { success: true, segmentationDataUrl: finalPublicUrl, generationTime: result.generationTime };
+  } catch (error) {
+    await supabase.from('tasks').update({ status: 'failed', current_step: 'Failed', progress_percent: 0, output_data: { success: false, type: 'video_segmentation', error: error instanceof Error ? error.message : 'Unknown error' } }).eq('id', taskId);
+    throw error;
+  }
+};
+
+// ============================================================================
+// ANIMATED SEGMENTATION PROCESSOR (SAM 3.1)
+// ============================================================================
+
+export interface GpuSegmentAnimateJobData {
+  taskId: string;
+  userId: string;
+  inputImageUrl: string;
+  textPrompt?: string;
+  pointPrompts?: number[][];
+  boxPrompts?: number[][];
+  boxPromptsLabeled?: { box: number[]; label: boolean }[];
+  objectPrompts?: { label: string; text: string }[];
+  confidenceThreshold?: number;
+  maxObjects?: number;
+  durationSeconds?: number;
+  fps?: number;
+  operations: SegmentOperation[];
+}
+
+export const gpuSegmentAnimateProcessor: Processor<GpuSegmentAnimateJobData> = async (job: Job<GpuSegmentAnimateJobData>) => {
+  const {
+    taskId,
+    userId,
+    inputImageUrl,
+    textPrompt,
+    pointPrompts,
+    boxPrompts,
+    boxPromptsLabeled,
+    objectPrompts,
+    confidenceThreshold,
+    maxObjects,
+    durationSeconds,
+    fps,
+    operations,
+  } = job.data;
+  const supabase = getSupabaseServiceClient();
+
+  console.log(`[GPUApiTest] Starting animated segmentation for task ${taskId}`);
+
+  try {
+    if (!isR2Configured()) throw new Error('R2 storage is not configured.');
+
+    await updateTaskStatus(taskId, {
+      status: 'running',
+      current_phase: 'segmentation',
+      current_step: 'Generating presigned URL...',
+      progress_percent: 10,
+    });
+
+    const key = generateGpuTestKey(userId, 'segmentation', 'mp4');
+    const { putUrl } = await generatePresignedPutUrl(key, 'video/mp4');
+
+    await updateTaskStatus(taskId, { current_step: 'Calling GPU API (SAM 3 Animate)...', progress_percent: 30 });
+
+    const gpuJobId = uuidv4();
+    let result = await callGpuAnimateSegment({
+      job_id: gpuJobId,
+      input_image_url: inputImageUrl,
+      text_prompt: textPrompt || undefined,
+      point_prompts: pointPrompts?.length ? pointPrompts : undefined,
+      box_prompts: boxPrompts?.length ? boxPrompts : undefined,
+      box_prompts_labeled: boxPromptsLabeled?.length ? boxPromptsLabeled : undefined,
+      object_prompts: objectPrompts?.length ? objectPrompts : undefined,
+      confidence_threshold: confidenceThreshold ?? undefined,
+      max_objects: maxObjects || undefined,
+      duration_seconds: durationSeconds || undefined,
+      fps: fps || undefined,
+      operations: operations as import('@/lib/services/gpu-api-service').SegmentOperation[],
+      save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: taskId,
+      webhook_secret: getWebhookSecret(),
+    });
+
+    if (result.success && result.isAsync) {
+      const webhookResult = await waitForJobCompletion(taskId, 'Animated segmentation', 600000);
+      result = mergeSegmentMetadata({ ...result, ...webhookResult }, webhookResult.metadata);
+    } else {
+      result = mergeSegmentMetadata(result);
+    }
+
+    const finalStatus = result.success ? 'completed' : 'failed';
+    const finalPublicUrl = result.success ? getPublicUrl(key) : undefined;
+
+    console.log(`[GPUApiTest] Updating task ${taskId} to ${finalStatus}`);
+
+    const { error: updateError, data: updateData } = await supabase.from('tasks').update({
+      status: finalStatus,
+      current_step: result.success ? 'Complete' : 'Failed',
+      progress_percent: result.success ? 100 : 0,
+      completed_at: new Date().toISOString(),
+      output_data: {
+        success: result.success,
+        type: 'animated_segmentation',
+        segmentationDataUrl: finalPublicUrl,
+        generationTime: result.generationTime,
+        width: result.width,
+        height: result.height,
+        durationSeconds: result.durationSeconds,
+        fps: result.fps,
+        frameCount: result.frameCount,
+        objectCount: result.objectCount,
+        modelVersion: result.modelVersion,
+        labels: result.labels,
+        promptToObjectIds: result.promptToObjectIds,
+        objectIdToPromptLabel: result.objectIdToPromptLabel,
+        metadata: result.metadata,
+        inputImageUrl,
+        error: result.success ? undefined : result.errorMessage,
+        r2Key: key,
+      },
+    }).eq('id', taskId).select('id, status');
+
+    if (updateError) {
+      console.error(`[GPUApiTest] FAILED to update task ${taskId}:`, updateError);
+    } else {
+      console.log(`[GPUApiTest] Task ${taskId} updated successfully:`, updateData);
+    }
+
+    if (!result.success) throw new Error(result.errorMessage || 'GPU API returned error');
+    return { success: true, segmentationDataUrl: finalPublicUrl, generationTime: result.generationTime };
+  } catch (error) {
+    await supabase.from('tasks').update({
+      status: 'failed',
+      current_step: 'Failed',
+      progress_percent: 0,
+      output_data: { success: false, type: 'animated_segmentation', error: error instanceof Error ? error.message : 'Unknown error' },
+    }).eq('id', taskId);
     throw error;
   }
 };

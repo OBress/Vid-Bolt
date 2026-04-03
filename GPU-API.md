@@ -1,6 +1,6 @@
 # Vid-Bolt GPU API
 
-A high-performance FastAPI backend for AI-powered image, video, and music generation.
+A high-performance FastAPI backend for AI-powered image, video, music generation, and segmentation.
 
 ## Table of Contents
 
@@ -20,6 +20,8 @@ A high-performance FastAPI backend for AI-powered image, video, and music genera
   - [LTX-2 Video Generation](#ltx-2-video-generation)
   - [LTX-2 Keyframe Interpolation](#ltx-2-keyframe-interpolation)
   - [Music Generation](#music-generation)
+  - [Segmentation](#segmentation)
+  - [Animated Segmentation (Image→Video)](#animated-segmentation-imagevideo)
   - [Batch Operations](#batch-operations)
   - [LoRA Management](#lora-management)
   - [GPU Monitoring](#gpu-monitoring)
@@ -34,12 +36,13 @@ A high-performance FastAPI backend for AI-powered image, video, and music genera
 
 Vid-Bolt GPU API provides AI-powered generation capabilities:
 
-| Capability           | Model                | Description                              |
-| -------------------- | -------------------- | ---------------------------------------- |
-| **Text-to-Image**    | Z-Image Turbo        | Generate images from text prompts        |
-| **Image Editing**    | Qwen-Image-Edit-2511 | Edit images with AI instructions         |
-| **Video Generation** | LTX-2 19B            | Generate videos from images (720p/1080p) |
-| **Music Generation** | ACE-Step 1.5         | Generate music from text prompts         |
+| Capability           | Model                | Description                                              |
+| -------------------- | -------------------- | -------------------------------------------------------- |
+| **Text-to-Image**    | Z-Image Turbo        | Generate images from text prompts                        |
+| **Image Editing**    | Qwen-Image-Edit-2511 | Edit images with AI instructions                         |
+| **Video Generation** | LTX-2 19B            | Generate videos from images (720p/1080p)                 |
+| **Music Generation** | ACE-Step 1.5         | Generate music from text prompts                         |
+| **Segmentation**     | SAM 3.1              | Segment, track, and animate objects in images and videos |
 
 ### Architecture
 
@@ -54,15 +57,15 @@ Vid-Bolt GPU API provides AI-powered generation capabilities:
 │   THREAD    │  • Automatic Mode Switching (Dynamic)     │
 │             │  • OOM & Timeout Handling                 │
 ├─────────────┴───────────────────────────────────────────┤
-│   IMAGE MODE       │   VIDEO MODE    │   AUDIO MODE     │
-│  ┌──────────────┐  │ ┌─────────────┐ │ ┌──────────────┐ │
-│  │ Z-Image Turbo│  │ │ LTX-2 19B   │ │ │ ACE-Step 1.5 │ │
-│  │ (text-to-img)│  │ │ (I2V, 720p/ │ │ │ (music gen)  │ │
-│  ├──────────────┤  │ │ 1080p)      │ │ └──────────────┘ │
-│  │ Qwen-Image-  │  │ └─────────────┘ │                  │
-│  │ Edit (editing)│  │                 │                  │
-│  └──────────────┘  │                 │                  │
-└────────────────────┴─────────────────┴──────────────────┘
+│   IMAGE MODE       │   VIDEO MODE    │   AUDIO MODE     │  SEG MODE    │
+│  ┌──────────────┐  │ ┌─────────────┐ │ ┌──────────────┐ │ ┌──────────┐ │
+│  │ Z-Image Turbo│  │ │ LTX-2 19B   │ │ │ ACE-Step 1.5 │ │ │  SAM 3   │ │
+│  │ (text-to-img)│  │ │ (I2V, 720p/ │ │ │ (music gen)  │ │ │ (segment)│ │
+│  ├──────────────┤  │ │ 1080p)      │ │ └──────────────┘ │ └──────────┘ │
+│  │ Qwen-Image-  │  │ └─────────────┘ │                  │              │
+│  │ Edit (editing)│  │                 │                  │              │
+│  └──────────────┘  │                 │                  │              │
+└────────────────────┴─────────────────┴──────────────────┴──────────────┘
 ```
 
 ---
@@ -201,6 +204,7 @@ Configurable via `POST /api/v1/settings/vram-mode`:
 | `image_editing`    | LightX2V only      | ~40GB      | Image editing/inpainting   |
 | `video_generation` | LTX-2 only         | ~40GB      | Video generation           |
 | `audio_creation`   | ACE-Step           | ~4GB       | Music generation           |
+| `segmentation`     | SAM 3              | ~4-10GB    | Image/video segmentation   |
 | `all`              | All models         | ~76GB+     | High-VRAM GPUs (A100/H100) |
 
 #### Mode Behavior
@@ -225,7 +229,13 @@ Configurable via `POST /api/v1/settings/vram-mode`:
    - Scheduling: Grouped by job type to minimize switching
    - Switching time: ~15-30s
 
-5. **all**:
+5. **segmentation**:
+   - Loads **SAM 3** (Segment Anything Model 3) for image/video segmentation
+   - Supports text prompts, point prompts, and box prompts
+   - Switching time: ~5-10s (lightweight model)
+   - VRAM usage: ~4-10GB
+
+6. **all**:
    - Loads **all models simultaneously**
    - Scheduling: Strict FIFO (no switching needed)
    - Switching time: Instant
@@ -376,16 +386,16 @@ Get the current VRAM mode status including switching progress.
 }
 ```
 
-| Field                | Type         | Description                                                                                     |
-| -------------------- | ------------ | ----------------------------------------------------------------------------------------------- |
-| `mode`               | string       | Current mode (`image_generation`, `image_editing`, `video_generation`, `audio_creation`, `all`) |
-| `is_busy`            | bool         | Whether a job is currently running                                                              |
-| `active_job_id`      | string\|null | ID of the currently running job                                                                 |
-| `loaded_models`      | list[string] | Names of currently loaded models                                                                |
-| `is_switching`       | bool         | Whether mode switch is in progress                                                              |
-| `switching_target`   | string\|null | Target mode when switching                                                                      |
-| `switching_step`     | string\|null | Current switching step description                                                              |
-| `switching_progress` | float\|null  | Progress 0.0-1.0 when switching                                                                 |
+| Field                | Type         | Description                                                                                                     |
+| -------------------- | ------------ | --------------------------------------------------------------------------------------------------------------- |
+| `mode`               | string       | Current mode (`image_generation`, `image_editing`, `video_generation`, `audio_creation`, `segmentation`, `all`) |
+| `is_busy`            | bool         | Whether a job is currently running                                                                              |
+| `active_job_id`      | string\|null | ID of the currently running job                                                                                 |
+| `loaded_models`      | list[string] | Names of currently loaded models                                                                                |
+| `is_switching`       | bool         | Whether mode switch is in progress                                                                              |
+| `switching_target`   | string\|null | Target mode when switching                                                                                      |
+| `switching_step`     | string\|null | Current switching step description                                                                              |
+| `switching_progress` | float\|null  | Progress 0.0-1.0 when switching                                                                                 |
 
 ---
 
@@ -459,9 +469,9 @@ Set the VRAM loading mode. This unloads current models and loads the target mode
 }
 ```
 
-| Field  | Type   | Required | Description                                                                              |
-| ------ | ------ | -------- | ---------------------------------------------------------------------------------------- |
-| `mode` | string | ✅       | One of: `image_generation`, `image_editing`, `video_generation`, `audio_creation`, `all` |
+| Field  | Type   | Required | Description                                                                                              |
+| ------ | ------ | -------- | -------------------------------------------------------------------------------------------------------- |
+| `mode` | string | ✅       | One of: `image_generation`, `image_editing`, `video_generation`, `audio_creation`, `segmentation`, `all` |
 
 **Response:**
 
@@ -827,6 +837,706 @@ Example prompts:
   "job_id": "550e8400-e29b...",
   "status": "queued",
   "message": "Music generation job queued"
+}
+```
+
+---
+
+### Segmentation
+
+Segmentation uses deterministic prompt handling. `text_prompts` and named `object_prompts` are passed through as provided, and this stack does **not** use an LLM to rewrite, reformat, or enhance segmentation queries.
+
+Image and video segmentation powered by Meta's **SAM 3.1** (Segment Anything Model 3.1). Supports:
+
+- **Text prompts** — open-vocabulary detection ("segment all cars")
+- **Point prompts** — click coordinates to segment specific objects
+- **Box prompts** — bounding regions (with positive/negative labels)
+- **Composable effects pipeline** — apply visual operations and get processed images/videos
+- **Video tracking** — track objects across frames with text, point, or box prompts
+- **Image→Video animation** — animate effects with easing, draw-on, pulse, and zoom to create videos from images
+
+#### `POST /api/v1/segment/image`
+
+**Returns HTTP 202 Accepted**. Segments objects in an image using text, point, or box prompts. Optionally applies visual effects.
+
+**Request:**
+
+| Field                  | Type     | Required | Description                                                         | Default        |
+| ---------------------- | -------- | -------- | ------------------------------------------------------------------- | -------------- |
+| `job_id`               | string   | ✅       | Unique job identifier                                               | -              |
+| `input_image_url`      | string   | ✅       | URL of input image (PNG/JPEG/WebP)                                  | -              |
+| `text_prompt`          | string   | ❌\*     | Text describing objects to segment                                  | -              |
+| `point_prompts`        | int[][]  | ❌\*     | List of `[x, y]` click coordinates                                  | -              |
+| `box_prompts`          | int[][]  | ❌\*     | List of `[x1, y1, x2, y2]` bounding boxes (all positive)            | -              |
+| `box_prompts_labeled`  | object[] | ❌\*     | List of `{box: [x1,y1,x2,y2], label: true/false}` (include/exclude) | -              |
+| `object_prompts`       | object[] | ❌\*     | Named object prompts for per-object targeting (see below)           | -              |
+| `confidence_threshold` | float    | ❌       | Minimum confidence to include (0.0-1.0)                             | `0.5`          |
+| `max_objects`          | int      | ❌       | Maximum objects to segment (1-500)                                  | `100`          |
+| `output_type`          | string   | ❌       | `"masks_json"` for raw masks, `"image"` for processed image         | `"masks_json"` |
+| `operations`           | object[] | ❌       | Ordered list of visual operations (only when `output_type="image"`) | -              |
+| `save_url`             | string   | ✅       | Presigned PUT URL for output                                        | -              |
+| `webhook_url`          | string   | ❌       | URL to POST when complete                                           | -              |
+| `item_id`              | string   | ❌       | Client identifier (returned in webhook)                             | -              |
+| `webhook_secret`       | string   | ❌       | HMAC signing secret                                                 | -              |
+
+> **Note:** At least one prompt type is required (`text_prompt`, `point_prompts`, `box_prompts`, `box_prompts_labeled`, or `object_prompts`).
+
+Additional metadata:
+
+- Image segmentation responses now include `model_version`.
+- When using `object_prompts`, image and animation metadata include `labels` aligned with the returned masks.
+
+**Prompt Types:**
+
+| Prompt Type           | Use Case                               | Example                                                                                         |
+| --------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `text_prompt`         | Open-vocabulary detection ("all cars") | `"person in red shirt"`                                                                         |
+| `point_prompts`       | Click specific objects                 | `[[512, 300], [100, 200]]`                                                                      |
+| `box_prompts`         | Segment within bounding regions        | `[[50, 50, 400, 300]]`                                                                          |
+| `box_prompts_labeled` | Include/exclude regions                | `[{"box": [50,50,400,300], "label": true}, {"box": [100,100,200,200], "label": false}]`         |
+| `object_prompts`      | Named per-object targeting             | `[{"label": "person", "text": "white man sitting"}, {"label": "table", "text": "metal table"}]` |
+
+**`object_prompts` — Named Object Targeting:**
+
+Use `object_prompts` when you need to apply different effects to different objects. Each prompt defines a `label` (a name you choose) and `text` (the SAM detection query). The label is then used in `select` operations to target specific objects.
+
+```json
+{
+  "object_prompts": [
+    { "label": "person", "text": "white man sitting" },
+    { "label": "table", "text": "metal table" }
+  ],
+  "operations": [
+    { "type": "select", "target": "background" },
+    { "type": "blur", "strength": 25 },
+    { "type": "select", "target": "mask", "object_label": "person" },
+    { "type": "outline", "color": [0, 255, 255, 255], "thickness": 3 }
+  ]
+}
+```
+
+Key behaviors:
+
+- `select: background` (no label) → excludes ALL detected objects (person + table). **Use this for background blur to avoid double-blur artifacts.**
+- `select: mask, object_label: "person"` → targets only the person
+- `select: mask, object_labels: ["person", "table"]` → targets the union of person + table masks
+- Response metadata includes a `labels` array mapping each detected mask to its label
+
+**Example — Raw masks (default):**
+
+```json
+{
+  "job_id": "seg-001",
+  "input_image_url": "https://storage.example.com/photo.jpg",
+  "text_prompt": "person",
+  "save_url": "https://storage.example.com/masks.json"
+}
+```
+
+**Example — Processed image with effects:**
+
+```json
+{
+  "job_id": "seg-002",
+  "input_image_url": "https://storage.example.com/photo.jpg",
+  "text_prompt": "person",
+  "output_type": "image",
+  "operations": [
+    { "type": "select", "target": "background" },
+    { "type": "blur", "strength": 25 },
+    { "type": "select", "target": "mask" },
+    { "type": "outline", "color": [0, 255, 255, 200], "thickness": 3 }
+  ],
+  "save_url": "https://storage.example.com/processed.png"
+}
+```
+
+**Result Payload (masks_json):**
+
+```json
+{
+  "save_url": "https://storage.example.com/masks.json",
+  "generation_time": 1.2,
+  "metadata": {
+    "object_count": 3,
+    "width": 1920,
+    "height": 1080,
+    "boxes": [
+      [50, 100, 400, 350],
+      [600, 200, 900, 500],
+      [1000, 50, 1200, 300]
+    ],
+    "scores": [0.98, 0.95, 0.87],
+    "output_type": "masks_json"
+  }
+}
+```
+
+**Result Payload (image):**
+
+```json
+{
+  "save_url": "https://storage.example.com/processed.png",
+  "generation_time": 1.8,
+  "metadata": {
+    "object_count": 1,
+    "width": 1920,
+    "height": 1080,
+    "boxes": [[200, 100, 800, 900]],
+    "scores": [0.97],
+    "output_type": "image"
+  }
+}
+```
+
+---
+
+#### `POST /api/v1/segment/video`
+
+**Returns HTTP 202 Accepted**. Tracks and segments objects across video frames. Optionally applies visual effects and returns a processed MP4.
+
+**Request:**
+
+| Field                   | Type      | Required | Description                                                     | Default        |
+| ----------------------- | --------- | -------- | --------------------------------------------------------------- | -------------- |
+| `job_id`                | string    | ✅       | Unique job identifier                                           | -              |
+| `input_video_url`       | string    | ✅       | URL of input video (MP4)                                        | -              |
+| `text_prompt`           | string    | ❌\*     | Objects to track (e.g., "yellow school bus")                    | -              |
+| `point_prompts`         | float[][] | ❌\*     | List of `[x, y]` coordinates for point prompts on initial frame | -              |
+| `point_labels`          | int[]     | ❌       | Labels per point: `1` = positive, `0` = negative                | all `1`        |
+| `box_prompts`           | float[][] | ❌\*     | List of `[x, y, w, h]` bounding boxes for initial frame         | -              |
+| `box_labels`            | int[]     | ❌       | Labels per box: `1` = positive, `0` = negative                  | all `1`        |
+| `prompt_frame_index`    | int       | ❌       | Frame to apply prompts on                                       | `0`            |
+| `propagation_direction` | string    | ❌       | `"forward"`, `"backward"`, or `"both"`                          | `"forward"`    |
+| `confidence_threshold`  | float     | ❌       | Minimum confidence (0.0-1.0)                                    | `0.5`          |
+| `output_format`         | string    | ❌       | `"masks_json"` or `"video"`                                     | `"masks_json"` |
+| `operations`            | object[]  | ❌       | Visual operations per frame (only when `output_format="video"`) | -              |
+| `max_frames`            | int       | ❌       | Maximum frames to process (1-1000)                              | `300`          |
+| `save_url`              | string    | ✅       | Presigned PUT URL for output                                    | -              |
+| `webhook_url`           | string    | ❌       | URL to POST when complete                                       | -              |
+| `item_id`               | string    | ❌       | Client identifier                                               | -              |
+| `webhook_secret`        | string    | ❌       | HMAC signing secret                                             | -              |
+
+> **Note:** At least one prompt type is required (`text_prompt`, `point_prompts`, or `box_prompts`).
+
+Current deterministic video prompt modes:
+
+- `text_prompt`: legacy single-prompt tracking mode.
+- `text_prompts`: multi-prompt tracking in one request.
+- `object_prompts`: named multi-object tracking using `{label, text}` objects.
+
+Current validation rules:
+
+- Only one of `text_prompt`, `text_prompts`, or `object_prompts` may be provided.
+- `point_prompts` and `box_prompts` are only supported with the legacy single-`text_prompt` video mode.
+- Set `include_tracking_metadata: true` to return `{mask, box, score, label}` per tracked object instead of bare mask strings.
+- Segmentation prompts are not rewritten, reformatted, or enhanced by an LLM.
+
+**Example — Raw masks (default):**
+
+```json
+{
+  "job_id": "vseg-001",
+  "input_video_url": "https://storage.example.com/clip.mp4",
+  "text_prompt": "yellow school bus",
+  "save_url": "https://storage.example.com/tracking.json"
+}
+```
+
+**Example — Processed video with blur + outline:**
+
+```json
+{
+  "job_id": "vseg-002",
+  "input_video_url": "https://storage.example.com/clip.mp4",
+  "text_prompt": "person",
+  "output_format": "video",
+  "operations": [
+    { "type": "select", "target": "background" },
+    { "type": "bokeh", "strength": 20 },
+    { "type": "select", "target": "mask" },
+    { "type": "outline", "color": [255, 255, 0, 200], "thickness": 2 }
+  ],
+  "save_url": "https://storage.example.com/processed.mp4"
+}
+```
+
+**Result Payload (masks_json):**
+
+The `save_url` points to a JSON file with per-frame masks:
+
+```json
+{
+  "frames": {
+    "0": { "1": "<base64_png_mask>", "2": "<base64_png_mask>" },
+    "1": { "1": "<base64_png_mask>", "2": "<base64_png_mask>" }
+  },
+  "tracked_ids": [1, 2],
+  "frame_count": 120,
+  "text_prompt": "yellow school bus"
+}
+```
+
+Current `masks_json` payloads also include:
+
+- `prompt_to_obj_ids`: maps each input label/prompt to the stable API-level object IDs returned for that prompt.
+- `object_id_to_prompt_label`: reverse lookup from stable object ID to the originating prompt label.
+- `model_version`: the SAM checkpoint version used for the request.
+- When `include_tracking_metadata=false`, each `frames[frame_idx][object_id]` value is the base64 mask string directly.
+
+**Result Payload (video):**
+
+The `save_url` points to the processed MP4 video with effects applied per-frame. FPS matches the source video.
+
+---
+
+#### Operations Reference
+
+Operations are applied sequentially. Use `select` to target which region subsequent operations apply to.
+
+**Selection:**
+
+| Operation | Description          | Parameters                                                                                                                                                                                                                   |
+| --------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `select`  | Switch target region | `target`: `"mask"`, `"background"`, or `"all"`. Optional: `object_index` (int), `object_label` (string, from `object_prompts`), or `object_labels` (string[], union). Without any index/label, targets all detected objects. |
+
+Extended selectors:
+
+- `object_id`: target one tracked video object by stable ID.
+- `object_ids`: target multiple tracked video objects by stable IDs.
+- Selector resolution order is `object_id(s)` â†’ `object_label(s)` â†’ `object_index`.
+
+**Blur / Privacy:**
+
+| Operation  | Description       | Parameters                          |
+| ---------- | ----------------- | ----------------------------------- |
+| `blur`     | Gaussian blur     | `strength`: 1-100 (default: 25)     |
+| `pixelate` | Mosaic pixelation | `block_size`: 5-50 px (default: 15) |
+| `redact`   | Solid color fill  | `color`: [R,G,B] (default: [0,0,0]) |
+
+**Color & Appearance:**
+
+| Operation       | Description                    | Parameters                                            |
+| --------------- | ------------------------------ | ----------------------------------------------------- |
+| `color_overlay` | Semi-transparent color fill    | `color`: [R,G,B,A] (default: [255,0,0,128])           |
+| `color_grade`   | Brightness/contrast/saturation | `brightness`, `contrast`, `saturation`: -100 to 100   |
+| `opacity`       | Adjust transparency            | `value`: 0.0-1.0                                      |
+| `replace_color` | Hue shift + saturation scale   | `hue_shift`: -180 to 180, `saturation_scale`: 0.0-3.0 |
+
+**Compositing:**
+
+| Operation            | Description                   | Parameters                              |
+| -------------------- | ----------------------------- | --------------------------------------- |
+| `remove_background`  | Make background transparent   | _(outputs RGBA PNG)_                    |
+| `replace_background` | Replace background            | `color`: [R,G,B] or `image_url`: string |
+| `greenscreen`        | Replace background with green | _(no params)_                           |
+
+Compositing notes:
+
+- `replace_background.image_url` is downloaded server-side before effects are rendered.
+- `remove_background` preserves transparency for image outputs; MP4 video outputs cannot preserve alpha and are flattened during encoding.
+
+**Drawing & Annotation:**
+
+| Operation      | Description               | Parameters                                                                                               |
+| -------------- | ------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `outline`      | Draw smooth contour lines | `color`: [R,G,B,A] (default: [0,255,0,255]), `thickness`: 1-20, `progress`: 0.0-1.0 (for draw animation) |
+| `bounding_box` | Draw bounding boxes       | `color`: [R,G,B,A] (default: [255,0,0,255]), `thickness`: 1-10 (default: 2)                              |
+
+**Creative Effects:**
+
+| Operation   | Description                       | Parameters                                             |
+| ----------- | --------------------------------- | ------------------------------------------------------ |
+| `spotlight` | Darken everything except objects  | `darkness`: 0.0-1.0 (default: 0.7)                     |
+| `bokeh`     | Depth-of-field blur on background | `strength`: 5-50 (default: 15)                         |
+| `glow`      | Glow/bloom around object edges    | `color`: [R,G,B], `radius`: 5-50, `intensity`: 0.0-1.0 |
+| `shadow`    | Drop shadow on objects            | `offset`: [x,y], `blur`: 5-30, `color`: [R,G,B,A]      |
+| `vignette`  | Vignette focused on objects       | `strength`: 0.0-1.0 (default: 0.5)                     |
+
+**Filters (NEW):**
+
+| Operation     | Description                 | Parameters                                                                          |
+| ------------- | --------------------------- | ----------------------------------------------------------------------------------- |
+| `grayscale`   | Convert selection to B&W    | `intensity`: 0.0-1.0 (default: 1.0) — blend factor                                  |
+| `invert`      | Invert colors of selection  | `intensity`: 0.0-1.0 (default: 1.0) — blend factor                                  |
+| `sharpen`     | Enhance/sharpen edges       | `strength`: 0.0-10.0 (default: 2.0)                                                 |
+| `sepia`       | Warm vintage tone           | `intensity`: 0.0-1.0 (default: 1.0)                                                 |
+| `posterize`   | Reduce to N color levels    | `levels`: 2-32 (default: 4)                                                         |
+| `edge_detect` | Show edges (line art blend) | `intensity`: 0.0-1.0 (default: 1.0)                                                 |
+| `emboss`      | 3D relief emboss            | `intensity`: 0.0-1.0 (default: 1.0)                                                 |
+| `noise`       | Add grain/noise             | `amount`: 0.0-1.0 (default: 0.3), `noise_type`: `"gaussian"`/`"grain"`, `seed`: int |
+| `sketch`      | Pencil drawing effect       | `intensity`: 0.0-1.0 (default: 1.0), `detail`: 1-10 (default: 5)                    |
+
+**Artistic (NEW):**
+
+| Operation  | Description           | Parameters                                                                                                        |
+| ---------- | --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `duotone`  | Two-color palette map | `color_dark`: [R,G,B] (default: [20,0,80]), `color_light`: [R,G,B] (default: [255,200,100]), `intensity`: 0.0-1.0 |
+| `halftone` | Newspaper dot-pattern | `dot_size`: 2-30 (default: 6), `intensity`: 0.0-1.0                                                               |
+| `glitch`   | RGB shift + scanlines | `intensity`: 0.0-1.0 (default: 0.5), `rgb_shift`: 0-30 (default: 10), `seed`: int                                 |
+
+**Distortion (NEW):**
+
+| Operation     | Description              | Parameters                                                             |
+| ------------- | ------------------------ | ---------------------------------------------------------------------- |
+| `motion_blur` | Directional blur         | `angle`: 0-360 (default: 0), `strength`: 1-50 (default: 15)            |
+| `glass`       | Frosted glass distortion | `strength`: 1-30 (default: 8), `scale`: 1-20 (default: 4), `seed`: int |
+
+**Mask Processing (NEW):**
+
+| Operation | Description       | Parameters                   |
+| --------- | ----------------- | ---------------------------- |
+| `feather` | Soften mask edges | `radius`: 1-50 (default: 10) |
+
+**Camera (Animation Only):**
+
+| Operation | Description                   | Parameters                                              |
+| --------- | ----------------------------- | ------------------------------------------------------- |
+| `zoom`    | Ken Burns zoom toward subject | `scale`: 1.0-4.0, `target`: `"mask"`/`"center"`/`[x,y]` |
+| `pan`     | Smooth camera pan             | `offset`: `[x, y]` pixel offset                         |
+
+> **Note:** `zoom` and `pan` only work with the animation system (`POST /segment/animate` or video operations with `animation` configs). They crop/scale the output canvas per frame.
+
+**Common Recipes:**
+
+| Use Case                        | Operations                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------- |
+| Blur background (portrait mode) | `[{select: background}, {blur: 25}]`                                                        |
+| Redact all faces                | `text_prompt: "face"` + `[{select: mask}, {pixelate: 20}]`                                  |
+| Green screen removal            | `text_prompt: "person"` + `[{greenscreen}]`                                                 |
+| Spotlight subject               | `[{spotlight: 0.6}, {select: background}, {bokeh: 15}]`                                     |
+| Annotate objects                | `[{outline}, {bounding_box: {color: [255,0,0], thickness: 2}}]`                             |
+| Vintage film look               | `[{sepia: {intensity: 0.7}}, {noise: {amount: 0.2, noise_type: "grain"}}]`                  |
+| Neon outline                    | `[{outline: {color: [0,255,255], thickness: 3}}, {glow: {color: [0,200,255], radius: 20}}]` |
+| Pencil sketch                   | `[{sketch: {intensity: 0.9, detail: 6}}]`                                                   |
+| Color pop                       | `[{select: background}, {grayscale: 1.0}, {select: mask}, {color_grade: {saturation: 50}}]` |
+
+---
+
+### Animated Segmentation (Image→Video)
+
+Generate an animated video from a single image by applying animated visual effects to segmented regions. SAM 3.1 runs once to detect objects, then the animation engine renders frames with interpolated effect parameters.
+
+**Key concepts:**
+
+- Every numeric parameter on any operation can be animated
+- 10 easing functions control the rate of change
+- 6 animation modes (transition, draw, pulse, reveal, loop, stagger)
+- Camera operations (zoom/pan) for Ken Burns effects
+- Output is always MP4 video
+- CPU-only rendering after initial GPU segmentation (~5-15s for 90 frames)
+
+#### `POST /api/v1/segment/animate`
+
+**Returns HTTP 202 Accepted**. Segments the image, then renders animated effects to produce an MP4.
+
+**Request:**
+
+| Field                  | Type     | Required | Description                                                  | Default |
+| ---------------------- | -------- | -------- | ------------------------------------------------------------ | ------- |
+| `job_id`               | string   | ✅       | Unique job identifier                                        | -       |
+| `input_image_url`      | string   | ✅       | URL of input image (PNG/JPEG/WebP)                           | -       |
+| `text_prompt`          | string   | ❌\*     | Text describing objects to segment                           | -       |
+| `point_prompts`        | int[][]  | ❌\*     | List of `[x, y]` click coordinates                           | -       |
+| `box_prompts`          | int[][]  | ❌\*     | List of `[x1, y1, x2, y2]` bounding boxes                    | -       |
+| `box_prompts_labeled`  | object[] | ❌\*     | List of `{box: [x1,y1,x2,y2], label: true/false}`            | -       |
+| `confidence_threshold` | float    | ❌       | Minimum confidence (0.0-1.0)                                 | `0.5`   |
+| `max_objects`          | int      | ❌       | Maximum objects to segment (1-500)                           | `100`   |
+| `duration_seconds`     | float    | ❌       | Animation duration (0.5-10.0)                                | `3.0`   |
+| `fps`                  | int      | ❌       | Frames per second (8-60)                                     | `30`    |
+| `operations`           | object[] | ✅       | Ordered list of operations with optional `animation` configs | -       |
+| `save_url`             | string   | ✅       | Presigned PUT URL for MP4 output                             | -       |
+| `webhook_url`          | string   | ❌       | URL to POST when complete                                    | -       |
+| `item_id`              | string   | ❌       | Client identifier                                            | -       |
+| `webhook_secret`       | string   | ❌       | HMAC signing secret                                          | -       |
+
+> **Note:** At least one prompt type is required. At least one operation is required.
+
+Additional animation support:
+
+- `object_prompts` is also supported on `POST /api/v1/segment/animate` using the same `{label, text}` structure as image segmentation.
+- Named labels can be reused in `select` operations via `object_label` / `object_labels` for per-object animated effects.
+- Segmentation prompts are not rewritten, reformatted, or enhanced by an LLM.
+
+---
+
+#### Animation System
+
+Every operation can include an `animation` key to animate its parameters over time.
+
+**Animation Config:**
+
+| Field           | Type   | Required | Description                                      | Default        |
+| --------------- | ------ | -------- | ------------------------------------------------ | -------------- |
+| `mode`          | string | ❌       | Animation mode (see below)                       | `"transition"` |
+| `start`         | object | ❌       | Parameter values at animation start              | current values |
+| `end`           | object | ❌       | Parameter values at animation end                | current values |
+| `easing`        | string | ❌       | Easing function name (see below)                 | `"ease_out"`   |
+| `delay`         | float  | ❌       | Seconds before animation starts (0.0-10.0)       | `0.0`          |
+| `duration`      | float  | ❌       | Animation duration in seconds (overrides total)  | total duration |
+| `cycles`        | int    | ❌       | Oscillation count for pulse/loop modes (1-20)    | `1`            |
+| `direction`     | string | ❌       | Reveal direction (for `reveal` mode)             | `"left"`       |
+| `stagger_delay` | float  | ❌       | Seconds between each object (for `stagger` mode) | `0.2`          |
+
+**Schema (operation with animation):**
+
+```json
+{
+  "type": "blur",
+  "target": "background",
+  "strength": 25,
+  "animation": {
+    "mode": "transition",
+    "start": { "strength": 0 },
+    "end": { "strength": 25 },
+    "easing": "ease_out",
+    "delay": 0.0,
+    "duration": 2.0
+  }
+}
+```
+
+---
+
+#### Animation Modes
+
+| Mode         | Behavior                                                        | Use Cases                                             |
+| ------------ | --------------------------------------------------------------- | ----------------------------------------------------- |
+| `transition` | Interpolate `start` → `end` values linearly over time           | Blur fading in, color shifting, opacity changing      |
+| `draw`       | Sets `progress` param from 0→1 (progressive contour trace)      | Outline drawing itself around an object               |
+| `pulse`      | Oscillates `start` → `end` → `start` with configurable `cycles` | Pulsing glow, breathing spotlight, flickering noise   |
+| `reveal`     | Progressive directional wipe (set `direction`)                  | Effect appearing via wipe from left/right/radial      |
+| `loop`       | Sawtooth: value goes `start` → `end` repeatedly over `cycles`   | Hue cycling, continuous color shifting                |
+| `stagger`    | Like transition, but each detected object starts with an offset | Objects outlining one-by-one, sequential highlighting |
+
+---
+
+#### Easing Functions
+
+| Easing              | Description                       | Character                   |
+| ------------------- | --------------------------------- | --------------------------- |
+| `linear`            | Constant speed                    | Mechanical, robotic         |
+| `ease_in`           | Slow start, fast end (quadratic)  | Building momentum           |
+| `ease_out`          | Fast start, slow end (quadratic)  | **Recommended default**     |
+| `ease_in_out`       | Smooth start and end (smoothstep) | Polished, professional      |
+| `ease_in_cubic`     | More dramatic slow start          | Intense build-up            |
+| `ease_out_cubic`    | More dramatic slow end            | Heavy landing               |
+| `ease_in_out_cubic` | Professional cubic motion         | Film-quality movement       |
+| `ease_out_back`     | Overshoots then settles back      | Bouncy, playful             |
+| `ease_out_elastic`  | Spring oscillation                | High-energy, dynamic reveal |
+| `ease_out_bounce`   | Ball-drop bounce                  | Fun, attention-grabbing     |
+
+---
+
+#### Per-Effect Animation Guide
+
+How to animate each of the 35 operations. Every numeric parameter listed above can be placed in `start`/`end`.
+
+| Effect        | Best Mode  | Animated Params    | Example                                |
+| ------------- | ---------- | ------------------ | -------------------------------------- |
+| `blur`        | transition | `strength`: 0→25   | Background gradually blurs             |
+| `outline`     | **draw**   | _(auto progress)_  | Contour traces itself around object    |
+| `glow`        | **pulse**  | `intensity`: 0→0.8 | Pulsing neon glow (set cycles: 3)      |
+| `spotlight`   | transition | `darkness`: 0→0.8  | Lights gradually dim around subject    |
+| `grayscale`   | transition | `intensity`: 0→1   | Color drains to B&W                    |
+| `sepia`       | transition | `intensity`: 0→1   | Modern photo ages to vintage           |
+| `sketch`      | transition | `intensity`: 0→1   | Photo transforms into pencil drawing   |
+| `glitch`      | pulse/loop | `intensity`: 0→0.8 | Glitch effect flickers on and off      |
+| `noise`       | transition | `amount`: 0→0.5    | Film grain gradually appears           |
+| `zoom`        | transition | `scale`: 1.0→1.5   | Ken Burns zoom toward subject          |
+| `opacity`     | transition | `value`: 0→1       | Fade-in effect                         |
+| `color_grade` | transition | `saturation`: 0→60 | Colors gradually become vivid          |
+| `bokeh`       | transition | `strength`: 0→30   | Background gradually blurs with bokeh  |
+| `halftone`    | transition | `dot_size`: 30→6   | Large dots shrink to detailed halftone |
+| `duotone`     | transition | `intensity`: 0→1   | Photo morphs into two-color palette    |
+| `invert`      | pulse      | `intensity`: 0→1   | Colors flash inverted and back         |
+| `posterize`   | transition | `levels`: 32→4     | Gradually reduces color levels         |
+| `edge_detect` | transition | `intensity`: 0→1   | Photo fades to line art                |
+| `emboss`      | transition | `intensity`: 0→1   | 3D relief effect fades in              |
+| `motion_blur` | transition | `strength`: 0→30   | Motion blur streaks appear             |
+| `glass`       | transition | `strength`: 0→15   | Frosted glass effect fades in          |
+| `feather`     | transition | `radius`: 0→20     | Mask edges progressively soften        |
+| `pixelate`    | transition | `block_size`: 5→50 | Mosaic blocks get larger               |
+| `vignette`    | transition | `strength`: 0→0.8  | Edges gradually darken                 |
+| `shadow`      | transition | `opacity`: 0→200   | Drop shadow fades in                   |
+
+---
+
+#### Example — Cinematic Subject Reveal
+
+```json
+{
+  "job_id": "anim-001",
+  "input_image_url": "https://storage.example.com/portrait.jpg",
+  "text_prompt": "person",
+  "duration_seconds": 4,
+  "fps": 30,
+  "operations": [
+    {
+      "type": "spotlight",
+      "darkness": 0.8,
+      "animation": {
+        "mode": "transition",
+        "start": { "darkness": 0 },
+        "end": { "darkness": 0.8 },
+        "easing": "ease_in",
+        "duration": 1.5
+      }
+    },
+    {
+      "type": "outline",
+      "color": [0, 255, 255, 255],
+      "thickness": 3,
+      "animation": {
+        "mode": "draw",
+        "easing": "ease_in_out",
+        "delay": 1.0,
+        "duration": 2.0
+      }
+    },
+    {
+      "type": "glow",
+      "color": [0, 200, 255],
+      "radius": 20,
+      "animation": {
+        "mode": "pulse",
+        "start": { "intensity": 0 },
+        "end": { "intensity": 0.8 },
+        "easing": "ease_in_out",
+        "cycles": 3,
+        "delay": 1.5
+      }
+    },
+    {
+      "type": "zoom",
+      "target": "mask",
+      "animation": {
+        "mode": "transition",
+        "start": { "scale": 1.0 },
+        "end": { "scale": 1.3 },
+        "easing": "ease_out",
+        "delay": 0.5
+      }
+    }
+  ],
+  "save_url": "https://storage.example.com/reveal.mp4"
+}
+```
+
+**Result:** A 4-second video where the background gradually darkens, the camera zooms toward the person, a cyan outline traces itself around them, and a pulsing glow pulses around the edges.
+
+---
+
+#### Example — Photo to Pencil Drawing
+
+```json
+{
+  "job_id": "anim-002",
+  "input_image_url": "https://storage.example.com/landscape.jpg",
+  "text_prompt": "all objects",
+  "duration_seconds": 3,
+  "operations": [
+    {
+      "type": "sketch",
+      "detail": 6,
+      "animation": {
+        "mode": "transition",
+        "start": { "intensity": 0 },
+        "end": { "intensity": 1.0 },
+        "easing": "ease_in_out"
+      }
+    }
+  ],
+  "save_url": "https://storage.example.com/sketch.mp4"
+}
+```
+
+---
+
+#### Example — Glitch Flicker Effect
+
+```json
+{
+  "job_id": "anim-004",
+  "input_image_url": "https://storage.example.com/cyberpunk.jpg",
+  "text_prompt": "neon sign",
+  "duration_seconds": 3,
+  "operations": [
+    {
+      "type": "glitch",
+      "rgb_shift": 15,
+      "seed": 42,
+      "animation": {
+        "mode": "pulse",
+        "start": { "intensity": 0 },
+        "end": { "intensity": 0.8 },
+        "easing": "ease_out_elastic",
+        "cycles": 5
+      }
+    },
+    {
+      "type": "glow",
+      "color": [255, 50, 255],
+      "radius": 15,
+      "animation": {
+        "mode": "loop",
+        "start": { "intensity": 0.2 },
+        "end": { "intensity": 0.9 },
+        "easing": "ease_in_out",
+        "cycles": 4
+      }
+    }
+  ],
+  "save_url": "https://storage.example.com/glitch.mp4"
+}
+```
+
+---
+
+#### Video Temporal Animation
+
+Operations on `POST /api/v1/segment/video` now also support `animation` configs. When present, effect parameters interpolate across the video's native frame count rather than applying statically to every frame.
+
+**Example — Gradual blur on faces in video:**
+
+```json
+{
+  "job_id": "vseg-003",
+  "input_video_url": "https://storage.example.com/clip.mp4",
+  "text_prompt": "face",
+  "output_format": "video",
+  "operations": [
+    { "type": "select", "target": "mask" },
+    {
+      "type": "blur",
+      "strength": 40,
+      "animation": {
+        "mode": "transition",
+        "start": { "strength": 0 },
+        "end": { "strength": 40 },
+        "easing": "ease_in",
+        "duration": 2.0
+      }
+    }
+  ],
+  "save_url": "https://storage.example.com/blurred.mp4"
+}
+```
+
+**Animate Result Payload:**
+
+```json
+{
+  "save_url": "https://storage.example.com/reveal.mp4",
+  "generation_time": 8.5,
+  "metadata": {
+    "width": 1920,
+    "height": 1080,
+    "duration_seconds": 4.0,
+    "fps": 30,
+    "frame_count": 120,
+    "object_count": 1
+  }
 }
 ```
 
@@ -1277,6 +1987,44 @@ Retry downloading any failed models. **Requires authentication.**
 ---
 
 ## Changelog
+
+### v0.9.0
+
+- **SAM 3.1 Upgrade**: Upgraded from SAM 3 to SAM 3.1 multiplex predictor for 2-7× faster multi-object tracking
+- **15 New Effects** (35 total): `grayscale`, `invert`, `sharpen`, `sepia`, `posterize`, `edge_detect`, `emboss`, `noise`, `sketch`, `duotone`, `halftone`, `glitch`, `motion_blur`, `glass`, `feather`
+- **Animation Engine**: Universal animation system for all effects
+  - 10 easing functions: `linear`, `ease_in`, `ease_out`, `ease_in_out`, `ease_in_cubic`, `ease_out_cubic`, `ease_in_out_cubic`, `ease_out_back`, `ease_out_elastic`, `ease_out_bounce`
+  - 6 animation modes: `transition`, `draw`, `pulse`, `reveal`, `loop`, `stagger`
+  - Keyframe interpolation with configurable delay, duration, and cycles
+- **Image→Video Animation**: New `POST /api/v1/segment/animate` endpoint
+  - Generates MP4 from single image + animated segmentation effects
+  - Configurable `duration_seconds` (0.5-10s) and `fps` (8-60)
+  - Camera operations: `zoom` (Ken Burns) and `pan`
+- **Video Temporal Animation**: Video segmentation operations now support `animation` configs for parameter interpolation across frames
+- **Progressive Draw**: Outline operation supports `progress` parameter for contour-tracing animations
+
+### v0.8.1
+
+- **Composable Effects Pipeline**: 20 visual operations for SAM 3 segmentation output
+  - Image: `output_type: "image"` + `operations` → returns processed PNG
+  - Video: `output_format: "video"` + `operations` → returns processed MP4
+  - Operations: `blur`, `pixelate`, `redact`, `color_overlay`, `color_grade`, `opacity`, `replace_color`, `remove_background`, `replace_background`, `greenscreen`, `outline`, `bounding_box`, `spotlight`, `bokeh`, `glow`, `shadow`, `vignette`, `select`
+  - `select` operation targets: `mask` (objects), `background`, `all`
+  - Backward compatible: default `masks_json` unchanged
+- **SAM 3 Full Feature Coverage**:
+  - Labeled box prompts with positive/negative include/exclude
+  - Configurable `confidence_threshold` (0.0-1.0)
+  - Video: point prompts, box prompts, configurable `prompt_frame_index`
+  - Video: `propagation_direction`: forward/backward/both
+- **Dependency**: Added `opencv-python-headless` for video frame processing
+
+### v0.8.0
+
+- **Segmentation**: Added SAM 3 (Segment Anything Model 3) integration
+  - `POST /api/v1/segment/image` — text/box/point prompt image segmentation
+  - `POST /api/v1/segment/video` — text prompt video object tracking
+  - New `segmentation` VRAM mode (~4-10GB)
+  - Dynamic loading in `all` mode
 
 ### v0.7.0
 

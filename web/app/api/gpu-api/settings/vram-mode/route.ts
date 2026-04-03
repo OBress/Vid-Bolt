@@ -59,9 +59,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { mode } = body;
 
-    const validModes = ["image_generation", "image_editing", "video_generation", "audio_creation", "all"];
+    const validModes = ["image_generation", "image_editing", "video_generation", "audio_creation", "segmentation", "all"];
     if (!validModes.includes(mode)) {
-      return NextResponse.json({ error: "Invalid mode. Must be 'image_generation', 'image_editing', 'video_generation', 'audio_creation', or 'all'" }, { status: 400 });
+      return NextResponse.json({ error: "Invalid mode. Must be 'image_generation', 'image_editing', 'video_generation', 'audio_creation', 'segmentation', or 'all'" }, { status: 400 });
     }
 
     const result = await callGpuSetVramMode(mode as VramMode);

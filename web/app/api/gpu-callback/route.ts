@@ -7,10 +7,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { getRedisConnection } from "@/lib/queues/redis";
 import type { WebhookPayload } from "@/lib/services/gpu-api-service";
-import { getKeyFromUrl, getPublicUrl } from "@/lib/services/r2-storage";
 import { verifySignature } from "@/lib/utils/signature-verification";
 
 // Channel name for webhook result pub/sub
@@ -75,49 +73,13 @@ export async function POST(request: NextRequest) {
       console.error("[GPUCallback] Failed to publish to Redis:", redisError);
     }
 
-    // Update task status in Supabase (for UI polling to stop)
-    try {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-      
-        if (supabaseUrl && supabaseKey && payload.item_id) {
-        const supabase = createClient(supabaseUrl, supabaseKey);
-        const isSuccess = payload.status === 'completed';
-        
-        // FIX: Ensure we use the public URL (custom domain) not the internal R2 URL
-        // The GPU API returns the internal R2 URL (r2.cloudflarestorage.com)
-        // We need to convert this to our custom domain public URL
-        let finalUrl = payload.result?.save_url;
-        if (isSuccess && finalUrl) {
-          try {
-            const key = getKeyFromUrl(finalUrl);
-            finalUrl = getPublicUrl(key);
-          } catch (e) {
-            console.error("[GPUCallback] Failed to sanitize URL:", e);
-            // Fallback to original URL if parsing fails
-          }
-        }
-        
-        await supabase.from('tasks').update({
-          status: isSuccess ? 'completed' : 'failed',
-          current_step: isSuccess ? 'Complete' : 'Failed',
-          progress_percent: isSuccess ? 100 : 0,
-          output_data: {
-            success: isSuccess,
-            type: payload.generation_type,
-            imageUrl: finalUrl,
-            videoUrl: finalUrl,
-            generationTime: payload.result?.generation_time,
-            error: payload.error_message,
-          },
-        }).eq('id', payload.item_id);
-        
-        console.log(`[GPUCallback] Updated task ${payload.item_id} status to ${isSuccess ? 'completed' : 'failed'}`);
-      }
-    } catch (dbError) {
-      // Log but don't fail - Redis was still notified
-      console.error("[GPUCallback] Failed to update Supabase:", dbError);
-    }
+    // NOTE: Supabase task updates are intentionally NOT done here.
+    // Each worker (gpu-api-test, gpu-batch-generation, scene-harmonizer, etc.)
+    // handles its own DB write after receiving the webhook via Redis pub/sub.
+    // Previously, this callback also updated Supabase, creating a race condition
+    // where the frontend poll would read the callback's generic output_data
+    // (with only imageUrl/videoUrl) before the worker could write type-specific
+    // fields (e.g., segmentationDataUrl, audioUrl, objectCount, etc.).
 
     const duration = Date.now() - startTime;
     console.log(`[GPUCallback] Processed webhook in ${duration}ms`);

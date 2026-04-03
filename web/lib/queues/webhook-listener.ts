@@ -30,6 +30,7 @@ export interface WebhookResult {
   result?: { 
     save_url?: string; 
     generation_time?: number;
+    metadata?: Record<string, unknown>;
   };
   errorMessage?: string;
   errorCode?: string;

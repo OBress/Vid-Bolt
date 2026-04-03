@@ -92,6 +92,15 @@ export const gpuMusicCreateQueue = createQueue('gpu-music-create');
 /** GPU sound effect generation (AudioGen) */
 export const gpuSfxCreateQueue = createQueue('gpu-sfx-create');
 
+/** GPU image segmentation test (SAM 3) */
+export const gpuSegmentImageQueue = createQueue('gpu-segment-image');
+
+/** GPU video segmentation/tracking test (SAM 3) */
+export const gpuSegmentVideoQueue = createQueue('gpu-segment-video');
+
+/** GPU animated segmentation test (SAM 3.1) */
+export const gpuSegmentAnimateQueue = createQueue('gpu-segment-animate');
+
 // ============================================================================
 // QUEUE UTILITIES
 // ============================================================================
@@ -203,6 +212,9 @@ export const allQueues = [
   gpuLtx2InterpolateQueue,
   gpuMusicCreateQueue,
   gpuSfxCreateQueue,
+  gpuSegmentImageQueue,
+  gpuSegmentVideoQueue,
+  gpuSegmentAnimateQueue,
   gcpProvisioningQueue,
   videoSegmentationQueue,
   stockMediaQueue,

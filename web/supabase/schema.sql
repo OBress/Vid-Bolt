@@ -315,6 +315,61 @@ COMMENT ON FUNCTION "public"."admin_get_user_for_deletion"("target_user_id" "uui
 
 
 
+CREATE OR REPLACE FUNCTION "public"."admin_send_notification"("p_target_user_id" "uuid", "p_title" "text", "p_message" "text", "p_type" "text" DEFAULT 'info'::"text") RETURNS json
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+    v_caller_id   UUID;
+    v_is_admin    BOOLEAN;
+    v_inserted    INT := 0;
+BEGIN
+    -- Auth check
+    v_caller_id := auth.uid();
+    IF v_caller_id IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated';
+    END IF;
+
+    SELECT is_admin INTO v_is_admin
+    FROM public.users WHERE id = v_caller_id;
+
+    IF NOT COALESCE(v_is_admin, false) THEN
+        RAISE EXCEPTION 'Admin access required';
+    END IF;
+
+    -- Validate type
+    IF p_type NOT IN ('info', 'warning', 'success', 'update') THEN
+        RAISE EXCEPTION 'Invalid notification type: %', p_type;
+    END IF;
+
+    IF p_target_user_id IS NOT NULL THEN
+        -- Send to a specific user
+        INSERT INTO public.notifications (user_id, title, message, type, sent_by)
+        VALUES (p_target_user_id, p_title, p_message, p_type, v_caller_id);
+        v_inserted := 1;
+    ELSE
+        -- Broadcast: insert one row per active user (excluding caller)
+        INSERT INTO public.notifications (user_id, title, message, type, sent_by)
+        SELECT id, p_title, p_message, p_type, v_caller_id
+        FROM public.users
+        WHERE status = 'active'
+          AND id != v_caller_id;
+
+        GET DIAGNOSTICS v_inserted = ROW_COUNT;
+    END IF;
+
+    RETURN json_build_object(
+        'success',  true,
+        'sent_to',  v_inserted,
+        'broadcast', (p_target_user_id IS NULL)
+    );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."admin_send_notification"("p_target_user_id" "uuid", "p_title" "text", "p_message" "text", "p_type" "text") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."admin_unban_identity"("p_banned_id" "uuid") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -512,6 +567,20 @@ COMMENT ON FUNCTION "public"."check_banned_identity"("p_email" "text", "p_discor
 
 
 
+CREATE OR REPLACE FUNCTION "public"."clear_all_notifications"() RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+    DELETE FROM public.notifications
+    WHERE user_id = auth.uid();
+END;
+$$;
+
+
+ALTER FUNCTION "public"."clear_all_notifications"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") RETURNS integer
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
@@ -566,6 +635,107 @@ ALTER FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer
 
 COMMENT ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") IS 'Atomically credits GPU hours to a user after a Stripe purchase. Idempotent on stripe_session_id.';
 
+
+
+CREATE OR REPLACE FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text", "p_amount_cents" integer DEFAULT NULL::integer) RETURNS integer
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_new_balance INTEGER;
+  v_existing_txn UUID;
+BEGIN
+  -- Validate inputs
+  IF p_hours <= 0 THEN
+    RAISE EXCEPTION 'Hours must be positive, got %', p_hours;
+  END IF;
+
+  -- Idempotency check: skip if this stripe session already credited
+  IF p_stripe_session_id IS NOT NULL THEN
+    SELECT id INTO v_existing_txn
+    FROM gpu_hours_transactions
+    WHERE stripe_session_id = p_stripe_session_id
+      AND type = 'purchase'
+    LIMIT 1;
+
+    IF v_existing_txn IS NOT NULL THEN
+      -- Already processed, return current balance
+      SELECT gpu_hours_balance INTO v_new_balance
+      FROM users WHERE id = p_user_id;
+      RETURN v_new_balance;
+    END IF;
+  END IF;
+
+  -- Atomically update balance
+  UPDATE users
+  SET gpu_hours_balance = gpu_hours_balance + p_hours
+  WHERE id = p_user_id
+  RETURNING gpu_hours_balance INTO v_new_balance;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'User not found: %', p_user_id;
+  END IF;
+
+  -- Insert ledger entry with amount_cents
+  INSERT INTO gpu_hours_transactions (user_id, type, hours, balance_after, stripe_session_id, amount_cents, description)
+  VALUES (p_user_id, 'purchase', p_hours, v_new_balance, p_stripe_session_id,
+          COALESCE(p_amount_cents, p_hours * 100),
+          format('Purchased %s GPU hours via Stripe', p_hours));
+
+  RETURN v_new_balance;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text", "p_amount_cents" integer) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text", "p_amount_cents" integer) IS 'Atomically credits GPU hours to a user after a Stripe purchase. Stores actual dollar amount. Idempotent on stripe_session_id.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."decrement_active_gpu_productions"("p_user_id" "uuid") RETURNS TABLE("new_count" integer, "should_shutdown" boolean)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_new_count INTEGER;
+  v_shutdown_requested BOOLEAN;
+  v_status TEXT;
+BEGIN
+  -- Atomic decrement + read in a single UPDATE ... RETURNING
+  UPDATE public.user_gcp_config
+  SET active_gpu_productions = GREATEST(COALESCE(active_gpu_productions, 1) - 1, 0)
+  WHERE user_id = p_user_id
+  RETURNING
+    active_gpu_productions,
+    shutdown_after_production_requested,
+    status
+  INTO v_new_count, v_shutdown_requested, v_status;
+
+  -- If no row found, return safe defaults
+  IF NOT FOUND THEN
+    new_count := 0;
+    should_shutdown := FALSE;
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  new_count := v_new_count;
+  should_shutdown := (v_new_count = 0 AND v_shutdown_requested = TRUE AND v_status = 'RUNNING');
+
+  -- If shutting down, clear the flag atomically
+  IF should_shutdown THEN
+    UPDATE public.user_gcp_config
+    SET shutdown_after_production_requested = FALSE
+    WHERE user_id = p_user_id;
+  END IF;
+
+  RETURN NEXT;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."decrement_active_gpu_productions"("p_user_id" "uuid") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."deduct_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_video_id" "uuid" DEFAULT NULL::"uuid", "p_description" "text" DEFAULT 'Video render'::"text") RETURNS integer
@@ -651,6 +821,63 @@ $$;
 
 
 ALTER FUNCTION "public"."get_admin_analytics"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_admin_notification_history"("p_limit" integer DEFAULT 50) RETURNS TABLE("id" "uuid", "title" "text", "message" "text", "type" "text", "created_at" timestamp with time zone, "sent_by_name" "text", "recipient_name" "text", "recipient_email" "text", "is_broadcast" boolean)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+    v_caller_id UUID;
+    v_is_admin  BOOLEAN;
+BEGIN
+    v_caller_id := auth.uid();
+    SELECT u.is_admin INTO v_is_admin
+    FROM public.users u WHERE u.id = v_caller_id;
+
+    IF NOT COALESCE(v_is_admin, false) THEN
+        RAISE EXCEPTION 'Admin access required';
+    END IF;
+
+    RETURN QUERY
+    SELECT DISTINCT ON (sub.id)
+        sub.id,
+        sub.title,
+        sub.message,
+        sub.type,
+        sub.created_at,
+        sub.sent_by_name,
+        sub.recipient_name,
+        sub.recipient_email,
+        sub.is_broadcast
+    FROM (
+        SELECT
+            n.id,
+            n.title,
+            n.message,
+            n.type,
+            n.created_at,
+            sender.name   AS sent_by_name,
+            recip.name    AS recipient_name,
+            recip.email   AS recipient_email,
+            -- A broadcast is identified by multiple rows sharing the same
+            -- (title, message, type, sent_by, created_at) tuple.
+            (COUNT(*) OVER (
+                PARTITION BY n.title, n.message, n.type, n.sent_by,
+                             date_trunc('second', n.created_at)
+            ) > 1) AS is_broadcast
+        FROM public.notifications n
+        LEFT JOIN public.users sender ON sender.id = n.sent_by
+        LEFT JOIN public.users recip  ON recip.id  = n.user_id
+        ORDER BY n.created_at DESC
+    ) sub
+    ORDER BY sub.id, sub.created_at DESC
+    LIMIT p_limit;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_admin_notification_history"("p_limit" integer) OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."get_banned_identities"("page" integer DEFAULT 1, "per_page" integer DEFAULT 20) RETURNS TABLE("id" "uuid", "email" "text", "discord_id" "text", "banned_by_name" "text", "reason" "text", "created_at" timestamp with time zone, "total_count" bigint)
@@ -783,6 +1010,32 @@ $$;
 
 
 ALTER FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_user_notifications"("p_limit" integer DEFAULT 50) RETURNS TABLE("id" "uuid", "title" "text", "message" "text", "type" "text", "is_read" boolean, "created_at" timestamp with time zone, "sent_by_name" "text")
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        n.id,
+        n.title,
+        n.message,
+        n.type,
+        n.is_read,
+        n.created_at,
+        u.name AS sent_by_name
+    FROM public.notifications n
+    LEFT JOIN public.users u ON u.id = n.sent_by
+    WHERE n.user_id = auth.uid()
+    ORDER BY n.created_at DESC
+    LIMIT p_limit;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_user_notifications"("p_limit" integer) OWNER TO "postgres";
 
 SET default_tablespace = '';
 
@@ -936,6 +1189,49 @@ $$;
 ALTER FUNCTION "public"."handle_updated_at"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."increment_active_gpu_productions"("p_user_id" "uuid") RETURNS "void"
+    LANGUAGE "sql" SECURITY DEFINER
+    AS $$
+  UPDATE public.user_gcp_config
+  SET active_gpu_productions = COALESCE(active_gpu_productions, 0) + 1
+  WHERE user_id = p_user_id;
+$$;
+
+
+ALTER FUNCTION "public"."increment_active_gpu_productions"("p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."jsonb_deep_merge"("base_val" "jsonb", "updates_val" "jsonb") RETURNS "jsonb"
+    LANGUAGE "plpgsql" IMMUTABLE
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  result jsonb := base_val;
+  key text;
+  bv jsonb;
+  uv jsonb;
+BEGIN
+  FOR key IN SELECT jsonb_object_keys(updates_val)
+  LOOP
+    uv := updates_val -> key;
+    bv := result -> key;
+    IF bv IS NOT NULL
+       AND jsonb_typeof(bv) = 'object'
+       AND jsonb_typeof(uv) = 'object'
+    THEN
+      result := jsonb_set(result, ARRAY[key], public.jsonb_deep_merge(bv, uv));
+    ELSE
+      result := jsonb_set(result, ARRAY[key], uv);
+    END IF;
+  END LOOP;
+  RETURN result;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."jsonb_deep_merge"("base_val" "jsonb", "updates_val" "jsonb") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -958,6 +1254,38 @@ $$;
 
 
 ALTER FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."mark_all_notifications_read"() RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+    UPDATE public.notifications
+    SET is_read = true
+    WHERE user_id = auth.uid()
+      AND is_read = false;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."mark_all_notifications_read"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."mark_notification_read"("p_notification_id" "uuid") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+BEGIN
+    UPDATE public.notifications
+    SET is_read = true
+    WHERE id = p_notification_id
+      AND user_id = auth.uid();
+END;
+$$;
+
+
+ALTER FUNCTION "public"."mark_notification_read"("p_notification_id" "uuid") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."match_stock_media"("query_embedding" "extensions"."vector", "match_threshold" double precision, "match_count" integer) RETURNS TABLE("id" "uuid", "r2_key" "text", "metadata" "jsonb", "similarity" double precision)
@@ -1035,11 +1363,10 @@ CREATE OR REPLACE FUNCTION "public"."merge_video_metadata"("p_video_id" "uuid", 
     AS $$
 BEGIN
   UPDATE public.video_projects
-  SET 
-    metadata = COALESCE(metadata, '{}'::jsonb) || p_updates,
+  SET
+    metadata = public.jsonb_deep_merge(COALESCE(metadata, '{}'::jsonb), p_updates),
     updated_at = now()
   WHERE id = p_video_id;
-  
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Video project not found: %', p_video_id;
   END IF;
@@ -1323,6 +1650,18 @@ ALTER FUNCTION "public"."protect_video_projects_sensitive_columns"() OWNER TO "p
 
 COMMENT ON FUNCTION "public"."protect_video_projects_sensitive_columns"() IS 'Blocks non-service-role callers from modifying pipeline-managed video project columns. Users can only modify: name, idea, notes.';
 
+
+
+CREATE OR REPLACE FUNCTION "public"."reset_active_gpu_productions"("p_user_id" "uuid", "p_count" integer DEFAULT 0) RETURNS "void"
+    LANGUAGE "sql" SECURITY DEFINER
+    AS $$
+  UPDATE public.user_gcp_config
+  SET active_gpu_productions = p_count
+  WHERE user_id = p_user_id;
+$$;
+
+
+ALTER FUNCTION "public"."reset_active_gpu_productions"("p_user_id" "uuid", "p_count" integer) OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_month_date" "text") RETURNS "void"
@@ -1618,11 +1957,16 @@ CREATE TABLE IF NOT EXISTS "public"."gpu_hours_transactions" (
     "video_id" "uuid",
     "description" "text",
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "amount_cents" integer,
     CONSTRAINT "gpu_hours_transactions_type_check" CHECK (("type" = ANY (ARRAY['purchase'::"text", 'deduction'::"text", 'refund'::"text", 'admin_adjustment'::"text"])))
 );
 
 
 ALTER TABLE "public"."gpu_hours_transactions" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."gpu_hours_transactions"."amount_cents" IS 'Actual payment amount in cents from Stripe session.amount_total. NULL for non-purchase entries.';
+
 
 
 CREATE TABLE IF NOT EXISTS "public"."media_projects" (
@@ -1687,6 +2031,22 @@ CREATE TABLE IF NOT EXISTS "public"."niche_network_edges" (
 
 
 ALTER TABLE "public"."niche_network_edges" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."notifications" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "title" "text" NOT NULL,
+    "message" "text" NOT NULL,
+    "type" "text" DEFAULT 'info'::"text" NOT NULL,
+    "is_read" boolean DEFAULT false NOT NULL,
+    "sent_by" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "notifications_type_check" CHECK (("type" = ANY (ARRAY['info'::"text", 'warning'::"text", 'success'::"text", 'update'::"text"])))
+);
+
+
+ALTER TABLE "public"."notifications" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."pending_gpu_jobs" (
@@ -1903,7 +2263,7 @@ CREATE TABLE IF NOT EXISTS "public"."tasks" (
     "chapters" "jsonb" DEFAULT '[]'::"jsonb",
     "final_script" "text",
     "steps" "jsonb" DEFAULT '[]'::"jsonb",
-    CONSTRAINT "tasks_current_phase_check" CHECK ((("current_phase" IS NULL) OR ("current_phase" = ANY (ARRAY['preprocessing'::"text", 'writing'::"text", 'postprocessing'::"text", 'audio_generation'::"text", 'audio_processing'::"text", 'image_generation'::"text", 'image_editing'::"text", 'video_generation'::"text", 'compositing'::"text", 'encoding'::"text", 'uploading'::"text", 'research'::"text", 'scoping'::"text", 'spine'::"text", 'assets'::"text", 'expansion'::"text", 'assembly'::"text"])))),
+    CONSTRAINT "tasks_current_phase_check" CHECK ((("current_phase" IS NULL) OR ("current_phase" = ANY (ARRAY['preprocessing'::"text", 'writing'::"text", 'postprocessing'::"text", 'audio_generation'::"text", 'audio_processing'::"text", 'image_generation'::"text", 'image_editing'::"text", 'video_generation'::"text", 'compositing'::"text", 'encoding'::"text", 'uploading'::"text", 'research'::"text", 'scoping'::"text", 'spine'::"text", 'assets'::"text", 'expansion'::"text", 'assembly'::"text", 'segmentation'::"text"])))),
     CONSTRAINT "tasks_progress_percent_check" CHECK ((("progress_percent" >= 0) AND ("progress_percent" <= 100))),
     CONSTRAINT "tasks_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'running'::"text", 'completed'::"text", 'failed'::"text", 'cancelled'::"text"]))),
     CONSTRAINT "tasks_type_check" CHECK (("type" = ANY (ARRAY['writing'::"text", 'writing_workflow'::"text", 'audio'::"text", 'video'::"text", 'export'::"text", 'outline'::"text", 'script_writing'::"text", 'av_script_part1'::"text", 'av_script_part2'::"text", 'edit_assembly'::"text", 'closed_loop'::"text", 'niche_discovery'::"text"])))
@@ -1997,6 +2357,8 @@ CREATE TABLE IF NOT EXISTS "public"."user_gcp_config" (
     "youtube_access_token" "text",
     "youtube_token_expires_at" timestamp with time zone,
     "youtube_oauth_verified" boolean DEFAULT false,
+    "active_gpu_productions" integer DEFAULT 0,
+    "shutdown_after_production_requested" boolean DEFAULT false,
     CONSTRAINT "gpu_auto_shutdown_minutes_range" CHECK ((("gpu_auto_shutdown_minutes" >= 10) AND ("gpu_auto_shutdown_minutes" <= 600)))
 );
 
@@ -2033,6 +2395,14 @@ COMMENT ON COLUMN "public"."user_gcp_config"."youtube_refresh_token" IS 'YouTube
 
 
 COMMENT ON COLUMN "public"."user_gcp_config"."youtube_oauth_verified" IS 'Whether the user has verified their OAuth setup';
+
+
+
+COMMENT ON COLUMN "public"."user_gcp_config"."active_gpu_productions" IS 'Reference counter of active GPU productions for this user. Shutdown only fires when this reaches 0.';
+
+
+
+COMMENT ON COLUMN "public"."user_gcp_config"."shutdown_after_production_requested" IS 'Whether the user has requested GPU auto-shutdown after all active productions complete.';
 
 
 
@@ -2100,6 +2470,7 @@ CREATE TABLE IF NOT EXISTS "public"."video_editor_media" (
     "thumbnail" "text",
     "width" integer,
     "height" integer,
+    "created_at" timestamp with time zone DEFAULT "now"(),
     "audio_normalization_status" "text" DEFAULT 'pending'::"text",
     "has_embedded_audio" boolean,
     "normalized_audio_url" "text",
@@ -2108,7 +2479,6 @@ CREATE TABLE IF NOT EXISTS "public"."video_editor_media" (
     "true_peak_dbtp" double precision,
     "audio_normalization_error" "text",
     "audio_normalized_at" timestamp with time zone,
-    "created_at" timestamp with time zone DEFAULT "now"(),
     CONSTRAINT "video_editor_media_audio_normalization_status_check" CHECK (("audio_normalization_status" = ANY (ARRAY['pending'::"text", 'processing'::"text", 'completed'::"text", 'failed'::"text", 'not_applicable'::"text"]))),
     CONSTRAINT "video_editor_media_type_check" CHECK (("type" = ANY (ARRAY['video'::"text", 'image'::"text", 'audio'::"text"])))
 );
@@ -2395,6 +2765,11 @@ ALTER TABLE ONLY "public"."niche_network_edges"
 
 
 
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."pending_gpu_jobs"
     ADD CONSTRAINT "pending_gpu_jobs_pkey" PRIMARY KEY ("id");
 
@@ -2613,6 +2988,14 @@ CREATE INDEX "idx_niche_network_similarity" ON "public"."niche_network_channels"
 
 
 CREATE INDEX "idx_niche_network_user" ON "public"."niche_network_channels" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_notifications_user_id" ON "public"."notifications" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_notifications_user_unread" ON "public"."notifications" USING "btree" ("user_id", "is_read") WHERE ("is_read" = false);
 
 
 
@@ -2927,6 +3310,16 @@ ALTER TABLE ONLY "public"."niche_network_edges"
 
 
 
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_sent_by_fkey" FOREIGN KEY ("sent_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."pending_gpu_jobs"
     ADD CONSTRAINT "pending_gpu_jobs_task_id_fkey" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE SET NULL;
 
@@ -3154,6 +3547,10 @@ CREATE POLICY "System manage video analytics" ON "public"."youtube_video_analyti
 
 
 
+CREATE POLICY "Users can delete own notifications" ON "public"."notifications" FOR DELETE USING (("auth"."uid"() = "user_id"));
+
+
+
 CREATE POLICY "Users can delete own project entities" ON "public"."project_entities" FOR DELETE USING ((EXISTS ( SELECT 1
    FROM "public"."video_projects" "vp"
   WHERE (("vp"."id" = "project_entities"."project_id") AND ("vp"."user_id" = "auth"."uid"())))));
@@ -3252,6 +3649,10 @@ CREATE POLICY "Users can update own keys" ON "public"."user_api_keys" FOR UPDATE
 
 
 
+CREATE POLICY "Users can update own notifications" ON "public"."notifications" FOR UPDATE USING (("auth"."uid"() = "user_id"));
+
+
+
 CREATE POLICY "Users can update own profile" ON "public"."users" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "id"));
 
 
@@ -3281,6 +3682,10 @@ CREATE POLICY "Users can update their own video projects" ON "public"."video_pro
 
 
 CREATE POLICY "Users can view own keys" ON "public"."user_api_keys" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users can view own notifications" ON "public"."notifications" FOR SELECT USING (("auth"."uid"() = "user_id"));
 
 
 
@@ -3428,6 +3833,9 @@ ALTER TABLE "public"."niche_network_channels" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."niche_network_edges" ENABLE ROW LEVEL SECURITY;
 
 
+ALTER TABLE "public"."notifications" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."pending_gpu_jobs" ENABLE ROW LEVEL SECURITY;
 
 
@@ -3494,6 +3902,10 @@ ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
 
 
 
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."notifications";
 
 
 
@@ -4025,6 +4437,12 @@ GRANT ALL ON FUNCTION "public"."admin_get_user_for_deletion"("target_user_id" "u
 
 
 
+GRANT ALL ON FUNCTION "public"."admin_send_notification"("p_target_user_id" "uuid", "p_title" "text", "p_message" "text", "p_type" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."admin_send_notification"("p_target_user_id" "uuid", "p_title" "text", "p_message" "text", "p_type" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."admin_send_notification"("p_target_user_id" "uuid", "p_title" "text", "p_message" "text", "p_type" "text") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."admin_unban_identity"("p_banned_id" "uuid") TO "anon";
 GRANT ALL ON FUNCTION "public"."admin_unban_identity"("p_banned_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."admin_unban_identity"("p_banned_id" "uuid") TO "service_role";
@@ -4061,9 +4479,27 @@ GRANT ALL ON FUNCTION "public"."check_banned_identity"("p_email" "text", "p_disc
 
 
 
+GRANT ALL ON FUNCTION "public"."clear_all_notifications"() TO "anon";
+GRANT ALL ON FUNCTION "public"."clear_all_notifications"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."clear_all_notifications"() TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") TO "anon";
 GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text", "p_amount_cents" integer) TO "anon";
+GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text", "p_amount_cents" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" integer, "p_stripe_session_id" "text", "p_amount_cents" integer) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."decrement_active_gpu_productions"("p_user_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."decrement_active_gpu_productions"("p_user_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."decrement_active_gpu_productions"("p_user_id" "uuid") TO "service_role";
 
 
 
@@ -4076,6 +4512,12 @@ GRANT ALL ON FUNCTION "public"."deduct_gpu_hours"("p_user_id" "uuid", "p_hours" 
 GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "anon";
 GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_admin_analytics"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_admin_notification_history"("p_limit" integer) TO "anon";
+GRANT ALL ON FUNCTION "public"."get_admin_notification_history"("p_limit" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_admin_notification_history"("p_limit" integer) TO "service_role";
 
 
 
@@ -4106,6 +4548,12 @@ GRANT ALL ON FUNCTION "public"."get_stock_media_by_entity"("p_video_id" "uuid", 
 GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "anon";
 GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."get_task_step_stats"("p_task_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_user_notifications"("p_limit" integer) TO "anon";
+GRANT ALL ON FUNCTION "public"."get_user_notifications"("p_limit" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_user_notifications"("p_limit" integer) TO "service_role";
 
 
 
@@ -4145,9 +4593,33 @@ GRANT ALL ON FUNCTION "public"."handle_updated_at"() TO "service_role";
 
 
 
+GRANT ALL ON FUNCTION "public"."increment_active_gpu_productions"("p_user_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."increment_active_gpu_productions"("p_user_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."increment_active_gpu_productions"("p_user_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."jsonb_deep_merge"("base_val" "jsonb", "updates_val" "jsonb") TO "anon";
+GRANT ALL ON FUNCTION "public"."jsonb_deep_merge"("base_val" "jsonb", "updates_val" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."jsonb_deep_merge"("base_val" "jsonb", "updates_val" "jsonb") TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") TO "anon";
 GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."link_task_to_video"("p_video_id" "uuid", "p_task_id" "uuid", "p_task_type" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."mark_all_notifications_read"() TO "anon";
+GRANT ALL ON FUNCTION "public"."mark_all_notifications_read"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."mark_all_notifications_read"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."mark_notification_read"("p_notification_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."mark_notification_read"("p_notification_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."mark_notification_read"("p_notification_id" "uuid") TO "service_role";
 
 
 
@@ -4196,6 +4668,12 @@ GRANT ALL ON FUNCTION "public"."protect_users_sensitive_columns"() TO "service_r
 GRANT ALL ON FUNCTION "public"."protect_video_projects_sensitive_columns"() TO "anon";
 GRANT ALL ON FUNCTION "public"."protect_video_projects_sensitive_columns"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."protect_video_projects_sensitive_columns"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."reset_active_gpu_productions"("p_user_id" "uuid", "p_count" integer) TO "anon";
+GRANT ALL ON FUNCTION "public"."reset_active_gpu_productions"("p_user_id" "uuid", "p_count" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."reset_active_gpu_productions"("p_user_id" "uuid", "p_count" integer) TO "service_role";
 
 
 
@@ -4325,6 +4803,12 @@ GRANT ALL ON TABLE "public"."niche_network_channels" TO "service_role";
 GRANT ALL ON TABLE "public"."niche_network_edges" TO "anon";
 GRANT ALL ON TABLE "public"."niche_network_edges" TO "authenticated";
 GRANT ALL ON TABLE "public"."niche_network_edges" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."notifications" TO "anon";
+GRANT ALL ON TABLE "public"."notifications" TO "authenticated";
+GRANT ALL ON TABLE "public"."notifications" TO "service_role";
 
 
 
