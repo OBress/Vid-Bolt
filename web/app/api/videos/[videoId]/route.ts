@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import type { UpdateVideoInput } from "@/types/video";
+import type { ProductionTaskSummary, UpdateVideoInput } from "@/types/video";
 
 // Helper to get authenticated user
 async function getAuthenticatedUser() {
@@ -171,6 +171,45 @@ export async function GET(
       // Non-fatal - continue without linked task info
     }
 
+    let latestProductionTask: ProductionTaskSummary | null = null;
+    const productionTaskSelect =
+      "id, type, status, name, current_step, current_phase, progress_percent, error_message, started_at, completed_at, updated_at";
+
+    try {
+      if (video.video_task_id) {
+        const { data: linkedProductionTask } = await supabase
+          .from("tasks")
+          .select(productionTaskSelect)
+          .eq("id", video.video_task_id)
+          .eq("type", "closed_loop")
+          .maybeSingle();
+
+        latestProductionTask = (linkedProductionTask as ProductionTaskSummary | null) ?? null;
+      }
+
+      if (!latestProductionTask) {
+        const { data: fallbackProductionTask } = await supabase
+          .from("tasks")
+          .select(productionTaskSelect)
+          .eq("type", "closed_loop")
+          .filter("input_data->>videoId", "eq", videoId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        latestProductionTask = (fallbackProductionTask as ProductionTaskSummary | null) ?? null;
+      }
+
+      if (
+        latestProductionTask
+        && !linkedTasks.some((task) => task.id === latestProductionTask?.id)
+      ) {
+        linkedTasks.push(latestProductionTask as unknown as Record<string, unknown>);
+      }
+    } catch (err) {
+      console.error("[API] Failed to fetch latest production task:", err);
+    }
+
     // Sanitize generatedMedia URLs: convert presigned PUT URLs to public URLs
     // This fixes existing data where media_url was stored as a presigned upload URL
     const metadata = video.metadata as any;
@@ -217,7 +256,7 @@ export async function GET(
       }
     }
 
-    return NextResponse.json({ video, audioChunks, activeTasks, linkedTasks });
+    return NextResponse.json({ video, audioChunks, activeTasks, linkedTasks, latestProductionTask });
   } catch (error) {
     console.error("Failed to get video:", error);
     return NextResponse.json(

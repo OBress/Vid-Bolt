@@ -395,6 +395,7 @@ GPU VM (self-contained loop, all in-memory):
 **Responsibilities:**
 
 - Analyzes script mood/tone via Gemini 3 Flash to craft ACE-Step-optimized prompts
+- Keeps background music instrumental-only and nearly invisible in the mix: no lyrics, no hooks, no featured melody, just a subtle ambient bed that fills silence without calling attention to itself
 - Generates 2–3 music variants for Orchestrator selection
 - Produces audio mixing metadata (ducking rules, crossfade timings, volume envelopes)
 - **Multi-segment generation:** For videos longer than 90 seconds, generates music in overlapping 90–120 second segments with consistent seed/prompt parameters. Uses audio crossfading to join segments seamlessly. ACE-Step quality is most consistent at 90–120 second durations; longer single generations may produce inconsistent sections.
@@ -1458,3 +1459,13 @@ Each template defines typed `GraphNode[]` with dependencies, skip conditions, an
 3. **Meta-review:** "Was Step 2's verdict correct? Any overlooked aspects?"
 
 Graphs with critical structural issues are rejected immediately. LLM review can be skipped for preset templates (they're pre-validated).
+
+## 18. Reliability Guardrails
+
+Two implementation rules are required for the closed-loop pipeline:
+
+1. GPU API compliance:
+All local GPU image, image-edit, and video calls must follow the checked-in [`GPU-API.md`](../GPU-API.md) contract. That means `/api/v1/*`, `X-API-Key`, the documented request field names such as `input_image_url` and `prompt`, and presigned `PUT` upload targets for every `save_url`.
+
+2. Orchestrator-owned task lifecycle:
+When the closed-loop orchestrator dispatches child jobs, those child workers may report intermediate progress but must never mark the parent production task as completed, failed, or cancelled. Only the orchestrator may write the parent task's terminal status, final error details, `completed_at`, or the final editor handoff stage change.

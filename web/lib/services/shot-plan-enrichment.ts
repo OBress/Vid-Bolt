@@ -1,4 +1,10 @@
-import type { GCMEntity, PlannedShot } from '@/lib/types/closed-loop';
+import type {
+  AssemblyContract,
+  ContinuityAnchor,
+  GCMEntity,
+  PlannedShot,
+  SequencePlanScene,
+} from '@/lib/types/closed-loop';
 
 export interface PlannerDiagnosticsSummary {
   fallback_scene_count?: number;
@@ -12,6 +18,11 @@ export interface PlannerDiagnosticsSummary {
 export interface EnrichShotPlanResult {
   shots: PlannedShot[];
   diagnostics: PlannerDiagnosticsSummary;
+  sequencePlan: SequencePlanScene[];
+  continuityAnchors: ContinuityAnchor[];
+  transitionPalette: string[];
+  plannerScores: Record<string, number>;
+  assemblyContract: AssemblyContract;
 }
 
 const ENTITY_TOKEN_STOP_WORDS = new Set([
@@ -313,6 +324,99 @@ function assignBreakdownSequences(shots: PlannedShot[]): {
   };
 }
 
+function buildSequencePlan(shots: PlannedShot[]): SequencePlanScene[] {
+  const results: SequencePlanScene[] = [];
+  let cursor = 0;
+
+  while (cursor < shots.length) {
+    const sceneId = shots[cursor].scene_id;
+    const start = cursor;
+    let end = cursor + 1;
+    while (end < shots.length && shots[end].scene_id === sceneId) {
+      end++;
+    }
+
+    const sceneShots = shots.slice(start, end);
+    const firstShot = sceneShots[0];
+    const lastShot = sceneShots[sceneShots.length - 1];
+    const anchorSubjects = unique(
+      sceneShots.flatMap(shot => [shot.subject_focus, shot.bridge_subject].filter(Boolean) as string[])
+    );
+
+    results.push({
+      scene_id: sceneId || `scene-${results.length + 1}`,
+      description: firstShot.summary || firstShot.visual_description || firstShot.text,
+      narrative_purpose: firstShot.narrative_beat || firstShot.content_type,
+      pacing_intent: firstShot.trim_priority,
+      opening_intent: firstShot.entry_transition_intent,
+      closing_intent: lastShot.exit_transition_intent,
+      anchor_cluster_id: firstShot.scene_cluster_id,
+      anchor_subjects: anchorSubjects,
+      motif: firstShot.visual_motif,
+      transition_to_next: lastShot.exit_transition_intent,
+    });
+
+    cursor = end;
+  }
+
+  return results;
+}
+
+function buildContinuityAnchors(shots: PlannedShot[]): ContinuityAnchor[] {
+  const anchors = new Map<string, ContinuityAnchor>();
+
+  for (const shot of shots) {
+    if (!shot.scene_cluster_id || anchors.has(shot.scene_cluster_id)) continue;
+    anchors.set(shot.scene_cluster_id, {
+      scene_cluster_id: shot.scene_cluster_id,
+      anchor_shot_index: shot.segment_index,
+      continuity_level: shot.continuity_level || 'soft',
+      render_strategy: shot.render_strategy,
+      anchor_visual: shot.visual_description || shot.summary || shot.text,
+      anchor_subjects: unique([shot.subject_focus, shot.bridge_subject].filter(Boolean) as string[]),
+    });
+  }
+
+  return [...anchors.values()];
+}
+
+function buildTransitionPalette(shots: PlannedShot[]): string[] {
+  return unique(
+    shots.flatMap(shot => [shot.entry_transition_intent, shot.exit_transition_intent])
+      .filter((value): value is string => !!value)
+      .map(value => value.trim())
+      .filter(value => value.length > 0)
+  ).slice(0, 12);
+}
+
+function buildPlannerScores(
+  shots: PlannedShot[],
+  diagnostics: PlannerDiagnosticsSummary,
+): Record<string, number> {
+  const continuityHeavyShots = shots.filter(
+    shot => shot.continuity_level === 'strict' || shot.continuity_from_previous
+  ).length;
+  const segmentationShots = shots.filter(shot => !!shot.segmentation_treatment).length;
+  const directedShots = shots.filter(
+    shot => !!shot.shot_role && !!shot.framing && !!shot.camera_motion
+  ).length;
+
+  return {
+    continuity_coverage: shots.length > 0 ? continuityHeavyShots / shots.length : 0,
+    segmentation_selectivity: shots.length > 0 ? segmentationShots / shots.length : 0,
+    directing_completeness: shots.length > 0 ? directedShots / shots.length : 0,
+    fallback_ratio: shots.length > 0 ? (diagnostics.fallback_scene_count || 0) / shots.length : 0,
+  };
+}
+
+function continuityLinkedTrimBias(shots: PlannedShot[]): AssemblyContract['trim_bias'] {
+  const holdCount = shots.filter(shot => shot.trim_priority === 'hold').length;
+  const tightCount = shots.filter(shot => shot.trim_priority === 'tight').length;
+  if (holdCount > tightCount) return 'hold';
+  if (tightCount > holdCount) return 'tight';
+  return 'balanced';
+}
+
 export function enrichShotPlan(
   shots: PlannedShot[],
   entities: GCMEntity[],
@@ -342,6 +446,22 @@ export function enrichShotPlan(
       breakdown_sequence_count: sequenceCount,
       linked_entity_count: linkedEntityCount,
       linked_shot_count: linkedShotCount,
+    },
+    sequencePlan: buildSequencePlan(breakdownShots),
+    continuityAnchors: buildContinuityAnchors(breakdownShots),
+    transitionPalette: buildTransitionPalette(breakdownShots),
+    plannerScores: buildPlannerScores(breakdownShots, {
+      fallback_scene_count: options?.fallbackSceneCount || 0,
+      fallback_scene_ids: options?.fallbackSceneIds || [],
+      scene_cluster_count: sceneClusterCount,
+      breakdown_sequence_count: sequenceCount,
+      linked_entity_count: linkedEntityCount,
+      linked_shot_count: linkedShotCount,
+    }),
+    assemblyContract: {
+      preferred_transition_palette: buildTransitionPalette(breakdownShots),
+      maintain_scene_runs: true,
+      trim_bias: continuityLinkedTrimBias(breakdownShots),
     },
   };
 }

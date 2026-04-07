@@ -77,6 +77,8 @@ export interface EDLAudioEffect {
   volume?: number;
 }
 
+export type AssemblyPlacement = 'base_only' | 'overlay_on_base' | 'standalone_graphic';
+
 export interface MediaIssueEDL {
   shotIndex: number;
   severity: 'error' | 'warning';
@@ -215,25 +217,27 @@ Create tracks based on content needs:
 - Always create an "sfx" track (type: audio, name: "Sound Effects", group: audio, order: 1) for sound effects
 - Place image and video clips on the "main-video" track
 - For STANDALONE motion-graphics shots (no base media), place on "main-video"
-- For HYBRID shots (base media + motion-graphics overlay), place the base clip on "main-video" AND a separate motion-graphics clip on "overlays" at the SAME startTime and duration
+- For HYBRID shots explicitly marked as placement=overlay_on_base, place the base clip on "main-video" AND a separate motion-graphics clip on "overlays" at the SAME startTime and duration
+- If a shot is not marked placement=overlay_on_base, do NOT invent an overlay companion clip
 - Audio narration is handled separately by the import system
 
 ## CRITICAL RULES
 
-1. NEVER create overlapping clips on the SAME track
-2. Every transition duration must be <= min(fromClipDuration, toClipDuration) / 2
-3. For failed shots (listed in failedShots): SKIP them — do NOT create a clip for them. Include them as mediaIssues for tracking. NEVER extend neighboring clips to fill a gap.
-4. ALL image clips MUST have keyframe animations — static images look dead on video
-5. Always include audio fades: fadeIn on start, fadeOut on end
-6. Do NOT create any "text" clips — all text/titles are handled by motion graphics in a separate pipeline
-7. Hybrid shots (marked ⚡ in the shot list) MUST produce TWO clips: base on "main-video" + overlay on "overlays"
-8. The FIRST clip MUST start at exactly startTime: 0. There must NEVER be a black screen at the beginning.
-9. Place each clip at its narration-aligned startTime from the shot data. Gaps are acceptable — the renderer handles them gracefully. NEVER sacrifice audio sync for visual coverage.
-10. NEVER stretch or extend any clip beyond its narration segment boundary. Stretched clips create frozen frames — the single worst artifact possible.
-11. Every major section break (sectionBreak=true shots) MUST have a fadeToBlack transition of 0.5–0.7s AND an SFX clip labeled "section-transition" on the sfx track.
-12. Shot 0 MUST have an aggressive Ken Burns push-in keyframe (scale 1.0→1.10 over the shot duration) to hook the viewer from frame one.
-13. Vary Ken Burns patterns — alternate push-in, pull-out, drift-left, drift-right across consecutive image clips. Never use the same animation on two adjacent clips.
-14. For emotional beat shots, use a dissolve transition (0.5s). For high-energy shots, use hard cuts only.
+1. Before emitting any clip, verify that shotIndex has not already appeared earlier on that same track. The ONLY exception is the companion overlay for placement=overlay_on_base on the "overlays" track.
+2. NEVER create overlapping clips on the SAME track
+3. Every transition duration must be <= min(fromClipDuration, toClipDuration) / 2
+4. For failed shots (listed in failedShots): SKIP them — do NOT create a clip for them. Include them as mediaIssues for tracking. NEVER extend neighboring clips to fill a gap.
+5. ALL image clips MUST have keyframe animations — static images look dead on video
+6. Always include audio fades: fadeIn on start, fadeOut on end
+7. Do NOT create any "text" clips — all text/titles are handled by motion graphics in a separate pipeline
+8. Hybrid shots (marked ⚡ / placement=overlay_on_base in the shot list) MUST produce TWO clips: base on "main-video" + overlay on "overlays"
+9. The FIRST clip MUST start at exactly startTime: 0. There must NEVER be a black screen at the beginning.
+10. Place each clip at its narration-aligned startTime from the shot data. Gaps are acceptable — the renderer handles them gracefully. NEVER sacrifice audio sync for visual coverage.
+11. NEVER stretch or extend any clip beyond its narration segment boundary. Stretched clips create frozen frames — the single worst artifact possible.
+12. Every major section break (sectionBreak=true shots) MUST have a fadeToBlack transition of 0.5–0.7s AND an SFX clip labeled "section-transition" on the sfx track.
+13. Shot 0 MUST have an aggressive Ken Burns push-in keyframe (scale 1.0→1.10 over the shot duration) to hook the viewer from frame one.
+14. Vary Ken Burns patterns — alternate push-in, pull-out, drift-left, drift-right across consecutive image clips. Never use the same animation on two adjacent clips.
+15. For emotional beat shots, use a dissolve transition (0.5s). For high-energy shots, use hard cuts only.
 
 ## REQUIRED JSON FORMAT
 
@@ -278,14 +282,33 @@ export interface EditAssemblyContext {
     hasMedia: boolean;
     mediaUrl?: string;
     hasRemotionCode?: boolean;
+    assemblyPlacement?: AssemblyPlacement;
+    visualElements?: string[];
     /** Content type from segmenter (list-item, concept, emotional-beat, etc.) */
     contentType?: string;
     /** True if this shot marks a major section/topic boundary */
     sectionBreak?: boolean;
     /** Scene grouping ID — shots sharing a scene_id belong to the same visual scene */
     sceneId?: string;
+    sceneClusterId?: string;
+    breakdownSequenceId?: string;
+    breakdownRole?: 'macro' | 'mid' | 'micro' | 'detail';
     /** Narrative purpose (e.g., 'hook', 'reveal', 'climax', 'transition', 'cta') */
     narrativeBeat?: string;
+    shotRole?: string;
+    framing?: string;
+    cameraAngle?: string;
+    cameraMotion?: string;
+    lensStyle?: string;
+    subjectFocus?: string;
+    entryTransitionIntent?: string;
+    exitTransitionIntent?: string;
+    visualMotif?: string;
+    continuityLevel?: 'fresh' | 'soft' | 'strict';
+    anchorStrategy?: 'fresh' | 'scene_anchor' | 'prev_frame' | 'prev_keyframe';
+    renderStrategy?: string;
+    trimPriority?: 'hold' | 'balanced' | 'tight';
+    assemblyContract?: Record<string, unknown>;
     /** Whether this shot continues the previous shot's scene seamlessly */
     continuityFromPrevious?: boolean;
   }>;
@@ -312,7 +335,7 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   let prevSceneId: string | undefined;
   for (const shot of context.shots) {
     const mediaStatus = shot.hasMedia ? `✓ ${shot.mediaType}` : '✗ no media';
-    const hybridTag = (shot.hasRemotionCode && shot.hasMedia && shot.mediaType !== 'motiongraphic') ? ' ⚡ HYBRID' : '';
+    const hybridTag = shot.assemblyPlacement === 'overlay_on_base' ? ' ⚡ HYBRID' : '';
     const sectionTag = shot.sectionBreak ? ' 🔶 SECTION-BREAK' : '';
     const ctTag = shot.contentType ? ` [${shot.contentType}]` : '';
 
@@ -335,7 +358,44 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
     // Include truncated narration text so the LLM can match pacing to content
     const narrationPreview = shot.text.length > 150 ? shot.text.substring(0, 147) + '...' : shot.text;
     lines.push(`    Narration: "${narrationPreview}"`);
+    const shotDetails = [
+      shot.shotRole ? `role=${shot.shotRole}` : '',
+      shot.framing ? `framing=${shot.framing}` : '',
+      shot.cameraAngle ? `angle=${shot.cameraAngle}` : '',
+      shot.cameraMotion ? `motion=${shot.cameraMotion}` : '',
+      shot.lensStyle ? `lens=${shot.lensStyle}` : '',
+      shot.subjectFocus ? `focus=${shot.subjectFocus}` : '',
+      shot.entryTransitionIntent ? `entry=${shot.entryTransitionIntent}` : '',
+      shot.exitTransitionIntent ? `exit=${shot.exitTransitionIntent}` : '',
+      shot.visualMotif ? `motif=${shot.visualMotif}` : '',
+      shot.continuityLevel ? `continuity=${shot.continuityLevel}` : '',
+      shot.anchorStrategy ? `anchor=${shot.anchorStrategy}` : '',
+      shot.renderStrategy ? `render=${shot.renderStrategy}` : '',
+      shot.assemblyPlacement ? `placement=${shot.assemblyPlacement}` : '',
+      shot.trimPriority ? `trimPriority=${shot.trimPriority}` : '',
+      shot.sceneClusterId ? `cluster=${shot.sceneClusterId}` : '',
+      shot.breakdownSequenceId ? `breakdown=${shot.breakdownSequenceId}` : '',
+      shot.breakdownRole ? `breakdownRole=${shot.breakdownRole}` : '',
+    ].filter(Boolean);
+    if (shotDetails.length > 0) {
+      lines.push(`    Directing: ${shotDetails.join(' | ')}`);
+    }
+    if (shot.assemblyContract && Object.keys(shot.assemblyContract).length > 0) {
+      lines.push(`    Assembly contract: ${JSON.stringify(shot.assemblyContract)}`);
+    }
   }
+  lines.push('');
+
+  const availableIndices = context.shots
+    .filter(shot => shot.hasMedia)
+    .map(shot => shot.index);
+  const unavailableIndices = context.shots
+    .filter(shot => !shot.hasMedia)
+    .map(shot => shot.index);
+  lines.push('## Available Shot Pool');
+  lines.push(`  Indices with media: [${availableIndices.join(', ')}]`);
+  lines.push(`  Indices without media: [${unavailableIndices.join(', ')}]`);
+  lines.push('  Each shotIndex may appear at most once per track. Verify this before emitting each clip.');
   lines.push('');
 
   // Failed shots
@@ -381,6 +441,11 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   audioRunning = chunkOffset; // total audio duration
   lines.push(`  Total audio: ${audioRunning.toFixed(1)}s`);
   lines.push('');
+  lines.push('## Editorial Constraints');
+  lines.push('- Treat shot metadata as authoritative when present: shot role, framing, camera motion, lens, subject focus, continuity level, and assembly contract are deliberate creative constraints.');
+  lines.push('- If continuity level is strict, preserve the same world and subject identity and prefer anchor-based continuity over fresh reinterpretation.');
+  lines.push('- If render strategy indicates segmentation-led execution, keep the edit crisp and editorial, not gimmicky. Use that lane only where it clearly improves clarity or emphasis.');
+  lines.push('');
 
   lines.push('## Instructions');
   lines.push('');
@@ -396,12 +461,16 @@ export function buildEditAssemblyUserPrompt(context: EditAssemblyContext): strin
   lines.push('- Every image clip MUST have purposeful keyframe animations (choose based on the shot\'s narrative role)');
   lines.push('- Base media clips (image, video) go on "main-video"');
   lines.push('- Standalone motion-graphics (no base media) go on "main-video"');
-  lines.push('- HYBRID shots (⚡) need TWO clips: base on "main-video" + overlay on "overlays" at same timing');
+  lines.push('- HYBRID shots (⚡ / placement=overlay_on_base) need TWO clips: base on "main-video" + overlay on "overlays" at same timing');
+  lines.push('- If a shot is not marked placement=overlay_on_base, do NOT create an overlay companion clip for it');
   lines.push('- Do NOT create any text clips — text is handled by motion graphics');
   lines.push('- Choose transitions that MEAN something — crossfade for connection, dissolve for time, wipe for contrast, fadeToBlack for chapter end');
   lines.push('- Use SFX intentionally as emotional punctuation on the "sfx" track');
   lines.push('- Include fadeIn and fadeOut audio fades');
   lines.push(`- The timeline MUST match total audio duration (~${audioRunning.toFixed(0)}s). Do NOT exceed this.`);
+  lines.push('- Treat shot metadata as authoritative when present: shot role, framing, camera motion, lens, subject focus, continuity level, and assembly contract are deliberate creative constraints.');
+  lines.push('- If continuity level is strict, preserve the same world and subject identity and prefer anchor-based continuity over fresh reinterpretation.');
+  lines.push('- If render strategy indicates segmentation-led execution, keep the edit crisp and editorial, not gimmicky. Use that lane only where it clearly improves clarity or emphasis.');
   lines.push('');
   lines.push('**Narrative-aware transitions:**');
   lines.push('- 🔗CONTINUOUS shots: use hard cuts ONLY — these are the same scene, no transition needed');

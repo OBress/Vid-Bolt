@@ -114,6 +114,8 @@ export interface OpenRouterConfig {
     | { type: "json_object" };
   /** Number of retry attempts for transient failures. Default: 3. */
   maxRetries?: number;
+  /** Abort the HTTP request after this many milliseconds. */
+  timeoutMs?: number;
   /** Title sent to OpenRouter for tracking. Default: 'Vid-Bolt'. */
   xTitle?: string;
 }
@@ -508,6 +510,10 @@ async function callOpenRouterInternal(
             mergedConfig.xTitle || "Vid-Bolt"
           ),
           body: JSON.stringify(requestBody),
+          signal:
+            typeof mergedConfig.timeoutMs === "number"
+              ? AbortSignal.timeout(mergedConfig.timeoutMs)
+              : undefined,
         });
 
         const parsed = await parseResponse(

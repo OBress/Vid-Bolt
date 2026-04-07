@@ -100,6 +100,126 @@ export const VisualTreatment = z.enum([
 ]);
 export type VisualTreatment = z.infer<typeof VisualTreatment>;
 
+export const ReviewMode = z.enum(['off', 'sequence_preview']);
+export type ReviewMode = z.infer<typeof ReviewMode>;
+
+export const FormatProfile = z.enum([
+  'auto',
+  'documentary',
+  'explainer',
+  'listicle',
+  'narrative',
+  'promo',
+  'ugc',
+]);
+export type FormatProfile = z.infer<typeof FormatProfile>;
+
+export const ContinuityBias = z.enum(['balanced', 'strict', 'dynamic']);
+export type ContinuityBias = z.infer<typeof ContinuityBias>;
+
+export const SegmentationMode = z.enum(['auto', 'prefer', 'avoid']);
+export type SegmentationMode = z.infer<typeof SegmentationMode>;
+
+export const ShotRole = z.enum([
+  'hook',
+  'establish',
+  'coverage',
+  'insert',
+  'bridge',
+  'annotation',
+  'payoff',
+  'reaction',
+  'graphic_explainer',
+  'closing',
+]);
+export type ShotRole = z.infer<typeof ShotRole>;
+
+export const ShotFraming = z.enum([
+  'extreme_wide',
+  'wide',
+  'medium_wide',
+  'medium',
+  'medium_close',
+  'close_up',
+  'extreme_close',
+]);
+export type ShotFraming = z.infer<typeof ShotFraming>;
+
+export const CameraAngle = z.enum([
+  'eye_level',
+  'low_angle',
+  'high_angle',
+  'overhead',
+  'top_down',
+  'profile',
+  'macro_detail',
+  'first_person',
+  'dutch',
+]);
+export type CameraAngle = z.infer<typeof CameraAngle>;
+
+export const CameraMotion = z.enum([
+  'static',
+  'push_in',
+  'pull_out',
+  'pan_left',
+  'pan_right',
+  'tilt_up',
+  'tilt_down',
+  'orbit',
+  'tracking',
+  'handheld',
+  'crane',
+  'zoom_in',
+  'zoom_out',
+]);
+export type CameraMotion = z.infer<typeof CameraMotion>;
+
+export const ContinuityLevel = z.enum(['fresh', 'soft', 'strict']);
+export type ContinuityLevel = z.infer<typeof ContinuityLevel>;
+
+export const AnchorStrategy = z.enum([
+  'fresh',
+  'scene_anchor',
+  'prev_frame',
+  'prev_keyframe',
+]);
+export type AnchorStrategy = z.infer<typeof AnchorStrategy>;
+
+export const RenderStrategy = z.enum([
+  'ai_video',
+  'ai_image',
+  'stock',
+  'motiongraphic',
+  'segment_animate',
+  'segment_video_fx',
+  'segment_mask_prep',
+]);
+export type RenderStrategy = z.infer<typeof RenderStrategy>;
+
+export const TrimPriority = z.enum(['hold', 'balanced', 'tight']);
+export type TrimPriority = z.infer<typeof TrimPriority>;
+
+export const SegmentationExecutionMode = z.enum([
+  'segment_animate',
+  'segment_video_fx',
+  'segment_mask_prep',
+]);
+export type SegmentationExecutionMode = z.infer<typeof SegmentationExecutionMode>;
+
+export const SegmentationPreset = z.enum([
+  'focus_reveal',
+  'detail_callout',
+  'subject_isolation',
+  'progressive_reveal',
+  'tracked_annotation',
+  'danger_emphasis',
+]);
+export type SegmentationPreset = z.infer<typeof SegmentationPreset>;
+
+export const SegmentationTargetMode = z.enum(['text_prompt', 'object_prompts']);
+export type SegmentationTargetMode = z.infer<typeof SegmentationTargetMode>;
+
 export const MotionGraphicsMode = z.enum(MOTION_GRAPHICS_MODES);
 export type MotionGraphicsMode = z.infer<typeof MotionGraphicsMode>;
 
@@ -133,6 +253,200 @@ export const GraphicStatePatch = z.object({
   status: z.enum(['introduced', 'updated', 'revealed', 'resolved']).optional(),
 });
 export type GraphicStatePatch = z.infer<typeof GraphicStatePatch>;
+
+export const SegmentationPromptObject = z.object({
+  label: z.string(),
+  text: z.string(),
+});
+export type SegmentationPromptObject = z.infer<typeof SegmentationPromptObject>;
+
+export const SegmentationAnimation = z.object({
+  mode: z.enum(['transition', 'draw', 'pulse', 'reveal', 'loop', 'stagger']).optional(),
+  easing: z.enum([
+    'linear',
+    'ease_in',
+    'ease_out',
+    'ease_in_out',
+    'ease_in_cubic',
+    'ease_out_cubic',
+    'ease_in_out_cubic',
+    'ease_out_back',
+    'ease_out_elastic',
+    'ease_out_bounce',
+  ]).optional(),
+  duration: z.number().optional(),
+  delay: z.number().optional(),
+  cycles: z.number().int().optional(),
+  direction: z.enum(['left', 'right', 'top', 'bottom', 'radial']).optional(),
+  stagger_delay: z.number().optional(),
+  start: z.record(z.string(), z.union([z.number(), z.array(z.number())])).optional(),
+  end: z.record(z.string(), z.union([z.number(), z.array(z.number())])).optional(),
+}).optional();
+export type SegmentationAnimation = z.infer<typeof SegmentationAnimation>;
+
+export const SegmentationOperationPlan = z.object({
+  type: z.enum([
+    'select',
+    'blur',
+    'pixelate',
+    'redact',
+    'color_overlay',
+    'color_grade',
+    'opacity',
+    'replace_color',
+    'remove_background',
+    'replace_background',
+    'greenscreen',
+    'outline',
+    'bounding_box',
+    'spotlight',
+    'bokeh',
+    'glow',
+    'shadow',
+    'vignette',
+    'grayscale',
+    'invert',
+    'sharpen',
+    'sepia',
+    'posterize',
+    'edge_detect',
+    'emboss',
+    'noise',
+    'sketch',
+    'duotone',
+    'halftone',
+    'glitch',
+    'motion_blur',
+    'glass',
+    'feather',
+    'zoom',
+    'pan',
+  ]),
+  target: z.union([
+    z.enum(['mask', 'background', 'all', 'center']),
+    z.array(z.number()),
+  ]).optional(),
+  object_index: z.number().int().optional(),
+  object_label: z.string().optional(),
+  object_labels: z.array(z.string()).optional(),
+  object_id: z.number().int().optional(),
+  object_ids: z.array(z.number().int()).optional(),
+  notes: z.string().optional(),
+  color: z.array(z.number()).optional(),
+  thickness: z.number().optional(),
+  strength: z.number().optional(),
+  block_size: z.number().optional(),
+  brightness: z.number().optional(),
+  contrast: z.number().optional(),
+  saturation: z.number().optional(),
+  hue_shift: z.number().optional(),
+  saturation_scale: z.number().optional(),
+  image_url: z.string().url().optional(),
+  progress: z.number().optional(),
+  radius: z.number().optional(),
+  intensity: z.number().optional(),
+  darkness: z.number().optional(),
+  scale: z.number().optional(),
+  offset: z.array(z.number()).optional(),
+  value: z.number().optional(),
+  amount: z.number().optional(),
+  levels: z.number().optional(),
+  noise_type: z.enum(['gaussian', 'grain']).optional(),
+  detail: z.number().optional(),
+  color_dark: z.array(z.number()).optional(),
+  color_light: z.array(z.number()).optional(),
+  dot_size: z.number().optional(),
+  rgb_shift: z.number().optional(),
+  seed: z.number().optional(),
+  angle: z.number().optional(),
+  animation: SegmentationAnimation,
+});
+export type SegmentationOperationPlan = z.infer<typeof SegmentationOperationPlan>;
+
+export const SegmentationTreatment = z.object({
+  execution_mode: SegmentationExecutionMode,
+  preset: SegmentationPreset.optional(),
+  target_mode: SegmentationTargetMode.default('text_prompt'),
+  text_prompt: z.string().optional(),
+  text_prompts: z.array(z.string()).default([]),
+  point_prompts: z.array(z.array(z.number())).default([]),
+  point_labels: z.array(z.number().int()).default([]),
+  box_prompts: z.array(z.array(z.number())).default([]),
+  box_labels: z.array(z.number().int()).default([]),
+  box_prompts_labeled: z.array(z.object({
+    box: z.array(z.number()),
+    label: z.boolean(),
+  })).default([]),
+  object_prompts: z.array(SegmentationPromptObject).default([]),
+  subject_focus: z.string().optional(),
+  notes: z.string().optional(),
+  prompt_frame_index: z.number().int().optional(),
+  propagation_direction: z.enum(['forward', 'backward', 'both']).optional(),
+  confidence_threshold: z.number().optional(),
+  max_frames: z.number().int().optional(),
+  max_objects: z.number().int().optional(),
+  include_tracking_metadata: z.boolean().default(false),
+  output_type: z.enum(['masks_json', 'image']).optional(),
+  output_format: z.enum(['masks_json', 'video']).optional(),
+  intensity: z.enum(['subtle', 'moderate', 'strong']).default('moderate'),
+  operations: z.array(SegmentationOperationPlan).default([]),
+  allow_background_desaturation: z.boolean().default(false),
+  allow_guided_zoom: z.boolean().default(false),
+  allow_tracked_annotation: z.boolean().default(false),
+  fallback_policy: z.enum([
+    'fallback_to_prompted_generation',
+    'fallback_to_source_media',
+    'fail_strict',
+  ]).default('fallback_to_prompted_generation'),
+}).optional();
+export type SegmentationTreatment = z.infer<typeof SegmentationTreatment>;
+
+export const VideoGrammarProfile = z.object({
+  format_profile: FormatProfile.default('auto'),
+  continuity_bias: ContinuityBias.default('balanced'),
+  segmentation_mode: SegmentationMode.default('auto'),
+  annotation_preference: z.enum(['minimal', 'selective', 'expressive']).default('selective'),
+  transition_palette: z.array(z.string()).default([]),
+  shot_vocab: z.array(z.string()).default([]),
+  motif_bias: z.string().optional(),
+});
+export type VideoGrammarProfile = z.infer<typeof VideoGrammarProfile>;
+
+export const ProductionControls = z.object({
+  reviewMode: ReviewMode.default('off'),
+}).optional();
+export type ProductionControls = z.infer<typeof ProductionControls>;
+
+export const SequencePlanScene = z.object({
+  scene_id: z.string(),
+  description: z.string(),
+  narrative_purpose: z.string(),
+  pacing_intent: z.string().optional(),
+  opening_intent: z.string().optional(),
+  closing_intent: z.string().optional(),
+  anchor_cluster_id: z.string().optional(),
+  anchor_subjects: z.array(z.string()).default([]),
+  motif: z.string().optional(),
+  transition_to_next: z.string().optional(),
+});
+export type SequencePlanScene = z.infer<typeof SequencePlanScene>;
+
+export const ContinuityAnchor = z.object({
+  scene_cluster_id: z.string(),
+  anchor_shot_index: z.number().int(),
+  continuity_level: ContinuityLevel.default('soft'),
+  render_strategy: RenderStrategy.optional(),
+  anchor_visual: z.string().optional(),
+  anchor_subjects: z.array(z.string()).default([]),
+});
+export type ContinuityAnchor = z.infer<typeof ContinuityAnchor>;
+
+export const AssemblyContract = z.object({
+  preferred_transition_palette: z.array(z.string()).default([]),
+  maintain_scene_runs: z.boolean().default(true),
+  trim_bias: TrimPriority.default('balanced'),
+});
+export type AssemblyContract = z.infer<typeof AssemblyContract>;
 
 // ============================================================================
 // MESSAGE ENVELOPE
@@ -247,6 +561,14 @@ export const VideoCreativeOverrides = z.object({
   videoCreativePrompt: z.string().optional(),
   /** Override quality anchors for this video */
   qualityAnchors: z.array(z.string()).optional(),
+  /** Format-specific directing profile */
+  formatProfile: FormatProfile.optional(),
+  /** Controls how strongly continuity should be enforced */
+  continuityBias: ContinuityBias.optional(),
+  /** Controls how readily segmentation-led effects should be used */
+  segmentationMode: SegmentationMode.optional(),
+  /** Video-specific directing notes beyond visual style */
+  directingIntent: z.string().optional(),
 }).optional();
 export type VideoCreativeOverrides = z.infer<typeof VideoCreativeOverrides>;
 
@@ -323,6 +645,8 @@ export const CreativeManifest = z.object({
   master_creative_prompt: z.string().optional(),
   /** Video-specific creative direction prompt */
   video_creative_prompt: z.string().optional(),
+  /** Video-specific directing intent */
+  directing_intent: z.string().optional(),
   /** Narrow project-scoped reference kit for MG composition and overlays */
   reference_kit: z.array(MotionGraphicsAssetBundleItem).optional(),
   /** Per-worker prompt overrides from user settings */
@@ -344,6 +668,7 @@ export const CreativeManifest = z.object({
     target_audience: z.string().optional(),
     content_niche: z.string().optional(),
   }).optional(),
+  video_grammar_profile: VideoGrammarProfile.optional(),
 });
 export type CreativeManifest = z.infer<typeof CreativeManifest>;
 
@@ -371,8 +696,38 @@ export const PlannedShot = z.object({
   visual_elements: z.array(z.string()).default([]),
   /** AI visual description */
   visual_description: z.string().optional(),
+  /** Director-level role this shot plays in the surrounding sequence */
+  shot_role: ShotRole.optional(),
+  /** Intended framing of the shot */
+  framing: ShotFraming.optional(),
+  /** Intended camera angle */
+  camera_angle: CameraAngle.optional(),
+  /** Intended camera motion */
+  camera_motion: CameraMotion.optional(),
+  /** Lens or focal style note when relevant */
+  lens_style: z.string().optional(),
+  /** What the viewer should focus on in this shot */
+  subject_focus: z.string().optional(),
+  /** Motivated entry transition from the previous shot */
+  entry_transition_intent: z.string().optional(),
+  /** Motivated exit transition toward the next shot */
+  exit_transition_intent: z.string().optional(),
+  /** Subject or visual bridge that links this shot to its neighbors */
+  bridge_subject: z.string().optional(),
+  /** Recurring visual motif carried across shots */
+  visual_motif: z.string().optional(),
   /** Higher-level media treatment decision for this shot */
   visual_treatment: VisualTreatment.optional(),
+  /** How strict visual continuity should be for this shot */
+  continuity_level: ContinuityLevel.default('soft'),
+  /** Preferred continuity anchor selection strategy */
+  anchor_strategy: AnchorStrategy.optional(),
+  /** Preferred downstream render lane */
+  render_strategy: RenderStrategy.optional(),
+  /** Trim bias for assembly */
+  trim_priority: TrimPriority.default('balanced'),
+  /** Optional segmentation-led execution plan */
+  segmentation_treatment: SegmentationTreatment,
   /** Sound effects for this shot */
   sound_effects: z.array(z.object({
     type: z.string(),
@@ -452,6 +807,15 @@ export const ShotPlan = z.object({
       linked_entity_count: z.number().int().optional(),
       linked_shot_count: z.number().int().optional(),
     }).optional(),
+    sequence_plan: z.array(SequencePlanScene).optional(),
+    continuity_anchors: z.array(ContinuityAnchor).optional(),
+    transition_palette: z.array(z.string()).optional(),
+    planner_scores: z.record(z.string(), z.number()).optional(),
+    review_state: z.object({
+      review_mode: ReviewMode.default('off'),
+      status: z.enum(['not_requested', 'pending', 'approved', 'skipped']).default('not_requested'),
+    }).optional(),
+    assembly_contract: AssemblyContract.optional(),
   }),
 });
 export type ShotPlan = z.infer<typeof ShotPlan>;
@@ -469,6 +833,16 @@ export const AssetEntry = z.object({
   visual_prompt: z.string(),
   /** Source type */
   source: z.enum(['stock', 'ai_image', 'ai_video', 'motiongraphic']),
+  render_strategy: RenderStrategy.optional(),
+  transition_notes: z.array(z.string()).default([]),
+  continuity_level: ContinuityLevel.optional(),
+  shot_role: ShotRole.optional(),
+  framing: ShotFraming.optional(),
+  camera_angle: CameraAngle.optional(),
+  camera_motion: CameraMotion.optional(),
+  visual_motif: z.string().optional(),
+  trim_priority: TrimPriority.optional(),
+  segmentation_treatment: SegmentationTreatment,
   /** Stock image URL (if source is stock) */
   stock_url: z.string().url().optional(),
   stock_metadata: z.object({
@@ -593,6 +967,10 @@ export const OrchestratorJobData = z.object({
   entities: z.array(GCMEntity).default([]),
   /** Per-video creative overrides set by the user at production time */
   videoCreativeOverrides: VideoCreativeOverrides,
+  /** Per-run production controls */
+  productionControls: ProductionControls,
+  /** Internal resume point for paused sequence-preview flows */
+  resumeFromPhase: z.enum(['asset_retrieval', 'production', 'assembly']).optional(),
   /** Resolved project-level settings passed once from the route */
   projectConfig: z.object({
     voice: z.object({

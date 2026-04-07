@@ -17,6 +17,10 @@
  */
 
 import type { CreativeManifest, GCMEntity, WorkerPrompts } from '@/lib/types/closed-loop';
+import {
+  getDefaultQualityAnchorsForStyle,
+  getStyleSignals,
+} from '@/lib/services/style-signals';
 
 // ============================================================================
 // SHARED BUILDERS
@@ -78,6 +82,68 @@ function getWorkerOverride(manifest: CreativeManifest, workerKey: string): strin
   return `\n\nADDITIONAL USER INSTRUCTIONS:\n${override}`;
 }
 
+function buildStyleGuardBlock(manifest: CreativeManifest): string {
+  const signals = getStyleSignals(
+    manifest.style.visual_style,
+    manifest.master_creative_prompt,
+    manifest.video_creative_prompt,
+    manifest.script_context?.genre,
+    manifest.directing_intent,
+  );
+  const parts: string[] = [];
+
+  if (signals.nonPhotorealistic) {
+    parts.push(`STYLE CONTEXT — NON-PHOTOREALISTIC PROJECT:
+The declared visual style is an artistic world, not a photoreal world. Every image and video must stay inside that world.
+Do NOT drift into realistic skin, generic live-action portraiture, or mismatched photographic aesthetics.
+Favor stylized materials, handcrafted texture cues, and cohesive art direction over realism.`);
+  }
+
+  if (signals.historical) {
+    parts.push(`HISTORICAL PERIOD CONTEXT:
+The declared period defines the visual world. Props, architecture, clothing, hair, and graphic language must plausibly belong to that era.
+Avoid anachronisms such as modern suits, modern haircuts, digital UI, contemporary signage, or modern maps unless the prompt explicitly calls for a contrast.`);
+  }
+
+  return parts.length > 0 ? `\n${parts.join('\n\n')}` : '';
+}
+
+function describePreferenceWeight(value: number): 'high' | 'moderate' | 'low' {
+  if (value >= 0.4) return 'high';
+  if (value >= 0.2) return 'moderate';
+  return 'low';
+}
+
+function describeCadence(value: number): string {
+  if (value >= 0.4) return 'frequently when the moment benefits from designed information';
+  if (value >= 0.2) return 'selectively when clarity or emphasis improves';
+  return 'sparingly and only when the beat truly calls for it';
+}
+
+function buildCreativePreferencesBlock(manifest: CreativeManifest): string {
+  const grammar = manifest.video_grammar_profile;
+
+  return `CREATIVE PREFERENCES (signals from the user's style choices — not quotas to fill):
+The user's media preference leans toward:
+- AI video: ${describePreferenceWeight(manifest.media_weighting.ai_video)} — use dynamic motion when the moment needs action or world-building
+- Motion graphics: ${describePreferenceWeight(manifest.media_weighting.motion_graphics)} — use overlays, maps, explainers, and callouts ${describeCadence(manifest.media_weighting.motion_graphics)}
+- Stock footage: ${describePreferenceWeight(manifest.media_weighting.stock_footage)} — use real-world footage when it materially improves credibility or specificity
+- AI image stills: ${describePreferenceWeight(manifest.media_weighting.ai_image_static)} — use as source material for segmentation, image edits, or editorial camera movement rather than dead final stills
+These preferences describe taste. They do NOT prescribe quotas.
+
+PACING PREFERENCES:
+- Hook: open strong within roughly the first ${manifest.pacing_rules.hook_duration_seconds}s.
+- Avoid extended static holds — if a beat starts from a still, plan motion or segmentation emphasis intentionally.
+- Vary rhythm based on narrative beat instead of mechanically alternating shot types.
+
+VIDEO GRAMMAR PROFILE:
+- Format profile: ${grammar?.format_profile || 'auto'}
+- Continuity bias: ${grammar?.continuity_bias || 'balanced'}
+- Segmentation mode: ${grammar?.segmentation_mode || 'auto'}
+- Annotation preference: ${grammar?.annotation_preference || 'selective'}
+${manifest.directing_intent ? `- Directing intent: ${manifest.directing_intent}` : ''}`;
+}
+
 // ============================================================================
 // PROMPT TEMPLATES
 // ============================================================================
@@ -106,17 +172,8 @@ ASPECT RATIO: ${manifest.style.aspect_ratio}
 ${manifest.style.lighting_mood ? `LIGHTING MOOD: ${manifest.style.lighting_mood}` : ''}
 ${manifest.style.color_palette.length > 0 ? `COLOR PALETTE: ${manifest.style.color_palette.join(', ')}` : ''}
 
-MEDIA WEIGHTING TARGETS:
-- Stock footage: ${Math.round(manifest.media_weighting.stock_footage * 100)}%
-- AI video: ${Math.round(manifest.media_weighting.ai_video * 100)}%
-- Motion graphics: ${Math.round(manifest.media_weighting.motion_graphics * 100)}%
-- AI image (static): ${Math.round(manifest.media_weighting.ai_image_static * 100)}%
-
-PACING RULES:
-- Hook duration: ${manifest.pacing_rules.hook_duration_seconds}s
-- Hook must have at least ${manifest.pacing_rules.hook_min_motion_graphics} motion graphics
-- Max ${manifest.pacing_rules.max_consecutive_static_images} consecutive static images
-- Min ${manifest.pacing_rules.min_video_shots_per_minute} video shots per minute
+${buildStyleGuardBlock(manifest)}
+${buildCreativePreferencesBlock(manifest)}
 
 ═══ DIRECTOR MINDSET ═══
 Think from a director's point of view. Every shot serves a purpose in the viewer's journey.
@@ -146,6 +203,45 @@ Use continuity_from_previous: false when the visual should change completely.
 Not every shot needs continuity — use it purposefully.
 For continuity shots: downstream, the last frame of the previous video will be image-edited
 with your angle_change directive, then used as the starting frame for a new video.
+Keep angle_change short and camera-oriented: reframe, push in, pull back, side view, overhead,
+detail crop, reveal left/right.
+
+═══ DIRECTING GRAMMAR ═══
+Every shot should also think like a directed edit, not just a prompt:
+- Declare shot_role, framing, camera_angle, and camera_motion when possible
+- Use entry_transition_intent and exit_transition_intent to explain why the cut feels motivated
+- Use bridge_subject and visual_motif when a recurring visual idea should carry across shots
+- continuity_level should reflect how visually stable the shot must remain: fresh, soft, or strict
+- render_strategy should distinguish between normal generation and segmentation-led editorial shots
+
+═══ SEGMENTATION AS AN EDITORIAL TOOL ═══
+Use segmentation_treatment only for shots that benefit from deliberate emphasis:
+- tracked subject callouts
+- spotlighting or isolating an important person/object
+- documentary-style annotation and reveal shots
+- guided push-ins on a specific face, object, or detail
+Prefer object_prompts over a vague text prompt when multiple people or objects may appear.
+object_prompts.label should be short snake_case. object_prompts.text should usually be 2-8 words.
+Do NOT overuse it. It should feel like intentional editing, not effect spam.
+
+NON-STATIC RULE:
+- Do not plan normal final shots as stagnant still images.
+- If a shot starts from a still, route it toward segment_animate, ai_video, or motiongraphic.
+
+CAMERA MOTION AS LANGUAGE:
+- push_in / zoom_in = intensify focus, move closer to a reveal or detail
+- pull_out / zoom_out = reveal context, scale, aftermath, or reflection
+- pan_left / pan_right = scan a scene, connect subjects, or shift attention
+- tilt_up / tilt_down = reveal scale or descend toward a consequential detail
+- orbit / tracking = examine or accompany a subject in a motivated way
+- handheld = urgency or grounded documentary immediacy
+- static = deliberate stillness only when the moment needs to land without distraction
+- Avoid choosing static by default. Stillness should feel intentional, not lazy.
+
+TEXT SAFETY:
+- Do NOT plan AI imagery that depends on a readable paragraph, full-page article, or dense body copy.
+- If the beat requires readable text, route toward motion graphics, callouts, labels, or short designed typography.
+- A document/image shot may suggest texture, headlines, or key phrases, but not long readable prose.
 
 ═══ INTENTIONALITY RULES ═══
 - Every shot MUST have a clear purpose: inform, emotionally engage, or visually transition
@@ -153,6 +249,7 @@ with your angle_change directive, then used as the starting frame for a new vide
 - Use visual motifs (recurring visual elements) to create thematic continuity
 - Match visual intensity to narrative intensity (calm narration = slow/wide shots, tense = tight/fast)
 - Vary shot types intentionally: establish → detail → reaction → establish
+- Avoid back-to-back shots that lazily reuse the same base composition. If a motion graphic follows a base shot, it should add new information or a new emphasis layer.
 - Each shot must declare its narrative purpose via narrative_beat
 ${entityList}
 
@@ -181,6 +278,7 @@ ${buildScriptContextBlock(manifest)}
 VISUAL STYLE: ${manifest.style.visual_style}
 COLOR PALETTE: ${manifest.style.color_palette.join(', ') || 'Not specified'}
 ${manifest.style.lighting_mood ? `LIGHTING: ${manifest.style.lighting_mood}` : ''}
+${buildStyleGuardBlock(manifest)}
 ${entityContext}
 
 PROMPT ENRICHMENT RULES:
@@ -188,7 +286,8 @@ PROMPT ENRICHMENT RULES:
 - For shots referencing entities, embed the entity's text_description
 - For stock searches, extract semantic keywords from the shot description
 - For SFX, match sound effects to precise timeline positions
-- Maintain thematic consistency across all prompts — every visual should feel like it belongs to the same video${getWorkerOverride(manifest, 'asset_scout')}`;
+- Maintain thematic consistency across all prompts — every visual should feel like it belongs to the same video
+- Never rely on AI imagery to render long readable paragraphs, dense document pages, or precise UI copy. Route those needs toward motion graphics or short overlay text instead${getWorkerOverride(manifest, 'asset_scout')}`;
 }
 
 /**
@@ -198,7 +297,11 @@ function buildImageGenPrompt(
   userPrompt: string,
   manifest: CreativeManifest
 ): string {
-  const qualityAnchors = manifest.visual?.quality_anchors?.join(', ') || 'photorealistic, cinematic, 4K, film grain';
+  const qualityAnchors = manifest.visual?.quality_anchors?.join(', ') || getDefaultQualityAnchorsForStyle(
+    manifest.style.visual_style,
+    manifest.master_creative_prompt,
+    manifest.video_creative_prompt,
+  ).join(', ');
   const constraints = manifest.visual?.image_constraints?.join(', ') || 'no text, no watermark, no logos';
 
   return `You are an expert AI image generation specialist optimized for Z-Image Turbo.
@@ -209,6 +312,7 @@ ${buildCreativeDirectionBlock(manifest)}
 ${buildLoraBlock(manifest)}
 
 VISUAL STYLE: ${manifest.style.visual_style}
+${buildStyleGuardBlock(manifest)}
 QUALITY ANCHORS: ${qualityAnchors}
 CONSTRAINTS: ${constraints}
 ASPECT RATIO: ${manifest.style.aspect_ratio}
@@ -220,7 +324,8 @@ GENERATION RULES:
 - Always include quality anchors in every prompt
 - Maintain consistent lighting and color grading across all images
 - Generate at the highest quality settings available
-- Every image must serve a narrative purpose — no generic stock-like compositions${getWorkerOverride(manifest, 'image_gen')}`;
+- Every image must serve a narrative purpose — no generic stock-like compositions
+- Do NOT ask the image model to render long readable body text, document paragraphs, or dense UI copy. Use headlines, labels, and motion-graphics typography for readable text${getWorkerOverride(manifest, 'image_gen')}`;
 }
 
 /**
@@ -235,8 +340,10 @@ function buildVideoGenPrompt(
 USER CREATIVE DIRECTION:
 ${userPrompt || 'No specific direction provided.'}
 ${buildCreativeDirectionBlock(manifest)}
+${buildScriptContextBlock(manifest)}
 
 VISUAL STYLE: ${manifest.style.visual_style}
+${buildStyleGuardBlock(manifest)}
 ASPECT RATIO: ${manifest.style.aspect_ratio}
 ${manifest.style.lighting_mood ? `LIGHTING MOOD: ${manifest.style.lighting_mood}` : ''}
 
@@ -250,7 +357,8 @@ VIDEO GENERATION RULES (LTX-2.3):
 - Design audio intentionally — describe environmental sounds, tone, and intensity (the upgraded vocoder produces cleaner output)
 - Match the lighting and color grading from the style guide
 - Generated video MUST contain meaningful motion — if the prompt reads like a still photo, the output will freeze
-- For portrait (9:16) content, compose for vertical intentionally — don't treat as cropped landscape${getWorkerOverride(manifest, 'video_gen')}`;
+- For portrait (9:16) content, compose for vertical intentionally — don't treat as cropped landscape
+- Do NOT depend on in-world readable paragraphs or dense UI text. Reserve readable long-form text for motion graphics and designed overlays${getWorkerOverride(manifest, 'video_gen')}`;
 }
 
 
@@ -279,6 +387,7 @@ ${userPrompt || 'No specific direction provided.'}
 ${buildCreativeDirectionBlock(manifest)}
 
 VISUAL STYLE: ${manifest.style.visual_style}
+${buildStyleGuardBlock(manifest)}
 
 ═══ CHANNEL THEME SYSTEM ═══
 These values MUST be used consistently across ALL motion graphics in this video:
@@ -298,6 +407,8 @@ COMPOSITION RULES:
 - Include smooth entrance and exit animations
 - Use borderRadius: "${borderRadius}" on all card/container elements
 - Base colors on the Primary Colors palette above
+- All visible copy must be clean, legible English unless the prompt explicitly asks for another language
+- Use short labels, callouts, and designed typography. Never fake long paragraphs of article or document text inside AI-rendered art
 
 CONSISTENCY ENFORCEMENT:
 - Every MG composition of the same type (e.g., all location cards) must be visually identical except for data

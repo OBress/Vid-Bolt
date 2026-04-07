@@ -12,6 +12,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getModelById } from '@/lib/constants/model-registry';
 import { callGpuImageGenerate, getImageDimensions } from '@/lib/services/gpu-api-service';
 import { generateImageViaReplicate, getReplicateApiKey } from '@/lib/services/replicate-client';
+import { generatePresignedPutUrl, generateVideoEditorMediaKey } from '@/lib/services/r2-storage';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: NextRequest) {
@@ -63,8 +64,8 @@ export async function POST(request: NextRequest) {
       const ar = aspectRatio === '9-16' ? '9:16' : '16:9';
       const dims = getImageDimensions(ar as any);
       const jobId = `editor-img-${uuidv4().slice(0, 8)}`;
-      // Use a temporary R2 save URL pattern
-      const saveUrl = `${process.env.R2_PUBLIC_URL || ''}/editor-gen/${user.id}/${jobId}.png`;
+      const outputKey = generateVideoEditorMediaKey(user.id, null, `${jobId}.png`);
+      const { putUrl, publicUrl } = await generatePresignedPutUrl(outputKey, 'image/png');
 
       const result = await callGpuImageGenerate({
         job_id: jobId,
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
         seed: seed ?? undefined,
         num_inference_steps: steps ?? 4,
         lora_name: loraName ?? undefined,
-        save_url: saveUrl,
+        save_url: putUrl,
       });
 
       if (!result.success) {
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
 
       // For async jobs, return the save URL (will be populated when GPU finishes)
       return NextResponse.json({
-        url: result.publicUrl || saveUrl,
+        url: result.publicUrl || publicUrl,
         jobId: result.jobId,
         isAsync: result.isAsync,
         generationTime: result.generationTime,

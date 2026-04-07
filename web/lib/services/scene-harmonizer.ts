@@ -23,6 +23,7 @@ import {
   generatePresignedPutUrl,
   generatePresignedGetUrl,
   getKeyFromUrl,
+  getPublicUrl,
   STORAGE_PATHS,
 } from '@/lib/services/r2-storage';
 import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
@@ -52,6 +53,24 @@ const SIMILARITY_THRESHOLD = 0.25;
 const MIN_SEQUENCE_SIZE = 2;
 /** Timeout per image edit webhook (Qwen-Edit: ~3-5s per edit) */
 const EDIT_TIMEOUT_MS = 30_000;
+
+function groupPlannerFirstSequences(imageShots: PlannedShot[]): number[][] {
+  const clusterGroups = new Map<string, number[]>();
+
+  imageShots.forEach((shot, index) => {
+    if (!shot.scene_cluster_id) return;
+    const group = clusterGroups.get(shot.scene_cluster_id) || [];
+    group.push(index);
+    clusterGroups.set(shot.scene_cluster_id, group);
+  });
+
+  const plannerDrivenGroups = [...clusterGroups.values()].filter(group => group.length >= MIN_SEQUENCE_SIZE);
+  if (plannerDrivenGroups.length > 0) {
+    return plannerDrivenGroups;
+  }
+
+  return groupIntoVisualSequences(imageShots, SIMILARITY_THRESHOLD);
+}
 
 // ============================================================================
 // MAIN FUNCTION
@@ -101,7 +120,7 @@ export async function harmonizeSceneImages(
   }
 
   // Group into visual sequences
-  const sequenceGroups = groupIntoVisualSequences(imageShots, SIMILARITY_THRESHOLD);
+  const sequenceGroups = groupPlannerFirstSequences(imageShots);
   const multiShotSequences = sequenceGroups.filter(g => g.length >= MIN_SEQUENCE_SIZE);
   result.sequences = multiShotSequences.length;
 
@@ -118,6 +137,7 @@ export async function harmonizeSceneImages(
   // Collect all edit items across all sequences for a single batch submission
   const batchItems: BatchImageEditItem[] = [];
   const itemIdToShotKey = new Map<string, string>();
+  const itemIdToPublicUrl = new Map<string, string>();
 
   for (const groupIndices of multiShotSequences) {
     const sequenceShots = groupIndices.map(i => imageShots[i]);
@@ -180,6 +200,7 @@ export async function harmonizeSceneImages(
         });
 
         itemIdToShotKey.set(itemId, shotKey);
+        itemIdToPublicUrl.set(itemId, getPublicUrl(outputKey));
       } catch (err) {
         console.warn(`${LOG_PREFIX} Error preparing shot ${shot.segment_index}:`, err);
         result.skipped++;
@@ -219,7 +240,7 @@ export async function harmonizeSceneImages(
       const shotKey = itemIdToShotKey.get(item.item_id);
 
       if (webhookResult?.status === 'completed' && webhookResult.result?.save_url && shotKey) {
-        result.updatedImages[shotKey] = webhookResult.result.save_url;
+        result.updatedImages[shotKey] = itemIdToPublicUrl.get(item.item_id) || webhookResult.result.save_url;
         result.harmonized++;
         console.log(`${LOG_PREFIX} ✓ ${shotKey} harmonized`);
       } else {

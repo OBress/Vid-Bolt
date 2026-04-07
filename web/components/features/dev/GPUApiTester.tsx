@@ -64,6 +64,8 @@ interface GPUApiTesterProps {
   inline?: boolean;
 }
 
+const GALLERY_PAGE_SIZE = 18;
+
 interface DebugInfo {
   request?: Record<string, unknown>;
   response?: unknown;
@@ -760,12 +762,64 @@ export function GPUApiTester({
   const [galleryVideos, setGalleryVideos] = useState<GalleryMedia[]>([]);
   const [galleryAudio, setGalleryAudio] = useState<GalleryMedia[]>([]);
   const [galleryFilter, setGalleryFilter] = useState<'all' | 'image' | 'video' | 'audio'>('all');
+  const [galleryVisibleCount, setGalleryVisibleCount] = useState(GALLERY_PAGE_SIZE);
+  const galleryScrollRef = useRef<HTMLDivElement | null>(null);
+  const galleryLoadMoreRef = useRef<HTMLDivElement | null>(null);
+
+  const galleryTotalItems = galleryImages.length + galleryVideos.length + galleryAudio.length;
+  const galleryFilteredItems =
+    galleryFilter === 'all'
+      ? [...galleryImages, ...galleryVideos, ...galleryAudio]
+      : galleryFilter === 'image'
+        ? galleryImages
+        : galleryFilter === 'video'
+          ? galleryVideos
+          : galleryAudio;
+  const galleryVisibleItems = galleryFilteredItems.slice(0, galleryVisibleCount);
+  const galleryVisibleImages = galleryVisibleItems.filter((item) => item.type === 'image');
+  const galleryVisibleVideos = galleryVisibleItems.filter((item) => item.type === 'video');
+  const galleryVisibleAudio = galleryVisibleItems.filter((item) => item.type === 'audio');
+  const galleryHasMore = galleryVisibleItems.length < galleryFilteredItems.length;
 
   // Ref to always have latest trackedJobs for polling
   const trackedJobsRef = useRef<Map<string, TrackedJob>>(trackedJobs);
   useEffect(() => {
     trackedJobsRef.current = trackedJobs;
   }, [trackedJobs]);
+
+  useEffect(() => {
+    if (!galleryOpen) return;
+
+    setGalleryVisibleCount(GALLERY_PAGE_SIZE);
+    galleryScrollRef.current?.scrollTo({ top: 0 });
+  }, [galleryFilter, galleryOpen]);
+
+  useEffect(() => {
+    if (!galleryOpen || galleryLoading || !galleryHasMore) return;
+
+    const root = galleryScrollRef.current;
+    const target = galleryLoadMoreRef.current;
+
+    if (!root || !target) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+
+        setGalleryVisibleCount((current) =>
+          Math.min(current + GALLERY_PAGE_SIZE, galleryFilteredItems.length),
+        );
+      },
+      {
+        root,
+        rootMargin: "200px 0px",
+      },
+    );
+
+    observer.observe(target);
+
+    return () => observer.disconnect();
+  }, [galleryOpen, galleryLoading, galleryHasMore, galleryFilteredItems.length]);
 
   // ====================================================================
   // [DEVTOOLS-MEDIA] START - Real-time sync to DevTools media store.
@@ -2035,6 +2089,8 @@ export function GPUApiTester({
   };
 
   const handleLoadGallery = async () => {
+    setGalleryVisibleCount(GALLERY_PAGE_SIZE);
+    galleryScrollRef.current?.scrollTo({ top: 0 });
     setGalleryLoading(true);
     try {
       const response = await fetch("/api/gpu-api/test/media");
@@ -6326,22 +6382,34 @@ export function GPUApiTester({
           </div>
 
           {/* Gallery Content */}
-          <div className="flex-1 overflow-y-auto min-h-0">
-            {galleryLoading && galleryImages.length === 0 && galleryVideos.length === 0 ? (
+          <div ref={galleryScrollRef} className="flex-1 overflow-y-auto min-h-0">
+            {galleryLoading && galleryTotalItems === 0 ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-6 h-6 animate-spin text-cyan-400 mr-3" />
                 <span className="text-neutral-400">Loading media...</span>
               </div>
-            ) : (galleryImages.length + galleryVideos.length + galleryAudio.length) === 0 ? (
+            ) : galleryFilteredItems.length === 0 ? (
               <div className="text-center py-12">
                 <GalleryHorizontalEnd className="w-10 h-10 text-neutral-600 mx-auto mb-3" />
-                <p className="text-neutral-400">No generated media found.</p>
-                <p className="text-neutral-500 text-sm mt-1">Generate some images or videos first!</p>
+                <p className="text-neutral-400">
+                  {galleryTotalItems === 0 ? "No generated media found." : `No ${galleryFilter} media found.`}
+                </p>
+                <p className="text-neutral-500 text-sm mt-1">
+                  {galleryTotalItems === 0 ? "Generate some images or videos first!" : "Try another filter or generate more media."}
+                </p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-1">
+              <>
+                <div className="flex items-center justify-between px-1 pb-3 text-xs text-neutral-500">
+                  <span>
+                    Showing {galleryVisibleItems.length} of {galleryFilteredItems.length}
+                  </span>
+                  <span>{galleryHasMore ? "Scroll for more" : "All loaded"}</span>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-1">
                 {/* Images */}
-                {(galleryFilter === 'all' || galleryFilter === 'image') && galleryImages.map((item) => (
+                {galleryVisibleImages.map((item) => (
                   <div key={item.key} className="bg-neutral-800 rounded-lg overflow-hidden border border-neutral-700 group hover:border-cyan-600/50 transition-colors cursor-pointer" onClick={() => copyToClipboard(item.url)}>
                     <div className="aspect-video relative bg-neutral-900">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -6371,7 +6439,7 @@ export function GPUApiTester({
                 ))}
 
                 {/* Videos */}
-                {(galleryFilter === 'all' || galleryFilter === 'video') && galleryVideos.map((item) => (
+                {galleryVisibleVideos.map((item) => (
                   <div key={item.key} className="bg-neutral-800 rounded-lg overflow-hidden border border-neutral-700 group hover:border-teal-600/50 transition-colors cursor-pointer" onClick={() => copyToClipboard(item.url)}>
                     <div className="aspect-video relative bg-neutral-900">
                       <video
@@ -6406,7 +6474,7 @@ export function GPUApiTester({
                 ))}
 
                 {/* Audio */}
-                {(galleryFilter === 'all' || galleryFilter === 'audio') && galleryAudio.map((item) => (
+                {galleryVisibleAudio.map((item) => (
                   <div key={item.key} className="bg-neutral-800 rounded-lg overflow-hidden border border-neutral-700 p-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Music className="w-4 h-4 text-amber-400 shrink-0" />
@@ -6427,7 +6495,14 @@ export function GPUApiTester({
                     </div>
                   </div>
                 ))}
-              </div>
+                </div>
+
+                {galleryHasMore && (
+                  <div ref={galleryLoadMoreRef} className="flex items-center justify-center py-4">
+                    <span className="text-xs text-neutral-500">Loading more as you scroll...</span>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </DialogContent>

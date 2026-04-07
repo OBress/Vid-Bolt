@@ -22,6 +22,10 @@ export interface ShotNeighborInfo {
   summary: string;
   media_type: string;
   content_type: string;
+  shot_role?: string;
+  visual_motif?: string;
+  subject_focus?: string;
+  exit_transition_intent?: string;
   /** Generated media URL (available after generation phase) */
   generated_url?: string;
 }
@@ -58,7 +62,7 @@ const DEFAULT_WINDOW_SIZE = 2;
  * @returns Context object with neighbor info and pre-built consistency notes
  */
 export function getShotNeighborContext(
-  allShots: Array<Pick<PlannedShot, 'segment_index' | 'summary' | 'media_type' | 'content_type' | 'visual_description' | 'visual_elements' | 'text'>>,
+  allShots: Array<Pick<PlannedShot, 'segment_index' | 'summary' | 'media_type' | 'content_type' | 'visual_description' | 'visual_elements' | 'text' | 'shot_role' | 'visual_motif' | 'subject_focus' | 'exit_transition_intent'>>,
   currentIndex: number,
   windowSize: number = DEFAULT_WINDOW_SIZE,
   generatedMedia?: Record<string, string>
@@ -90,7 +94,7 @@ export function getShotNeighborContext(
  * since MG prompts are more token-tolerant than diffusion prompts.
  */
 export function getShotNeighborContextForMG(
-  allShots: Array<Pick<PlannedShot, 'segment_index' | 'summary' | 'media_type' | 'content_type' | 'visual_description' | 'visual_elements' | 'text'>>,
+  allShots: Array<Pick<PlannedShot, 'segment_index' | 'summary' | 'media_type' | 'content_type' | 'visual_description' | 'visual_elements' | 'text' | 'shot_role' | 'visual_motif' | 'subject_focus' | 'exit_transition_intent'>>,
   currentIndex: number,
   generatedMedia?: Record<string, string>
 ): string {
@@ -189,7 +193,7 @@ export function groupIntoVisualSequences(
 // ============================================================================
 
 function toNeighborInfo(
-  shot: Pick<PlannedShot, 'segment_index' | 'summary' | 'media_type' | 'content_type' | 'visual_description' | 'visual_elements' | 'text'>,
+  shot: Pick<PlannedShot, 'segment_index' | 'summary' | 'media_type' | 'content_type' | 'visual_description' | 'visual_elements' | 'text' | 'shot_role' | 'visual_motif' | 'subject_focus' | 'exit_transition_intent'>,
   generatedMedia?: Record<string, string>
 ): ShotNeighborInfo {
   return {
@@ -198,6 +202,10 @@ function toNeighborInfo(
     summary: shot.summary || '',
     media_type: shot.media_type,
     content_type: shot.content_type,
+    shot_role: shot.shot_role || undefined,
+    visual_motif: shot.visual_motif || undefined,
+    subject_focus: shot.subject_focus || undefined,
+    exit_transition_intent: shot.exit_transition_intent || undefined,
     generated_url: generatedMedia?.[`shot-${shot.segment_index}`],
   };
 }
@@ -253,7 +261,16 @@ function buildCompactNote(
 
   if (!keywords) return '';
 
-  return `Maintain visual continuity with: ${keywords}.`;
+  const previousShot = previous[0];
+  const addOns = [
+    previousShot.visual_motif ? `motif ${previousShot.visual_motif}` : '',
+    previousShot.subject_focus ? `focus ${previousShot.subject_focus}` : '',
+    previousShot.exit_transition_intent ? `exit ${previousShot.exit_transition_intent}` : '',
+  ].filter(Boolean).join('; ');
+
+  return addOns
+    ? `Maintain visual continuity with: ${keywords}. Continue ${addOns}.`
+    : `Maintain visual continuity with: ${keywords}.`;
 }
 
 /**

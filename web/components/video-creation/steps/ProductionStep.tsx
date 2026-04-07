@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -26,6 +27,18 @@ import { useProjectSettings } from "@/hooks/use-project-settings";
 import { hasAnyLocalModel } from "@/lib/constants/model-registry";
 import { PipelineGraph } from "@/components/video-creation/PipelineGraph";
 import { ActivityFeed } from "@/components/video-creation/ActivityFeed";
+import { VideoPreferencesPanel } from "@/components/features/project/settings/VideoPreferencesPanel";
+import type { VideoCreativeOverrides } from "@/lib/types/closed-loop";
+import type { EditDecisionList } from "@/lib/services/edit-assembly/edit-assembly-prompts";
+import type { Task } from "@/types/task";
+import type {
+  AudioChunk,
+  GeneratedMedia,
+  ProductionTaskSummary,
+  ShotEvent,
+  VideoProject,
+  VideoStage,
+} from "@/types/video";
 
 // ============================================================================
 // TYPES
@@ -37,11 +50,64 @@ interface ProductionStepProps {
   isLoading: boolean;
   taskId: string | null;
   onTaskStarted: (taskId: string) => void;
-  onComplete: () => void;
+  onComplete: (payload: ProductionCompletionPayload) => void;
   onError?: (error: string) => void;
   onBack: () => void;
+  videoCreativeOverrides?: VideoCreativeOverrides;
+  onVideoCreativeOverridesChange: (overrides: VideoCreativeOverrides) => void;
+  reviewMode: ProductionReviewMode;
+  onReviewModeChange: (reviewMode: ProductionReviewMode) => void;
   isLocked?: boolean;
   lockedMessage?: string;
+}
+
+export type ProductionReviewMode = "off" | "sequence_preview";
+
+export interface ProductionCompletionPayload {
+  video: VideoProject;
+  latestProductionTask: ProductionTaskSummary | null;
+  edl: EditDecisionList | null;
+  agentEdl: any | null;
+  audioChunks: AudioChunk[];
+  shotList: ShotEvent[];
+  generatedMedia: GeneratedMedia[];
+}
+
+function extractPipelineOutputs(metadata: Record<string, any>): {
+  audioChunks: AudioChunk[];
+  shotList: ShotEvent[];
+  generatedMedia: GeneratedMedia[];
+} {
+  const shotPlan = metadata?.shot_plan || {};
+  const avScript = metadata?.av_script_part1 || {};
+  const shots: ShotEvent[] = ((shotPlan.shots || avScript.shots || [])) as ShotEvent[];
+  const genImages = (metadata?.generated_images || {}) as Record<string, string>;
+  const genVideos = (metadata?.generated_videos || {}) as Record<string, string>;
+  const genMG = (metadata?.generated_motion_graphics || {}) as Record<string, string>;
+  const audioChunks = (metadata?.audio_chunks || []) as AudioChunk[];
+
+  const generatedMedia: GeneratedMedia[] = shots.map((shot: any) => {
+    const idx = shot.segment_index as number;
+    const key = `shot-${idx}`;
+    const imageUrl = genImages[key];
+    const videoUrl = genVideos[key];
+    const mgCode = genMG[key];
+    const url = videoUrl || imageUrl || (mgCode ? `remotion://shot-${idx}` : undefined);
+    return {
+      shot_index: idx,
+      media_type: (shot.media_type || "image") as "image" | "video" | "motiongraphic",
+      generation_status: (url || mgCode) ? "completed" : "failed",
+      media_url: url,
+      visual_prompt: shot.visual_prompt || shot.summary || "",
+      remotion_code: mgCode,
+    } as GeneratedMedia;
+  });
+
+  return { audioChunks, shotList: shots, generatedMedia };
+}
+
+function isEditorReadyStage(stage: VideoStage): stage is "video" | "export" | "completed" {
+  return stage === "video" || stage === "export" || stage === "completed";
 }
 
 // Types and constants for pipeline phases removed — status derivation
@@ -60,6 +126,10 @@ export function ProductionStep({
   onComplete,
   onError,
   onBack,
+  videoCreativeOverrides,
+  onVideoCreativeOverridesChange,
+  reviewMode,
+  onReviewModeChange,
 }: ProductionStepProps) {
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -67,7 +137,10 @@ export function ProductionStep({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasCompleted, setHasCompleted] = useState(false);
   const [shutdownWhenDone, setShutdownWhenDone] = useState(false);
+  const [completionPayload, setCompletionPayload] = useState<ProductionCompletionPayload | null>(null);
   const completedRef = useRef(false);
+  const completionDispatchedRef = useRef(false);
+  const completionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // GPU VM status
   const { displayStatus: vmStatus, startVM, isLoading: _isVmLoading } = useGCPVM();
@@ -91,19 +164,164 @@ export function ProductionStep({
   // Task Progress Polling
   // =========================================================================
 
-  const handleComplete = useCallback(
-    () => {
-      if (completedRef.current) return;
-      completedRef.current = true;
-      setHasCompleted(true);
+  const dispatchCompletion = useCallback(
+    (payload: ProductionCompletionPayload, delayMs: number) => {
+      if (completionTimeoutRef.current) {
+        clearTimeout(completionTimeoutRef.current);
+      }
 
-      // Give the user a moment to see the completed state
-      setTimeout(() => {
-        onComplete();
-      }, 1500);
+      completionTimeoutRef.current = setTimeout(() => {
+        if (completionDispatchedRef.current) return;
+        completionDispatchedRef.current = true;
+        onComplete(payload);
+      }, delayMs);
     },
     [onComplete]
   );
+
+  const failCompletionConfirmation = useCallback(
+    (message: string, latestTaskId?: string | null) => {
+      completedRef.current = false;
+      completionDispatchedRef.current = false;
+      if (completionTimeoutRef.current) {
+        clearTimeout(completionTimeoutRef.current);
+        completionTimeoutRef.current = null;
+      }
+      setCompletionPayload(null);
+      setHasCompleted(false);
+      setErrorMessage(message);
+      if (latestTaskId) {
+        setTaskId(latestTaskId);
+      }
+      onError?.(message);
+    },
+    [onError]
+  );
+
+  const confirmProductionCompletion = useCallback(
+    async (expectedTaskId: string | null): Promise<{
+      payload: ProductionCompletionPayload | null;
+      error?: string;
+      latestTaskId?: string | null;
+    }> => {
+      try {
+        const res = await fetch(`/api/videos/${videoId}`);
+        const data = await res.json();
+
+        if (!res.ok) {
+          return {
+            payload: null,
+            error: data.error || "Failed to confirm production completion.",
+          };
+        }
+
+        const video = data.video as VideoProject;
+        const latestProductionTask = (data.latestProductionTask || null) as ProductionTaskSummary | null;
+        const metadata = (video.metadata || {}) as Record<string, any>;
+        const edl = (metadata.edl || null) as EditDecisionList | null;
+        const agentEdl = metadata.agentEdl || null;
+        const pipelineOutputs = extractPipelineOutputs(metadata);
+        const audioChunks = Array.isArray(data.audioChunks) && data.audioChunks.length > 0
+          ? (data.audioChunks as AudioChunk[])
+          : pipelineOutputs.audioChunks;
+        const hasAssemblyOutput = Boolean(edl || agentEdl);
+        const latestTaskMatches = !expectedTaskId || latestProductionTask?.id === expectedTaskId;
+
+        if (
+          !latestProductionTask
+          || latestProductionTask.status !== "completed"
+          || !latestTaskMatches
+          || !isEditorReadyStage(video.current_stage)
+          || !hasAssemblyOutput
+        ) {
+          return {
+            payload: null,
+            latestTaskId: latestProductionTask?.id || expectedTaskId,
+            error:
+              latestProductionTask?.error_message
+              || "Production did not finish cleanly. Staying on Production.",
+          };
+        }
+
+        return {
+          payload: {
+            video,
+            latestProductionTask,
+            edl,
+            agentEdl,
+            audioChunks,
+            shotList: pipelineOutputs.shotList,
+            generatedMedia: pipelineOutputs.generatedMedia,
+          },
+          latestTaskId: latestProductionTask.id,
+        };
+      } catch (error) {
+        return {
+          payload: null,
+          error: error instanceof Error ? error.message : "Failed to confirm production completion.",
+        };
+      }
+    },
+    [videoId]
+  );
+
+  const handleComplete = useCallback(
+    async (task: Task) => {
+      if (completedRef.current) return;
+      completedRef.current = true;
+
+      const confirmation = await confirmProductionCompletion(task.id);
+      if (!confirmation.payload) {
+        failCompletionConfirmation(
+          confirmation.error || "Production did not finish cleanly. Staying on Production.",
+          confirmation.latestTaskId
+        );
+        return;
+      }
+
+      setErrorMessage(null);
+      setCompletionPayload(confirmation.payload);
+      setHasCompleted(true);
+      if (confirmation.latestTaskId) {
+        setTaskId(confirmation.latestTaskId);
+      }
+      dispatchCompletion(confirmation.payload, 1500);
+    },
+    [confirmProductionCompletion, dispatchCompletion, failCompletionConfirmation]
+  );
+
+  const handleContinueToEditor = useCallback(async () => {
+    if (completionPayload) {
+      if (completionTimeoutRef.current) {
+        clearTimeout(completionTimeoutRef.current);
+        completionTimeoutRef.current = null;
+      }
+      if (!completionDispatchedRef.current) {
+        completionDispatchedRef.current = true;
+        onComplete(completionPayload);
+      }
+      return;
+    }
+
+    const confirmation = await confirmProductionCompletion(taskId);
+    if (!confirmation.payload) {
+      failCompletionConfirmation(
+        confirmation.error || "Production did not finish cleanly. Staying on Production.",
+        confirmation.latestTaskId
+      );
+      return;
+    }
+
+    setErrorMessage(null);
+    setCompletionPayload(confirmation.payload);
+    setHasCompleted(true);
+    if (completionTimeoutRef.current) {
+      clearTimeout(completionTimeoutRef.current);
+      completionTimeoutRef.current = null;
+    }
+    completionDispatchedRef.current = true;
+    onComplete(confirmation.payload);
+  }, [completionPayload, confirmProductionCompletion, failCompletionConfirmation, onComplete, taskId]);
 
   const handleError = useCallback(
     (error: string) => {
@@ -145,7 +363,13 @@ export function ProductionStep({
     setIsStarting(true);
     setErrorMessage(null);
     completedRef.current = false;
+    completionDispatchedRef.current = false;
     setHasCompleted(false);
+    setCompletionPayload(null);
+    if (completionTimeoutRef.current) {
+      clearTimeout(completionTimeoutRef.current);
+      completionTimeoutRef.current = null;
+    }
 
     try {
       // Auto-start GPU if it's off and we have local models that need it
@@ -163,6 +387,8 @@ export function ProductionStep({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           videoId,
+          videoCreativeOverrides,
+          productionControls: { reviewMode },
           shutdownWhenDone: needsLocalGpu ? shutdownWhenDone : false,
         }),
       });
@@ -187,7 +413,17 @@ export function ProductionStep({
     } finally {
       setIsStarting(false);
     }
-  }, [videoId, onTaskStarted, onError, vmStatus, startVM, needsLocalGpu, shutdownWhenDone]);
+  }, [
+    videoId,
+    onTaskStarted,
+    onError,
+    vmStatus,
+    startVM,
+    needsLocalGpu,
+    shutdownWhenDone,
+    reviewMode,
+    videoCreativeOverrides,
+  ]);
 
   const handleStop = useCallback(async () => {
     if (!taskId) return;
@@ -225,8 +461,24 @@ export function ProductionStep({
     }
     setErrorMessage(null);
     setTaskId(null);
+    setCompletionPayload(null);
+    setHasCompleted(false);
+    completedRef.current = false;
+    completionDispatchedRef.current = false;
+    if (completionTimeoutRef.current) {
+      clearTimeout(completionTimeoutRef.current);
+      completionTimeoutRef.current = null;
+    }
     handleStart();
   }, [handleStart, taskId]);
+
+  useEffect(() => {
+    return () => {
+      if (completionTimeoutRef.current) {
+        clearTimeout(completionTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // =========================================================================
   // Render
@@ -352,6 +604,43 @@ export function ProductionStep({
         <ActivityFeed events={activityEvents} isRunning={isRunning} />
       )}
 
+      {/* Creative direction controls */}
+      {!isRunning && !hasCompleted && (
+        <div className="w-full space-y-4">
+          <VideoPreferencesPanel
+            overrides={videoCreativeOverrides}
+            onChange={onVideoCreativeOverridesChange}
+            availableLoras={settings.visuals.creativeDirection?.loras || []}
+            channelDefaultLora={settings.visuals.creativeDirection?.defaultLoraName}
+          />
+
+          <div className="w-full rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-3 backdrop-blur-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-neutral-200">Review mode</p>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Keep production automatic, or pause after planning for a quick sequence preview.
+                </p>
+              </div>
+              <div className="w-52">
+                <Select
+                  value={reviewMode}
+                  onValueChange={(val) => onReviewModeChange(val as ProductionReviewMode)}
+                >
+                  <SelectTrigger className="bg-black/40 border-neutral-800 h-10">
+                    <SelectValue placeholder="Automatic" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-neutral-900 border-neutral-800">
+                    <SelectItem value="off">Automatic</SelectItem>
+                    <SelectItem value="sequence_preview">Sequence preview</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Action Buttons */}
       <div className="flex flex-col gap-3 w-full">
         <div className="flex items-center gap-3 w-full">
@@ -390,7 +679,9 @@ export function ProductionStep({
             </Button>
           ) : hasCompleted ? (
             <Button
-              onClick={onComplete}
+              onClick={() => {
+                void handleContinueToEditor();
+              }}
               className="gap-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white border-0"
             >
               <CheckCircle2 className="w-4 h-4" />

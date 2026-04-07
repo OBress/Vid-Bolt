@@ -35,6 +35,10 @@ import { listEntities, incrementAppearance } from '@/lib/services/gcm';
 import { selectBestFitSalvage, type SalvageAttempt } from '@/lib/services/best-fit-salvage';
 import { syncLorasToGpuApi } from '@/lib/services/lora-sync-service';
 import { decrementActiveProductions, executeGpuShutdown } from '@/lib/services/gpu-production-tracker';
+import { withGpuLock } from '@/lib/queues/gpu-lock';
+import { executeSegmentationShot } from '@/lib/services/segmentation-shot-executor';
+import { buildVideoGenerationWaves } from '@/lib/services/continuity-wave-planner';
+import { processContinuityWaveBatch } from '@/lib/av-script/i2v-processor';
 import type { VerifierResult } from '@/lib/queues/workers/verifier';
 import type {
   OrchestratorJobData,
@@ -314,6 +318,31 @@ async function getQueueEvents(queueName: string): Promise<QueueEvents> {
   return events;
 }
 
+function isBullMqWaitTimeoutError(error: unknown): error is Error {
+  return error instanceof Error && error.message.includes('timed out before finishing');
+}
+
+function buildVerifierTimeoutResult(waitTimeoutMs: number): VerifierResult {
+  return {
+    verdict: 'FAIL',
+    failure_type: 'recoverable',
+    dimension_feedback: {
+      semantic_alignment: `Verifier wait timed out after ${Math.round(waitTimeoutMs / 1000)}s before a verdict was received.`,
+      entity_consistency: 'Unknown because the verifier did not return in time.',
+      temporal_continuity: 'Unknown because the verifier did not return in time.',
+      visual_quality: 'Unknown because the verifier did not return in time.',
+      style_consistency: 'Unknown because the verifier did not return in time.',
+      thematic_consistency: 'Unknown because the verifier did not return in time.',
+    },
+    suggested_corrections: [
+      'Verifier timed out before returning a verdict',
+      'Retry verification or review this shot manually in the editor',
+    ],
+    recommended_action: 'regenerate',
+    confidence: 0,
+  };
+}
+
 // ============================================================================
 // STATE HELPERS
 // ============================================================================
@@ -413,6 +442,7 @@ async function executeTtsPhase(
     taskId,
     userId: jobData.userId,
     videoId,
+    taskLifecycleOwner: 'orchestrator',
     script: jobData.scriptContent,
     voiceProvider: voice?.provider || 'inworld',
     voiceModel: voice?.model || 'inworld-tts-1.5-max',
@@ -499,6 +529,7 @@ async function executeShotPlanningPhase(
     taskId,
     userId: jobData.userId,
     videoId,
+    taskLifecycleOwner: 'orchestrator',
     script: jobData.scriptContent,
     wordTimestamps,
     totalDurationSeconds: totalDuration,
@@ -522,7 +553,7 @@ async function executeShotPlanningPhase(
 const REFLECTION_MODEL = 'google/gemini-3-flash-preview';
 
 /** Timeout for video verification jobs (vision analysis is slower than text). */
-const VIDEO_VERIFY_TIMEOUT_MS = 180_000;
+const VIDEO_VERIFY_TIMEOUT_MS = calculateVerifierTimeout('video');
 
 interface ShotPlanReflectionResult {
   severity: 'none' | 'minor' | 'major';
@@ -665,6 +696,7 @@ async function executeAssetRetrievalPhase(
     taskId,
     userId: jobData.userId,
     videoId,
+    taskLifecycleOwner: 'orchestrator',
     aspectRatio: jobData.creativeManifest.style.aspect_ratio,
     systemPrompt: workerPrompts.asset_scout,
   });
@@ -714,6 +746,7 @@ async function executeWithVerification(
     entityReferences?: EntityReference[];
     previousShotUrl?: string;
     styleGuide?: string;
+    visualStyleTag?: string;
     /** GCM entity IDs referenced by this shot (for appearance tracking) */
     entityIds?: string[];
     // Creative context for dynamic verifier prompt
@@ -722,6 +755,10 @@ async function executeWithVerification(
     genre?: string;
     narrativeBeat?: string;
     imageEditInstruction?: string;
+    /** Total shots in this pipeline run - drives image-edit timeout scaling */
+    totalShotCount?: number;
+    /** Total video duration in seconds - drives image-edit timeout scaling */
+    totalDurationSeconds?: number;
   },
   state: ClosedLoopState
 ): Promise<{ mediaUrl: string; verified: boolean; flag?: ReturnType<typeof selectBestFitSalvage>['flag']; softFailed?: boolean }> {
@@ -730,6 +767,7 @@ async function executeWithVerification(
 
   // Track the current media URL — may be updated by image-edit
   let currentMediaUrl = '';
+  let retryVerificationOnly = false;
 
   for (let attempt = 1; attempt <= MAX_VERIFY_ATTEMPTS; attempt++) {
     console.log(`${LOG_PREFIX} Shot ${shotIndex} attempt ${attempt}/${MAX_VERIFY_ATTEMPTS}`);
@@ -743,11 +781,15 @@ async function executeWithVerification(
     // -----------------------------------------------------------------------
     const lastResult = attempt > 1 ? salvageAttempts[attempt - 2]?.verifierResult : undefined;
     const isRecoverableImageFail =
+      !retryVerificationOnly &&
       generationConfig.mediaType === 'image' &&
       lastResult?.failure_type === 'recoverable' &&
       currentMediaUrl;
 
-    if (isRecoverableImageFail) {
+    if (retryVerificationOnly) {
+      console.log(`${LOG_PREFIX} Shot ${shotIndex}: retrying verification on existing media`);
+      retryVerificationOnly = false;
+    } else if (isRecoverableImageFail) {
       // --- RECOVERABLE IMAGE: use image-edit (cheaper, no VRAM switch) ---
       console.log(`${LOG_PREFIX} Shot ${shotIndex}: recoverable failure — dispatching to image-edit`);
 
@@ -758,6 +800,7 @@ async function executeWithVerification(
           taskId: verificationContext.taskId,
           userId: verificationContext.userId,
           videoId: verificationContext.videoId,
+          taskLifecycleOwner: 'orchestrator',
           shotIndex,
           sourceImageUrl: currentMediaUrl,
           editInstruction: lastResult!.suggested_corrections.join('. '),
@@ -768,7 +811,13 @@ async function executeWithVerification(
         }
       );
 
-      const editResult = await editJob.waitUntilFinished(editQueueEvents, calculateImageEditTimeout());
+      const editResult = await editJob.waitUntilFinished(
+        editQueueEvents,
+        calculateImageEditTimeout(
+          verificationContext.totalShotCount ?? 1,
+          verificationContext.totalDurationSeconds ?? 0
+        )
+      );
       currentMediaUrl = editResult?.mediaUrl || editResult?.url || currentMediaUrl;
     } else {
       // --- FUNDAMENTAL or FIRST ATTEMPT: generate from scratch ---
@@ -810,6 +859,7 @@ async function executeWithVerification(
       entityReferences: verificationContext.entityReferences,
       previousShotUrl: verificationContext.previousShotUrl,
       styleGuide: verificationContext.styleGuide,
+      visualStyleTag: verificationContext.visualStyleTag,
       previousFeedback,
       // Creative context for dynamic verifier prompt
       creativeDirection: verificationContext.creativeDirection,
@@ -819,8 +869,30 @@ async function executeWithVerification(
       imageEditInstruction: verificationContext.imageEditInstruction,
     });
 
-    const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, calculateVerifierTimeout(generationConfig.mediaType));
-    const result: VerifierResult = verifyResult?.result;
+    const verifierTimeoutMs = calculateVerifierTimeout(generationConfig.mediaType);
+    console.log(
+      `${LOG_PREFIX} Shot ${shotIndex} verifier wait budget: ${Math.round(verifierTimeoutMs / 1000)}s`
+    );
+
+    let result: VerifierResult | undefined;
+    try {
+      const verifierWaitStartedAt = Date.now();
+      const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, verifierTimeoutMs);
+      console.log(
+        `${LOG_PREFIX} Shot ${shotIndex} verifier completed in ${Date.now() - verifierWaitStartedAt}ms`
+      );
+      result = verifyResult?.result;
+    } catch (error) {
+      if (isBullMqWaitTimeoutError(error)) {
+        console.warn(
+          `${LOG_PREFIX} Shot ${shotIndex} attempt ${attempt}: verifier wait timed out after ${Math.round(verifierTimeoutMs / 1000)}s`
+        );
+        result = buildVerifierTimeoutResult(verifierTimeoutMs);
+        retryVerificationOnly = attempt < MAX_VERIFY_ATTEMPTS;
+      } else {
+        throw error;
+      }
+    }
 
     if (!result) {
       console.warn(`${LOG_PREFIX} Shot ${shotIndex} attempt ${attempt}: no verifier result`);
@@ -983,6 +1055,21 @@ async function executeProductionPhase(
     template_type?: import('@/types/video').MotionGraphicsTemplateType;
     mg_asset_bundle?: MotionGraphicsAssetBundleItem[];
     visual_treatment?: import('@/lib/types/closed-loop').VisualTreatment;
+    shot_role?: string;
+    framing?: string;
+    camera_angle?: string;
+    camera_motion?: string;
+    lens_style?: string;
+    subject_focus?: string;
+    entry_transition_intent?: string;
+    exit_transition_intent?: string;
+    bridge_subject?: string;
+    visual_motif?: string;
+    continuity_level?: 'fresh' | 'soft' | 'strict';
+    anchor_strategy?: 'fresh' | 'scene_anchor' | 'prev_frame' | 'prev_keyframe';
+    render_strategy?: 'ai_video' | 'ai_image' | 'stock' | 'motiongraphic' | 'segment_animate' | 'segment_video_fx' | 'segment_mask_prep';
+    trim_priority?: 'hold' | 'balanced' | 'tight';
+    segmentation_treatment?: import('@/lib/types/closed-loop').SegmentationTreatment;
     persistent_graphic_id?: string;
     persistent_graphic_type?: import('@/types/video').PersistentGraphicType;
     graphic_state_patch?: import('@/types/video').GraphicStatePatch;
@@ -1030,6 +1117,12 @@ async function executeProductionPhase(
   // Stock style guide: no LoRA info — stock images are real footage, not AI-generated
   const stockStyleGuide = baseStyle;
 
+  // Derive pipeline-level dimensions for timeout scaling (no extra DB call)
+  const pipelineShotCount = shots.length;
+  const shotPlanMeta = (shotPlan.metadata || {}) as Record<string, unknown>;
+  const pipelineDurationSeconds = (shotPlanMeta.total_duration_seconds as number) ||
+    (shots.length > 0 ? Math.max(...shots.map(s => s.end_seconds || 0)) : 0);
+
   let imagesCompleted = 0;
   let imagesFailed = 0;
   let videosCompleted = 0;
@@ -1060,7 +1153,15 @@ async function executeProductionPhase(
     const treatment = resolveVisualTreatment(s);
     return treatment === 'ai_image' || s.media_type === 'image';
   });
+  const segmentMaskPrepShots = shots.filter(s =>
+    s.segmentation_treatment?.execution_mode === 'segment_mask_prep'
+  );
+  const segmentationAnimateShots = shots.filter(s =>
+    s.render_strategy === 'segment_animate' &&
+    s.segmentation_treatment?.execution_mode === 'segment_animate'
+  );
   const allVideoShots = shots.filter(s => {
+    if (s.render_strategy === 'segment_animate') return false;
     const treatment = resolveVisualTreatment(s);
     if (treatment === 'ai_video') return true;
     if ((treatment === 'stock' || treatment === 'archival') && !scrapedStock[`shot-${s.segment_index}`]) {
@@ -1068,10 +1169,20 @@ async function executeProductionPhase(
     }
     return !s.visual_treatment && s.media_type === 'video';
   });
-  const i2vShots = allVideoShots.filter(s => s.synthesis_mode === 'I2V' && s.angle_change);
-  const videoShots = allVideoShots.filter(s => !(s.synthesis_mode === 'I2V' && s.angle_change));
-  if (i2vShots.length > 0) {
-    console.log(`${LOG_PREFIX} Separated ${i2vShots.length} I2V shots for sequential processing after batch`);
+  const segmentationVideoFxShots = allVideoShots.filter(s =>
+    s.render_strategy === 'segment_video_fx' &&
+    s.segmentation_treatment?.execution_mode === 'segment_video_fx'
+  );
+  const videoGenerationWaves = buildVideoGenerationWaves(allVideoShots);
+  const videoShots = allVideoShots.filter(s =>
+    videoGenerationWaves[0]?.shotIndices.includes(s.segment_index)
+  );
+  const i2vShots: typeof allVideoShots = [];
+  if (videoGenerationWaves.length > 1) {
+    console.log(
+      `${LOG_PREFIX} Planned ${videoGenerationWaves.length} video generation waves: ` +
+      `${videoGenerationWaves.map(w => `wave ${w.index} [${w.shotIndices.join(', ')}]`).join(' | ')}`
+    );
   }
   const mgShots = shots.filter(s =>
     s.media_type === 'motiongraphic' ||
@@ -1425,6 +1536,7 @@ async function executeProductionPhase(
             taskId,
             userId: jobData.userId,
             videoId,
+            taskLifecycleOwner: 'orchestrator',
             shotIndex: shot.segment_index,
             aspectRatio: jobData.creativeManifest.style.aspect_ratio,
             loraName: jobData.creativeManifest.lora?.name,
@@ -1434,7 +1546,27 @@ async function executeProductionPhase(
           shotDescription: shot.summary || `Shot ${shot.segment_index}`,
           timeout: IMAGE_GEN_TIMEOUT_MS,
         },
-        { userId: jobData.userId, videoId, taskId, entityReferences: entityRefs, styleGuide: stockStyleGuide, entityIds: shot.entity_refs },
+        {
+          userId: jobData.userId,
+          videoId,
+          taskId,
+          entityReferences: entityRefs,
+          styleGuide: stockStyleGuide,
+          visualStyleTag: jobData.creativeManifest?.style?.visual_style,
+          entityIds: shot.entity_refs,
+          creativeDirection: [
+            jobData.creativeManifest?.master_creative_prompt,
+            jobData.creativeManifest?.video_creative_prompt,
+          ].filter(Boolean).join('\n') || undefined,
+          loraInfo: jobData.creativeManifest?.lora
+            ? { name: jobData.creativeManifest.lora.name, triggerWords: jobData.creativeManifest.lora.trigger_words }
+            : undefined,
+          genre: (jobData.creativeManifest?.script_context as any)?.genre || undefined,
+          narrativeBeat: shot.narrative_beat || undefined,
+          imageEditInstruction: shot.image_edit_instruction || undefined,
+          totalShotCount: pipelineShotCount,
+          totalDurationSeconds: pipelineDurationSeconds,
+        },
         state
       );
 
@@ -1521,6 +1653,78 @@ async function executeProductionPhase(
       console.warn(`${LOG_PREFIX} Scene harmonization error (non-fatal):`, harmErr);
     }
 
+    // --- SEGMENTATION MASK PREP ---
+    // Prep-only segmentation runs before downstream creative edits so masks and
+    // object metadata are available for later compositing or editing decisions.
+    if (segmentMaskPrepShots.length > 0) {
+      console.log(`${LOG_PREFIX} Preparing segmentation masks for ${segmentMaskPrepShots.length} shots...`);
+      await updateTaskStatus(taskId, {
+        current_step: `Phase IV: Preparing segmentation masks for ${segmentMaskPrepShots.length} shots...`,
+        progress_percent: 50,
+      });
+
+      const { data: maskPrepMeta } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+      const maskPrepObj = (maskPrepMeta?.metadata || {}) as Record<string, unknown>;
+      const currentImages = (maskPrepObj.generated_images || {}) as Record<string, string>;
+      const currentStock = (maskPrepObj.scraped_stock_images || {}) as Record<string, string>;
+      const existingMaskPrepOutputs = (maskPrepObj.segmentation_outputs || {}) as Record<string, Record<string, unknown>>;
+      const maskPrepUpdates: Record<string, Record<string, unknown>> = {};
+
+      for (const shot of segmentMaskPrepShots) {
+        const shotKey = `shot-${shot.segment_index}`;
+        const sourceUrl = currentImages[shotKey] || currentStock[shotKey];
+        if (!sourceUrl) {
+          console.warn(`${LOG_PREFIX} Segment mask prep shot ${shot.segment_index}: no source image available, skipping`);
+          continue;
+        }
+
+        const lockTtlMs = Math.max(180_000, Math.round((shot.duration_seconds || 4) * 35_000) + 120_000);
+        const segResult = await withGpuLock(jobData.userId, async () => {
+          return executeSegmentationShot({
+            userId: jobData.userId,
+            videoId,
+            shot: shot as any,
+            inputUrl: sourceUrl,
+          });
+        }, lockTtlMs, videoId);
+
+        if (segResult.success) {
+          maskPrepUpdates[shotKey] = {
+            mode: 'segment_mask_prep',
+            source_media_url: sourceUrl,
+            output_url: segResult.mediaUrl,
+            lane_decision: shot.render_strategy || 'segment_mask_prep',
+            model_version: segResult.metadata?.model_version,
+            labels: segResult.metadata?.labels,
+            prompt_to_obj_ids: segResult.metadata?.prompt_to_obj_ids,
+            object_id_to_prompt_label: segResult.metadata?.object_id_to_prompt_label,
+            metadata: segResult.metadata || {},
+          };
+          console.log(`${LOG_PREFIX} Segment mask prep shot ${shot.segment_index}: prepared`);
+        } else {
+          state.flagged_shots.push({
+            shotIndex: shot.segment_index,
+            issue: segResult.error || 'Segmentation mask prep failed',
+            suggestions: ['Use unmasked editing or simplify the segmentation request'],
+            allAttemptUrls: [sourceUrl],
+          });
+        }
+      }
+
+      if (Object.keys(maskPrepUpdates).length > 0) {
+        await supabase.rpc('merge_video_metadata', {
+          p_video_id: videoId,
+          p_updates: {
+            segmentation_outputs: { ...existingMaskPrepOutputs, ...maskPrepUpdates },
+          },
+        });
+      }
+    }
+
     // --- CREATIVE IMAGE EDITING ---
     // After harmonization, apply any image_edit_instruction directives from the
     // shot planner. These are creative edits on keyframe/stock images used in
@@ -1563,6 +1767,7 @@ async function executeProductionPhase(
             shot.image_edit_instruction!,
             videoId,
             shot.segment_index,
+            jobData.userId,
             jobData.creativeManifest.style.aspect_ratio
           );
 
@@ -1588,6 +1793,83 @@ async function executeProductionPhase(
           },
         });
         console.log(`${LOG_PREFIX} Persisted ${Object.keys(editedImages).length} creatively edited images`);
+      }
+    }
+
+    // --- SEGMENTATION-LED IMAGE → VIDEO SHOTS ---
+    if (segmentationAnimateShots.length > 0) {
+      console.log(`${LOG_PREFIX} Running ${segmentationAnimateShots.length} segmentation-led animation shots...`);
+      await updateTaskStatus(taskId, {
+        current_step: `Phase IV: Animating ${segmentationAnimateShots.length} segmentation-led shots...`,
+        progress_percent: 52,
+      });
+
+      const { data: segMeta } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+      const segMetaObj = (segMeta?.metadata || {}) as Record<string, unknown>;
+      const currentImages = (segMetaObj.generated_images || {}) as Record<string, string>;
+      const currentStock = (segMetaObj.scraped_stock_images || {}) as Record<string, string>;
+      const existingGeneratedVideosForSeg = (segMetaObj.generated_videos || {}) as Record<string, string>;
+      const existingSegmentationOutputs = (segMetaObj.segmentation_outputs || {}) as Record<string, Record<string, unknown>>;
+      const segmentedVideos: Record<string, string> = {};
+      const segmentationOutputs: Record<string, Record<string, unknown>> = {};
+
+      for (const shot of segmentationAnimateShots) {
+        const shotKey = `shot-${shot.segment_index}`;
+        const sourceUrl = currentImages[shotKey] || currentStock[shotKey];
+        if (!sourceUrl) {
+          console.warn(`${LOG_PREFIX} Segmentation animate shot ${shot.segment_index}: no source image found, skipping`);
+          continue;
+        }
+
+        const lockTtlMs = Math.max(240_000, Math.round((shot.duration_seconds || 4) * 45_000) + 120_000);
+        const segResult = await withGpuLock(jobData.userId, async () => {
+          return executeSegmentationShot({
+            userId: jobData.userId,
+            videoId,
+            shot: shot as any,
+            inputUrl: sourceUrl,
+          });
+        }, lockTtlMs, videoId);
+
+        if (segResult.success && segResult.mediaUrl) {
+          segmentedVideos[shotKey] = segResult.mediaUrl;
+          segmentationOutputs[shotKey] = {
+            mode: 'segment_animate',
+            output_url: segResult.mediaUrl,
+            source_media_url: sourceUrl,
+            lane_decision: shot.render_strategy || 'segment_animate',
+            model_version: segResult.metadata?.model_version,
+            labels: segResult.metadata?.labels,
+            prompt_to_obj_ids: segResult.metadata?.prompt_to_obj_ids,
+            object_id_to_prompt_label: segResult.metadata?.object_id_to_prompt_label,
+            metadata: segResult.metadata || {},
+          };
+          generatedAssets.set(`placeholder://shot-${shot.segment_index}/asset-0`, segResult.mediaUrl);
+          videosCompleted++;
+          console.log(`${LOG_PREFIX} Segmentation animate shot ${shot.segment_index}: generated ${segResult.mediaUrl}`);
+        } else {
+          console.warn(`${LOG_PREFIX} Segmentation animate shot ${shot.segment_index} failed: ${segResult.error}`);
+          state.flagged_shots.push({
+            shotIndex: shot.segment_index,
+            issue: segResult.error || 'Segmentation animation failed',
+            suggestions: ['Fallback to source image or simplify segmentation treatment'],
+            allAttemptUrls: sourceUrl ? [sourceUrl] : [],
+          });
+        }
+      }
+
+      if (Object.keys(segmentedVideos).length > 0) {
+        await supabase.rpc('merge_video_metadata', {
+          p_video_id: videoId,
+          p_updates: {
+            generated_videos: { ...existingGeneratedVideosForSeg, ...segmentedVideos },
+            segmentation_outputs: { ...existingSegmentationOutputs, ...segmentationOutputs },
+          },
+        });
       }
     }
 
@@ -1684,6 +1966,7 @@ async function executeProductionPhase(
               shotIndex: shot.segment_index,
               entityReferences: entityRefs,
               styleGuide: aiStyleGuide,
+              visualStyleTag: jobData.creativeManifest?.style?.visual_style,
               // Creative context for dynamic verifier prompt
               creativeDirection: [jobData.creativeManifest?.master_creative_prompt, jobData.creativeManifest?.video_creative_prompt].filter(Boolean).join('\n') || undefined,
               loraInfo: jobData.creativeManifest?.lora ? { name: jobData.creativeManifest.lora.name, triggerWords: jobData.creativeManifest.lora.trigger_words } : undefined,
@@ -1752,6 +2035,7 @@ async function executeProductionPhase(
         taskId,
         userId: jobData.userId,
         videoId,
+        taskLifecycleOwner: 'orchestrator',
         aspectRatio: jobData.creativeManifest.style.aspect_ratio,
         loraName: jobData.creativeManifest.lora?.name,
         loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
@@ -1802,6 +2086,7 @@ async function executeProductionPhase(
             taskId,
             userId: jobData.userId,
             videoId,
+            taskLifecycleOwner: 'orchestrator',
             retryShotIndices,
             retryFeedbackMap,
             aspectRatio: jobData.creativeManifest.style.aspect_ratio,
@@ -1863,6 +2148,178 @@ async function executeProductionPhase(
 
     if (videosFailed > 0) {
       console.warn(`${LOG_PREFIX} ${videosFailed}/${videoShots.length} video shots had no URL in batch results`);
+    }
+
+    if (videoGenerationWaves.length > 1) {
+      const waveVideoGenQueue = new Queue('video-gen', { connection: getRedisConnection() });
+      const waveQueueEvents = await getQueueEvents('video-gen');
+      const { verifierQueue } = await import('@/lib/queues/queues');
+      const verifyQueueEvents = await getQueueEvents('verifier');
+
+      for (const wave of videoGenerationWaves.slice(1)) {
+        await updateTaskStatus(taskId, {
+          current_step: `Phase IV: Preparing continuity wave ${wave.index + 1}/${videoGenerationWaves.length}...`,
+          progress_percent: 67,
+        });
+
+        const { data: continuityMeta } = await supabase
+          .from('video_projects')
+          .select('metadata')
+          .eq('id', videoId)
+          .single();
+        const continuityMetaObj = (continuityMeta?.metadata || {}) as Record<string, unknown>;
+        const currentGeneratedVideos = (continuityMetaObj.generated_videos || {}) as Record<string, string>;
+        const currentGeneratedImages = (continuityMetaObj.generated_images || {}) as Record<string, string>;
+        const currentImageProvenance = (continuityMetaObj.generated_image_provenance || {}) as Record<string, string>;
+        const currentContinuityOutputs = (continuityMetaObj.continuity_outputs || {}) as Record<string, Record<string, unknown>>;
+        const manualContinuityOutputs: Record<string, Record<string, unknown>> = {};
+
+        const continuityInputs = wave.continuityDependencies
+          .map(dep => {
+            const targetShot = allVideoShots.find(shot => shot.segment_index === dep.shotIndex);
+            const parentVideoUrl = currentGeneratedVideos[`shot-${dep.parentShotIndex}`]
+              || generatedAssets.get(`placeholder://shot-${dep.parentShotIndex}/asset-0`) as string | undefined;
+
+            if (!targetShot || !parentVideoUrl) {
+              manualContinuityOutputs[`shot-${dep.shotIndex}`] = {
+                parent_shot_index: dep.parentShotIndex,
+                source_video_url: parentVideoUrl,
+                edit_instruction: targetShot?.angle_change,
+                continuity_applied: false,
+                status: 'fallback_to_t2v',
+                failure_reason: 'Missing parent video for continuity wave',
+              };
+              return null;
+            }
+
+            return {
+              shotIndex: dep.shotIndex,
+              previousShotIndex: dep.parentShotIndex,
+              previousVideoUrl: parentVideoUrl,
+              angleChange: targetShot.angle_change || '',
+            };
+          })
+          .filter((input): input is NonNullable<typeof input> => Boolean(input));
+
+        const continuityBatch = continuityInputs.length > 0
+          ? await withGpuLock(jobData.userId, async () => {
+              return processContinuityWaveBatch({
+                userId: jobData.userId,
+                videoId,
+                aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+                shots: continuityInputs,
+                existingContinuityOutputs: currentContinuityOutputs,
+              });
+            }, Math.max(240_000, continuityInputs.length * 90_000), videoId)
+          : {
+              startFrames: {},
+              continuityOutputs: {},
+              failedShotIndices: [],
+            };
+
+        await supabase.rpc('merge_video_metadata', {
+          p_video_id: videoId,
+          p_updates: {
+            generated_images: {
+              ...currentGeneratedImages,
+              ...continuityBatch.startFrames,
+            },
+            generated_image_provenance: {
+              ...currentImageProvenance,
+              ...Object.fromEntries(
+                Object.keys(continuityBatch.startFrames).map(key => [key, 'continuity_edit'])
+              ),
+            },
+            continuity_outputs: {
+              ...currentContinuityOutputs,
+              ...manualContinuityOutputs,
+              ...continuityBatch.continuityOutputs,
+            },
+          },
+        });
+
+        await updateTaskStatus(taskId, {
+          current_step: `Phase IV: Generating continuity wave ${wave.index + 1}/${videoGenerationWaves.length}...`,
+          progress_percent: 68,
+        });
+
+        const waveJob = await waveVideoGenQueue.add(`video-wave-${wave.index}`, {
+          taskId,
+          userId: jobData.userId,
+          videoId,
+          taskLifecycleOwner: 'orchestrator',
+          shotIndices: wave.shotIndices,
+          aspectRatio: jobData.creativeManifest.style.aspect_ratio,
+          loraName: jobData.creativeManifest.lora?.name,
+          loraTriggerWords: jobData.creativeManifest.lora?.trigger_words,
+        }, { attempts: 1 });
+
+        const waveDuration = wave.shotIndices.reduce((sum, shotIndex) => {
+          const shot = allVideoShots.find(candidate => candidate.segment_index === shotIndex);
+          return sum + (shot?.duration_seconds || 0);
+        }, 0);
+        const waveTimeout = Math.max(180_000, waveDuration * 20 * 1_000) + 180_000;
+        await waveJob.waitUntilFinished(waveQueueEvents, waveTimeout);
+
+        const { data: waveMeta } = await supabase
+          .from('video_projects')
+          .select('metadata')
+          .eq('id', videoId)
+          .single();
+        const waveMetaObj = (waveMeta?.metadata || {}) as Record<string, unknown>;
+        const waveVideos = (waveMetaObj.generated_videos || {}) as Record<string, string>;
+
+        await Promise.allSettled(wave.shotIndices.map(async shotIndex => {
+          const mediaUrl = waveVideos[`shot-${shotIndex}`];
+          const shot = allVideoShots.find(candidate => candidate.segment_index === shotIndex);
+          if (!mediaUrl || !shot) {
+            videosFailed++;
+            return;
+          }
+
+          generatedAssets.set(`placeholder://shot-${shotIndex}/asset-0`, mediaUrl);
+          videosCompleted++;
+
+          try {
+            const verifyJob = await verifierQueue.add(`verify-video-wave-${shotIndex}`, {
+              taskId,
+              userId: jobData.userId,
+              videoId,
+              mediaType: 'video',
+              mediaUrl,
+              shotDescription: shot.summary || `Shot ${shot.segment_index}`,
+              shotIndex: shot.segment_index,
+              entityReferences: entityRefs,
+              styleGuide: aiStyleGuide,
+              visualStyleTag: jobData.creativeManifest?.style?.visual_style,
+              creativeDirection: [jobData.creativeManifest?.master_creative_prompt, jobData.creativeManifest?.video_creative_prompt].filter(Boolean).join('\n') || undefined,
+              loraInfo: jobData.creativeManifest?.lora ? { name: jobData.creativeManifest.lora.name, triggerWords: jobData.creativeManifest.lora.trigger_words } : undefined,
+              genre: (jobData.creativeManifest?.script_context as any)?.genre || undefined,
+              narrativeBeat: shot.narrative_beat || undefined,
+              imageEditInstruction: shot.image_edit_instruction || undefined,
+            });
+
+            const verifyResult = await verifyJob.waitUntilFinished(verifyQueueEvents, VIDEO_VERIFY_TIMEOUT_MS);
+            const verdict = verifyResult?.result;
+            if (verifyResult?.verificationSkipped) {
+              state.verification_skipped = (state.verification_skipped || 0) + 1;
+            }
+
+            if (verdict?.verdict === 'SOFT_FAIL' || (verdict && verdict.verdict !== 'PASS')) {
+              state.flagged_shots.push({
+                shotIndex: shot.segment_index,
+                issue: verdict?.suggested_corrections?.join('; ') || 'Wave verification flagged quality issues',
+                suggestions: verdict?.suggested_corrections || [],
+                allAttemptUrls: [mediaUrl],
+              });
+            }
+          } catch (verifyErr) {
+            console.warn(`${LOG_PREFIX} Wave ${wave.index} shot ${shotIndex} verification error:`, verifyErr);
+          }
+        }));
+      }
+
+      console.log(`${LOG_PREFIX} Continuity wave processing complete`);
     }
 
     // -----------------------------------------------------------------
@@ -1929,6 +2386,7 @@ async function executeProductionPhase(
                 taskId,
                 userId: jobData.userId,
                 videoId,
+                taskLifecycleOwner: 'orchestrator',
                 aspectRatio: jobData.creativeManifest.style.aspect_ratio,
                 singleShotIndex: shotIdx,
                 loraName: jobData.creativeManifest.lora?.name,
@@ -1963,6 +2421,7 @@ async function executeProductionPhase(
             taskId,
             userId: jobData.userId,
             videoId,
+            taskLifecycleOwner: 'orchestrator',
             aspectRatio: jobData.creativeManifest.style.aspect_ratio,
             singleShotIndex: shotIdx,
             loraName: jobData.creativeManifest.lora?.name,
@@ -1989,6 +2448,79 @@ async function executeProductionPhase(
       }
 
       console.log(`${LOG_PREFIX} I2V processing complete: ${i2vShots.length} shots handled`);
+    }
+
+    if (segmentationVideoFxShots.length > 0) {
+      console.log(`${LOG_PREFIX} Applying segmentation FX to ${segmentationVideoFxShots.length} generated video shots...`);
+      await updateTaskStatus(taskId, {
+        current_step: `Phase IV: Applying tracked segmentation FX to ${segmentationVideoFxShots.length} shots...`,
+        progress_percent: 69,
+      });
+
+      const { data: segVideoMeta } = await supabase
+        .from('video_projects')
+        .select('metadata')
+        .eq('id', videoId)
+        .single();
+      const segVideoMetaObj = (segVideoMeta?.metadata || {}) as Record<string, unknown>;
+      const currentVideos = (segVideoMetaObj.generated_videos || {}) as Record<string, string>;
+      const existingSegmentationOutputs = (segVideoMetaObj.segmentation_outputs || {}) as Record<string, Record<string, unknown>>;
+      const segmentedVideoUpdates: Record<string, string> = {};
+      const segmentationOutputs: Record<string, Record<string, unknown>> = {};
+
+      for (const shot of segmentationVideoFxShots) {
+        const shotKey = `shot-${shot.segment_index}`;
+        const sourceUrl = currentVideos[shotKey] || generatedAssets.get(`placeholder://shot-${shot.segment_index}/asset-0`) as string | undefined;
+        if (!sourceUrl) {
+          console.warn(`${LOG_PREFIX} Segmentation video FX shot ${shot.segment_index}: missing source video, skipping`);
+          continue;
+        }
+
+        const lockTtlMs = Math.max(240_000, Math.round((shot.duration_seconds || 4) * 50_000) + 120_000);
+        const segResult = await withGpuLock(jobData.userId, async () => {
+          return executeSegmentationShot({
+            userId: jobData.userId,
+            videoId,
+            shot: shot as any,
+            inputUrl: sourceUrl,
+          });
+        }, lockTtlMs, videoId);
+
+        if (segResult.success && segResult.mediaUrl) {
+          segmentedVideoUpdates[shotKey] = segResult.mediaUrl;
+          segmentationOutputs[shotKey] = {
+            mode: 'segment_video_fx',
+            source_video_url: sourceUrl,
+            output_url: segResult.mediaUrl,
+            lane_decision: shot.render_strategy || 'segment_video_fx',
+            model_version: segResult.metadata?.model_version,
+            labels: segResult.metadata?.labels,
+            prompt_to_obj_ids: segResult.metadata?.prompt_to_obj_ids,
+            object_id_to_prompt_label: segResult.metadata?.object_id_to_prompt_label,
+            metadata: segResult.metadata || {},
+          };
+          generatedAssets.set(`placeholder://shot-${shot.segment_index}/asset-0`, segResult.mediaUrl);
+          console.log(`${LOG_PREFIX} Segmentation video FX shot ${shot.segment_index}: updated ${segResult.mediaUrl}`);
+        } else {
+          console.warn(`${LOG_PREFIX} Segmentation video FX shot ${shot.segment_index} failed: ${segResult.error}`);
+          state.flagged_shots.push({
+            shotIndex: shot.segment_index,
+            issue: segResult.error || 'Segmentation video effect failed',
+            suggestions: ['Use the unprocessed video or simplify the segmentation treatment'],
+            allAttemptUrls: [sourceUrl],
+          });
+        }
+      }
+
+      if (Object.keys(segmentedVideoUpdates).length > 0) {
+        await supabase.rpc('merge_video_metadata', {
+          p_video_id: videoId,
+          p_updates: {
+            generated_videos: { ...currentVideos, ...segmentedVideoUpdates },
+            segmentation_outputs: { ...existingSegmentationOutputs, ...segmentationOutputs },
+          },
+        });
+      }
     }
 
     return generatedAssets;
@@ -2050,6 +2582,7 @@ async function executeProductionPhase(
           taskId,
           userId: jobData.userId,
           videoId,
+          taskLifecycleOwner: 'orchestrator',
           singleShotIndex: shot.segment_index,
           aspectRatio: jobData.creativeManifest.style.aspect_ratio,
           loraName: jobData.creativeManifest.lora?.name,
@@ -2212,6 +2745,7 @@ async function executeAssemblyPhase(
     taskId,
     userId: jobData.userId,
     videoId,
+    taskLifecycleOwner: 'orchestrator',
   });
 
   // Dynamic timeout: base 120s + 15s per shot, clamped [180s, 900s]
@@ -2248,10 +2782,11 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
   job: Job<OrchestratorJobData>
 ) => {
   const { taskId, userId, videoId, creativeManifest, userSystemPrompt, scriptContent: _scriptContent, entities } = job.data;
+  const resumeFromSequencePreview = job.data.resumeFromPhase === 'asset_retrieval';
 
   console.log(`${LOG_PREFIX} Starting closed-loop pipeline for video ${videoId}`);
 
-  const state = createInitialState();
+  let state = createInitialState();
 
   try {
     const supabase = getSupabaseServiceClient();
@@ -2299,6 +2834,7 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
               taskId,
               userId,
               videoId,
+              taskLifecycleOwner: 'orchestrator',
               shotIndex: -1, // Sentinel: not a real shot
               prompt: portraitPrompt,
               aspectRatio: creativeManifest.style.aspect_ratio,
@@ -2391,136 +2927,231 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
       message: 'Pipeline initialized — worker prompts generated',
     });
 
-    // =========================================================================
-    // PHASE I: TTS Generation
-    // =========================================================================
-    state.phase = 'tts';
-    state.status = 'running';
-    await persistState(videoId, state);
+    if (resumeFromSequencePreview) {
+      const { data: existingProject } = await supabase
+        .from('video_projects')
+        .select('closed_loop_state, metadata')
+        .eq('id', videoId)
+        .single();
 
-    await appendActivityEvent(taskId, {
-      phase: 'tts',
-      type: 'phase_start',
-      message: 'Phase I: Starting TTS narration generation',
-    });
+      const existingState = existingProject?.closed_loop_state as ClosedLoopState | null;
+      const existingMetadata = (existingProject?.metadata || {}) as Record<string, unknown>;
+      const persistedShotCount = Array.isArray((existingMetadata.shot_plan as Record<string, unknown> | undefined)?.shots)
+        ? (((existingMetadata.shot_plan as Record<string, unknown>).shots as unknown[])?.length || 0)
+        : 0;
 
-    const ttsResult = await executeTtsPhase(videoId, job.data, taskId);
+      if (existingState) {
+        state = {
+          ...createInitialState(),
+          ...existingState,
+          phase: 'shot_planning',
+          status: 'running',
+          completed_at: undefined,
+          phase_data: {
+            ...existingState.phase_data,
+          },
+        };
+      }
 
-    state.phase_data.tts = {
-      completed: true,
-      audio_url: ttsResult.audioUrl,
-      timestamps_count: ttsResult.timestampsCount,
-    };
-    await persistState(videoId, state);
-    console.log(`${LOG_PREFIX} Phase I complete: ${ttsResult.timestampsCount} word timestamps`);
+      state.phase = 'shot_planning';
+      state.status = 'running';
+      state.completed_at = undefined;
+      state.started_at = state.started_at || new Date().toISOString();
 
-    await appendActivityEvent(taskId, {
-      phase: 'tts',
-      type: 'phase_complete',
-      message: `Phase I complete — ${ttsResult.timestampsCount} word timestamps generated`,
-    });
-
-    // Cancellation check: abort if user stopped the task
-    await checkCancelled(taskId);
-
-    // =========================================================================
-    // PHASE II: Shot Planning
-    // =========================================================================
-    state.phase = 'shot_planning';
-    await persistState(videoId, state);
-
-    await appendActivityEvent(taskId, {
-      phase: 'shot_planning',
-      type: 'phase_start',
-      message: 'Phase II: Planning shots aligned to narration timing',
-    });
-
-    const shotResult = await executeShotPlanningPhase(videoId, job.data, taskId, workerPrompts);
-
-    state.phase_data.shot_planning = {
-      completed: true,
-      shot_count: shotResult.shotCount,
-      iteration: 1,
-    };
-    await persistState(videoId, state);
-    console.log(`${LOG_PREFIX} Phase II complete: ${shotResult.shotCount} shots planned`);
-
-    await appendActivityEvent(taskId, {
-      phase: 'shot_planning',
-      type: 'phase_complete',
-      message: `Phase II complete — ${shotResult.shotCount} shots planned`,
-    });
-
-    // =========================================================================
-    // PHASE II-B: Shot Plan Self-Reflection (for long videos only)
-    // =========================================================================
-    // Lightweight LLM check catches bad plans before expensive GPU generation.
-    // P2 Fix: Lowered from 15 to 5 — short videos have proportionally higher
-    // impact per shot, so plan errors are MORE damaging, not less (~$0.001/call).
-    if (shotResult.shotCount >= 5) {
-      console.log(`${LOG_PREFIX} Phase II-B: Self-reflection on ${shotResult.shotCount}-shot plan...`);
+      if (!state.phase_data.shot_planning?.shot_count && persistedShotCount > 0) {
+        state.phase_data.shot_planning = {
+          completed: true,
+          shot_count: persistedShotCount,
+          iteration: state.phase_data.shot_planning?.iteration || 1,
+        };
+      }
 
       await appendActivityEvent(taskId, {
         phase: 'shot_planning',
-        type: 'reflection',
-        message: `Self-reflection: Reviewing ${shotResult.shotCount}-shot plan for quality issues`,
+        type: 'info',
+        message: 'Sequence preview approved — resuming from asset retrieval',
       });
 
-      try {
-        const reflectionResult = await performShotPlanReflection(
-          videoId,
-          shotResult.shotCount,
-          userId
-        );
-
-        if (reflectionResult.severity === 'major') {
-          console.warn(
-            `${LOG_PREFIX} Phase II-B: MAJOR issues found — re-planning (1 retry):`,
-            reflectionResult.issues
-          );
-
-          await appendActivityEvent(taskId, {
-            phase: 'shot_planning',
-            type: 'retry',
-            message: `Self-reflection found ${reflectionResult.issues.length} major issue(s) — re-planning shots`,
-            detail: reflectionResult.issues.join('; '),
-          });
-
-          // Prepend feedback to re-run shot planning (max 1 re-plan)
-          const replanResult = await executeShotPlanningPhase(
-            videoId, job.data, taskId, workerPrompts, reflectionResult.issues.join('; ')
-          );
-
-          state.phase_data.shot_planning = {
-            completed: true,
-            shot_count: replanResult.shotCount,
-            iteration: 2,
-          };
-          await persistState(videoId, state);
-          console.log(`${LOG_PREFIX} Phase II-B: Re-planned → ${replanResult.shotCount} shots`);
-
-          await appendActivityEvent(taskId, {
-            phase: 'shot_planning',
-            type: 'phase_complete',
-            message: `Re-plan complete — ${replanResult.shotCount} shots (iteration 2)`,
-          });
-        } else {
-          console.log(`${LOG_PREFIX} Phase II-B: Plan OK (severity: ${reflectionResult.severity})`);
-
-          await appendActivityEvent(taskId, {
-            phase: 'shot_planning',
-            type: 'info',
-            message: `Self-reflection passed — plan quality: ${reflectionResult.severity}`,
-          });
-        }
-      } catch (reflectionError) {
-        // Non-blocking: reflection failure shouldn't stop the pipeline
-        console.warn(`${LOG_PREFIX} Phase II-B: Self-reflection failed, continuing:`, reflectionError);
-      }
+      await updateTaskStatus(taskId, {
+        status: 'running',
+        current_step: 'Sequence preview approved — resuming production...',
+        progress_percent: 15,
+      });
     }
 
-    // Cancellation check: abort if user stopped the task
-    await checkCancelled(taskId);
+    // =========================================================================
+    // PHASE I: TTS Generation
+    // =========================================================================
+    if (!resumeFromSequencePreview) {
+      state.phase = 'tts';
+      state.status = 'running';
+      await persistState(videoId, state);
+
+      await appendActivityEvent(taskId, {
+        phase: 'tts',
+        type: 'phase_start',
+        message: 'Phase I: Starting TTS narration generation',
+      });
+
+      const ttsResult = await executeTtsPhase(videoId, job.data, taskId);
+
+      state.phase_data.tts = {
+        completed: true,
+        audio_url: ttsResult.audioUrl,
+        timestamps_count: ttsResult.timestampsCount,
+      };
+      await persistState(videoId, state);
+      console.log(`${LOG_PREFIX} Phase I complete: ${ttsResult.timestampsCount} word timestamps`);
+
+      await appendActivityEvent(taskId, {
+        phase: 'tts',
+        type: 'phase_complete',
+        message: `Phase I complete — ${ttsResult.timestampsCount} word timestamps generated`,
+      });
+
+      // Cancellation check: abort if user stopped the task
+      await checkCancelled(taskId);
+
+      // =========================================================================
+      // PHASE II: Shot Planning
+      // =========================================================================
+      state.phase = 'shot_planning';
+      await persistState(videoId, state);
+
+      await appendActivityEvent(taskId, {
+        phase: 'shot_planning',
+        type: 'phase_start',
+        message: 'Phase II: Planning shots aligned to narration timing',
+      });
+
+      const shotResult = await executeShotPlanningPhase(videoId, job.data, taskId, workerPrompts);
+
+      state.phase_data.shot_planning = {
+        completed: true,
+        shot_count: shotResult.shotCount,
+        iteration: 1,
+      };
+      await persistState(videoId, state);
+      console.log(`${LOG_PREFIX} Phase II complete: ${shotResult.shotCount} shots planned`);
+
+      await appendActivityEvent(taskId, {
+        phase: 'shot_planning',
+        type: 'phase_complete',
+        message: `Phase II complete — ${shotResult.shotCount} shots planned`,
+      });
+
+      // =========================================================================
+      // PHASE II-B: Shot Plan Self-Reflection (for long videos only)
+      // =========================================================================
+      // Lightweight LLM check catches bad plans before expensive GPU generation.
+      // P2 Fix: Lowered from 15 to 5 — short videos have proportionally higher
+      // impact per shot, so plan errors are MORE damaging, not less (~$0.001/call).
+      if (shotResult.shotCount >= 5) {
+        console.log(`${LOG_PREFIX} Phase II-B: Self-reflection on ${shotResult.shotCount}-shot plan...`);
+
+        await appendActivityEvent(taskId, {
+          phase: 'shot_planning',
+          type: 'reflection',
+          message: `Self-reflection: Reviewing ${shotResult.shotCount}-shot plan for quality issues`,
+        });
+
+        try {
+          const reflectionResult = await performShotPlanReflection(
+            videoId,
+            shotResult.shotCount,
+            userId
+          );
+
+          if (reflectionResult.severity === 'major') {
+            console.warn(
+              `${LOG_PREFIX} Phase II-B: MAJOR issues found — re-planning (1 retry):`,
+              reflectionResult.issues
+            );
+
+            await appendActivityEvent(taskId, {
+              phase: 'shot_planning',
+              type: 'retry',
+              message: `Self-reflection found ${reflectionResult.issues.length} major issue(s) — re-planning shots`,
+              detail: reflectionResult.issues.join('; '),
+            });
+
+            // Prepend feedback to re-run shot planning (max 1 re-plan)
+            const replanResult = await executeShotPlanningPhase(
+              videoId, job.data, taskId, workerPrompts, reflectionResult.issues.join('; ')
+            );
+
+            state.phase_data.shot_planning = {
+              completed: true,
+              shot_count: replanResult.shotCount,
+              iteration: 2,
+            };
+            await persistState(videoId, state);
+            console.log(`${LOG_PREFIX} Phase II-B: Re-planned → ${replanResult.shotCount} shots`);
+
+            await appendActivityEvent(taskId, {
+              phase: 'shot_planning',
+              type: 'phase_complete',
+              message: `Re-plan complete — ${replanResult.shotCount} shots (iteration 2)`,
+            });
+          } else {
+            console.log(`${LOG_PREFIX} Phase II-B: Plan OK (severity: ${reflectionResult.severity})`);
+
+            await appendActivityEvent(taskId, {
+              phase: 'shot_planning',
+              type: 'info',
+              message: `Self-reflection passed — plan quality: ${reflectionResult.severity}`,
+            });
+          }
+        } catch (reflectionError) {
+          // Non-blocking: reflection failure shouldn't stop the pipeline
+          console.warn(`${LOG_PREFIX} Phase II-B: Self-reflection failed, continuing:`, reflectionError);
+        }
+      }
+
+      if (job.data.productionControls?.reviewMode === 'sequence_preview') {
+        await supabase.rpc('merge_video_metadata', {
+          p_video_id: videoId,
+          p_updates: {
+            shot_plan: {
+              metadata: {
+                review_state: {
+                  review_mode: 'sequence_preview',
+                  status: 'pending',
+                },
+              },
+            },
+          },
+        });
+
+        state.phase = 'shot_planning';
+        state.status = 'pending';
+        await persistState(videoId, state);
+
+        await appendActivityEvent(taskId, {
+          phase: 'shot_planning',
+          type: 'info',
+          message: 'Sequence preview ready — approve by starting production again to continue from asset retrieval',
+        });
+
+        await updateTaskStatus(taskId, {
+          status: 'completed',
+          current_step: 'Sequence preview ready — start production again to continue',
+          progress_percent: 15,
+          completed_at: new Date().toISOString(),
+        });
+
+        return {
+          success: true,
+          videoId,
+          pausedForSequencePreview: true,
+        };
+      }
+
+      // Cancellation check: abort if user stopped the task
+      await checkCancelled(taskId);
+    } else {
+      await persistState(videoId, state);
+    }
 
     // =========================================================================
     // PHASE III: Asset Retrieval + SFX

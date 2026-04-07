@@ -1029,7 +1029,7 @@ function AudioGenForm() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: audioGen.prompt,
-          lyrics: audioGen.lyrics || '[Instrumental]',
+          ...(audioGen.lyrics.trim() ? { lyrics: audioGen.lyrics } : {}),
           durationSeconds: audioGen.durationSeconds,
           seed: audioGen.seed,
           bpm: audioGen.bpm,
@@ -1076,21 +1076,21 @@ function AudioGenForm() {
         </p>
       </div>
 
-      {/* Lyrics Structure */}
+      {/* Optional Lyrics */}
       <div className="space-y-1">
         <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
-          Energy Structure
+          Lyrics
         </label>
         <textarea
           value={audioGen.lyrics}
           onChange={(e) => updateAudioGen({ lyrics: e.target.value })}
-          placeholder={'[Instrumental]\n[Intro]\n[Verse - gentle, atmospheric]\n[Chorus - intense, full]\n[Outro - fading]'}
+          placeholder={'Leave empty for instrumental background music.\nOptional vocal lines or sections only if you intentionally want vocals.'}
           rows={3}
           className="w-full bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 py-2 text-xs text-neutral-200 placeholder:text-neutral-600 resize-none focus:outline-none focus:ring-1 focus:ring-primary/50 font-mono"
           disabled={isGenerating}
         />
         <p className="text-[9px] text-neutral-600 leading-tight">
-          Section tags control energy dynamics. Use [Intro], [Verse], [Chorus], [Outro] with descriptors.
+          Leave blank for subtle instrumental beds. Only fill this in if you deliberately want vocal music.
         </p>
       </div>
 
@@ -1123,9 +1123,9 @@ function AudioGenForm() {
           <input
             type="number"
             value={audioGen.bpm}
-            onChange={(e) => updateAudioGen({ bpm: Math.max(40, Math.min(200, Number(e.target.value) || 100)) })}
-            min={40}
-            max={200}
+            onChange={(e) => updateAudioGen({ bpm: Math.max(50, Math.min(70, Number(e.target.value) || 58)) })}
+            min={50}
+            max={70}
             className="w-full h-8 bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-primary/50"
             disabled={isGenerating}
           />

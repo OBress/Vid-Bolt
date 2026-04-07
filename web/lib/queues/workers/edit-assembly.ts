@@ -20,6 +20,7 @@ import {
   failStep,
   updateTaskStatus,
   updateTaskOutput,
+  type TaskLifecycleOwner,
 } from '@/lib/queues/shared';
 import {
   assembleEdit,
@@ -46,6 +47,7 @@ export interface EditAssemblyJobData {
   taskId: string;
   userId: string;
   videoId: string;
+  taskLifecycleOwner?: TaskLifecycleOwner;
 }
 
 // ============================================================================
@@ -55,8 +57,11 @@ export interface EditAssemblyJobData {
 export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
   job: Job<EditAssemblyJobData>
 ) => {
-  const { taskId, userId, videoId } = job.data;
+  const { taskId, userId, videoId, taskLifecycleOwner } = job.data;
   const supabase = getSupabaseServiceClient();
+  const updateOwnedTaskStatus = (
+    updates: Parameters<typeof updateTaskStatus>[1]
+  ) => updateTaskStatus(taskId, updates, { lifecycleOwner: taskLifecycleOwner });
 
   console.log(`[EditAssembly Worker] Starting for video ${videoId}, task ${taskId}`);
 
@@ -67,7 +72,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     // =====================================================================
     // PHASE 1: Context Analysis (0-10%)
     // =====================================================================
-    await updateTaskStatus(taskId, {
+    await updateOwnedTaskStatus({
       status: 'running',
       current_phase: 'preprocessing',
       current_step: 'Loading project data...',
@@ -207,7 +212,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     }
 
     await completeStep(taskId, contextStepId);
-    await updateTaskStatus(taskId, {
+    await updateOwnedTaskStatus({
       progress_percent: 10,
       current_step: `Loaded ${shots.length} shots, ${generatedMedia.length} media items`,
     });
@@ -262,7 +267,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
 
       const batchStepId = await addTaskStep(taskId, 'writing', stepName, batchIdx + 2);
 
-      await updateTaskStatus(taskId, {
+      await updateOwnedTaskStatus({
         current_phase: 'compositing',
         current_step: stepName,
         progress_percent: Math.round(10 + (batchIdx / totalBatches) * 70),
@@ -347,7 +352,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     // =====================================================================
     const reconStepId = await addTaskStep(taskId, 'postprocessing', 'Merge & validate EDL', totalBatches + 2);
 
-    await updateTaskStatus(taskId, {
+    await updateOwnedTaskStatus({
       current_phase: 'postprocessing',
       current_step: 'Merging EDL chunks...',
       progress_percent: 85,
@@ -516,7 +521,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     // =====================================================================
     const finalStepId = await addTaskStep(taskId, 'postprocessing', 'Save EDL to project', totalBatches + 3);
 
-    await updateTaskStatus(taskId, {
+    await updateOwnedTaskStatus({
       current_phase: 'encoding',
       current_step: 'Saving EDL to project...',
       progress_percent: 95,
@@ -549,7 +554,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     await completeStep(taskId, finalStepId);
 
     // Mark task as completed
-    await updateTaskStatus(taskId, {
+    await updateOwnedTaskStatus({
       status: 'completed',
       current_step: 'EDL generation complete',
       progress_percent: 100,
@@ -567,7 +572,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
   } catch (error) {
     console.error(`[EditAssembly Worker] Task ${taskId} failed:`, error);
 
-    await updateTaskStatus(taskId, {
+    await updateOwnedTaskStatus({
       status: 'failed',
       error_message: error instanceof Error ? error.message : 'Unknown error',
       completed_at: new Date().toISOString(),

@@ -19,7 +19,7 @@
  */
 
 import { Job, Processor } from 'bullmq';
-import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
+import { getSupabaseServiceClient, updateTaskStatus, type TaskLifecycleOwner } from '@/lib/queues/shared';
 import { analyzeContentStructure, segmentTimeline } from '@/lib/av-script';
 import { processInChunks } from '@/lib/av-script/chunked-processor';
 import type { WordTimestamp } from '@/types/task';
@@ -37,6 +37,10 @@ import {
 } from '@/lib/av-script/scene-shot-planner';
 import { listEntities } from '@/lib/services/gcm';
 import { enrichShotPlan } from '@/lib/services/shot-plan-enrichment';
+import {
+  normalizePlannedShotForProduction,
+  normalizeSegmentationTreatment,
+} from '@/lib/services/production-lane-normalizer';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -46,6 +50,7 @@ export interface ShotPlannerJobData {
   taskId: string;
   userId: string;
   videoId: string;
+  taskLifecycleOwner?: TaskLifecycleOwner;
   /** The locked script content */
   script: string;
   /** Word-level TTS timestamps */
@@ -64,11 +69,34 @@ export interface ShotPlannerJobData {
 
 const LOG_PREFIX = '[ShotPlanner]';
 
+function buildFallbackShotDefaults(): Pick<
+  PlannedShot,
+  'synthesis_mode' | 'continuity_level' | 'anchor_strategy' | 'render_strategy' | 'trim_priority'
+> {
+  return {
+    synthesis_mode: 'T2V',
+    continuity_level: 'fresh',
+    anchor_strategy: 'fresh',
+    render_strategy: 'ai_video',
+    trim_priority: 'balanced',
+  };
+}
+
+function resolveReviewMode(metadata: Record<string, unknown>): 'off' | 'sequence_preview' {
+  const snakeCaseControls = (metadata.production_controls || {}) as Record<string, unknown>;
+  const camelCaseControls = (metadata.productionControls || {}) as Record<string, unknown>;
+  const reviewMode =
+    (snakeCaseControls.reviewMode as 'off' | 'sequence_preview' | undefined)
+    || (camelCaseControls.reviewMode as 'off' | 'sequence_preview' | undefined);
+
+  return reviewMode || 'off';
+}
+
 export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
   job: Job<ShotPlannerJobData>
 ) => {
   const { taskId, userId, videoId, script, wordTimestamps, totalDurationSeconds } = job.data;
-  const isClosedLoop = job.name.startsWith('closed-loop-');
+  const isClosedLoop = job.data.taskLifecycleOwner === 'orchestrator' || job.name.startsWith('closed-loop-');
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId} (${wordTimestamps.length} words, ${totalDurationSeconds}s)${isClosedLoop ? ' (closed-loop)' : ''}`);
 
@@ -81,7 +109,7 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
       // Fetch outline assets and creative manifest from metadata
       const { data: video } = await supabase
         .from('video_projects')
-        .select('metadata, project_id')
+        .select('metadata, project_id, creative_manifest')
         .eq('id', videoId)
         .single();
 
@@ -89,7 +117,8 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
       const projectId = video?.project_id as string | undefined;
 
       // Build creative context for scene decomposition
-      const creativeManifest = metadata.creative_manifest as Record<string, unknown> | undefined;
+      const creativeManifest = (video?.creative_manifest as Record<string, unknown> | undefined)
+        || (metadata.creative_manifest as Record<string, unknown> | undefined);
       let creativeContext: SceneDecompositionContext = {};
       if (creativeManifest) {
         try {
@@ -207,7 +236,7 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         if (shots) {
           // LLM-planned shots — convert to PlannedShot
           for (const shot of shots) {
-            allShots.push({
+            const normalizedShot = normalizePlannedShotForProduction({
               segment_index: segmentIndex++,
               start_seconds: shot.start_seconds,
               end_seconds: shot.end_seconds,
@@ -220,7 +249,25 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
               entity_refs: [],
               visual_elements: shot.visual_elements,
               visual_description: shot.visual_description,
+              shot_role: shot.shot_role,
+              framing: shot.framing,
+              camera_angle: shot.camera_angle,
+              camera_motion: shot.camera_motion,
+              lens_style: shot.lens_style,
+              subject_focus: shot.subject_focus,
+              entry_transition_intent: shot.entry_transition_intent,
+              exit_transition_intent: shot.exit_transition_intent,
+              bridge_subject: shot.bridge_subject,
+              visual_motif: shot.visual_motif,
               visual_treatment: shot.visual_treatment,
+              continuity_level: shot.continuity_level || (shot.continuity_from_previous ? 'soft' : 'fresh'),
+              anchor_strategy: shot.anchor_strategy,
+              render_strategy: shot.render_strategy,
+              trim_priority: shot.trim_priority || 'balanced',
+              segmentation_treatment: normalizeSegmentationTreatment(shot.segmentation_treatment, {
+                subjectFocus: shot.subject_focus,
+                notes: shot.summary,
+              }),
               stock_worthy: shot.stock_worthy,
               stock_search_query: shot.stock_search_query,
               sound_effects: shot.sound_effects.map(sfx => ({
@@ -241,6 +288,7 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
               persistent_graphic_type: shot.persistent_graphic_type,
               graphic_state_patch: shot.graphic_state_patch,
             });
+            allShots.push(normalizedShot);
           }
         } else {
           // Per-scene legacy fallback — only for this one failing scene
@@ -314,6 +362,15 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
             description: s.description,
           })),
           planner_diagnostics: enrichment.diagnostics,
+          sequence_plan: enrichment.sequencePlan,
+          continuity_anchors: enrichment.continuityAnchors,
+          transition_palette: enrichment.transitionPalette,
+          planner_scores: enrichment.plannerScores,
+          review_state: {
+            review_mode: resolveReviewMode(metadata),
+            status: resolveReviewMode(metadata) === 'sequence_preview' ? 'pending' : 'not_requested',
+          },
+          assembly_contract: enrichment.assemblyContract,
         },
       };
 
@@ -322,19 +379,19 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 4: Persisting shot plan to metadata...`);
 
+      await supabase.rpc('merge_video_metadata', {
+        p_video_id: videoId,
+        p_updates: {
+          shot_plan: shotPlan,
+          // Keep backward-compat av_script_part1 format
+          av_script_part1: {
+            shots: enrichedShots,
+          },
+        },
+      });
       await supabase
         .from('video_projects')
-        .update({
-          metadata: {
-            ...metadata,
-            shot_plan: shotPlan,
-            // Keep backward-compat av_script_part1 format
-            av_script_part1: {
-              shots: enrichedShots,
-            },
-          },
-          updated_at: new Date().toISOString(),
-        })
+        .update({ updated_at: new Date().toISOString() })
         .eq('id', videoId);
 
       if (!isClosedLoop) {
@@ -416,6 +473,7 @@ function generateLegacyFallbackForScene(
         scene_id: scene.scene_id,
         narrative_beat: 'establishing',
         continuity_from_previous: false,
+        ...buildFallbackShotDefaults(),
       }];
     }
 
@@ -444,6 +502,7 @@ function generateLegacyFallbackForScene(
       scene_id: scene.scene_id,
       narrative_beat: 'establishing',
       continuity_from_previous: false,
+      ...buildFallbackShotDefaults(),
     }));
   } catch (err) {
     console.error(`${LOG_PREFIX} Legacy fallback also failed for scene "${scene.scene_id}":`, err);
@@ -466,6 +525,7 @@ function generateLegacyFallbackForScene(
       scene_id: scene.scene_id,
       narrative_beat: 'establishing',
       continuity_from_previous: false,
+      ...buildFallbackShotDefaults(),
     }];
   }
 }
@@ -537,6 +597,7 @@ async function runLegacyPipeline(
     })),
     image_count: shot.image_count ?? 1,
     continuity_from_previous: false,
+    ...buildFallbackShotDefaults(),
   }));
 
   // MG override
@@ -577,16 +638,17 @@ async function runLegacyPipeline(
     },
   };
 
+  await supabase.rpc('merge_video_metadata', {
+    p_video_id: videoId,
+    p_updates: {
+      shot_plan: shotPlan,
+      av_script_part1: { shots: enrichedShots, analysis },
+    },
+  });
+
   await supabase
     .from('video_projects')
-    .update({
-      metadata: {
-        ...metadata,
-        shot_plan: shotPlan,
-        av_script_part1: { shots: enrichedShots, analysis },
-      },
-      updated_at: new Date().toISOString(),
-    })
+    .update({ updated_at: new Date().toISOString() })
     .eq('id', videoId);
 
   if (!isClosedLoop) {

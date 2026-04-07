@@ -643,7 +643,7 @@ export interface GpuMusicCreateJobData {
   taskId: string;
   userId: string;
   prompt: string;
-  lyrics?: string;
+  lyrics?: string | string[];
   durationSeconds?: number;
   seed?: number;
   // Pre-generated URLs for batch jobs

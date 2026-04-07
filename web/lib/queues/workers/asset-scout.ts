@@ -15,7 +15,7 @@
  */
 
 import { Job, Processor } from 'bullmq';
-import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
+import { getSupabaseServiceClient, updateTaskStatus, type TaskLifecycleOwner } from '@/lib/queues/shared';
 import { processWithStockMedia } from '@/lib/av-script/stock-media-director';
 import { getEntitiesByIds } from '@/lib/services/gcm';
 import type { AssetEntry, AssetManifest, PlannedShot } from '@/lib/types/closed-loop';
@@ -30,6 +30,7 @@ export interface AssetScoutJobData {
   taskId: string;
   userId: string;
   videoId: string;
+  taskLifecycleOwner?: TaskLifecycleOwner;
   /** System prompt from the Orchestrator's Dynamic Prompt Generator */
   systemPrompt?: string;
   /** Aspect ratio for generation */
@@ -43,6 +44,9 @@ export interface AssetScoutJobData {
 const LOG_PREFIX = '[AssetScout]';
 
 function resolveAssetSource(shot: PlannedShot): AssetEntry['source'] {
+  if (shot.render_strategy === 'segment_animate' || shot.render_strategy === 'segment_video_fx') {
+    return 'ai_video';
+  }
   switch (shot.visual_treatment) {
     case 'stock':
     case 'archival':
@@ -91,11 +95,43 @@ function buildBreakdownPromptNote(shot: PlannedShot): string {
   ].join(' ');
 }
 
+function buildDirectingPromptNote(shot: PlannedShot): string {
+  const parts = [
+    shot.shot_role ? `Shot role: ${shot.shot_role}.` : '',
+    shot.framing ? `Framing: ${shot.framing}.` : '',
+    shot.camera_angle ? `Angle: ${shot.camera_angle}.` : '',
+    shot.camera_motion ? `Camera motion: ${shot.camera_motion}.` : '',
+    shot.subject_focus ? `Focus on: ${shot.subject_focus}.` : '',
+    shot.entry_transition_intent ? `Enter via: ${shot.entry_transition_intent}.` : '',
+    shot.exit_transition_intent ? `Exit via: ${shot.exit_transition_intent}.` : '',
+    shot.visual_motif ? `Carry the motif: ${shot.visual_motif}.` : '',
+  ].filter(Boolean);
+  return parts.join(' ');
+}
+
+function buildSegmentationPromptNote(shot: PlannedShot): string {
+  const treatment = shot.segmentation_treatment;
+  if (!treatment?.execution_mode) return '';
+
+  const parts = [
+    `This shot is segmentation-led (${treatment.execution_mode}).`,
+    treatment.preset ? `Preset: ${treatment.preset}.` : '',
+    treatment.subject_focus ? `Segment around: ${treatment.subject_focus}.` : '',
+    treatment.text_prompt ? `Segmentation prompt: ${treatment.text_prompt}.` : '',
+    treatment.allow_background_desaturation ? 'Allow the background to desaturate while the subject stays emphasized.' : '',
+    treatment.allow_guided_zoom ? 'Use a guided zoom toward the segmented subject/detail.' : '',
+    treatment.allow_tracked_annotation ? 'Use tracked annotation/highlight language rather than generic motion.' : '',
+    treatment.notes || '',
+  ].filter(Boolean);
+
+  return parts.join(' ');
+}
+
 export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
   job: Job<AssetScoutJobData>
 ) => {
   const { taskId, userId, videoId, aspectRatio: _aspectRatio } = job.data;
-  const isClosedLoop = job.name.startsWith('closed-loop-');
+  const isClosedLoop = job.data.taskLifecycleOwner === 'orchestrator' || job.name.startsWith('closed-loop-');
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}${isClosedLoop ? ' (closed-loop)' : ''}`);
 
@@ -251,6 +287,8 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
           neighborCtx.compactNote,
           buildClusterPromptNote(shots, i),
           buildBreakdownPromptNote(shot),
+          buildDirectingPromptNote(shot),
+          buildSegmentationPromptNote(shot),
         ].filter(Boolean);
         const enrichedPromptWithContext = promptNotes.length > 0
           ? `${enrichedPrompt} [${promptNotes.join(' ')}]`
@@ -279,6 +317,19 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
           segment_index: shot.segment_index,
           visual_prompt: enrichedPromptWithContext,
           source,
+          render_strategy: shot.render_strategy,
+          transition_notes: [
+            shot.entry_transition_intent,
+            shot.exit_transition_intent,
+          ].filter((value): value is string => !!value),
+          continuity_level: shot.continuity_level,
+          shot_role: shot.shot_role,
+          framing: shot.framing,
+          camera_angle: shot.camera_angle,
+          camera_motion: shot.camera_motion,
+          visual_motif: shot.visual_motif,
+          trim_priority: shot.trim_priority,
+          segmentation_treatment: shot.segmentation_treatment,
           stock_url: stockMatch?.url,
           sfx: hasSfx ? {
             url: '', // Will be populated by SFX search
@@ -323,17 +374,17 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
         stockUrlMap[`shot-${idx}`] = result.url;
       }
 
+      await supabase.rpc('merge_video_metadata', {
+        p_video_id: videoId,
+        p_updates: {
+          asset_manifest: manifest,
+          scraped_stock_images: stockUrlMap,
+          resolved_prompts: resolvedPrompts,
+        },
+      });
       await supabase
         .from('video_projects')
-        .update({
-          metadata: {
-            ...metadata,
-            asset_manifest: manifest,
-            scraped_stock_images: stockUrlMap,
-            resolved_prompts: resolvedPrompts,
-          },
-          updated_at: new Date().toISOString(),
-        })
+        .update({ updated_at: new Date().toISOString() })
         .eq('id', videoId);
 
       if (!isClosedLoop) {

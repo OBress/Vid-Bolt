@@ -147,10 +147,50 @@ export function calculateAssemblyTimeout(shotCount: number): number {
 
 /**
  * Timeout for image edit jobs (recoverable verification failures).
- * Single GPU edit operation — generous but bounded.
+ *
+ * Image edits go through the GPU webhook pipeline:
+ *   - GPU queue wait:      0–120s  (depends on current GPU load)
+ *   - Qwen edit inference: 30–90s  (per image, VRAM/resolution dependent)
+ *   - Webhook delivery:    5–15s   (network + worker processing)
+ *
+ * For a single shot this is ~150s worst case. But under heavy load
+ * (many shots in parallel, or a large video with many retries) the GPU
+ * queue can back up significantly. We therefore scale the budget with:
+ *
+ *   - shotCount           (more shots → more concurrent GPU load → longer queues)
+ *   - totalDurationSeconds (longer videos → more overall pipeline pressure)
+ *
+ * NO UPPER CAP — a 60-minute video with 300 shots must never hit the wall.
+ *
+ * @param shotCount            - Total shots in the pipeline (default 1 for standalone use)
+ * @param totalDurationSeconds - Total video duration in seconds (default 0)
+ * @returns Timeout in milliseconds
  */
-export function calculateImageEditTimeout(): number {
-  return 90_000; // 90s — single edit + network buffer
+export function calculateImageEditTimeout(
+  shotCount: number = 1,
+  totalDurationSeconds: number = 0
+): number {
+  // Base: queue wait + inference + webhook overhead for a single edit
+  const BASE_S = 150;           // 2.5 min — generous single-shot baseline
+  const PER_SHOT_S = 3;         // Each additional shot = +3s of queue pressure
+  const PER_MINUTE_S = 5;       // Each minute of video = +5s of pipeline pressure
+  const FIXED_OVERHEAD_S = 30;  // BullMQ dispatch + Redis round-trip
+
+  const videoMinutes = totalDurationSeconds / 60;
+  const estimatedSeconds =
+    BASE_S +
+    (shotCount * PER_SHOT_S) +
+    (videoMinutes * PER_MINUTE_S) +
+    FIXED_OVERHEAD_S;
+
+  const timeout = Math.max(GLOBAL_FLOOR_MS, estimatedSeconds * 1_000 * LENIENCY);
+
+  console.log(
+    `${LOG_PREFIX} ImageEdit: ${Math.round(timeout / 1000)}s ` +
+    `(${shotCount} shots, ${videoMinutes.toFixed(1)}min video → ` +
+    `${Math.round(estimatedSeconds)}s est × ${LENIENCY}x leniency)`
+  );
+  return timeout;
 }
 
 /**
@@ -161,7 +201,13 @@ export function calculateImageEditTimeout(): number {
  */
 export function calculateVerifierTimeout(mediaType: 'image' | 'video'): number {
   // Video verification requires downloading + analyzing video frames — slower
-  return mediaType === 'video' ? 180_000 : 120_000;
+  const estimatedMs = mediaType === 'video' ? 180_000 : 120_000;
+  const timeout = Math.max(GLOBAL_FLOOR_MS, estimatedMs);
+  console.log(
+    `${LOG_PREFIX} Verifier(${mediaType}): ${Math.round(timeout / 1000)}s ` +
+    `(estimated ${Math.round(estimatedMs / 1000)}s, floor ${Math.round(GLOBAL_FLOOR_MS / 1000)}s)`
+  );
+  return timeout;
 }
 
 /**

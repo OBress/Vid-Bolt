@@ -19,10 +19,26 @@
 
 import { callOpenRouter } from '@/lib/ai/openrouter';
 import { extractLastFrame } from '@/lib/services/frame-extraction';
-import { fetchDynamicGpuApiUrl } from '@/lib/services/gpu-api-service';
+import {
+  callGpuBatchImageEdit,
+  callGpuGetJobStatus,
+  callGpuImageEdit,
+  type BatchImageEditItem,
+} from '@/lib/services/gpu-api-service';
+import {
+  generateMediaKey,
+  generatePresignedGetUrl,
+  generatePresignedPutUrl,
+  getKeyFromUrl,
+  STORAGE_PATHS,
+} from '@/lib/services/r2-storage';
+import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
+import { v4 as uuidv4 } from 'uuid';
 
 const LOG_PREFIX = '[I2VProcessor]';
-const GPU_API_SECRET = process.env.GPU_API_SECRET || '';
+const CONTINUITY_EDIT_TIMEOUT_MS = 90_000;
+const getWebhookUrl = () => process.env.WEBHOOK_CALLBACK_URL || 'http://localhost:3000/api/gpu-callback';
+const getWebhookSecret = () => process.env.GPU_WEBHOOK_SECRET;
 
 // ============================================================================
 // FRAME QUALITY CHECK
@@ -97,56 +113,322 @@ export async function editImage(
   editInstruction: string,
   videoId: string,
   shotIndex: number,
+  userId: string,
   aspectRatio: string = '16:9'
 ): Promise<string | null> {
-  const gpuApiUrl = await fetchDynamicGpuApiUrl();
-  if (!gpuApiUrl || gpuApiUrl === 'http://localhost:8000') {
-    console.warn(`${LOG_PREFIX} No GPU VM available for image editing`);
-    return null;
-  }
-
   try {
     console.log(
-      `${LOG_PREFIX} Shot ${shotIndex}: Editing image — "${editInstruction.substring(0, 80)}..."`
+      `${LOG_PREFIX} Shot ${shotIndex}: Editing image - "${editInstruction.substring(0, 80)}..."`
     );
 
-    const response = await fetch(`${gpuApiUrl}/api/edit-image`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GPU_API_SECRET}`,
-      },
-      body: JSON.stringify({
-        source_image_url: sourceImageUrl,
-        edit_instruction: editInstruction,
-        aspect_ratio: aspectRatio,
-        video_id: videoId,
-        shot_index: shotIndex,
-      }),
-      signal: AbortSignal.timeout(120_000), // 2 min timeout
+    const outputKey = generateMediaKey(
+      userId,
+      videoId,
+      STORAGE_PATHS.IMAGES.GENERATED,
+      `shot_${shotIndex}_creative_edit_${uuidv4().slice(0, 8)}.png`,
+    );
+    const { putUrl, publicUrl } = await generatePresignedPutUrl(outputKey, 'image/png');
+    const itemId = `creative-edit-${shotIndex}-${uuidv4().slice(0, 8)}`;
+
+    const submitResult = await callGpuImageEdit({
+      job_id: `creative-edit-${videoId}-${shotIndex}-${uuidv4().slice(0, 8)}`,
+      input_image_url: sourceImageUrl,
+      prompt: editInstruction,
+      aspect_ratio: aspectRatio as '16:9' | '9:16',
+      save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: itemId,
+      webhook_secret: getWebhookSecret(),
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error(`${LOG_PREFIX} Shot ${shotIndex}: Image edit API error: ${response.status} — ${errText.substring(0, 200)}`);
-      return null;
+    if (!submitResult.success) {
     }
 
-    const result = await response.json();
-    const editedUrl = result.url || result.media_url;
+    let editedUrl = submitResult.publicUrl || publicUrl;
+
+    if (submitResult.isAsync && submitResult.jobId) {
+      try {
+        const webhookResult = await waitForWebhookResult(itemId, CONTINUITY_EDIT_TIMEOUT_MS);
+        if (webhookResult.status === 'completed') {
+          editedUrl = webhookResult.result?.save_url || publicUrl;
+        } else {
+          console.error(
+            `${LOG_PREFIX} Shot ${shotIndex}: Image edit webhook failed: ${webhookResult.errorMessage || 'Unknown error'}`
+          );
+          return null;
+        }
+      } catch (webhookError) {
+        const jobStatus = await callGpuGetJobStatus(submitResult.jobId);
+        if (jobStatus.success && jobStatus.job?.status === 'completed') {
+          editedUrl = jobStatus.job.result?.save_url || publicUrl;
+        } else {
+          console.error(`${LOG_PREFIX} Shot ${shotIndex}: Image edit completion check failed:`, webhookError);
+          return null;
+        }
+      }
+    }
 
     if (!editedUrl) {
       console.error(`${LOG_PREFIX} Shot ${shotIndex}: No edited image URL in response`);
       return null;
     }
 
-    console.log(`${LOG_PREFIX} Shot ${shotIndex}: Image edit complete → ${editedUrl}`);
+    console.log(`${LOG_PREFIX} Shot ${shotIndex}: Image edit complete -> ${editedUrl}`);
     return editedUrl;
-
   } catch (error) {
     console.error(`${LOG_PREFIX} Shot ${shotIndex}: Image edit failed:`, error);
     return null;
   }
+}
+
+export function normalizeAngleChangeInstruction(angleChange: string | undefined): string {
+  return (angleChange || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .slice(0, 12)
+    .join(' ');
+}
+
+export interface ContinuityWaveShotInput {
+  shotIndex: number;
+  previousShotIndex: number;
+  previousVideoUrl: string;
+  angleChange: string;
+}
+
+export interface ContinuityWaveBatchResult {
+  startFrames: Record<string, string>;
+  continuityOutputs: Record<string, Record<string, unknown>>;
+  failedShotIndices: number[];
+}
+
+function isReusableContinuityEntry(
+  entry: Record<string, unknown> | undefined,
+  previousShotIndex: number,
+  previousVideoUrl: string,
+): boolean {
+  if (!entry) return false;
+  return entry.parent_shot_index === previousShotIndex
+    && entry.source_video_url === previousVideoUrl;
+}
+
+async function toPresignedInputUrl(frameUrl: string): Promise<string> {
+  try {
+    return await generatePresignedGetUrl(getKeyFromUrl(frameUrl));
+  } catch {
+    return frameUrl;
+  }
+}
+
+export async function processContinuityWaveBatch(params: {
+  userId: string;
+  videoId: string;
+  aspectRatio?: '16:9' | '9:16';
+  shots: ContinuityWaveShotInput[];
+  existingContinuityOutputs?: Record<string, Record<string, unknown>>;
+}): Promise<ContinuityWaveBatchResult> {
+  const {
+    userId,
+    videoId,
+    aspectRatio = '16:9',
+    shots,
+    existingContinuityOutputs = {},
+  } = params;
+
+  const result: ContinuityWaveBatchResult = {
+    startFrames: {},
+    continuityOutputs: {},
+    failedShotIndices: [],
+  };
+
+  const shotsNeedingExtraction: Array<ContinuityWaveShotInput & {
+    shotKey: string;
+    extractedFrameUrl?: string;
+    extractionMethod?: string;
+  }> = [];
+
+  for (const shot of shots) {
+    const shotKey = `shot-${shot.shotIndex}`;
+    const existing = existingContinuityOutputs[shotKey];
+    if (isReusableContinuityEntry(existing, shot.previousShotIndex, shot.previousVideoUrl)) {
+      const editedFrameUrl = existing.edited_frame_url;
+      if (typeof editedFrameUrl === 'string' && editedFrameUrl) {
+        result.startFrames[shotKey] = editedFrameUrl;
+        result.continuityOutputs[shotKey] = {
+          ...existing,
+          reused_cached_edit: true,
+        };
+        continue;
+      }
+    }
+
+    shotsNeedingExtraction.push({ ...shot, shotKey });
+  }
+
+  const extractedShots = await Promise.all(shotsNeedingExtraction.map(async shot => {
+    const existing = existingContinuityOutputs[shot.shotKey];
+    if (isReusableContinuityEntry(existing, shot.previousShotIndex, shot.previousVideoUrl)) {
+      const extractedFrameUrl = existing.extracted_frame_url;
+      if (typeof extractedFrameUrl === 'string' && extractedFrameUrl) {
+        return {
+          ...shot,
+          extractedFrameUrl,
+          extractionMethod: String(existing.extraction_method || 'cache'),
+        };
+      }
+    }
+
+    try {
+      const frameResult = await extractLastFrame(
+        shot.previousVideoUrl,
+        videoId,
+        shot.shotIndex,
+      );
+
+      return {
+        ...shot,
+        extractedFrameUrl: frameResult.frameUrl,
+        extractionMethod: frameResult.extractionMethod,
+      };
+    } catch (error) {
+      result.failedShotIndices.push(shot.shotIndex);
+      result.continuityOutputs[shot.shotKey] = {
+        parent_shot_index: shot.previousShotIndex,
+        source_video_url: shot.previousVideoUrl,
+        edit_instruction: normalizeAngleChangeInstruction(shot.angleChange),
+        continuity_applied: false,
+        status: 'fallback_to_t2v',
+        failure_reason: error instanceof Error ? error.message : 'Frame extraction failed',
+      };
+    }
+  }));
+
+  const extractedReady = extractedShots.filter((shot): shot is NonNullable<typeof shot> => Boolean(shot));
+  const usableFrames = await Promise.all(extractedReady.map(async shot => {
+    const quality = await checkFrameQuality(shot.extractedFrameUrl!, userId);
+    if (!quality.usable) {
+      result.failedShotIndices.push(shot.shotIndex);
+      result.continuityOutputs[shot.shotKey] = {
+        parent_shot_index: shot.previousShotIndex,
+        source_video_url: shot.previousVideoUrl,
+        extracted_frame_url: shot.extractedFrameUrl,
+        extraction_method: shot.extractionMethod,
+        edit_instruction: normalizeAngleChangeInstruction(shot.angleChange),
+        continuity_applied: false,
+        status: 'fallback_to_t2v',
+        failure_reason: quality.reason || 'Frame quality check failed',
+      };
+      return null;
+    }
+
+    return shot;
+  }));
+
+  const batchShots = usableFrames.filter((shot): shot is NonNullable<typeof shot> => Boolean(shot));
+  if (batchShots.length === 0) {
+    return result;
+  }
+
+  const batchId = `continuity-${videoId}-${uuidv4().slice(0, 8)}`;
+  const webhookUrl = process.env.WEBHOOK_CALLBACK_URL || 'http://localhost:3000/api/gpu-callback';
+  const webhookSecret = process.env.GPU_WEBHOOK_SECRET;
+  const outputPublicUrls = new Map<string, string>();
+  const batchItems: BatchImageEditItem[] = [];
+  const itemIdToShot = new Map<string, typeof batchShots[number]>();
+
+  for (const shot of batchShots) {
+    const outputKey = generateMediaKey(
+      userId,
+      videoId,
+      STORAGE_PATHS.IMAGES.GENERATED,
+      `shot_${shot.shotIndex}_continuity_start.png`,
+    );
+    const { putUrl, publicUrl } = await generatePresignedPutUrl(outputKey, 'image/png');
+    const itemId = `continuity-${shot.shotIndex}-${uuidv4().slice(0, 8)}`;
+    outputPublicUrls.set(itemId, publicUrl);
+    itemIdToShot.set(itemId, shot);
+    batchItems.push({
+      item_id: itemId,
+      input_image_url: await toPresignedInputUrl(shot.extractedFrameUrl!),
+      prompt: normalizeAngleChangeInstruction(shot.angleChange),
+      aspect_ratio: aspectRatio,
+      save_url: putUrl,
+    });
+  }
+
+  const submitResult = await callGpuBatchImageEdit(
+    batchId,
+    batchItems,
+    webhookUrl,
+    webhookSecret,
+  );
+
+  if (!submitResult.success) {
+    for (const shot of batchShots) {
+      result.failedShotIndices.push(shot.shotIndex);
+      result.continuityOutputs[shot.shotKey] = {
+        parent_shot_index: shot.previousShotIndex,
+        source_video_url: shot.previousVideoUrl,
+        extracted_frame_url: shot.extractedFrameUrl,
+        extraction_method: shot.extractionMethod,
+        edit_instruction: normalizeAngleChangeInstruction(shot.angleChange),
+        continuity_applied: false,
+        status: 'fallback_to_t2v',
+        failure_reason: submitResult.errorMessage || 'Batch image edit submission failed',
+      };
+    }
+    return result;
+  }
+
+  await Promise.allSettled(batchItems.map(async item => {
+    const shot = itemIdToShot.get(item.item_id);
+    if (!shot) return;
+
+    try {
+      const webhookResult = await waitForWebhookResult(item.item_id, CONTINUITY_EDIT_TIMEOUT_MS);
+      if (webhookResult.status === 'completed') {
+        const startFrameUrl = outputPublicUrls.get(item.item_id) || '';
+        result.startFrames[shot.shotKey] = startFrameUrl;
+        result.continuityOutputs[shot.shotKey] = {
+          parent_shot_index: shot.previousShotIndex,
+          source_video_url: shot.previousVideoUrl,
+          extracted_frame_url: shot.extractedFrameUrl,
+          extraction_method: shot.extractionMethod,
+          edit_instruction: normalizeAngleChangeInstruction(shot.angleChange),
+          edited_frame_url: startFrameUrl,
+          continuity_applied: true,
+          status: 'ready',
+        };
+      } else {
+        result.failedShotIndices.push(shot.shotIndex);
+        result.continuityOutputs[shot.shotKey] = {
+          parent_shot_index: shot.previousShotIndex,
+          source_video_url: shot.previousVideoUrl,
+          extracted_frame_url: shot.extractedFrameUrl,
+          extraction_method: shot.extractionMethod,
+          edit_instruction: normalizeAngleChangeInstruction(shot.angleChange),
+          continuity_applied: false,
+          status: 'fallback_to_t2v',
+          failure_reason: webhookResult.errorMessage || 'Continuity image edit failed',
+        };
+      }
+    } catch (error) {
+      result.failedShotIndices.push(shot.shotIndex);
+      result.continuityOutputs[shot.shotKey] = {
+        parent_shot_index: shot.previousShotIndex,
+        source_video_url: shot.previousVideoUrl,
+        extracted_frame_url: shot.extractedFrameUrl,
+        extraction_method: shot.extractionMethod,
+        edit_instruction: normalizeAngleChangeInstruction(shot.angleChange),
+        continuity_applied: false,
+        status: 'fallback_to_t2v',
+        failure_reason: error instanceof Error ? error.message : 'Continuity image edit timed out',
+      };
+    }
+  }));
+
+  return result;
 }
 
 // ============================================================================
@@ -194,8 +476,7 @@ export async function processI2VShot(
     return null;
   }
 
-  if (!frameResult.frameUrl || frameResult.frameUrl === previousVideoUrl) {
-    // extractLastFrame fell back to returning the video URL — frame extraction unavailable
+  if (!frameResult.frameUrl) {
     console.warn(`${LOG_PREFIX} Shot ${shotIndex}: Frame extraction unavailable, falling back to T2V`);
     return null;
   }
@@ -215,6 +496,7 @@ export async function processI2VShot(
     angleChange,
     videoId,
     shotIndex,
+    userId,
     aspectRatio
   );
 
@@ -228,7 +510,7 @@ export async function processI2VShot(
   return {
     startFrameUrl: editedUrl,
     wasEdited: true,
-    editInstruction: angleChange,
+    editInstruction: normalizeAngleChangeInstruction(angleChange),
   };
 }
 
@@ -252,6 +534,7 @@ export async function applyCreativeEdit(
   editInstruction: string,
   videoId: string,
   shotIndex: number,
+  userId: string,
   aspectRatio: string = '16:9'
 ): Promise<string> {
   const editedUrl = await editImage(
@@ -259,6 +542,7 @@ export async function applyCreativeEdit(
     editInstruction,
     videoId,
     shotIndex,
+    userId,
     aspectRatio
   );
 
@@ -272,3 +556,4 @@ export async function applyCreativeEdit(
 
   return editedUrl;
 }
+

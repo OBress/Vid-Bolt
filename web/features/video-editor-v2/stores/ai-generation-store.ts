@@ -69,13 +69,13 @@ export interface SfxSearchState {
 export interface AudioGenState {
   /** Comma-separated ACE-Step caption tags: genre, instruments, mood, tempo */
   prompt: string;
-  /** Optional structured lyrics field (section tags for energy dynamics) */
+  /** Optional lyrics for vocal generation. Leave empty for instrumental background music. */
   lyrics: string;
   /** Duration in seconds (30-180 optimal for ACE-Step) */
   durationSeconds: number;
   /** Seed for reproducibility (null = random) */
   seed: number | null;
-  /** Beats per minute (60-160) */
+  /** Beats per minute (keep 50-70 for subtle ambient beds) */
   bpm: number;
   /** Musical key/scale (e.g. 'C Major', 'Am', 'D Minor') */
   keyScale: string;
@@ -171,11 +171,11 @@ const DEFAULT_SFX_SEARCH: SfxSearchState = {
 
 const DEFAULT_AUDIO_GEN: AudioGenState = {
   prompt: '',
-  lyrics: '[Instrumental]',
+  lyrics: '',
   durationSeconds: 60,
   seed: null,
-  bpm: 100,
-  keyScale: 'C Major',
+  bpm: 58,
+  keyScale: 'Dm',
 };
 
 const DEFAULT_TTS_FORM: TtsFormState = {

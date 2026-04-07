@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
       keyScale,
     } = body as {
       prompt: string;
-      lyrics?: string;
+      lyrics?: string | string[];
       durationSeconds?: number;
       seed?: number | null;
       bpm?: number;
@@ -69,23 +69,27 @@ export async function POST(request: NextRequest) {
     const r2Key = `editor-gen/${user.id}/${jobId}.wav`;
     const { putUrl } = await generatePresignedPutUrl(r2Key, 'audio/wav');
     const publicUrl = getPublicUrl(r2Key);
+    const normalizedLyrics = Array.isArray(lyrics)
+      ? lyrics.map((line) => String(line).trim()).filter(Boolean)
+      : lyrics?.trim();
 
     // 4. Build GPU API request
     const gpuRequest: MusicGenerateRequest = {
       job_id: jobId,
       prompt: prompt.trim(),
-      lyrics: lyrics || '[Instrumental]',
       duration_seconds: Math.max(10, Math.min(180, durationSeconds ?? 60)),
       seed: seed ?? undefined,
-      bpm: bpm ?? 100,
-      key_scale: keyScale ?? 'C Major',
+      bpm: Math.max(50, Math.min(70, bpm ?? 58)),
+      key_scale: keyScale ?? 'Dm',
       time_signature: '4',
-      vocal_language: 'unknown', // Instrumental
       save_url: putUrl,
       webhook_url: getWebhookUrl(),
       item_id: itemId,
       webhook_secret: getWebhookSecret(),
     };
+    if (Array.isArray(normalizedLyrics) ? normalizedLyrics.length > 0 : Boolean(normalizedLyrics)) {
+      gpuRequest.lyrics = normalizedLyrics;
+    }
 
     // 5. Call GPU API
     const result = await callGpuMusicGenerate(gpuRequest);

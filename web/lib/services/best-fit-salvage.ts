@@ -60,6 +60,31 @@ const DIMENSION_KEYS = [
   'style_consistency',
 ] as const;
 
+const HARD_CONTRACT_PATTERNS = [
+  /garbled text/i,
+  /unreadable text/i,
+  /non-english/i,
+  /fake paragraph/i,
+  /document paragraph/i,
+  /photoreal/i,
+  /modern suit/i,
+  /modern clothing/i,
+  /modern haircut/i,
+  /anachron/i,
+  /opaque overlay/i,
+  /block the base media/i,
+  /placeholder asset/i,
+  /placeholder url/i,
+  /wrong-language visible text/i,
+];
+
+function hasHardContractViolation(result: VerifierResult): boolean {
+  const correctionText = result.suggested_corrections.join(' ');
+  const dimensionText = Object.values(result.dimension_feedback).join(' ');
+  const combined = `${correctionText} ${dimensionText}`;
+  return HARD_CONTRACT_PATTERNS.some((pattern) => pattern.test(combined));
+}
+
 /**
  * Score a verifier result for ranking.
  * Higher score = better result.
@@ -127,7 +152,8 @@ export function selectBestFitSalvage(
     .sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
-  const belowFloor = best.score < QUALITY_FLOOR;
+  const hardContractViolation = hasHardContractViolation(best.verifierResult);
+  const belowFloor = best.score < QUALITY_FLOOR || hardContractViolation;
 
   if (belowFloor) {
     console.warn(`[BestFitSalvage] Shot ${shotIndex}: best score ${best.score.toFixed(1)} is below quality floor (${QUALITY_FLOOR}) — flagging for replacement`);
@@ -139,7 +165,7 @@ export function selectBestFitSalvage(
     return !feedback.includes('fail') && !feedback.includes('mismatch') && !feedback.includes('wrong');
   });
 
-  const reason = `Selected attempt ${best.attemptNumber} (score: ${best.score.toFixed(1)}${belowFloor ? ' ⚠️ BELOW QUALITY FLOOR' : ''}). ` +
+  const reason = `Selected attempt ${best.attemptNumber} (score: ${best.score.toFixed(1)}${belowFloor ? ' ⚠️ BELOW QUALITY FLOOR' : ''}${hardContractViolation ? '; hard contract violation detected' : ''}). ` +
     `${passingDimensions.length}/${DIMENSION_KEYS.length} dimensions acceptable. ` +
     `Failure type: ${best.verifierResult.failure_type || 'unknown'}.`;
 
@@ -158,7 +184,8 @@ export function selectBestFitSalvage(
       shotIndex,
       issue: `Shot ${shotIndex + 1} failed verification ${attempts.length}x. ` +
         `Best attempt accepted with ${passingDimensions.length}/${DIMENSION_KEYS.length} passing dimensions.` +
-        (belowFloor ? ` ⚠️ BELOW QUALITY FLOOR — needs replacement.` : ` Review recommended.`),
+        (belowFloor ? ` ⚠️ BELOW QUALITY FLOOR — needs replacement.` : ` Review recommended.`) +
+        (hardContractViolation ? ` Hard contract violation detected.` : ''),
       suggestions: allSuggestions,
       allAttemptUrls: attempts.map((a) => a.mediaUrl),
     },

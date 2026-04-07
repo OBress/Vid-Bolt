@@ -13,8 +13,10 @@ import { ExportStep } from "./steps/ExportStep";
 import { AsyncLoadingStep } from "./AsyncLoadingStep";
 import { useVideos } from "@/hooks/use-videos";
 import { Loader2 } from "lucide-react";
-import type { VideoStage, VideoProject, AudioChunk, ShotEvent, GeneratedMedia } from "@/types/video";
+import type { VideoStage, VideoProject, AudioChunk, ShotEvent, GeneratedMedia, ProductionTaskSummary } from "@/types/video";
 import type { EditDecisionList } from "@/lib/services/edit-assembly/edit-assembly-prompts";
+import type { VideoCreativeOverrides } from "@/lib/types/closed-loop";
+import type { ProductionCompletionPayload, ProductionReviewMode } from "./steps/ProductionStep";
 
 
 export interface WizardState {
@@ -36,6 +38,8 @@ export interface WizardState {
   // Production (Step 3 — Closed-Loop Pipeline)
   isProductionLoading: boolean;
   productionTaskId: string | null;
+  videoCreativeOverrides?: VideoCreativeOverrides;
+  productionReviewMode: ProductionReviewMode;
   // Edit Decision List (produced by orchestrator Phase V)
   edl: EditDecisionList | null;
   agentEdl: any | null;
@@ -84,8 +88,9 @@ function extractPipelineOutputs(metadata: Record<string, any>): {
   shotList: ShotEvent[];
   generatedMedia: GeneratedMedia[];
 } {
+  const shotPlan = metadata?.shot_plan || {};
   const avScript = metadata?.av_script_part1 || {};
-  const shots: ShotEvent[] = (avScript.shots || []) as ShotEvent[];
+  const shots: ShotEvent[] = ((shotPlan.shots || avScript.shots || [])) as ShotEvent[];
   const genImages = (metadata?.generated_images || {}) as Record<string, string>;
   const genVideos = (metadata?.generated_videos || {}) as Record<string, string>;
   const genMG = (metadata?.generated_motion_graphics || {}) as Record<string, string>;
@@ -177,6 +182,8 @@ export function VideoCreationWizard({
     scriptTaskId: null,
     isProductionLoading: false,
     productionTaskId: null,
+    videoCreativeOverrides: undefined,
+    productionReviewMode: "off",
     edl: null,
     agentEdl: null,
     edlTaskId: null,
@@ -240,18 +247,20 @@ export function VideoCreationWizard({
         }
 
         const video: VideoProject = data.video;
+        const latestProductionTask = (data.latestProductionTask || null) as ProductionTaskSummary | null;
+        const metadata = (video.metadata || {}) as Record<string, any>;
 
         // Determine the correct step based on current_stage
         let targetStep = stageToStepNumber(video.current_stage);
 
         // Get expanded idea from metadata if available
-        const expandedIdea = (video.metadata as any)?.expanded_idea || "";
+        const expandedIdea = metadata?.expanded_idea || "";
 
         // Update state with loaded video data
-        const scriptConfig = (video.metadata as any)?.scriptConfig || null;
+        const scriptConfig = metadata?.scriptConfig || null;
 
         // Load outline data from metadata
-        let outlineOutput = (video.metadata as any)?.outlineOutput || null;
+        let outlineOutput = metadata?.outlineOutput || null;
 
         // RECOVERY: If outline missing in metadata, try to recover from linked task
         if (!outlineOutput && (video as any).outline_task_id) {
@@ -275,8 +284,8 @@ export function VideoCreationWizard({
           }
         }
 
-        const outlineConfig = (video.metadata as any)?.outlineConfig || null;
-        const scriptOutput = (video.metadata as any)?.scriptOutput || null;
+        const outlineConfig = metadata?.outlineConfig || null;
+        const scriptOutput = metadata?.scriptOutput || null;
 
         // RECONCILE: If metadata shows more progress than current_stage indicates,
         // bump the target step and fix the persisted stage for future loads.
@@ -296,7 +305,29 @@ export function VideoCreationWizard({
         }
 
         // Extract pipeline outputs (audioChunks, shots, media) from metadata
-        const pipelineOutputs = extractPipelineOutputs((video.metadata || {}) as Record<string, any>);
+        const pipelineOutputs = extractPipelineOutputs(metadata);
+        const hasEditorOutputs = Boolean(metadata?.edl || metadata?.agentEdl);
+
+        if (
+          video.current_stage === "video"
+          && (
+            latestProductionTask?.status === "failed"
+            || latestProductionTask?.status === "cancelled"
+            || !hasEditorOutputs
+          )
+        ) {
+          console.warn(
+            `[Wizard] Production/editor mismatch for video ${video.id}: stage="${video.current_stage}", latest task status="${latestProductionTask?.status || "missing"}", editorOutputs=${hasEditorOutputs}`
+          );
+          targetStep = 3;
+          fetch(`/api/videos/${video.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ current_stage: "production" }),
+          }).catch((err) =>
+            console.error("[Wizard] Failed to reconcile invalid editor handoff:", err),
+          );
+        }
 
         setState({
           prompt: video.idea || "",
@@ -313,9 +344,21 @@ export function VideoCreationWizard({
           isScriptLoading: false,
           scriptTaskId: null,
           isProductionLoading: false,
-          productionTaskId: null,
-          edl: (video.metadata as any)?.edl || null,
-          agentEdl: (video.metadata as any)?.agentEdl || null,
+          productionTaskId:
+            targetStep === 3
+            && (latestProductionTask?.status === "failed" || latestProductionTask?.status === "cancelled")
+              ? latestProductionTask.id
+              : null,
+          videoCreativeOverrides:
+            metadata?.videoCreativeOverrides
+            || metadata?.video_creative_overrides
+            || undefined,
+          productionReviewMode:
+            metadata?.productionControls?.reviewMode
+            || metadata?.production_controls?.reviewMode
+            || "off",
+          edl: metadata?.edl || null,
+          agentEdl: metadata?.agentEdl || null,
           edlTaskId: null,
           isEdlLoading: false,
           audioChunks: pipelineOutputs.audioChunks,
@@ -347,7 +390,7 @@ export function VideoCreationWizard({
                 console.log(`[Wizard] Restoring active outline task: ${task.id}`);
                 break;
               case "edit_assembly":
-                if (!(video.metadata as any)?.edl) {
+                if (!metadata?.edl) {
                   loadingUpdates.isEdlLoading = true;
                   loadingUpdates.edlTaskId = task.id;
                   console.log(`[Wizard] Restoring active edit assembly task: ${task.id}`);
@@ -816,52 +859,25 @@ export function VideoCreationWizard({
             projectId={projectId}
             isLoading={state.isProductionLoading}
             taskId={state.productionTaskId}
+            videoCreativeOverrides={state.videoCreativeOverrides}
+            onVideoCreativeOverridesChange={(overrides) => updateState({ videoCreativeOverrides: overrides })}
+            reviewMode={state.productionReviewMode}
+            onReviewModeChange={(reviewMode) => updateState({ productionReviewMode: reviewMode })}
             onTaskStarted={(taskId) => {
               updateState({
                 isProductionLoading: true,
                 productionTaskId: taskId,
               });
             }}
-            onComplete={async () => {
-              // Fetch completed EDL/agentEdl + pipeline outputs from project metadata
-              let edl = null;
-              let agentEdl = null;
-              let pipelineOutputs = { audioChunks: [] as AudioChunk[], shotList: [] as ShotEvent[], generatedMedia: [] as GeneratedMedia[] };
-              if (state.videoId) {
-                try {
-                  const res = await fetch(`/api/videos/${state.videoId}`);
-                  if (res.ok) {
-                    const data = await res.json();
-                    const meta = (data.video?.metadata || {}) as Record<string, any>;
-                    edl = meta.edl || null;
-                    agentEdl = meta.agentEdl || null;
-                    pipelineOutputs = extractPipelineOutputs(meta);
-                    console.log(`[Wizard] Post-production: ${pipelineOutputs.generatedMedia.length} media, ${pipelineOutputs.audioChunks.length} audio, ${pipelineOutputs.shotList.length} shots`);
-                  }
-                } catch (err) {
-                  console.warn("[Wizard] Failed to fetch data after production:", err);
-                }
-
-                // Update stage to video (editor)
-                try {
-                  await fetch(`/api/videos/${state.videoId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ current_stage: "video" }),
-                  });
-                } catch (err) {
-                  console.error("Failed to update stage:", err);
-                }
-              }
-
+            onComplete={async (payload: ProductionCompletionPayload) => {
               updateState({
                 isProductionLoading: false,
                 productionTaskId: null,
-                edl,
-                agentEdl,
-                audioChunks: pipelineOutputs.audioChunks,
-                shotList: pipelineOutputs.shotList,
-                generatedMedia: pipelineOutputs.generatedMedia,
+                edl: payload.edl,
+                agentEdl: payload.agentEdl,
+                audioChunks: payload.audioChunks,
+                shotList: payload.shotList,
+                generatedMedia: payload.generatedMedia,
               });
               resumedAtEditorRef.current = true;
               advanceToStep(4);

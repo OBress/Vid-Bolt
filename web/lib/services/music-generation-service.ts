@@ -11,13 +11,14 @@
  *
  * ACE-Step Best Practices (baked into agent prompt):
  *   - Captions: comma-separated tags (genre, instruments, mood, tempo)
- *   - Lyrics field: structured section tags even for instrumental ([Intro], [Verse], etc.)
+ *   - No lyrics field for closed-loop background music
  *   - Always instrumental, never vocals
  *   - Shared seed/BPM/key across segments for timbral consistency
  *   - 30-180s per segment (quality sweet spot)
  *   - BPM → emotion: 60-80 calm, 80-120 balanced, 120-160 energetic
  */
 
+import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { generateJSON } from '@/lib/ai/openrouter';
 import {
@@ -43,6 +44,11 @@ const MODE_SWITCH_TIMEOUT_MS = 120_000; // 2 min to switch to audio_creation
 const MODE_POLL_INTERVAL_MS = 2_000;
 const POST_SWITCH_DELAY_MS = 3_000;
 const MUSIC_GEN_TIMEOUT_MS = 900_000;   // 15 min per segment (long music can take a while)
+const MAX_PLANNING_RETRIES = 3;
+const DEFAULT_SHARED_BPM = 58;
+const DEFAULT_SHARED_KEY_SCALE = 'Dm';
+const DEFAULT_STYLE_SUMMARY =
+  'Barely noticeable ambient documentary bed with warm analog pads, faint room tone, and a slow, stable texture.';
 
 const getWebhookUrl = () =>
   process.env.WEBHOOK_CALLBACK_URL || 'http://localhost:3000/api/gpu-callback';
@@ -52,32 +58,36 @@ const getWebhookSecret = () => process.env.GPU_WEBHOOK_SECRET;
 // TYPES
 // ============================================================================
 
-/** Plan for a single music segment */
-export interface MusicSegmentPlan {
-  segment_index: number;
-  start_seconds: number;
-  end_seconds: number;
-  duration_seconds: number;
-  /** Comma-separated ACE-Step caption tags: genre, instruments, mood, tempo */
-  caption: string;
-  /** Structure tags for energy dynamics: [Intro]\n[Instrumental - ...]\n[Verse]... */
-  lyrics_structure: string;
-  transition_type: 'crossfade' | 'cut' | 'fade_out_in';
-  transition_duration_seconds: number;
-  energy_level: 'low' | 'medium' | 'high';
+const MusicSegmentPlanSchema = z.object({
+  segment_index: z.number().int().min(0),
+  start_seconds: z.number().min(0),
+  end_seconds: z.number().min(0),
+  duration_seconds: z.number().min(10).max(180),
+  /** Comma-separated ACE-Step caption tags: texture, atmosphere, timbre, mood. */
+  caption: z.string().trim().min(1).max(400),
+  transition_type: z.enum(['crossfade', 'cut', 'fade_out_in']).default('crossfade'),
+  transition_duration_seconds: z.number().min(0).max(10).default(4),
+  energy_level: z.enum(['low', 'medium', 'high']).default('low'),
   /** What's happening in the video at this point */
-  narrative_context: string;
-}
+  narrative_context: z.string().trim().min(1).max(400).default(
+    'Maintain the same quiet ambient bed with only a barely perceptible change in warmth or density.'
+  ),
+});
+
+/** Plan for a single music segment */
+export type MusicSegmentPlan = z.infer<typeof MusicSegmentPlanSchema>;
+
+const MusicDirectorOutputSchema = z.object({
+  segments: z.array(MusicSegmentPlanSchema).min(1),
+  shared_seed: z.number().int().min(1).max(999_999).default(482_910),
+  shared_bpm: z.number().int().min(50).max(70).default(DEFAULT_SHARED_BPM),
+  shared_key_scale: z.string().trim().min(1).max(40).default(DEFAULT_SHARED_KEY_SCALE),
+  /** e.g. "dark ambient drone with warm analog hum" */
+  style_summary: z.string().trim().min(1).max(400).default(DEFAULT_STYLE_SUMMARY),
+});
 
 /** Full output from the Music Director Agent */
-export interface MusicDirectorOutput {
-  segments: MusicSegmentPlan[];
-  shared_seed: number;
-  shared_bpm: number;
-  shared_key_scale: string;
-  /** e.g. "dark ambient electronic" */
-  style_summary: string;
-}
+export type MusicDirectorOutput = z.infer<typeof MusicDirectorOutputSchema>;
 
 /** A generated music segment with R2 URL */
 export interface MusicTrackSegment {
@@ -230,6 +240,95 @@ Shots may include a narrative_beat (hook, reveal, climax, transition, exposition
 - transition/exposition → standard ambient bed
 - cta → strip back to near-silence so the call-to-action is prominent
 These are 5% adjustments, not dramatic shifts. The viewer should never notice the change.`;
+
+const MUSIC_DIRECTOR_SYSTEM_PROMPT_V2 = `You are the Music Director for an AI video production pipeline.
+
+Your ONLY job is to plan instrumental background music that is so subtle the viewer barely notices it. It should fill silence and support narration without ever feeling like a song.
+
+## Core Philosophy
+- The bed must be felt, not heard.
+- If it sounds like something people would listen to on its own, it is too noticeable.
+- If it has obvious rhythm, hooks, vocals, melody, featured instruments, or dramatic transitions, it is wrong.
+- Think: warm room tone, distant ambient pad, restrained analog hum, quiet atmospheric texture.
+
+## Hard Rules
+- ALWAYS instrumental.
+- NEVER output lyrics.
+- NEVER output a lyrics field.
+- NEVER use verse, chorus, bridge, refrain, topline, chant, choir, hook, riff, or beat language.
+- Keep BPM in the 50-70 range only.
+- All segments in a video must share the exact same timbral identity.
+- Only make tiny changes in warmth, density, or tension between segments.
+
+## Caption Rules
+Each segment caption must be a comma-separated list of unobtrusive texture tags.
+
+Good:
+- "warm analog pad, quiet documentary drone, faint room tone, soft atmospheric wash, minimal, slow evolving texture"
+- "dark ambient bed, distant reverb wash, gentle sub bass undertone, restrained texture, barely noticeable"
+
+Bad:
+- "cinematic orchestral score, emotional piano melody, soaring strings"
+- "lo-fi beat, catchy synth lead, pulsing drums"
+- "vocal ambient chant, choir swell"
+
+## Allowed Sonic Language
+- ambient pad
+- drone
+- room tone
+- analog hum
+- reverb wash
+- tape warmth
+- low sub undertone
+- slow evolving texture
+- granular haze
+- distant shimmer
+
+## Output Schema
+Return JSON only with:
+- shared_seed: integer 1-999999, reused across every segment
+- shared_bpm: integer 50-70 only
+- shared_key_scale: one stable key/scale for the entire video
+- style_summary: one sentence describing the single stable timbral identity
+- segments: array of objects with
+  - segment_index
+  - start_seconds
+  - end_seconds
+  - duration_seconds
+  - caption
+  - transition_type
+  - transition_duration_seconds
+  - energy_level
+  - narrative_context
+
+## Segment Rules
+- Generate exactly the requested number of segments.
+- Cover the full runtime with no gaps or overlaps.
+- transition_type should almost always be "crossfade".
+- transition_duration_seconds should usually be 3-5 seconds.
+- energy_level may be low, medium, or high, but "high" still means subtle in practice.
+- narrative_context should describe the story beat in plain language, not musical instructions.
+
+## Narrative Mapping
+- hook/climax: slightly denser or darker texture, still restrained
+- exposition/transition: steady neutral bed
+- cta/outro: pull back toward near-silence
+
+## Consistency
+All segments must sound like the same invisible background bed. Re-listening to one segment after another should feel like the same source, not different songs.`;
+
+function getMusicDirectorResponseFormat() {
+  const schema = z.toJSONSchema(MusicDirectorOutputSchema);
+  const { $schema: _, ...structuralSchema } = schema as Record<string, unknown>;
+  return {
+    type: 'json_schema' as const,
+    json_schema: {
+      name: 'music_director_output',
+      strict: true,
+      schema: structuralSchema,
+    },
+  };
+}
 
 
 // ============================================================================
@@ -415,14 +514,15 @@ async function invokeMusicDirector(
   const TARGET_SEGMENT_DURATION = 120;
   const requiredSegments = Math.max(2, Math.ceil(context.totalDurationSeconds / TARGET_SEGMENT_DURATION));
   const totalBatches = Math.ceil(requiredSegments / PLANNING_BATCH_SIZE);
+  const responseFormat = getMusicDirectorResponseFormat();
 
   console.log(`${LOG_PREFIX} Planning ${requiredSegments} segments in ${totalBatches} batch(es)`);
 
   // Shared parameters established by the first batch
-  let sharedSeed: number = 0;
-  let sharedBpm: number = 0;
-  let sharedKeyScale: string = '';
-  let styleSummary: string = '';
+  let sharedSeed: number = 482_910;
+  let sharedBpm: number = DEFAULT_SHARED_BPM;
+  let sharedKeyScale: string = DEFAULT_SHARED_KEY_SCALE;
+  let styleSummary: string = DEFAULT_STYLE_SUMMARY;
   const allSegments: MusicSegmentPlan[] = [];
 
   for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
@@ -514,15 +614,63 @@ Maintain timbral continuity with previous segments.`;
     console.log(`${LOG_PREFIX} Planning batch ${batchIdx + 1}/${totalBatches}: ` +
       `segments ${batchStart}-${batchEnd - 1} (${windowStartSec.toFixed(0)}s–${windowEndSec.toFixed(0)}s)`);
 
-    const batchResult = await generateJSON<MusicDirectorOutput>(
-      context.userId,
-      MUSIC_DIRECTOR_SYSTEM_PROMPT,
-      userPrompt,
-      { maxTokens: 65536 }
-    );
+    let batchResult: MusicDirectorOutput | null = null;
+    let lastBatchError: Error | null = null;
 
-    if (!batchResult.segments?.length) {
-      throw new Error(`Music Director batch ${batchIdx + 1} returned no segments`);
+    for (let attempt = 1; attempt <= MAX_PLANNING_RETRIES; attempt++) {
+      console.log(
+        `${LOG_PREFIX} Planning batch ${batchIdx + 1}/${totalBatches} ` +
+        `(attempt ${attempt}/${MAX_PLANNING_RETRIES})`
+      );
+
+      try {
+        const raw = await generateJSON<MusicDirectorOutput>(
+          context.userId,
+          MUSIC_DIRECTOR_SYSTEM_PROMPT_V2,
+          userPrompt,
+          {
+            responseFormat,
+            temperature: 0.3,
+            maxTokens: 65536,
+            maxRetries: 1,
+          }
+        );
+
+        const parsed = MusicDirectorOutputSchema.safeParse(raw);
+        if (!parsed.success) {
+          lastBatchError = new Error(parsed.error.message);
+          console.warn(
+            `${LOG_PREFIX} Batch ${batchIdx + 1} schema validation failed on attempt ${attempt}:`,
+            parsed.error.message
+          );
+        } else if (parsed.data.segments.length !== batchCount) {
+          lastBatchError = new Error(
+            `Expected ${batchCount} segments but received ${parsed.data.segments.length}`
+          );
+          console.warn(
+            `${LOG_PREFIX} Batch ${batchIdx + 1} returned ${parsed.data.segments.length}/${batchCount} segments on attempt ${attempt}`
+          );
+        } else {
+          batchResult = parsed.data;
+          break;
+        }
+      } catch (error) {
+        lastBatchError = error instanceof Error ? error : new Error(String(error));
+        console.warn(
+          `${LOG_PREFIX} Batch ${batchIdx + 1} attempt ${attempt} failed: ${lastBatchError.message}`
+        );
+      }
+
+      if (attempt < MAX_PLANNING_RETRIES) {
+        await new Promise(resolve => setTimeout(resolve, 1_500 * attempt));
+      }
+    }
+
+    if (!batchResult) {
+      throw new Error(
+        `Music Director batch ${batchIdx + 1} failed after ${MAX_PLANNING_RETRIES} attempts: ` +
+        `${lastBatchError?.message || 'unknown error'}`
+      );
     }
 
     // Capture shared parameters from batch 1
@@ -531,15 +679,24 @@ Maintain timbral continuity with previous segments.`;
       sharedBpm = batchResult.shared_bpm;
       sharedKeyScale = batchResult.shared_key_scale;
       styleSummary = batchResult.style_summary;
+    } else if (
+      batchResult.shared_seed !== sharedSeed ||
+      batchResult.shared_bpm !== sharedBpm ||
+      batchResult.shared_key_scale !== sharedKeyScale
+    ) {
+      console.warn(
+        `${LOG_PREFIX} Batch ${batchIdx + 1} returned different shared music parameters â€” keeping batch 1 values`
+      );
     }
 
     // Clamp segment durations and fix indices
-    for (const seg of batchResult.segments) {
+    batchResult.segments.forEach((seg, indexInBatch) => {
+      seg.segment_index = batchStart + indexInBatch;
       if (seg.duration_seconds < 10) seg.duration_seconds = 30;
       if (seg.duration_seconds > 180) seg.duration_seconds = 180;
       seg.end_seconds = seg.start_seconds + seg.duration_seconds;
       allSegments.push(seg);
-    }
+    });
 
     console.log(`${LOG_PREFIX} Batch ${batchIdx + 1}: ${batchResult.segments.length} segments planned`);
   }
@@ -594,13 +751,11 @@ async function generateSegment(
     const request: MusicGenerateRequest = {
       job_id: gpuJobId,
       prompt: segment.caption,
-      lyrics: segment.lyrics_structure || '[Instrumental]',
       duration_seconds: segment.duration_seconds,
       seed: plan.shared_seed,
       bpm: plan.shared_bpm,
       key_scale: plan.shared_key_scale,
       time_signature: '4',  // 4/4 is standard for most background music
-      vocal_language: 'unknown',  // Instrumental — no vocals
       save_url: putUrl,
       webhook_url: getWebhookUrl(),
       item_id: itemId,

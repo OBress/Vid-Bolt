@@ -33,6 +33,7 @@ import {
 } from '@/lib/services/r2-storage';
 import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
 import { CancellationError, checkCancelled } from '@/lib/queues/cancellation';
+import { getStyleSignals } from '@/lib/services/style-signals';
 
 // ============================================================================
 // CONFIGURATION
@@ -96,6 +97,8 @@ export interface ShotForGpuGeneration {
   narration_text?: string;
   /** Compact neighbor context note for style continuity */
   neighbor_context?: string;
+  /** Video-level visual style context */
+  visual_style?: string;
 }
 
 export interface GpuGenerationResult {
@@ -323,6 +326,8 @@ export async function processGpuBatchGeneration(
   //  - Image-only shots (ai_image): just GPU image
   // -------------------------------------------------------------------------
   const videoShots = shots.filter(s => s.media_type === 'video');
+  const seededVideoShots = videoShots.filter(s => !!s.start_frame_url);
+  const videoShotsNeedingKeyframes = videoShots.filter(s => !s.start_frame_url);
 
   // Helper: does this MG shot need a base AI image?
   const mgNeedsBaseImage = (s: ShotForGpuGeneration) =>
@@ -338,9 +343,13 @@ export async function processGpuBatchGeneration(
   // Standalone images = pure image shots + hybrid MG shots (hybrid need base images)
   const standaloneImageShots = [...imageOnlyShots, ...hybridMgShots];
   // ALL shots that need keyframe images: standalone + video
-  const allShotsForImages = [...standaloneImageShots, ...videoShots];
+  const allShotsForImages = [...standaloneImageShots, ...videoShotsNeedingKeyframes];
 
-  console.log(`${logPrefix} Processing: ${imageOnlyShots.length} images, ${videoShots.length} videos, ${pureMgShots.length} pure MG (skipped), ${hybridMgShots.length} hybrid MG (need base images)`);
+  console.log(
+    `${logPrefix} Processing: ${imageOnlyShots.length} images, ${videoShots.length} videos ` +
+    `(${seededVideoShots.length} pre-seeded starts, ${videoShotsNeedingKeyframes.length} keyframes needed), ` +
+    `${pureMgShots.length} pure MG (skipped), ${hybridMgShots.length} hybrid MG (need base images)`
+  );
 
   // Pure MG shots don't need GPU at all — mark them for Remotion processing
   for (const shot of pureMgShots) {
@@ -396,8 +405,8 @@ export async function processGpuBatchGeneration(
   const standaloneResults = standaloneImageShots.length > 0 
     ? await processImageBatch(userId, videoId, standaloneImageShots, aspectRatio, 'standalone', imageItemCallback, loraName, loraTriggerWords)
     : [];
-  const keyframeResults = videoShots.length > 0
-    ? await processImageBatch(userId, videoId, videoShots, aspectRatio, 'keyframe', imageItemCallback, loraName, loraTriggerWords)
+  const keyframeResults = videoShotsNeedingKeyframes.length > 0
+    ? await processImageBatch(userId, videoId, videoShotsNeedingKeyframes, aspectRatio, 'keyframe', imageItemCallback, loraName, loraTriggerWords)
     : [];
   
   // ----- Cancellation checkpoint 1: After image batches complete -----
@@ -426,7 +435,7 @@ export async function processGpuBatchGeneration(
       keyframeImages[`shot-${kr.shot_index}`] = kr.media_url;
     }
   }
-  console.log(`${logPrefix} Keyframe images generated: ${keyframeMap.size}/${videoShots.length} for video shots`);
+  console.log(`${logPrefix} Keyframe images generated: ${keyframeMap.size}/${videoShotsNeedingKeyframes.length} for video shots needing fresh keyframes`);
 
   // =========================================================================
   // STEP 2: Generate all videos using keyframe images as start frames
@@ -450,7 +459,11 @@ export async function processGpuBatchGeneration(
           shot.start_frame_url = keyframeUrl;
         }
       } else {
-        console.warn(`${logPrefix} Shot ${shot.segment_index}: No keyframe image available, video will be skipped`);
+        if (shot.start_frame_url) {
+          console.log(`${logPrefix} Shot ${shot.segment_index}: Reusing pre-seeded start frame`);
+        } else {
+          console.warn(`${logPrefix} Shot ${shot.segment_index}: No keyframe image available, video will be skipped`);
+        }
       }
     }
     // -----------------------------------------------------------------------
@@ -754,12 +767,24 @@ function assembleMultiImageResults(
  * - Avoid static photo-like prompts — include action to reduce freezing
  * - Single flowing paragraph, present tense, 4-8 sentences
  */
-function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number, shotIndex?: number, neighborContext?: string): string {
+function enrichLtx2Prompt(
+  rawPrompt: string,
+  durationSeconds: number,
+  shotIndex?: number,
+  neighborContext?: string,
+  visualStyle?: string,
+): string {
+  const styleSignals = getStyleSignals(visualStyle, rawPrompt, neighborContext);
+  const cleanedPrompt = styleSignals.nonPhotorealistic
+    ? rawPrompt
+      .replace(/\bphotoreal(?:istic|ism)\b/gi, 'stylized')
+      .replace(/\brealistic\b/gi, 'stylized')
+    : rawPrompt;
   // Check if agent already specified detailed camera motion
-  const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot|orbit|sweep|glide)\b/i.test(rawPrompt);
+  const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot|orbit|sweep|glide)\b/i.test(cleanedPrompt);
 
   // LTX 2.3 anti-static guard: if prompt reads like a still image, add motion verbs
-  const hasActionVerbs = /\b(walks?|turns?|moves?|reaches?|adjusts?|steps?|gestures?|shifts?|drifts?|rises?|falls?|runs?|looks?|glances?|nods?|leans?|stands?\s+up|sits?\s+down)\b/i.test(rawPrompt);
+  const hasActionVerbs = /\b(walks?|turns?|moves?|reaches?|adjusts?|steps?|gestures?|shifts?|drifts?|rises?|falls?|runs?|looks?|glances?|nods?|leans?|stands?\s+up|sits?\s+down)\b/i.test(cleanedPrompt);
 
   // Inject neighbor context for style continuity
   const contextPrefix = neighborContext ? `${neighborContext} ` : '';
@@ -770,21 +795,33 @@ function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number, shotIndex?
     : durationSeconds <= 5
     ? 'Smooth, measured movement filling the full duration.'
     : `Extended, graceful movement maintaining visual interest across ${durationSeconds}s.`;
+  const styleLightingHint = styleSignals.nonPhotorealistic
+    ? 'Lighting and shading stay consistent with the declared stylized world.'
+    : 'Soft natural lighting with atmospheric depth.';
+  const styleRenderHint = styleSignals.nonPhotorealistic
+    ? 'Cinematic staging, cohesive non-photorealistic rendering, and smooth continuous motion that stays inside the declared art style.'
+    : 'Cinematic quality, photorealistic rendering, smooth continuous motion.';
+  const textSafetyHint = 'No watermarks, no text overlays, no readable document paragraphs, no CGI artifacts.';
+  const historicalAuthenticityHint = styleSignals.historical
+    ? 'Era-authentic costumes, props, grooming, and environments only. No modern clothing, no modern haircuts, no contemporary signage or UI.'
+    : undefined;
 
   // If the agent already provided camera motion, preserve it
   if (hasMotionLanguage) {
     const parts = [
-      contextPrefix + rawPrompt.trim().replace(/\.$/, ''),
+      contextPrefix + cleanedPrompt.trim().replace(/\.$/, ''),
       pacingHint,
     ];
 
     // LTX 2.3: Add texture detail if not present
-    if (!/\b(texture|fabric|surface|grain|strands?|material)\b/i.test(rawPrompt)) {
+    if (!/\b(texture|fabric|surface|grain|strands?|material)\b/i.test(cleanedPrompt)) {
       parts.push('Fine surface textures and material details visible.');
     }
 
-    parts.push('Cinematic quality, photorealistic rendering.');
-    parts.push('No watermarks, no text overlays, no CGI artifacts.');
+    parts.push(styleLightingHint);
+    parts.push(styleRenderHint);
+    if (historicalAuthenticityHint) parts.push(historicalAuthenticityHint);
+    parts.push(textSafetyHint);
 
     return parts.join('. ') + '.';
   }
@@ -804,7 +841,7 @@ function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number, shotIndex?
     : cameraStyles[(shotIndex || 0) % cameraStyles.length];
 
   const parts = [
-    contextPrefix + rawPrompt.trim().replace(/\.$/, ''),
+    contextPrefix + cleanedPrompt.trim().replace(/\.$/, ''),
   ];
 
   // LTX 2.3 anti-static: inject subtle action if prompt has no verbs
@@ -815,13 +852,14 @@ function enrichLtx2Prompt(rawPrompt: string, durationSeconds: number, shotIndex?
   parts.push(motionCue);
 
   // LTX 2.3: texture/material emphasis for improved VAE
-  if (!/\b(texture|fabric|surface|grain|strands?|material)\b/i.test(rawPrompt)) {
+  if (!/\b(texture|fabric|surface|grain|strands?|material)\b/i.test(cleanedPrompt)) {
     parts.push('Fine textures and material details are clearly visible.');
   }
 
-  parts.push('Soft natural lighting with atmospheric depth.');
-  parts.push('Cinematic quality, photorealistic rendering, smooth continuous motion.');
-  parts.push('No watermarks, no text overlays, no CGI artifacts.');
+  parts.push(styleLightingHint);
+  parts.push(styleRenderHint);
+  if (historicalAuthenticityHint) parts.push(historicalAuthenticityHint);
+  parts.push(textSafetyHint);
 
   return parts.join('. ') + '.';
 }
@@ -874,7 +912,13 @@ async function processVideoBatch(
       items.push({
         item_id: itemId,
         start_frame_url: shot.start_frame_url,
-        prompt: enrichLtx2Prompt(shot.visual_prompt, shot.duration_seconds || 5, shot.segment_index, shot.neighbor_context),
+        prompt: enrichLtx2Prompt(
+          shot.visual_prompt,
+          shot.duration_seconds || 5,
+          shot.segment_index,
+          shot.neighbor_context,
+          shot.visual_style,
+        ),
         duration_seconds: Math.min(shot.duration_seconds || 5, 10),
         aspect_ratio: aspectRatio,
         save_url: putUrl,

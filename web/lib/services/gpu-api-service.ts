@@ -115,8 +115,8 @@ export interface VideoGenerateRequest {
 export interface MusicGenerateRequest {
   job_id: string;
   prompt: string;
-  /** Optional lyrics for vocal generation. Use "[Instrumental]" for instrumental tracks. */
-  lyrics?: string;
+  /** Optional lyrics for vocal generation. Omit entirely for instrumental background music. */
+  lyrics?: string | string[];
   /** Duration in seconds (10-600), default 30 */
   duration_seconds?: number;
   seed?: number;
@@ -1979,6 +1979,14 @@ export interface VramModeResponse {
   description: string;
 }
 
+export interface GPUCapabilityResponse {
+  segmentation_routes_enabled: boolean;
+  frame_extraction_route_enabled: boolean;
+  mixed_video_segmentation: boolean;
+  recommended_scheduler: "dedicated_waves";
+  all_mode_recommended: boolean;
+}
+
 /**
  * Get current VRAM loading strategy
  */
@@ -1991,6 +1999,30 @@ export async function callGpuGetVramMode(): Promise<{
   const apiKey = getGpuApiKey();
   try {
     const response = await fetch(`${baseUrl}/api/v1/settings/vram-mode`, {
+      headers: { "X-API-Key": apiKey },
+    });
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+export async function callGpuGetCapabilities(): Promise<{
+  success: boolean;
+  data?: GPUCapabilityResponse;
+  error?: string;
+}> {
+  const baseUrl = await fetchDynamicGpuApiUrl();
+  const apiKey = getGpuApiKey();
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/settings/capabilities`, {
       headers: { "X-API-Key": apiKey },
     });
     if (!response.ok) {

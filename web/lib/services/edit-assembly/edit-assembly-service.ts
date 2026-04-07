@@ -11,6 +11,7 @@
 import {
   EDIT_ASSEMBLY_SYSTEM_PROMPT,
   buildEditAssemblyUserPrompt,
+  type AssemblyPlacement,
   type EditAssemblyContext,
   type EditDecisionList,
 } from './edit-assembly-prompts';
@@ -39,12 +40,31 @@ interface ShotDataInput {
   media_type?: 'image' | 'video' | 'motiongraphic';
   /** Scene grouping ID — shots sharing a scene_id belong to the same visual scene */
   scene_id?: string;
+  scene_cluster_id?: string;
+  breakdown_sequence_id?: string;
+  breakdown_role?: 'macro' | 'mid' | 'micro' | 'detail';
   /** Narrative purpose (e.g., 'hook', 'reveal', 'climax', 'transition', 'cta') */
   narrative_beat?: string;
+  shot_role?: string;
+  framing?: string;
+  camera_angle?: string;
+  camera_motion?: string;
+  lens_style?: string;
+  subject_focus?: string;
+  entry_transition_intent?: string;
+  exit_transition_intent?: string;
+  visual_motif?: string;
+  continuity_level?: 'fresh' | 'soft' | 'strict';
+  anchor_strategy?: 'fresh' | 'scene_anchor' | 'prev_frame' | 'prev_keyframe';
+  render_strategy?: string;
+  trim_priority?: 'hold' | 'balanced' | 'tight';
+  assembly_contract?: Record<string, unknown>;
   /** Whether this shot continues the previous shot's scene seamlessly */
   continuity_from_previous?: boolean;
   /** Creative image edit applied to this shot's keyframe */
   image_edit_instruction?: string;
+  visual_elements?: string[];
+  assemblyPlacement?: AssemblyPlacement;
 }
 
 export interface AssembleEditRequest {
@@ -142,6 +162,55 @@ export async function assembleEdit(request: AssembleEditRequest): Promise<Assemb
 // CONTEXT BUILDER
 // ============================================================
 
+function normalizeAssemblyPlacement(value: unknown): AssemblyPlacement | undefined {
+  if (value === 'base_only' || value === 'overlay_on_base' || value === 'standalone_graphic') {
+    return value;
+  }
+  return undefined;
+}
+
+function collectVisualElements(
+  shot: ShotDataInput,
+  media?: GeneratedMedia,
+): string[] {
+  const values = [
+    ...(Array.isArray(shot.visual_elements) ? shot.visual_elements : []),
+    ...(Array.isArray(media?.visual_elements) ? media.visual_elements : []),
+  ];
+
+  return [...new Set(values.filter((value): value is string => typeof value === 'string' && value.length > 0))];
+}
+
+function inferAssemblyPlacement(
+  shot: ShotDataInput,
+  media: GeneratedMedia | undefined,
+  visualElements: string[],
+): AssemblyPlacement {
+  const explicitPlacement = normalizeAssemblyPlacement(
+    shot.assemblyPlacement
+    ?? shot.assembly_contract?.placement
+    ?? shot.assembly_contract?.assembly_placement
+    ?? shot.assembly_contract?.composition_mode,
+  );
+  if (explicitPlacement) return explicitPlacement;
+
+  const hasOverlayIntent = visualElements.some((element) =>
+    element === 'remotion_overlay'
+    || element === 'remotion_video_manipulation'
+    || element === 'remotion_image_manipulation'
+  );
+
+  if (media?.remotion_code && !!media.media_url && hasOverlayIntent) {
+    return 'overlay_on_base';
+  }
+
+  if (media?.media_type === 'motiongraphic') {
+    return hasOverlayIntent && !!media.media_url ? 'overlay_on_base' : 'standalone_graphic';
+  }
+
+  return 'base_only';
+}
+
 function buildContext(
   shots: ShotDataInput[],
   generatedMedia: GeneratedMedia[],
@@ -184,7 +253,32 @@ function buildContext(
     totalDuration,
     fps,
     shots: shots.map(shot => {
+      const shotData = shot as unknown as Record<string, unknown>;
+      const readString = (...keys: string[]) => {
+        for (const key of keys) {
+          const value = shotData[key];
+          if (typeof value === 'string' && value.length > 0) return value;
+        }
+        return undefined;
+      };
+      const readTrimPriority = (...keys: string[]) => {
+        for (const key of keys) {
+          const value = shotData[key];
+          if (value === 'hold' || value === 'balanced' || value === 'tight') return value;
+        }
+        return undefined;
+      };
+      const readObject = (...keys: string[]) => {
+        for (const key of keys) {
+          const value = shotData[key];
+          if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+        }
+        return undefined;
+      };
+
       const media = mediaByShot.get(shot.segment_index);
+      const visualElements = collectVisualElements(shot, media);
+      const assemblyPlacement = inferAssemblyPlacement(shot, media, visualElements);
       return {
         index: shot.segment_index,
         startSeconds: shot.start_seconds,
@@ -195,11 +289,30 @@ function buildContext(
         hasMedia: !!media && (media.generation_status === 'completed' || !!media.remotion_code),
         mediaUrl: media?.media_url,
         hasRemotionCode: !!media?.remotion_code,
+        assemblyPlacement,
+        visualElements,
         contentType: shot.content_type,
         sectionBreak: shot.content_type === 'transition',
-        sceneId: shot.scene_id,
-        narrativeBeat: shot.narrative_beat,
-        continuityFromPrevious: shot.continuity_from_previous,
+        sceneId: readString('sceneId', 'scene_id'),
+        sceneClusterId: readString('sceneClusterId', 'scene_cluster_id'),
+        breakdownSequenceId: readString('breakdownSequenceId', 'breakdown_sequence_id'),
+        breakdownRole: readString('breakdownRole', 'breakdown_role') as 'macro' | 'mid' | 'micro' | 'detail' | undefined,
+        narrativeBeat: readString('narrativeBeat', 'narrative_beat'),
+        shotRole: readString('shotRole', 'shot_role'),
+        framing: readString('framing'),
+        cameraAngle: readString('cameraAngle', 'camera_angle'),
+        cameraMotion: readString('cameraMotion', 'camera_motion'),
+        lensStyle: readString('lensStyle', 'lens_style'),
+        subjectFocus: readString('subjectFocus', 'subject_focus'),
+        entryTransitionIntent: readString('entryTransitionIntent', 'entry_transition_intent'),
+        exitTransitionIntent: readString('exitTransitionIntent', 'exit_transition_intent'),
+        visualMotif: readString('visualMotif', 'visual_motif'),
+        continuityLevel: readString('continuityLevel', 'continuity_level') as 'fresh' | 'soft' | 'strict' | undefined,
+        anchorStrategy: readString('anchorStrategy', 'anchor_strategy') as 'fresh' | 'scene_anchor' | 'prev_frame' | 'prev_keyframe' | undefined,
+        renderStrategy: readString('renderStrategy', 'render_strategy'),
+        trimPriority: readTrimPriority('trimPriority', 'trim_priority'),
+        assemblyContract: readObject('assemblyContract', 'assembly_contract'),
+        continuityFromPrevious: Boolean(shot.continuity_from_previous ?? shotData.continuityFromPrevious),
       };
     }),
     scriptSentences,
@@ -828,6 +941,41 @@ function validateAndFixV2(edl: EditorAgentEDL, shots: ShotDataInput[]): EditorAg
 // ENHANCED FALLBACK EDL (no AI, but uses v2 format)
 // ============================================================
 
+function hashString(input: string): number {
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash * 31 + input.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function selectFallbackImagePattern(shot: ShotDataInput, shotIndex: number): number {
+  const role = String(shot.shot_role || shot.narrative_beat || '').toLowerCase();
+  const continuityLevel = shot.continuity_level;
+  const anchorStrategy = shot.anchor_strategy;
+  const seed = [
+    shot.scene_cluster_id,
+    shot.scene_id,
+    shot.breakdown_sequence_id,
+    shot.shot_role,
+    shot.visual_motif,
+    shotIndex,
+  ].filter(Boolean).join('|');
+
+  if (continuityLevel === 'strict' || anchorStrategy === 'prev_frame') {
+    return hashString(seed) % 8;
+  }
+
+  if (/establish|opening|context|overview|wide/.test(role)) return 1;
+  if (/reveal|detail|focus|character|clue|object|important/.test(role)) {
+    return shot.trim_priority === 'hold' ? 7 : 0;
+  }
+  if (/transition|bridge|shift|comparison|contrast|versus/.test(role)) return 2;
+  if (/emotion|reflect|aftermath|reaction|pause/.test(role)) return 6;
+
+  return hashString(seed || String(shotIndex)) % 8;
+}
+
 function generateFallbackAgentEDL(
   shots: ShotDataInput[],
   generatedMedia: GeneratedMedia[],
@@ -855,6 +1003,8 @@ function generateFallbackAgentEDL(
   for (const shot of shots) {
     const media = mediaByShot.get(shot.segment_index);
     const hasMedia = !!media && (media.generation_status === 'completed' || !!media.remotion_code);
+    const visualElements = collectVisualElements(shot, media);
+    const assemblyPlacement = inferAssemblyPlacement(shot, media, visualElements);
 
     if (!hasMedia) {
       mediaIssues.push({
@@ -866,19 +1016,14 @@ function generateFallbackAgentEDL(
       });
     }
 
-    const hasRemotionCode = !!media?.remotion_code;
-    const isStandaloneMG = media?.media_type === 'motiongraphic' && !hasRemotionCode;
-    // Any shot with remotion code gets an overlay clip on the overlays track
-    const isHybrid = hasRemotionCode;
-
-    const clipType = isStandaloneMG
+    const clipType = assemblyPlacement === 'standalone_graphic'
       ? 'motion-graphics' as const
-      : (media?.media_type || 'image') as 'image' | 'video';
+      : (media?.media_type === 'video' ? 'video' : 'image');
 
     // P6: Use narration-aligned start_seconds when available
     const clipStartTime = typeof shot.start_seconds === 'number' ? shot.start_seconds : fallbackTime;
 
-    // Base media clip always goes on main-video
+    // Base media clip always goes on main-video unless the shot has no usable media.
     const clip: AgentClip = {
       trackId: 'main-video',
       shotIndex: shot.segment_index,
@@ -893,7 +1038,7 @@ function generateFallbackAgentEDL(
     // 8 patterns: push-in, pull-out, drift-left, drift-right, diagonal NE,
     // diagonal SW, Ken Burns combo (scale+drift), subtle snap-zoom.
     if (clipType === 'image') {
-      const animPattern = shot.segment_index % 8;
+      const animPattern = selectFallbackImagePattern(shot, shot.segment_index);
       const dur = shot.duration_seconds;
       const patterns: Array<AgentKeyframes[]> = [
         // 0: Slow push-in (scale 1.0 → 1.08)
@@ -942,8 +1087,8 @@ function generateFallbackAgentEDL(
 
     clips.push(clip);
 
-    // For hybrid shots, add a separate overlay clip on the overlays track
-    if (isHybrid) {
+    // Only explicit overlay-on-base shots get a companion overlay clip.
+    if (assemblyPlacement === 'overlay_on_base') {
       clips.push({
         trackId: 'overlays',
         shotIndex: shot.segment_index,

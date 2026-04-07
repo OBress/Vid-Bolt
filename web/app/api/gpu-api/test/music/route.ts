@@ -31,7 +31,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { prompt, lyrics, durationSeconds, seed } = body;
+    const { prompt, lyrics, durationSeconds, seed } = body as {
+      prompt?: string;
+      lyrics?: string | string[];
+      durationSeconds?: number;
+      seed?: number;
+    };
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
       return NextResponse.json(

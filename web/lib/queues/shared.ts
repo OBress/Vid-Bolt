@@ -7,6 +7,8 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type { TaskStep, TaskPhase, WritingTaskOutput, ActivityEvent } from "@/types/task";
 
+export type TaskLifecycleOwner = 'worker' | 'orchestrator';
+
 // ============================================================================
 // SUPABASE CLIENT
 // ============================================================================
@@ -133,32 +135,69 @@ export async function updateTaskStatus(
     error_message?: string;
     started_at?: string;
     completed_at?: string;
+  },
+  options?: {
+    lifecycleOwner?: TaskLifecycleOwner;
   }
 ): Promise<void> {
-  console.log(`[shared:updateTaskStatus] Updating task ${taskId}:`, JSON.stringify(updates));
+  const normalizedUpdates = { ...updates };
+  const lifecycleOwner = options?.lifecycleOwner ?? 'worker';
+
+  if (lifecycleOwner === 'orchestrator') {
+    if (
+      normalizedUpdates.status
+      && ['completed', 'failed', 'cancelled'].includes(normalizedUpdates.status)
+    ) {
+      delete normalizedUpdates.status;
+    }
+
+    if (normalizedUpdates.completed_at !== undefined) {
+      delete normalizedUpdates.completed_at;
+    }
+
+    if (normalizedUpdates.error_message !== undefined) {
+      delete normalizedUpdates.error_message;
+    }
+
+    if (
+      normalizedUpdates.progress_percent !== undefined
+      && normalizedUpdates.progress_percent >= 100
+    ) {
+      delete normalizedUpdates.progress_percent;
+    }
+  }
+
+  if (Object.keys(normalizedUpdates).length === 0) {
+    console.log(
+      `[shared:updateTaskStatus] Skipping task ${taskId}: no allowed fields remain after lifecycle guard`
+    );
+    return;
+  }
+
+  console.log(`[shared:updateTaskStatus] Updating task ${taskId}:`, JSON.stringify(normalizedUpdates));
   
   const supabase = getSupabaseServiceClient();
 
   // Monotonic progress guard: never allow progress to decrease
-  if (updates.progress_percent !== undefined) {
+  if (normalizedUpdates.progress_percent !== undefined) {
     const { data: current } = await supabase
       .from('tasks')
       .select('progress_percent')
       .eq('id', taskId)
       .single();
 
-    if (current && current.progress_percent > updates.progress_percent) {
+    if (current && current.progress_percent > normalizedUpdates.progress_percent) {
       console.log(
-        `[shared:updateTaskStatus] Monotonic guard: keeping ${current.progress_percent}% (tried to set ${updates.progress_percent}%)`
+        `[shared:updateTaskStatus] Monotonic guard: keeping ${current.progress_percent}% (tried to set ${normalizedUpdates.progress_percent}%)`
       );
       // Remove the regressive progress — keep the current higher value
-      delete updates.progress_percent;
+      delete normalizedUpdates.progress_percent;
     }
   }
 
   const { error, data } = await supabase
     .from("tasks")
-    .update(updates)
+    .update(normalizedUpdates)
     .eq("id", taskId)
     .select('id, status, progress_percent');
   

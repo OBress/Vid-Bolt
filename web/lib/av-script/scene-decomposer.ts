@@ -125,6 +125,27 @@ CRITICAL RULES:
   if (creativeContext.targetAudience) {
     parts.push(`TARGET AUDIENCE: ${creativeContext.targetAudience}`);
   }
+  if (creativeContext.masterCreativePrompt) {
+    parts.push(`MASTER CREATIVE DIRECTION: ${creativeContext.masterCreativePrompt}`);
+  }
+  if (creativeContext.videoCreativePrompt) {
+    parts.push(`VIDEO-SPECIFIC DIRECTION: ${creativeContext.videoCreativePrompt}`);
+  }
+  if (creativeContext.directingIntent) {
+    parts.push(`DIRECTING INTENT: ${creativeContext.directingIntent}`);
+  }
+  if (creativeContext.loraName) {
+    parts.push(`STYLE MODEL: ${creativeContext.loraName}`);
+  }
+  if (creativeContext.qualityAnchors?.length) {
+    parts.push(`QUALITY ANCHORS: ${creativeContext.qualityAnchors.join(', ')}`);
+  }
+  if (creativeContext.transitionPalette?.length) {
+    parts.push(`PREFERRED TRANSITIONS: ${creativeContext.transitionPalette.join(', ')}`);
+  }
+  if (creativeContext.shotVocab?.length) {
+    parts.push(`SHOT VOCABULARY: ${creativeContext.shotVocab.join(', ')}`);
+  }
 
   // Pacing rules
   if (creativeContext.pacingRules) {
@@ -186,6 +207,13 @@ export interface SceneDecompositionContext {
   genre?: string;
   tone?: string;
   targetAudience?: string;
+  masterCreativePrompt?: string;
+  videoCreativePrompt?: string;
+  directingIntent?: string;
+  qualityAnchors?: string[];
+  loraName?: string;
+  transitionPalette?: string[];
+  shotVocab?: string[];
   pacingRules?: {
     hookDuration: number;
     maxConsecutiveStatic: number;
@@ -209,6 +237,13 @@ export function buildContextFromManifest(manifest: CreativeManifest): SceneDecom
     genre: manifest.script_context?.genre,
     tone: manifest.script_context?.tone_style,
     targetAudience: manifest.script_context?.target_audience,
+    masterCreativePrompt: manifest.master_creative_prompt,
+    videoCreativePrompt: manifest.video_creative_prompt,
+    directingIntent: manifest.directing_intent,
+    qualityAnchors: manifest.visual?.quality_anchors,
+    loraName: manifest.lora?.name,
+    transitionPalette: manifest.video_grammar_profile?.transition_palette,
+    shotVocab: manifest.video_grammar_profile?.shot_vocab,
     pacingRules: manifest.pacing_rules ? {
       hookDuration: manifest.pacing_rules.hook_duration_seconds,
       maxConsecutiveStatic: manifest.pacing_rules.max_consecutive_static_images,

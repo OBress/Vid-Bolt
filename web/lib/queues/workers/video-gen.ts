@@ -15,7 +15,7 @@
  */
 
 import { Job, Processor } from 'bullmq';
-import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
+import { getSupabaseServiceClient, updateTaskStatus, type TaskLifecycleOwner } from '@/lib/queues/shared';
 import {
   processGpuBatchGeneration,
   calculateTimeout,
@@ -39,10 +39,13 @@ export interface VideoGenJobData {
   taskId: string;
   userId: string;
   videoId: string;
+  taskLifecycleOwner?: TaskLifecycleOwner;
   /** Aspect ratio for generation */
   aspectRatio?: '16:9' | '9:16';
   /** When set, only regenerate this specific shot (for single-shot retries) */
   singleShotIndex?: number;
+  /** Generate only this explicit shot subset (used by continuity waves) */
+  shotIndices?: number[];
   /** Verifier feedback to incorporate into the retry prompt */
   previousFeedback?: string;
   /** Batch retry: regenerate multiple shots in a single GPU pass */
@@ -82,9 +85,11 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
   job: Job<VideoGenJobData>
 ) => {
   const { taskId, userId, videoId, aspectRatio = '16:9', loraName, loraTriggerWords } = job.data;
-  // Video-gen is always dispatched from the orchestrator with names like 'video-shot-1'.
-  // Skip task-level progress updates to avoid overwriting the orchestrator's progress.
-  const isClosedLoop = true;
+  const isClosedLoop =
+    job.data.taskLifecycleOwner === 'orchestrator'
+    || /^video-/.test(job.name)
+    || /^i2v-/.test(job.name)
+    || /^mg-to-video-/.test(job.name);
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
 
@@ -114,6 +119,8 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         .single();
 
       const metadata = (video?.metadata || {}) as Record<string, unknown>;
+      const creativeManifest = (metadata.creative_manifest || {}) as Record<string, unknown>;
+      const visualStyle = (((creativeManifest.style || {}) as Record<string, unknown>).visual_style as string | undefined) || undefined;
 
       // Get shots — primary: shot_plan (matches orchestrator), fallback: av_script_part1 (legacy)
       const shotPlanData = metadata.shot_plan as { shots?: Array<Record<string, unknown>> } | undefined;
@@ -136,12 +143,19 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
       );
 
       // Support both single-shot and batch retries
-      const { singleShotIndex, previousFeedback, retryShotIndices, retryFeedbackMap } = job.data;
+      const { singleShotIndex, shotIndices, previousFeedback, retryShotIndices, retryFeedbackMap } = job.data;
       const isSingleShotRetry = typeof singleShotIndex === 'number';
       const isBatchRetry = Array.isArray(retryShotIndices) && retryShotIndices.length > 0;
+      const isSelectiveBatch = Array.isArray(shotIndices) && shotIndices.length > 0;
       const isRetry = isSingleShotRetry || isBatchRetry;
 
-      if (isBatchRetry) {
+      if (isSelectiveBatch) {
+        const requestedSet = new Set(shotIndices);
+        videoShots = allShots.filter(
+          (s: Record<string, unknown>) => requestedSet.has(s.segment_index as number)
+        );
+        console.log(`${LOG_PREFIX} Selective batch: generating ${videoShots.length} shots [${shotIndices.join(', ')}]`);
+      } else if (isBatchRetry) {
         // Batch retry: filter to all failed shots at once (one GPU pass instead of N)
         const retrySet = new Set(retryShotIndices);
         videoShots = allShots.filter(
@@ -221,6 +235,7 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           segment_index: segmentIndex,
           media_type: 'video' as const,
           visual_prompt: visualPrompt,
+          visual_style: visualStyle,
           duration_seconds: (() => {
             const d = s.duration_seconds as number;
             if (!d || d <= 0) throw new Error(`[VideoGen] Shot ${segmentIndex} has no valid duration_seconds — shot plan timing is incomplete.`);
@@ -344,7 +359,7 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           Object.keys(gpuResult.keyframeImages).map(key => [key, 'video_keyframe'])
         ),
       };
-      if (isRetry) {
+      if (isRetry || isSelectiveBatch) {
         const { data: existingData } = await supabase
           .from('video_projects')
           .select('metadata')

@@ -151,6 +151,68 @@ function unionArrays(base: string[] | undefined, override: string[] | undefined)
   return [...new Set(merged)];
 }
 
+function resolveVideoGrammarProfile(
+  videoOverrides?: VideoCreativeOverrides,
+  scriptMeta?: { genre?: string; toneStyle?: string; targetAudience?: string; contentNiche?: string },
+): NonNullable<CreativeManifest['video_grammar_profile']> {
+  const formatProfile = videoOverrides?.formatProfile || (
+    (() => {
+      const genre = scriptMeta?.genre?.toLowerCase() || '';
+      const niche = scriptMeta?.contentNiche?.toLowerCase() || '';
+      if (genre.includes('documentary') || niche.includes('history')) return 'documentary' as const;
+      if (genre.includes('explain') || niche.includes('education')) return 'explainer' as const;
+      if (genre.includes('promo') || niche.includes('marketing')) return 'promo' as const;
+      if (genre.includes('narrative') || genre.includes('story')) return 'narrative' as const;
+      return 'auto' as const;
+    })()
+  );
+
+  const continuityBias = videoOverrides?.continuityBias || (
+    formatProfile === 'documentary' || formatProfile === 'narrative'
+      ? 'strict'
+      : formatProfile === 'ugc' || formatProfile === 'listicle'
+        ? 'dynamic'
+        : 'balanced'
+  );
+
+  const segmentationMode = videoOverrides?.segmentationMode || (
+    formatProfile === 'documentary' || formatProfile === 'explainer'
+      ? 'prefer'
+      : 'auto'
+  );
+
+  const transitionPalette = formatProfile === 'documentary'
+    ? ['motivated push-in', 'match detail', 'environment bridge', 'graphic callout']
+    : formatProfile === 'explainer'
+      ? ['concept bridge', 'annotation reveal', 'clean cut', 'graphic emphasis']
+      : formatProfile === 'promo'
+        ? ['punch cut', 'product isolate', 'fast momentum bridge']
+        : ['clean cut', 'motivated bridge'];
+
+  const shotVocab = formatProfile === 'documentary'
+    ? ['establishing', 'detail insert', 'reaction hold', 'annotation reveal']
+    : formatProfile === 'explainer'
+      ? ['coverage', 'graphic explainer', 'detail callout', 'bridge']
+      : formatProfile === 'ugc'
+        ? ['direct address', 'punch-in', 'reaction', 'caption support']
+        : ['establishing', 'coverage', 'insert', 'bridge'];
+
+  return {
+    format_profile: formatProfile,
+    continuity_bias: continuityBias,
+    segmentation_mode: segmentationMode,
+    annotation_preference:
+      segmentationMode === 'prefer'
+        ? 'selective'
+        : formatProfile === 'promo'
+          ? 'minimal'
+          : 'selective',
+    transition_palette: transitionPalette,
+    shot_vocab: shotVocab,
+    motif_bias: videoOverrides?.directingIntent || undefined,
+  };
+}
+
 /**
  * Build a CreativeManifest from the three-layer merge:
  * system defaults → channel-level settings → per-video overrides → outline config.
@@ -260,6 +322,7 @@ export function buildCreativeManifest(
   // --- Creative Direction Prompts ---
   const masterCreativePrompt = channelDefaults?.masterCreativePrompt || undefined;
   const videoCreativePrompt = videoOverrides?.videoCreativePrompt || undefined;
+  const directingIntent = videoOverrides?.directingIntent || undefined;
 
   // --- Worker Prompt Overrides ---
   const workerPromptOverrides = channelDefaults?.workerPromptOverrides || undefined;
@@ -276,6 +339,8 @@ export function buildCreativeManifest(
     video: visualsSettings?.videoModel || 'local-ltx2',
     image_edit: visualsSettings?.imageEditModel || 'local-qwen-edit',
   };
+
+  const videoGrammarProfile = resolveVideoGrammarProfile(videoOverrides, scriptMeta);
 
   return {
     project_id: videoId,
@@ -299,6 +364,7 @@ export function buildCreativeManifest(
     lora,
     master_creative_prompt: masterCreativePrompt,
     video_creative_prompt: videoCreativePrompt,
+    directing_intent: directingIntent,
     worker_prompt_overrides: workerPromptOverrides,
     models,
     script_context: scriptMeta ? {
@@ -316,5 +382,6 @@ export function buildCreativeManifest(
         ? 'formal' as const
         : 'conversational' as const,
     } : undefined,
+    video_grammar_profile: videoGrammarProfile,
   };
 }

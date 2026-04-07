@@ -11,7 +11,7 @@
  */
 
 import { Job, Processor } from 'bullmq';
-import { getSupabaseServiceClient, updateTaskStatus } from '@/lib/queues/shared';
+import { getSupabaseServiceClient, updateTaskStatus, type TaskLifecycleOwner } from '@/lib/queues/shared';
 import {
   processGpuBatchGeneration,
   calculateTimeout,
@@ -32,6 +32,7 @@ export interface ImageGenJobData {
   taskId: string;
   userId: string;
   videoId: string;
+  taskLifecycleOwner?: TaskLifecycleOwner;
   /** When set, only generate this one shot */
   singleShotIndex?: number;
   /** Backward-compatible alias used by the orchestrator */
@@ -79,10 +80,14 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
     loraTriggerWords,
     singleShotIndex,
     shotIndex,
+    taskLifecycleOwner,
   } = job.data;
   const requestedShotIndex = typeof singleShotIndex === 'number'
     ? singleShotIndex
     : shotIndex;
+  const updateOwnedTaskStatus = (
+    updates: Parameters<typeof updateTaskStatus>[1]
+  ) => updateTaskStatus(taskId, updates, { lifecycleOwner: taskLifecycleOwner });
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
 
@@ -97,7 +102,7 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 1: Loading shot data...`);
 
-      await updateTaskStatus(taskId, {
+      await updateOwnedTaskStatus({
         status: 'running',
         current_step: 'Loading shots for image generation...',
         progress_percent: 5,
@@ -119,7 +124,7 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
 
       if (shots.length === 0) {
         console.warn(`${LOG_PREFIX} No shots found`);
-        await updateTaskStatus(taskId, {
+        await updateOwnedTaskStatus({
           status: 'completed',
           current_step: 'No shots to generate images for',
           progress_percent: 100,
@@ -161,7 +166,7 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
       console.log(`${LOG_PREFIX} ${gpuShots.length} shots need image generation`);
 
       if (gpuShots.length === 0) {
-        await updateTaskStatus(taskId, {
+        await updateOwnedTaskStatus({
           status: 'completed',
           current_step: 'No image-led shots to generate',
           progress_percent: 100,
@@ -179,7 +184,7 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
       // =====================================================================
       console.log(`${LOG_PREFIX} Step 2: Running GPU batch image generation...`);
 
-      await updateTaskStatus(taskId, {
+      await updateOwnedTaskStatus({
         status: 'running',
         current_step: `Generating images for ${gpuShots.length} shots...`,
         progress_percent: 15,
@@ -187,7 +192,7 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
 
       const onProgress = async (message: string, percent: number) => {
         console.log(`${LOG_PREFIX} Progress: ${message} (${percent}%)`);
-        await updateTaskStatus(taskId, {
+        await updateOwnedTaskStatus({
           status: 'running',
           current_step: message,
           progress_percent: 15 + Math.round(percent * 0.7),
@@ -254,7 +259,7 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
         },
       });
 
-      await updateTaskStatus(taskId, {
+      await updateOwnedTaskStatus({
         status: 'completed',
         current_step: `Image generation complete: ${gpuResult.stats.imagesGenerated} generated, ${gpuResult.stats.imagesFailed} failed`,
         progress_percent: 100,
@@ -282,7 +287,7 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
     console.error(`${LOG_PREFIX} Failed for video ${videoId}:`, error);
     await costTracker.save(videoId);
 
-    await updateTaskStatus(taskId, {
+    await updateOwnedTaskStatus({
       status: 'failed',
       current_step: 'Image generation failed',
       progress_percent: 0,

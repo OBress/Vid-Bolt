@@ -48,9 +48,74 @@ const SceneShotOutput = z.object({
   end_word_index: z.number().int(),
   summary: z.string(),
   narrative_beat: NarrativeBeat,
-  media_type: z.enum(['video', 'motiongraphic']),
+  media_type: z.enum(['video', 'image', 'motiongraphic']),
   visual_description: z.string(),
   visual_elements: z.array(z.string()),
+  shot_role: z.enum([
+    'hook',
+    'establish',
+    'coverage',
+    'insert',
+    'bridge',
+    'annotation',
+    'payoff',
+    'reaction',
+    'graphic_explainer',
+    'closing',
+  ]).default('coverage'),
+  framing: z.enum([
+    'extreme_wide',
+    'wide',
+    'medium_wide',
+    'medium',
+    'medium_close',
+    'close_up',
+    'extreme_close',
+  ]).default('medium'),
+  camera_angle: z.enum([
+    'eye_level',
+    'low_angle',
+    'high_angle',
+    'overhead',
+    'top_down',
+    'profile',
+    'macro_detail',
+    'first_person',
+    'dutch',
+  ]).default('eye_level'),
+  camera_motion: z.enum([
+    'static',
+    'push_in',
+    'pull_out',
+    'pan_left',
+    'pan_right',
+    'tilt_up',
+    'tilt_down',
+    'orbit',
+    'tracking',
+    'handheld',
+    'crane',
+    'zoom_in',
+    'zoom_out',
+  ]).default('static'),
+  lens_style: z.string().default(''),
+  subject_focus: z.string().default(''),
+  entry_transition_intent: z.string().default(''),
+  exit_transition_intent: z.string().default(''),
+  bridge_subject: z.string().default(''),
+  visual_motif: z.string().default(''),
+  continuity_level: z.enum(['fresh', 'soft', 'strict']).default('soft'),
+  anchor_strategy: z.enum(['fresh', 'scene_anchor', 'prev_frame', 'prev_keyframe']).default('fresh'),
+  render_strategy: z.enum([
+    'ai_video',
+    'ai_image',
+    'stock',
+    'motiongraphic',
+    'segment_animate',
+    'segment_video_fx',
+    'segment_mask_prep',
+  ]).default('ai_video'),
+  trim_priority: z.enum(['hold', 'balanced', 'tight']).default('balanced'),
   stock_worthy: z.boolean(),
   stock_search_query: z.string(),
   synthesis_mode: z.enum(['T2V', 'I2V']),
@@ -75,6 +140,149 @@ const SceneShotOutput = z.object({
     description: z.string(),
     anchor_word: z.string(),
   })),
+  segmentation_treatment: z.object({
+    execution_mode: z.enum(['segment_animate', 'segment_video_fx', 'segment_mask_prep']),
+    preset: z.enum([
+      'focus_reveal',
+      'detail_callout',
+      'subject_isolation',
+      'progressive_reveal',
+      'tracked_annotation',
+      'danger_emphasis',
+    ]).optional(),
+    target_mode: z.enum(['text_prompt', 'object_prompts']).default('text_prompt'),
+    text_prompt: z.string().default(''),
+    text_prompts: z.array(z.string()).default([]),
+    point_prompts: z.array(z.array(z.number())).default([]),
+    point_labels: z.array(z.number().int()).default([]),
+    box_prompts: z.array(z.array(z.number())).default([]),
+    box_labels: z.array(z.number().int()).default([]),
+    box_prompts_labeled: z.array(z.object({
+      box: z.array(z.number()),
+      label: z.boolean(),
+    })).default([]),
+    object_prompts: z.array(z.object({
+      label: z.string(),
+      text: z.string(),
+    })).default([]),
+    subject_focus: z.string().default(''),
+    notes: z.string().default(''),
+    prompt_frame_index: z.number().int().optional(),
+    propagation_direction: z.enum(['forward', 'backward', 'both']).optional(),
+    confidence_threshold: z.number().optional(),
+    max_frames: z.number().int().optional(),
+    max_objects: z.number().int().optional(),
+    include_tracking_metadata: z.boolean().default(false),
+    output_type: z.enum(['masks_json', 'image']).optional(),
+    output_format: z.enum(['masks_json', 'video']).optional(),
+    intensity: z.enum(['subtle', 'moderate', 'strong']).default('moderate'),
+    operations: z.array(z.object({
+      type: z.enum([
+        'select',
+        'blur',
+        'pixelate',
+        'redact',
+        'color_overlay',
+        'color_grade',
+        'opacity',
+        'replace_color',
+        'remove_background',
+        'replace_background',
+        'greenscreen',
+        'outline',
+        'bounding_box',
+        'spotlight',
+        'bokeh',
+        'glow',
+        'shadow',
+        'vignette',
+        'grayscale',
+        'invert',
+        'sharpen',
+        'sepia',
+        'posterize',
+        'edge_detect',
+        'emboss',
+        'noise',
+        'sketch',
+        'duotone',
+        'halftone',
+        'glitch',
+        'motion_blur',
+        'glass',
+        'feather',
+        'zoom',
+        'pan',
+      ]),
+      target: z.union([
+        z.enum(['mask', 'background', 'all', 'center']),
+        z.array(z.number()),
+      ]).optional(),
+      object_index: z.number().int().optional(),
+      object_label: z.string().optional(),
+      object_labels: z.array(z.string()).optional(),
+      object_id: z.number().int().optional(),
+      object_ids: z.array(z.number().int()).optional(),
+      notes: z.string().optional(),
+      color: z.array(z.number()).optional(),
+      thickness: z.number().optional(),
+      strength: z.number().optional(),
+      block_size: z.number().optional(),
+      brightness: z.number().optional(),
+      contrast: z.number().optional(),
+      saturation: z.number().optional(),
+      value: z.number().optional(),
+      hue_shift: z.number().optional(),
+      saturation_scale: z.number().optional(),
+      image_url: z.string().optional(),
+      progress: z.number().optional(),
+      darkness: z.number().optional(),
+      radius: z.number().optional(),
+      intensity: z.number().optional(),
+      offset: z.array(z.number()).optional(),
+      amount: z.number().optional(),
+      levels: z.number().optional(),
+      noise_type: z.enum(['gaussian', 'grain']).optional(),
+      detail: z.number().optional(),
+      color_dark: z.array(z.number()).optional(),
+      color_light: z.array(z.number()).optional(),
+      dot_size: z.number().optional(),
+      rgb_shift: z.number().optional(),
+      seed: z.number().optional(),
+      angle: z.number().optional(),
+      scale: z.number().optional(),
+      animation: z.object({
+        mode: z.enum(['transition', 'draw', 'pulse', 'reveal', 'loop', 'stagger']).optional(),
+        easing: z.enum([
+          'linear',
+          'ease_in',
+          'ease_out',
+          'ease_in_out',
+          'ease_in_cubic',
+          'ease_out_cubic',
+          'ease_in_out_cubic',
+          'ease_out_back',
+          'ease_out_elastic',
+          'ease_out_bounce',
+        ]).optional(),
+        duration: z.number().optional(),
+        delay: z.number().optional(),
+        cycles: z.number().int().optional(),
+        direction: z.enum(['left', 'right', 'top', 'bottom', 'radial']).optional(),
+        stagger_delay: z.number().optional(),
+        start: z.record(z.string(), z.union([z.number(), z.array(z.number())])).optional(),
+        end: z.record(z.string(), z.union([z.number(), z.array(z.number())])).optional(),
+      }).optional(),
+    })).default([]),
+    allow_background_desaturation: z.boolean().default(false),
+    allow_guided_zoom: z.boolean().default(false),
+    allow_tracked_annotation: z.boolean().default(false),
+    fallback_policy: z.enum([
+      'fallback_to_prompted_generation',
+      'fallback_to_source_media',
+      'fail_strict',
+    ]).default('fallback_to_prompted_generation'),
+  }).optional(),
 });
 
 const SceneShotPlanOutput = z.object({
@@ -93,10 +301,100 @@ export interface EnrichedPlannedShot {
   text: string;
   summary: string;
   content_type: string;           // backward compat: populated from narrative_beat
-  media_type: 'video' | 'motiongraphic';
+  media_type: 'video' | 'image' | 'motiongraphic';
   synthesis_mode: 'T2V' | 'I2V';
   visual_description: string;
   visual_elements: string[];
+  shot_role?: 'hook' | 'establish' | 'coverage' | 'insert' | 'bridge' | 'annotation' | 'payoff' | 'reaction' | 'graphic_explainer' | 'closing';
+  framing?: 'extreme_wide' | 'wide' | 'medium_wide' | 'medium' | 'medium_close' | 'close_up' | 'extreme_close';
+  camera_angle?: 'eye_level' | 'low_angle' | 'high_angle' | 'overhead' | 'top_down' | 'profile' | 'macro_detail' | 'first_person' | 'dutch';
+  camera_motion?: 'static' | 'push_in' | 'pull_out' | 'pan_left' | 'pan_right' | 'tilt_up' | 'tilt_down' | 'orbit' | 'tracking' | 'handheld' | 'crane' | 'zoom_in' | 'zoom_out';
+  lens_style?: string;
+  subject_focus?: string;
+  entry_transition_intent?: string;
+  exit_transition_intent?: string;
+  bridge_subject?: string;
+  visual_motif?: string;
+  continuity_level?: 'fresh' | 'soft' | 'strict';
+  anchor_strategy?: 'fresh' | 'scene_anchor' | 'prev_frame' | 'prev_keyframe';
+  render_strategy?: 'ai_video' | 'ai_image' | 'stock' | 'motiongraphic' | 'segment_animate' | 'segment_video_fx' | 'segment_mask_prep';
+  trim_priority?: 'hold' | 'balanced' | 'tight';
+  segmentation_treatment?: {
+    execution_mode: 'segment_animate' | 'segment_video_fx' | 'segment_mask_prep';
+    preset?: 'focus_reveal' | 'detail_callout' | 'subject_isolation' | 'progressive_reveal' | 'tracked_annotation' | 'danger_emphasis';
+    target_mode?: 'text_prompt' | 'object_prompts';
+    text_prompt?: string;
+    text_prompts?: string[];
+    point_prompts?: number[][];
+    point_labels?: number[];
+    box_prompts?: number[][];
+    box_labels?: number[];
+    box_prompts_labeled?: Array<{ box: number[]; label: boolean }>;
+    object_prompts?: Array<{ label: string; text: string }>;
+    subject_focus?: string;
+    notes?: string;
+    prompt_frame_index?: number;
+    propagation_direction?: 'forward' | 'backward' | 'both';
+    confidence_threshold?: number;
+    max_frames?: number;
+    max_objects?: number;
+    include_tracking_metadata?: boolean;
+    output_type?: 'masks_json' | 'image';
+    output_format?: 'masks_json' | 'video';
+    intensity?: 'subtle' | 'moderate' | 'strong';
+    operations?: Array<{
+      type: string;
+      target?: 'mask' | 'background' | 'all' | 'center' | number[];
+      object_index?: number;
+      object_label?: string;
+      object_labels?: string[];
+      object_id?: number;
+      object_ids?: number[];
+      notes?: string;
+      color?: number[];
+      thickness?: number;
+      strength?: number;
+      block_size?: number;
+      brightness?: number;
+      contrast?: number;
+      saturation?: number;
+      value?: number;
+      hue_shift?: number;
+      saturation_scale?: number;
+      image_url?: string;
+      progress?: number;
+      darkness?: number;
+      radius?: number;
+      intensity?: number;
+      offset?: number[];
+      amount?: number;
+      levels?: number;
+      noise_type?: 'gaussian' | 'grain';
+      detail?: number;
+      color_dark?: number[];
+      color_light?: number[];
+      dot_size?: number;
+      rgb_shift?: number;
+      seed?: number;
+      angle?: number;
+      scale?: number;
+      animation?: {
+        mode?: 'transition' | 'draw' | 'pulse' | 'reveal' | 'loop' | 'stagger';
+        easing?: 'linear' | 'ease_in' | 'ease_out' | 'ease_in_out' | 'ease_in_cubic' | 'ease_out_cubic' | 'ease_in_out_cubic' | 'ease_out_back' | 'ease_out_elastic' | 'ease_out_bounce';
+        duration?: number;
+        delay?: number;
+        cycles?: number;
+        direction?: 'left' | 'right' | 'top' | 'bottom' | 'radial';
+        stagger_delay?: number;
+        start?: Record<string, number | number[]>;
+        end?: Record<string, number | number[]>;
+      };
+    }>;
+    allow_background_desaturation?: boolean;
+    allow_guided_zoom?: boolean;
+    allow_tracked_annotation?: boolean;
+    fallback_policy?: 'fallback_to_prompted_generation' | 'fallback_to_source_media' | 'fail_strict';
+  };
   stock_worthy: boolean;
   stock_search_query?: string;
   sound_effects: Array<{
@@ -226,7 +524,56 @@ SCENE CONTINUITY (angle_change):
 
 MEDIA TYPE:
 - "video": Dynamic scenes with motion, action, environment reveals
+- "image": A source still only. Do NOT treat this as a final static output unless it will become segmentation animation or motion-designed treatment.
 - "motiongraphic": Stats, lists, text overlays, infographics, data visualization
+
+FINAL LANE RULE:
+- Non-motiongraphic image shots should almost never ship as a static still.
+- If an image-led shot should reveal, isolate, spotlight, or annotate a subject, prefer render_strategy "segment_animate".
+- Otherwise, prefer render_strategy "ai_video" so the final output is moving footage.
+- Only use render_strategy "ai_image" when the still is clearly an intermediate source asset and not the intended final viewer experience.
+
+DIRECTING GRAMMAR:
+- shot_role: what this shot does in the sequence (hook, establish, coverage, insert, bridge, annotation, payoff, reaction, graphic_explainer, closing)
+- framing: choose the visual scale intentionally
+- camera_angle and camera_motion: describe how the audience is meant to perceive the shot
+- subject_focus: what exact person/object/detail deserves attention
+- entry_transition_intent and exit_transition_intent: why this cut is motivated
+- bridge_subject: repeated person/object/location/detail used to connect adjacent shots
+- visual_motif: recurring visual idea that should carry through the sequence
+- trim_priority: hold, balanced, or tight based on editorial pacing
+- continuity_level:
+  - fresh = new world or concept
+  - soft = should feel related but can flex
+  - strict = must preserve the same world/subject look
+- anchor_strategy:
+  - fresh = no anchor
+  - scene_anchor = use the scene's established look
+  - prev_frame = chain from the previous rendered frame
+  - prev_keyframe = chain from the previous still/keyframe
+- render_strategy:
+  - ai_video, ai_image, stock, motiongraphic for normal lanes
+  - segment_animate for still-image emphasis/reveal shots
+  - segment_video_fx for tracked effects on an existing video
+  - segment_mask_prep when segmentation should prepare a mask/edit before another step
+
+SEGMENTATION TREATMENT:
+- Use segmentation_treatment only when it adds real editorial value.
+- Good use cases: highlighting an important character, circling/isolating a face, spotlighting evidence, desaturating the background around a subject, guided zoom into a detail, tracked annotation in motion.
+- Prefer object_prompts over a generic text prompt whenever more than one subject could be in frame or when the target could be ambiguous.
+- Each object_prompts.label must be short, stable, and snake_case, such as "lead_detective", "left_witness", or "red_folder".
+- Each object_prompts.text should be concise, usually 2-8 words.
+- If multiple people are present, describe them only in this order as needed: role/name, left/right or foreground/background, distinctive clothing/color, action.
+- preset examples:
+  - focus_reveal = spotlight + guided zoom + subtle reveal
+  - detail_callout = annotation/outline around an important detail
+  - subject_isolation = subject stays vivid while background changes
+  - progressive_reveal = effect gradually reveals the point
+  - tracked_annotation = tracked highlight in a moving shot
+  - danger_emphasis = ominous focus on a person/object, often with background desaturation
+- If using segmentation_treatment, choose the matching render_strategy.
+- Default to subtle or moderate intensity unless the story beat truly needs strong emphasis.
+- Use segment_mask_prep only when segmentation should prepare a mask for image editing or later compositing before the final lane continues.
 
 STOCK MEDIA:
 - stock_worthy: true ONLY when the narration references specific real-world entities (people, places, events)
@@ -279,7 +626,7 @@ Generate the shot plan JSON for this scene.`;
 }
 
 function inferVisualTreatment(
-  mediaType: 'video' | 'motiongraphic',
+  mediaType: 'video' | 'image' | 'motiongraphic',
   stockWorthy: boolean,
   mgMode?: MotionGraphicsMode,
   visualElements: string[] = [],
@@ -289,6 +636,85 @@ function inferVisualTreatment(
   }
   if (stockWorthy || visualElements.some((tag) => tag.startsWith('stock_'))) return 'stock';
   if (visualElements.includes('ai_image')) return 'ai_image';
+  if (mediaType === 'image') return 'ai_image';
+  return 'ai_video';
+}
+
+function inferShotRole(
+  beat: EnrichedPlannedShot['narrative_beat'],
+  mediaType: EnrichedPlannedShot['media_type'],
+): NonNullable<EnrichedPlannedShot['shot_role']> {
+  switch (beat) {
+    case 'hook': return 'hook';
+    case 'establishing': return 'establish';
+    case 'detail': return mediaType === 'motiongraphic' ? 'graphic_explainer' : 'insert';
+    case 'transition': return 'bridge';
+    case 'reveal': return 'payoff';
+    case 'reaction': return 'reaction';
+    case 'resolution': return 'closing';
+    default: return mediaType === 'motiongraphic' ? 'graphic_explainer' : 'coverage';
+  }
+}
+
+function inferDefaultFraming(
+  beat: EnrichedPlannedShot['narrative_beat'],
+  role: NonNullable<EnrichedPlannedShot['shot_role']>,
+): NonNullable<EnrichedPlannedShot['framing']> {
+  if (role === 'insert') return 'close_up';
+  if (role === 'annotation') return 'medium_close';
+  if (beat === 'establishing') return 'wide';
+  if (beat === 'detail') return 'extreme_close';
+  if (beat === 'reaction') return 'medium_close';
+  return 'medium';
+}
+
+function inferCameraMotion(
+  beat: EnrichedPlannedShot['narrative_beat'],
+  mediaType: EnrichedPlannedShot['media_type'],
+  continuityFromPrevious: boolean,
+): NonNullable<EnrichedPlannedShot['camera_motion']> {
+  if (mediaType === 'motiongraphic') {
+    if (beat === 'detail' || beat === 'reveal' || beat === 'climax') return 'push_in';
+    if (beat === 'transition') return 'pan_right';
+    if (beat === 'establishing') return 'pull_out';
+    return 'pan_left';
+  }
+  if (mediaType === 'image') {
+    if (beat === 'detail' || beat === 'reveal' || beat === 'climax') return 'push_in';
+    if (beat === 'transition') return 'pan_right';
+    if (beat === 'establishing') return 'pull_out';
+    if (beat === 'reaction' || beat === 'resolution') return 'zoom_out';
+    return 'pan_left';
+  }
+  if (continuityFromPrevious) return 'tracking';
+  if (beat === 'reveal' || beat === 'climax') return 'push_in';
+  if (beat === 'detail') return 'zoom_in';
+  if (beat === 'transition') return 'pan_right';
+  if (beat === 'establishing') return 'pull_out';
+  if (beat === 'reaction' || beat === 'resolution') return 'static';
+  return 'tracking';
+}
+
+function inferContinuityLevel(
+  continuityFromPrevious: boolean,
+  synthesisMode: EnrichedPlannedShot['synthesis_mode'],
+): NonNullable<EnrichedPlannedShot['continuity_level']> {
+  if (continuityFromPrevious && synthesisMode === 'I2V') return 'strict';
+  if (continuityFromPrevious) return 'soft';
+  return 'fresh';
+}
+
+function inferRenderStrategy(
+  mediaType: EnrichedPlannedShot['media_type'],
+  visualTreatment: EnrichedPlannedShot['visual_treatment'],
+  segmentationTreatment?: EnrichedPlannedShot['segmentation_treatment'],
+): NonNullable<EnrichedPlannedShot['render_strategy']> {
+  if (segmentationTreatment?.execution_mode) {
+    return segmentationTreatment.execution_mode;
+  }
+  if (visualTreatment === 'stock' || visualTreatment === 'archival') return 'stock';
+  if (mediaType === 'motiongraphic') return 'motiongraphic';
+  if (mediaType === 'image') return 'ai_image';
   return 'ai_video';
 }
 
@@ -326,6 +752,21 @@ function postProcessSceneShots(
       synthesis_mode: 'T2V',
       visual_description: scene.description,
       visual_elements: [],
+      shot_role: 'establish',
+      framing: 'wide',
+      camera_angle: 'eye_level',
+      camera_motion: 'static',
+      lens_style: undefined,
+      subject_focus: scene.description,
+      entry_transition_intent: 'open the scene cleanly',
+      exit_transition_intent: 'hand off to the next beat',
+      bridge_subject: undefined,
+      visual_motif: undefined,
+      continuity_level: 'fresh',
+      anchor_strategy: 'fresh',
+      render_strategy: 'ai_video',
+      trim_priority: 'balanced',
+      segmentation_treatment: undefined,
       stock_worthy: false,
       sound_effects: [],
       image_count: 1,
@@ -421,6 +862,37 @@ function postProcessSceneShots(
     const graphicStatePatch = hasMeaningfulGraphicPatch(shot.graphic_state_patch)
       ? shot.graphic_state_patch
       : undefined;
+    const shotRole = shot.shot_role || inferShotRole(shot.narrative_beat, shot.media_type);
+    const framing = shot.framing || inferDefaultFraming(shot.narrative_beat, shotRole);
+    const cameraMotion = shot.camera_motion || inferCameraMotion(
+      shot.narrative_beat,
+      shot.media_type,
+      shot.continuity_from_previous,
+    );
+    const continuityLevel = shot.continuity_level || inferContinuityLevel(
+      shot.continuity_from_previous,
+      shot.synthesis_mode,
+    );
+    const segmentationTreatment = shot.segmentation_treatment?.execution_mode
+      ? {
+          ...shot.segmentation_treatment,
+          text_prompt: shot.segmentation_treatment.text_prompt || undefined,
+          object_prompts: shot.segmentation_treatment.object_prompts?.filter(obj => obj.label && obj.text) || [],
+          operations: shot.segmentation_treatment.operations || [],
+          subject_focus: shot.segmentation_treatment.subject_focus || shot.subject_focus || undefined,
+          notes: shot.segmentation_treatment.notes || undefined,
+        }
+      : undefined;
+    const renderStrategy = shot.render_strategy || inferRenderStrategy(
+      shot.media_type,
+      inferVisualTreatment(
+        shot.media_type,
+        shot.stock_worthy,
+        resolvedMgMode,
+        shot.visual_elements,
+      ),
+      segmentationTreatment,
+    );
 
     // Compute SFX timing from anchor words
     const soundEffects = shot.sound_effects
@@ -456,6 +928,16 @@ function postProcessSceneShots(
       synthesis_mode: shot.synthesis_mode,
       visual_description: shot.visual_description,
       visual_elements: shot.visual_elements,
+      shot_role: shotRole,
+      framing,
+      camera_angle: shot.camera_angle,
+      camera_motion: cameraMotion,
+      lens_style: shot.lens_style || undefined,
+      subject_focus: shot.subject_focus || undefined,
+      entry_transition_intent: shot.entry_transition_intent || undefined,
+      exit_transition_intent: shot.exit_transition_intent || undefined,
+      bridge_subject: shot.bridge_subject || undefined,
+      visual_motif: shot.visual_motif || undefined,
       stock_worthy: shot.stock_worthy,
       stock_search_query: shot.stock_search_query || undefined,
       sound_effects: soundEffects,
@@ -466,6 +948,21 @@ function postProcessSceneShots(
         resolvedMgMode,
         shot.visual_elements,
       ),
+      continuity_level: continuityLevel,
+      anchor_strategy: shot.anchor_strategy || (
+        shot.continuity_from_previous
+          ? (shot.synthesis_mode === 'I2V' ? 'prev_frame' : 'scene_anchor')
+          : 'fresh'
+      ),
+      render_strategy: renderStrategy,
+      trim_priority: shot.trim_priority || (
+        shot.narrative_beat === 'reaction' || shot.narrative_beat === 'resolution'
+          ? 'hold'
+          : shot.narrative_beat === 'hook' || shot.narrative_beat === 'transition'
+            ? 'tight'
+            : 'balanced'
+      ),
+      segmentation_treatment: segmentationTreatment,
       mg_mode: resolvedMgMode,
       template_type: resolvedTemplateType,
       scene_id: scene.scene_id,

@@ -11,7 +11,8 @@ import {
   addTaskStep, 
   completeStep, 
   failStep, 
-  updateTaskStatus 
+  updateTaskStatus,
+  type TaskLifecycleOwner,
 } from '@/lib/queues/shared';
 import { CostTracker } from '@/lib/queues/cost-tracker';
 
@@ -23,6 +24,7 @@ export interface AudioJobData {
   taskId: string;
   userId: string;
   videoId: string;
+  taskLifecycleOwner?: TaskLifecycleOwner;
   script: string;
   voiceProvider: 'elevenlabs' | 'genai' | 'inworld';
   voiceModel?: string;
@@ -48,7 +50,7 @@ const AUDIO_STEP_ORDER = {
 
 export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobData>) => {
   const { taskId, userId, videoId, script, voiceProvider, voiceModel, voiceName, voiceSettings } = job.data;
-  const isClosedLoop = job.name === 'closed-loop-tts';
+  const isClosedLoop = job.data.taskLifecycleOwner === 'orchestrator' || job.name === 'closed-loop-tts';
   const jobStartTime = Date.now();
 
   console.log(`[Audio] Starting job ${job.id} for task ${taskId}${isClosedLoop ? ' (closed-loop)' : ''}`);

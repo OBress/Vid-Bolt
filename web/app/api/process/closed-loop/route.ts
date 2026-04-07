@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { videoId, videoCreativeOverrides, shutdownWhenDone } = body;
+    const { videoId, videoCreativeOverrides, productionControls, shutdownWhenDone } = body;
 
     if (!videoId) {
       return NextResponse.json(
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
     // Fetch video project with script, metadata, and parent project ID
     const { data: video, error: videoError } = await supabase
       .from("video_projects")
-      .select("id, name, idea, script_content, metadata, project_id")
+      .select("id, name, idea, script_content, metadata, project_id, closed_loop_state")
       .eq("id", videoId)
       .eq("user_id", user.id)
       .single();
@@ -110,6 +110,16 @@ export async function POST(request: NextRequest) {
 
     if (existingTasks && existingTasks.length > 0) {
       const existing = existingTasks[0];
+      await supabase
+        .from("video_projects")
+        .update({
+          current_stage: "production",
+          video_task_id: existing.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", videoId)
+        .eq("user_id", user.id);
+
       console.log(
         `[Closed-Loop API] Duplicate prevented: video ${videoId} already has active task ${existing.id} (status: ${existing.status})`
       );
@@ -122,6 +132,14 @@ export async function POST(request: NextRequest) {
     }
 
     const metadata = (video.metadata || {}) as Record<string, any>;
+    const shotPlanReviewState = (((metadata.shot_plan || {}) as Record<string, any>).metadata || {}).review_state as
+      | { review_mode?: string; status?: string }
+      | undefined;
+    const closedLoopState = (video.closed_loop_state || {}) as Record<string, any>;
+    const isResumingSequencePreview =
+      shotPlanReviewState?.review_mode === 'sequence_preview'
+      && shotPlanReviewState?.status === 'pending'
+      && closedLoopState.phase === 'shot_planning';
     const outlineConfig = metadata?.outlineConfig;
 
     // Fetch project-level settings (voice, visuals, script, etc.)
@@ -220,9 +238,33 @@ export async function POST(request: NextRequest) {
       .from("video_projects")
       .update({
         current_stage: "production",
+        video_task_id: taskId,
         updated_at: new Date().toISOString(),
       })
       .eq("id", videoId);
+
+    const metadataUpdates: Record<string, unknown> = {
+      production_controls: productionControls || { reviewMode: 'off' },
+      productionControls: productionControls || { reviewMode: 'off' },
+      video_creative_overrides: videoCreativeOverrides || {},
+      videoCreativeOverrides: videoCreativeOverrides || {},
+    };
+
+    if (isResumingSequencePreview) {
+      metadataUpdates.shot_plan = {
+        metadata: {
+          review_state: {
+            review_mode: 'sequence_preview',
+            status: 'approved',
+          },
+        },
+      };
+    }
+
+    await supabase.rpc('merge_video_metadata', {
+      p_video_id: videoId,
+      p_updates: metadataUpdates,
+    });
 
     // Dispatch orchestrator job
     const job = await orchestratorQueue.add(
@@ -237,6 +279,8 @@ export async function POST(request: NextRequest) {
         scriptContent: video.script_content,
         entities: gcmEntities,
         videoCreativeOverrides,
+        productionControls,
+        resumeFromPhase: isResumingSequencePreview ? 'asset_retrieval' : undefined,
         projectConfig: projectSettings
           ? {
               voice: projectSettings.voice,
@@ -257,7 +301,10 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    console.log(`[Closed-Loop API] Started orchestrator for video ${videoId}, task ${taskId}, job ${job.id}`);
+    console.log(
+      `[Closed-Loop API] Started orchestrator for video ${videoId}, task ${taskId}, job ${job.id}` +
+      (isResumingSequencePreview ? ' (resume from sequence preview)' : '')
+    );
 
     // --- GPU production tracking ---
     // Check if project uses local GPU models

@@ -405,6 +405,20 @@ export interface VideoProject {
   completed_at?: string | null;
 }
 
+export interface ProductionTaskSummary {
+  id: string;
+  type: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  name?: string | null;
+  current_phase?: string | null;
+  current_step?: string | null;
+  progress_percent?: number | null;
+  error_message?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  updated_at?: string | null;
+}
+
 // ============================================================================
 // INPUT TYPES FOR API OPERATIONS
 // ============================================================================

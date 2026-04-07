@@ -1,21 +1,33 @@
 /**
  * Frame Extraction Utility
  * ============================================================================
- * Extracts the last frame from a generated video for use as a conditioning
- * anchor in FF2V (First-Frame-to-Video) synthesis mode with LTX-2.3.
+ * Extracts the last frame from a generated video for continuity editing.
  *
- * Flow:
- *   1. Download video from R2 URL to a temp buffer
- *   2. Use FFmpeg to extract the last frame as JPEG
- *   3. Upload the frame to R2
- *   4. Return the R2 URL for use as `start_frame_url` in LTX-2.3
+ * Preferred path:
+ *   1. Ask the GPU VM to extract the frame (when the route is available)
  *
- * This is a prerequisite for sequential shot generation where temporal
- * continuity between shots is needed (FF2V mode).
+ * Required fallback:
+ *   2. Download the source clip locally
+ *   3. Use FFmpeg to extract the last frame on CPU
+ *   4. Upload the JPEG to R2
+ *
+ * This keeps frame extraction as cheap CPU-side work and allows continuity
+ * editing to batch later in image-edit mode without pretending a video URL is
+ * a usable frame.
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { promises as fs } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { spawn } from 'child_process';
 import { fetchDynamicGpuApiUrl } from '@/lib/services/gpu-api-service';
+import {
+  getBucketName,
+  getPublicUrl,
+  getS3Client,
+} from '@/lib/services/r2-storage';
 
 // ============================================================================
 // TYPES
@@ -30,6 +42,113 @@ export interface FrameExtractionResult {
   height: number;
   /** Source video URL */
   sourceVideoUrl: string;
+  /** Which extraction path produced the frame */
+  extractionMethod: 'gpu_api' | 'ffmpeg_local';
+}
+
+function runCommand(command: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      reject(new Error(`${command} exited with code ${code}: ${stderr.slice(-500)}`));
+    });
+  });
+}
+
+async function extractViaLocalFfmpeg(
+  videoUrl: string,
+  videoId: string,
+  shotIndex: number,
+): Promise<FrameExtractionResult> {
+  const LOG_PREFIX = '[FrameExtract]';
+  const tempRoot = await fs.mkdtemp(join(tmpdir(), 'vidbolt-frame-'));
+  const tempVideoPath = join(tempRoot, `shot-${shotIndex}.mp4`);
+  const tempFramePath = join(tempRoot, `shot-${shotIndex}.jpg`);
+
+  try {
+    console.log(`${LOG_PREFIX} Shot ${shotIndex}: downloading video for local FFmpeg extraction`);
+    const response = await fetch(videoUrl, {
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) {
+      throw new Error(`Video download failed: HTTP ${response.status}`);
+    }
+
+    const videoBuffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(tempVideoPath, videoBuffer);
+
+    await runCommand('ffmpeg', [
+      '-y',
+      '-sseof',
+      '-0.1',
+      '-i',
+      tempVideoPath,
+      '-frames:v',
+      '1',
+      '-q:v',
+      '2',
+      tempFramePath,
+    ]);
+
+    const frameBuffer = await fs.readFile(tempFramePath);
+    const key = `projects/${videoId}/frames/shot-${shotIndex}-lastframe-${uuidv4().slice(0, 8)}.jpg`;
+    const client = getS3Client();
+    await client.send(new PutObjectCommand({
+      Bucket: getBucketName(),
+      Key: key,
+      Body: frameBuffer,
+      ContentType: 'image/jpeg',
+    }));
+
+    let width = 1920;
+    let height = 1080;
+    try {
+      const probe = await runCommand('ffprobe', [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=width,height',
+        '-of',
+        'json',
+        tempFramePath,
+      ]);
+      const parsed = JSON.parse(probe.stdout) as {
+        streams?: Array<{ width?: number; height?: number }>;
+      };
+      width = parsed.streams?.[0]?.width || width;
+      height = parsed.streams?.[0]?.height || height;
+    } catch (probeError) {
+      console.warn(`${LOG_PREFIX} Shot ${shotIndex}: ffprobe failed, using default dimensions`, probeError);
+    }
+
+    const frameUrl = getPublicUrl(key);
+    console.log(`${LOG_PREFIX} Shot ${shotIndex}: Local FFmpeg extraction complete → ${frameUrl}`);
+
+    return {
+      frameUrl,
+      width,
+      height,
+      sourceVideoUrl: videoUrl,
+      extractionMethod: 'ffmpeg_local',
+    };
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 // ============================================================================
@@ -60,13 +179,8 @@ export async function extractLastFrame(
   const gpuApiUrl = await fetchDynamicGpuApiUrl();
 
   if (!gpuApiUrl || gpuApiUrl === 'http://localhost:8000') {
-    console.warn(`${LOG_PREFIX} No GPU VM available — returning source URL as fallback`);
-    return {
-      frameUrl: videoUrl,
-      width: 1920,
-      height: 1080,
-      sourceVideoUrl: videoUrl,
-    };
+    console.warn(`${LOG_PREFIX} No GPU VM extraction route available — using local FFmpeg fallback`);
+    return extractViaLocalFfmpeg(videoUrl, videoId, shotIndex);
   }
 
   try {
@@ -108,20 +222,13 @@ export async function extractLastFrame(
       width: result.width || 1920,
       height: result.height || 1080,
       sourceVideoUrl: videoUrl,
+      extractionMethod: 'gpu_api',
     };
 
   } catch (error) {
     console.error(`${LOG_PREFIX} Frame extraction failed for shot ${shotIndex}:`, error);
-
-    // Fallback: return the video URL itself
-    // The LTX-2.3 API can sometimes accept a video URL as the start_frame reference
-    console.warn(`${LOG_PREFIX} Falling back to source video URL for FF2V conditioning`);
-    return {
-      frameUrl: videoUrl,
-      width: 1920,
-      height: 1080,
-      sourceVideoUrl: videoUrl,
-    };
+    console.warn(`${LOG_PREFIX} Falling back to local FFmpeg extraction`);
+    return extractViaLocalFfmpeg(videoUrl, videoId, shotIndex);
   }
 }
 

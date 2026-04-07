@@ -23,6 +23,7 @@ import { Job, Processor } from 'bullmq';
 import { getOpenRouterApiKey } from '@/lib/services/api-keys';
 import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 import type { OpenRouterMessage } from '@/lib/ai/openrouter';
+import { getStyleSignals } from '@/lib/services/style-signals';
 // Static video detection removed — VLM verifier catches bad media directly
 
 // ============================================================================
@@ -74,6 +75,8 @@ export interface VerifierJobData {
   previousShotUrl?: string;
   /** Style guide excerpt from the Creative Manifest */
   styleGuide?: string;
+  /** Raw visual style tag from the creative manifest */
+  visualStyleTag?: string;
   /** If this is a re-verification after edits, include the original feedback */
   previousFeedback?: string;
   // --- Creative context (dynamic prompt injection) ---
@@ -95,6 +98,8 @@ export interface VerifierJobData {
 
 const LOG_PREFIX = '[Verifier]';
 const VERIFICATION_MODEL = 'google/gemini-3-flash-preview';
+const VERIFIER_MAX_TOKENS = 4_096;
+const VERIFIER_OPENROUTER_TIMEOUT_MS = 240_000;
 
 /** Gemini 3.1 Pro for meta-review of borderline verdicts (deeper reasoning) */
 const META_REVIEW_MODEL = 'google/gemini-3.1-pro-preview';
@@ -105,6 +110,31 @@ const META_REVIEW_MODEL = 'google/gemini-3.1-pro-preview';
  */
 const META_REVIEW_CONFIDENCE_MIN = 0.4;
 const META_REVIEW_CONFIDENCE_MAX = 0.7;
+
+function buildStyleDriftRules(visualStyleTag?: string): string {
+  const signals = getStyleSignals(visualStyleTag);
+  const parts: string[] = [];
+
+  if (signals.nonPhotorealistic) {
+    parts.push(`=== STYLE DRIFT — NON-PHOTOREALISTIC PROJECT RULES ===
+- If the declared visual style is stylized, animated, clay, illustrated, or otherwise non-photorealistic, a photoreal human face or photographic realism that breaks that world is FAIL.
+- Modern office attire, modern suits, or contemporary haircuts that conflict with the declared stylized world are FAIL.
+- Treat "looks like a different rendering medium than the declared project style" as a hard style-contract violation, not a minor note.`);
+  }
+
+  if (signals.historical) {
+    parts.push(`=== HISTORICAL AUTHENTICITY RULES ===
+- Modern suits, modern casual clothing, contemporary hairstyles, modern signage, digital UI, or obviously modern map overlays inside a historical scene are FAIL.
+- If the shot belongs to a historical world, judge anachronisms as fundamental style and semantic errors, not small continuity issues.`);
+  }
+
+  parts.push(`=== TEXT SAFETY RULES ===
+- Garbled, meaningless, or wrong-language visible text is FAIL unless the prompt explicitly asked for that language or effect.
+- Fake long readable paragraph documents, unreadable paper pages meant to be read on screen, or invented article-like body copy are FAIL.
+- Motion-graphics overlays that cover the full frame with an opaque background instead of behaving like an overlay are FAIL.`);
+
+  return parts.join('\n\n');
+}
 
 /** Check if a URL points to a video file (not an image). */
 function isVideoUrl(url: string): boolean {
@@ -219,11 +249,16 @@ You must evaluate 6 dimensions and return a THREE-TIER verdict:
     parts.push(`\nCRITICAL — STYLE MODEL (LoRA) RULE:\nIf the style guide mentions a "STYLE MODEL (LoRA)", this model defines the INTENDED visual aesthetic.\nThe AI model's trained style IS the correct style — do NOT penalize shots for looking like the LoRA's output.`);
   }
 
+  const styleDriftRules = buildStyleDriftRules(jobData.visualStyleTag);
+  if (styleDriftRules) {
+    parts.push(`\n${styleDriftRules}`);
+  }
+
   parts.push(`
 === IMAGE-SPECIFIC RULES ===
 For IMAGES, be moderately strict:
 1. AI artifacts (extra fingers, melted faces, garbled text, floating objects) are FAIL.
-2. Style mismatches (lighting mood, color palette, visual tone) that differ significantly from the style guide are FAIL.
+2. Style mismatches (lighting mood, color palette, visual tone, rendering medium, or historical authenticity) that differ significantly from the style guide are FAIL.
 3. The generated image must clearly depict the scene described. A generic or unrelated image is FAIL.
 4. Wrong entity appearance (wrong hair color, clothing, character) is FAIL.
 
@@ -232,19 +267,22 @@ AI-generated video CANNOT precisely match text descriptions for style, lighting,
 composition, or color grading. Regenerating with the same model produces similar results.
 Therefore: for videos, you should return PASS approximately 90% of the time.
 
-FAIL — ONLY for catastrophically broken video. ALL of these must be true:
+FAIL — for catastrophically broken video OR clear contract violations:
   - The video is frozen (same frame repeating, zero motion throughout)
   - OR black screen / no visible content at all
   - OR extreme full-frame corruption (garbled noise, unwatchable distortion)
   - OR completely static with absolutely zero motion of any kind
-  NOTHING ELSE IS A FAIL FOR VIDEOS. Not wrong subject, not wrong lighting, not wrong style.
+  - OR the video clearly breaks the declared style contract (for example photoreal people inside a clay-animation project)
+  - OR the video introduces obvious anachronisms that break the declared historical world
+  - OR the video contains unreadable/garbled text or fake readable document paragraphs as a focal element
+  - OR an overlay composition is effectively unusable because it blocks the whole frame with an opaque root
   For frozen/corrupted/static failures, include "SIMPLIFY_PROMPT" as the FIRST item in
   suggested_corrections.
 
 SOFT_FAIL — ONLY when something is DRAMATICALLY wrong (not subtly wrong):
   - The subject is completely wrong: description says "a cat" but video clearly shows a dog
   - The background/setting is DRAMATICALLY different
-  - The style is DRASTICALLY off (realistic vs cartoon)
+  - The style is notably off, but not so broken that it violates the declared project contract
   - A completely different character appears than described
   IMPORTANT: "subtly wrong" is NOT SOFT_FAIL. If the subject is roughly correct but minor details differ — that is PASS.
 
@@ -304,7 +342,8 @@ async function callVisionModel(
   ], {
     model: config?.model || VERIFICATION_MODEL,
     temperature: config?.temperature ?? 0.2,
-    maxTokens: config?.maxTokens ?? 65536,
+    maxTokens: config?.maxTokens ?? VERIFIER_MAX_TOKENS,
+    timeoutMs: VERIFIER_OPENROUTER_TIMEOUT_MS,
     xTitle: 'Vid-Bolt Verifier',
     responseFormat: VERIFIER_JSON_SCHEMA,
   });
@@ -560,7 +599,11 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
     for (let attempt = 1; attempt <= MAX_VERIFIER_RETRIES; attempt++) {
       try {
         console.log(`${LOG_PREFIX} Calling Gemini 3 Flash for shot ${shotIndex} (attempt ${attempt}/${MAX_VERIFIER_RETRIES})...`);
+        const modelCallStartedAt = Date.now();
         const rawResponse = await callVisionModel(apiKey, buildVerifierSystemPrompt(job.data), userContent);
+        console.log(
+          `${LOG_PREFIX} Shot ${shotIndex} model response received in ${Date.now() - modelCallStartedAt}ms`
+        );
         const result = parseVerifierResponse(rawResponse);
 
         // If parse succeeded with real confidence, use it

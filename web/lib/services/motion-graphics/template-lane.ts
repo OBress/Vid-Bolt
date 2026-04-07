@@ -234,6 +234,7 @@ Rules:
 - Keep text concise and production-friendly.
 - Prefer the provided asset bundle over inventing new media.
 - If overlay_mode is "video", DO NOT assume you should render the base video inside the template. The video already exists beneath the overlay.
+- Never simulate long readable paragraph text inside documents, papers, or screenshots. Use short labels, callouts, and side notes instead.
 - If a persistent graphic state is provided, evolve it rather than reinventing it.
 - Reuse asset_index values from the provided asset bundle where helpful.
 - The "Context hint" field is internal pipeline metadata about the type of graphic — NEVER use it as visible text in the title, subtitle, or any other user-facing field. Derive titles and subtitles from the narration text and prompt content instead.
@@ -388,6 +389,42 @@ function backgroundForOverlayMode(overlayMode: z.infer<typeof OverlayModeSchema>
     : 'transparent';
 }
 
+function overlayPanelBackground(
+  overlayMode: z.infer<typeof OverlayModeSchema>,
+  standaloneBackground: string,
+  overlayBackground: string = 'rgba(15,23,42,0.82)',
+): string {
+  return overlayMode === 'standalone' ? standaloneBackground : overlayBackground;
+}
+
+function isRenderableAssetUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  const normalized = url.trim().toLowerCase();
+  return normalized.length > 0
+    && normalized !== 'undefined'
+    && normalized !== 'null'
+    && !normalized.startsWith('placeholder://');
+}
+
+function resolveTemplateAssetUrl(
+  assetBundle: MotionGraphicsAssetBundleItem[],
+  preferredIndex: number,
+  fallbackIndex: number = 0,
+): string {
+  const candidates = [
+    assetBundle[preferredIndex]?.url,
+    assetBundle[fallbackIndex]?.url,
+  ];
+
+  for (const candidate of candidates) {
+    if (isRenderableAssetUrl(candidate)) {
+      return candidate!;
+    }
+  }
+
+  return '';
+}
+
 function renderLowerThird(spec: TemplateSpec): string {
   const overlayMode = spec.overlay_mode || 'standalone';
   return `import React from 'react';
@@ -505,10 +542,11 @@ export default DynamicAnimation;`;
 }
 
 function renderPhotoMontage(spec: TemplateSpec, assetBundle: MotionGraphicsAssetBundleItem[]): string {
+  const overlayMode = spec.overlay_mode || 'standalone';
   const items = (spec.items || []).slice(0, 4).map((item, index) => ({
     label: item.label,
     detail: item.detail || '',
-    url: assetBundle[item.asset_index ?? index]?.url || assetBundle[index]?.url || '',
+    url: resolveTemplateAssetUrl(assetBundle, item.asset_index ?? index, index),
   }));
 
   return `import React from 'react';
@@ -526,12 +564,25 @@ export const DynamicAnimation = () => {
   return (
     <AbsoluteFill
       style={{
-        background: 'linear-gradient(135deg, #0f172a 0%, #111827 52%, #1e293b 100%)',
+        background: ${escape(backgroundForOverlayMode(overlayMode))},
         padding: 42,
       }}
     >
-      <div style={{ color: '#f8fafc', fontSize: 34, fontWeight: 700, marginBottom: 12, opacity: titleProgress }}>{TITLE}</div>
-      {SUBTITLE ? <div style={{ color: 'rgba(226,232,240,0.82)', fontSize: 18, marginBottom: 18 }}>{SUBTITLE}</div> : null}
+      <div
+        style={{
+          maxWidth: Math.min(width * 0.54, 760),
+          padding: '18px 22px',
+          borderRadius: 24,
+          background: ${escape(overlayPanelBackground(overlayMode, 'transparent'))},
+          border: ${escape(overlayMode === 'standalone' ? 'none' : '1px solid rgba(255,255,255,0.08)')},
+          boxShadow: ${escape(overlayMode === 'standalone' ? 'none' : '0 16px 36px rgba(0,0,0,0.24)')},
+          marginBottom: 18,
+          opacity: titleProgress,
+        }}
+      >
+        <div style={{ color: '#f8fafc', fontSize: 34, fontWeight: 700, marginBottom: 12 }}>{TITLE}</div>
+        {SUBTITLE ? <div style={{ color: 'rgba(226,232,240,0.82)', fontSize: 18 }}>{SUBTITLE}</div> : null}
+      </div>
       {ITEMS.map((item, index) => {
         const progress = spring({
           frame: frame - index * 5,
@@ -591,10 +642,11 @@ export default DynamicAnimation;`;
 }
 
 function renderComparisonBoard(spec: TemplateSpec, assetBundle: MotionGraphicsAssetBundleItem[]): string {
+  const overlayMode = spec.overlay_mode || 'standalone';
   const items = (spec.items || []).slice(0, 2).map((item, index) => ({
     label: item.label,
     detail: item.detail || '',
-    url: assetBundle[item.asset_index ?? index]?.url || assetBundle[index]?.url || '',
+    url: resolveTemplateAssetUrl(assetBundle, item.asset_index ?? index, index),
   }));
 
   return `import React from 'react';
@@ -609,8 +661,20 @@ export const DynamicAnimation = () => {
   const progress = spring({ frame, fps, config: { damping: 16, stiffness: 110 } });
 
   return (
-    <AbsoluteFill style={{ background: 'linear-gradient(135deg, #0b1220 0%, #111827 100%)', padding: 42 }}>
-      <div style={{ color: '#f8fafc', fontSize: 34, fontWeight: 700, marginBottom: 24 }}>{TITLE}</div>
+    <AbsoluteFill style={{ background: ${escape(backgroundForOverlayMode(overlayMode))}, padding: 42 }}>
+      <div
+        style={{
+          display: 'inline-flex',
+          padding: '16px 20px',
+          borderRadius: 22,
+          background: ${escape(overlayPanelBackground(overlayMode, 'transparent'))},
+          border: ${escape(overlayMode === 'standalone' ? 'none' : '1px solid rgba(255,255,255,0.08)')},
+          boxShadow: ${escape(overlayMode === 'standalone' ? 'none' : '0 16px 36px rgba(0,0,0,0.22)')},
+          marginBottom: 24,
+        }}
+      >
+        <div style={{ color: '#f8fafc', fontSize: 34, fontWeight: 700 }}>{TITLE}</div>
+      </div>
       <div style={{ display: 'flex', gap: 22, height: height - 140 }}>
         {ITEMS.map((item, index) => (
           <div
@@ -645,7 +709,8 @@ export default DynamicAnimation;`;
 }
 
 function renderDocumentCallout(spec: TemplateSpec, assetBundle: MotionGraphicsAssetBundleItem[]): string {
-  const primaryUrl = assetBundle[spec.items?.[0]?.asset_index ?? 0]?.url || assetBundle[0]?.url || '';
+  const overlayMode = spec.overlay_mode || 'standalone';
+  const primaryUrl = resolveTemplateAssetUrl(assetBundle, spec.items?.[0]?.asset_index ?? 0, 0);
   const notes = (spec.notes || []).slice(0, 3);
 
   return `import React from 'react';
@@ -666,11 +731,24 @@ export const DynamicAnimation = () => {
   });
 
   return (
-    <AbsoluteFill style={{ background: 'linear-gradient(135deg, #111827 0%, #0f172a 100%)', padding: 34 }}>
-      <div style={{ color: '#f8fafc', fontSize: 34, fontWeight: 700 }}>{TITLE}</div>
-      {SUBTITLE ? <div style={{ color: 'rgba(226,232,240,0.84)', fontSize: 18, marginTop: 8 }}>{SUBTITLE}</div> : null}
+    <AbsoluteFill style={{ background: ${escape(backgroundForOverlayMode(overlayMode))}, padding: 34 }}>
+      <div
+        style={{
+          display: 'inline-flex',
+          flexDirection: 'column',
+          maxWidth: Math.min(width * 0.5, 720),
+          padding: '18px 22px',
+          borderRadius: 22,
+          background: ${escape(overlayPanelBackground(overlayMode, 'transparent'))},
+          border: ${escape(overlayMode === 'standalone' ? 'none' : '1px solid rgba(255,255,255,0.08)')},
+          boxShadow: ${escape(overlayMode === 'standalone' ? 'none' : '0 16px 36px rgba(0,0,0,0.22)')},
+        }}
+      >
+        <div style={{ color: '#f8fafc', fontSize: 34, fontWeight: 700 }}>{TITLE}</div>
+        {SUBTITLE ? <div style={{ color: 'rgba(226,232,240,0.84)', fontSize: 18, marginTop: 8 }}>{SUBTITLE}</div> : null}
+      </div>
       <div style={{ display: 'flex', gap: 26, marginTop: 26, height: height - 140 }}>
-        <div style={{ flex: 1.3, position: 'relative', borderRadius: 26, overflow: 'hidden', background: '#0b1220' }}>
+        <div style={{ flex: 1.3, position: 'relative', borderRadius: 26, overflow: 'hidden', background: ${escape(overlayPanelBackground(overlayMode, '#0b1220', 'rgba(11,18,32,0.84)'))} }}>
           {PRIMARY_URL ? <Img src={PRIMARY_URL} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
           <div style={{ position: 'absolute', left: scanX, top: height * 0.18, width: Math.max(18, width * 0.01), height: height * 0.38, background: 'rgba(245,158,11,0.16)', border: '2px solid rgba(245,158,11,0.8)', borderRadius: 16, opacity: progress }} />
         </div>
@@ -704,10 +782,12 @@ export default DynamicAnimation;`;
 }
 
 function renderEvidenceBoard(spec: TemplateSpec, assetBundle: MotionGraphicsAssetBundleItem[]): string {
+  const overlayMode = spec.overlay_mode || 'standalone';
+  const boardPanelColor = '#2b2118';
   const items = (spec.items || []).slice(0, 5).map((item, index) => ({
     label: item.label,
     detail: item.detail || '',
-    url: assetBundle[item.asset_index ?? index]?.url || assetBundle[index]?.url || '',
+    url: resolveTemplateAssetUrl(assetBundle, item.asset_index ?? index, index),
     emphasis: item.emphasis || 'normal',
   }));
 
@@ -731,8 +811,27 @@ export const DynamicAnimation = () => {
   ];
 
   return (
-    <AbsoluteFill style={{ background: boardColor, padding: 32 }}>
-      <div style={{ color: '#fef3c7', fontSize: 34, fontWeight: 700, letterSpacing: '-0.03em' }}>{TITLE}</div>
+    <AbsoluteFill style={{ background: ${escape(backgroundForOverlayMode(overlayMode))}, padding: 32 }}>
+      <div
+        style={{
+          position: 'absolute',
+          inset: 16,
+          borderRadius: 28,
+          background: ${escape(overlayPanelBackground(overlayMode, boardPanelColor, 'rgba(43,33,24,0.68)'))},
+          border: ${escape(overlayMode === 'standalone' ? 'none' : '1px solid rgba(254,243,199,0.08)')},
+        }}
+      />
+      <div
+        style={{
+          position: 'relative',
+          display: 'inline-flex',
+          padding: '16px 20px',
+          borderRadius: 20,
+          background: ${escape(overlayMode === 'standalone' ? 'transparent' : 'rgba(17,24,39,0.46)')},
+        }}
+      >
+        <div style={{ color: '#fef3c7', fontSize: 34, fontWeight: 700, letterSpacing: '-0.03em' }}>{TITLE}</div>
+      </div>
       {ITEMS.map((item, index) => {
         const progress = spring({ frame: frame - index * 4, fps, config: { damping: 16, stiffness: 110 } });
         const pos = positions[index % positions.length];
@@ -792,6 +891,7 @@ export default DynamicAnimation;`;
 }
 
 function renderTimeline(spec: TemplateSpec): string {
+  const overlayMode = spec.overlay_mode || 'standalone';
   const entries = (spec.timeline_entries || []).slice(0, 4);
   const accent = spec.accent_color || '#38bdf8';
 
@@ -807,14 +907,38 @@ export const DynamicAnimation = () => {
   const { fps, width, height } = useVideoConfig();
 
   return (
-    <AbsoluteFill style={{ background: 'linear-gradient(135deg, #0f172a 0%, #111827 100%)', padding: 48 }}>
-      <div style={{ color: '#f8fafc', fontSize: 34, fontWeight: 700 }}>{TITLE}</div>
+    <AbsoluteFill style={{ background: ${escape(backgroundForOverlayMode(overlayMode))}, padding: 48 }}>
+      <div
+        style={{
+          display: 'inline-flex',
+          padding: '16px 20px',
+          borderRadius: 22,
+          background: ${escape(overlayPanelBackground(overlayMode, 'transparent'))},
+          border: ${escape(overlayMode === 'standalone' ? 'none' : '1px solid rgba(255,255,255,0.08)')},
+          boxShadow: ${escape(overlayMode === 'standalone' ? 'none' : '0 16px 36px rgba(0,0,0,0.22)')},
+        }}
+      >
+        <div style={{ color: '#f8fafc', fontSize: 34, fontWeight: 700 }}>{TITLE}</div>
+      </div>
       <div style={{ position: 'absolute', left: width * 0.1, right: width * 0.1, top: height * 0.55, height: 4, background: 'rgba(148,163,184,0.24)', borderRadius: 999 }} />
       {ENTRIES.map((entry, index) => {
         const progress = spring({ frame: frame - index * 5, fps, config: { damping: 18, stiffness: 120 } });
         const x = width * 0.14 + index * (width * 0.2);
         return (
-          <div key={entry.label + index} style={{ position: 'absolute', left: x, top: height * 0.42, width: width * 0.18, opacity: progress }}>
+          <div
+            key={entry.label + index}
+            style={{
+              position: 'absolute',
+              left: x,
+              top: height * 0.42,
+              width: width * 0.18,
+              opacity: progress,
+              padding: '14px 16px',
+              borderRadius: 18,
+              background: ${escape(overlayMode === 'standalone' ? 'transparent' : 'rgba(15,23,42,0.74)')},
+              border: ${escape(overlayMode === 'standalone' ? 'none' : '1px solid rgba(255,255,255,0.06)')},
+            }}
+          >
             <div style={{ width: 20, height: 20, borderRadius: 999, background: ACCENT, boxShadow: '0 0 0 6px rgba(56,189,248,0.12)' }} />
             <div style={{ color: '#f8fafc', fontSize: 20, fontWeight: 700, marginTop: 18 }}>{entry.label}</div>
             {entry.detail ? <div style={{ color: 'rgba(226,232,240,0.84)', fontSize: 15, lineHeight: 1.4, marginTop: 8 }}>{entry.detail}</div> : null}
@@ -897,6 +1021,7 @@ export default DynamicAnimation;`;
 }
 
 function renderProcessDiagram(spec: TemplateSpec): string {
+  const overlayMode = spec.overlay_mode || 'standalone';
   const entries = (spec.timeline_entries || []).slice(0, 4);
   return `import React from 'react';
 import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion';
@@ -909,8 +1034,19 @@ export const DynamicAnimation = () => {
   const { fps, width, height } = useVideoConfig();
 
   return (
-    <AbsoluteFill style={{ background: 'linear-gradient(135deg, #0f172a 0%, #111827 100%)', padding: 42 }}>
-      <div style={{ color: '#f8fafc', fontSize: 34, fontWeight: 700 }}>{TITLE}</div>
+    <AbsoluteFill style={{ background: ${escape(backgroundForOverlayMode(overlayMode))}, padding: 42 }}>
+      <div
+        style={{
+          display: 'inline-flex',
+          padding: '16px 20px',
+          borderRadius: 22,
+          background: ${escape(overlayPanelBackground(overlayMode, 'transparent'))},
+          border: ${escape(overlayMode === 'standalone' ? 'none' : '1px solid rgba(255,255,255,0.08)')},
+          boxShadow: ${escape(overlayMode === 'standalone' ? 'none' : '0 16px 36px rgba(0,0,0,0.22)')},
+        }}
+      >
+        <div style={{ color: '#f8fafc', fontSize: 34, fontWeight: 700 }}>{TITLE}</div>
+      </div>
       {ENTRIES.map((entry, index) => {
         const progress = spring({ frame: frame - index * 6, fps, config: { damping: 18, stiffness: 115 } });
         const top = height * 0.24 + index * 112;

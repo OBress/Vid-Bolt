@@ -5,15 +5,13 @@
  *
  * Input:  Generated keyframe images + GCM entity references
  * Output: Edited images with corrected consistency (hair, clothing, lighting, etc.)
- *
- * This worker operates in the `image_editing` VRAM mode and processes edits
- * after the initial image generation batch. It uses the existing
- * `gpu-batch-generation.ts` infrastructure.
  */
 
 import { Job, Processor } from 'bullmq';
-import { updateTaskStatus } from '@/lib/queues/shared';
-import { fetchDynamicGpuApiUrl } from '@/lib/services/gpu-api-service';
+import { updateTaskStatus, type TaskLifecycleOwner } from '@/lib/queues/shared';
+import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
+import { callGpuGetJobStatus, callGpuImageEdit } from '@/lib/services/gpu-api-service';
+import { generateMediaKey, generatePresignedPutUrl, STORAGE_PATHS } from '@/lib/services/r2-storage';
 
 // ============================================================================
 // TYPES
@@ -23,6 +21,7 @@ export interface ImageEditJobData {
   taskId: string;
   userId: string;
   videoId: string;
+  taskLifecycleOwner?: TaskLifecycleOwner;
   /** Shot index for traceability */
   shotIndex: number;
   /** URL of the source image to edit */
@@ -48,26 +47,19 @@ export interface ImageEditJobData {
 // ============================================================================
 
 const LOG_PREFIX = '[ImageEdit]';
-const GPU_API_SECRET = process.env.GPU_API_SECRET || '';
+const IMAGE_EDIT_TIMEOUT_MS = 300_000; // 5 min — webhook wait for GPU edit completion
+const getWebhookUrl = () => process.env.WEBHOOK_CALLBACK_URL || 'http://localhost:3000/api/gpu-callback';
+const getWebhookSecret = () => process.env.GPU_WEBHOOK_SECRET;
 
 // ============================================================================
 // EDIT PROMPT CONSTRUCTION
 // ============================================================================
 
-/**
- * Build a Qwen-Image-Edit-2511 instruction prompt from GCM delta feedback.
- * Qwen-Edit uses a different prompt format than generation — it takes the
- * source image + natural language instruction describing what to change.
- */
-function buildEditPrompt(
-  jobData: ImageEditJobData
-): string {
+function buildEditPrompt(jobData: ImageEditJobData): string {
   const parts: string[] = [];
 
-  // Base edit instruction (from verifier's suggested corrections)
   parts.push(jobData.editInstruction);
 
-  // Add entity context for consistency
   if (jobData.entityReferences && jobData.entityReferences.length > 0) {
     parts.push('\n\nEntity consistency requirements:');
     for (const entity of jobData.entityReferences) {
@@ -75,13 +67,38 @@ function buildEditPrompt(
     }
   }
 
-  // Add previous feedback for iterative refinement
   if (jobData.previousFeedback) {
     parts.push(`\n\nPrevious edit attempt feedback: ${jobData.previousFeedback}`);
     parts.push('Please address these remaining issues while preserving other correct aspects.');
   }
 
   return parts.join('\n');
+}
+
+async function resolveAsyncEditResult(jobId: string, itemId: string, publicUrl: string): Promise<string> {
+  try {
+    const webhookResult = await waitForWebhookResult(itemId, IMAGE_EDIT_TIMEOUT_MS);
+    if (webhookResult.status === 'completed') {
+      return webhookResult.result?.save_url || publicUrl;
+    }
+
+    throw new Error(webhookResult.errorMessage || 'GPU image edit job failed');
+  } catch (webhookError) {
+    const statusResult = await callGpuGetJobStatus(jobId);
+    if (statusResult.success && statusResult.job) {
+      if (statusResult.job.status === 'completed') {
+        return statusResult.job.result?.save_url || publicUrl;
+      }
+
+      if (statusResult.job.status === 'failed') {
+        throw new Error(statusResult.job.error_message || 'GPU image edit job failed');
+      }
+    }
+
+    throw webhookError instanceof Error
+      ? webhookError
+      : new Error('Unknown error waiting for GPU image edit completion');
+  }
 }
 
 // ============================================================================
@@ -91,54 +108,63 @@ function buildEditPrompt(
 export const imageEditProcessor: Processor<ImageEditJobData> = async (
   job: Job<ImageEditJobData>
 ) => {
-  const { taskId, videoId, shotIndex, sourceImageUrl, attempt = 1 } = job.data;
+  const {
+    taskId,
+    userId,
+    videoId,
+    shotIndex,
+    sourceImageUrl,
+    aspectRatio = '16:9',
+    attempt = 1,
+    taskLifecycleOwner,
+  } = job.data;
+  const updateOwnedTaskStatus = (
+    updates: Parameters<typeof updateTaskStatus>[1]
+  ) => updateTaskStatus(taskId, updates, { lifecycleOwner: taskLifecycleOwner });
 
   console.log(`${LOG_PREFIX} Editing shot ${shotIndex} (attempt ${attempt}) for video ${videoId}`);
 
   try {
-    await updateTaskStatus(taskId, {
+    await updateOwnedTaskStatus({
       current_step: `Editing image for shot ${shotIndex + 1}...`,
     });
 
-    // Build the edit prompt
     const editPrompt = buildEditPrompt(job.data);
     console.log(`${LOG_PREFIX} Shot ${shotIndex}: Edit prompt (${editPrompt.length} chars)`);
 
-    const gpuApiUrl = await fetchDynamicGpuApiUrl();
-    if (!gpuApiUrl || gpuApiUrl === 'http://localhost:8000') {
-      throw new Error('No GPU VM available — cannot perform image editing');
-    }
+    const outputKey = generateMediaKey(
+      userId,
+      videoId,
+      STORAGE_PATHS.IMAGES.GENERATED,
+      `shot_${shotIndex}_edit_attempt_${attempt}.png`,
+    );
+    const { putUrl, publicUrl } = await generatePresignedPutUrl(outputKey, 'image/png');
+    const itemId = `image-edit-shot-${shotIndex}-${crypto.randomUUID()}`;
 
-    // Call the GPU VM's image editing endpoint directly
-    const response = await fetch(`${gpuApiUrl}/api/edit-image`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GPU_API_SECRET}`,
-      },
-      body: JSON.stringify({
-        source_image_url: sourceImageUrl,
-        edit_instruction: editPrompt,
-        aspect_ratio: job.data.aspectRatio || '16:9',
-        video_id: videoId,
-        shot_index: shotIndex,
-      }),
-      signal: AbortSignal.timeout(120_000), // 2 min timeout
+    const submitResult = await callGpuImageEdit({
+      job_id: `image-edit-${videoId}-${shotIndex}-${crypto.randomUUID()}`,
+      input_image_url: sourceImageUrl,
+      prompt: editPrompt,
+      aspect_ratio: aspectRatio,
+      save_url: putUrl,
+      webhook_url: getWebhookUrl(),
+      item_id: itemId,
+      webhook_secret: getWebhookSecret(),
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`GPU image edit API error: ${response.status} — ${errText.substring(0, 200)}`);
+    if (!submitResult.success) {
+      throw new Error(submitResult.errorMessage || 'GPU image edit request failed');
     }
 
-    const result = await response.json();
+    const editedUrl = submitResult.isAsync && submitResult.jobId
+      ? await resolveAsyncEditResult(submitResult.jobId, itemId, publicUrl)
+      : (submitResult.publicUrl || publicUrl);
 
-    if (!result.url && !result.media_url) {
+    if (!editedUrl) {
       throw new Error(`No edited image URL returned for shot ${shotIndex}`);
     }
 
-    const editedUrl = result.url || result.media_url;
-    console.log(`${LOG_PREFIX} Shot ${shotIndex}: Edit complete → ${editedUrl}`);
+    console.log(`${LOG_PREFIX} Shot ${shotIndex}: Edit complete -> ${editedUrl}`);
 
     return {
       success: true,
@@ -147,7 +173,6 @@ export const imageEditProcessor: Processor<ImageEditJobData> = async (
       url: editedUrl,
       attempt,
     };
-
   } catch (error) {
     console.error(`${LOG_PREFIX} Shot ${shotIndex} edit failed:`, error);
     throw error;

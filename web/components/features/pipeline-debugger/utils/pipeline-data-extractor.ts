@@ -416,12 +416,18 @@ function extractStepOutputs(
         assetReferenceImages: meta.assetReferenceImages || null,
         // Per-shot timing from shot plan (requested durations)
         shotTimings: extractShotTimings(meta),
+        review_state: getNestedValue(meta, 'shot_plan.metadata.review_state') || null,
+        sequence_plan_count: getNestedValue(meta, 'shot_plan.metadata.sequence_plan.length') || 0,
+        continuity_anchor_count: getNestedValue(meta, 'shot_plan.metadata.continuity_anchors.length') || 0,
+        transition_palette: getNestedValue(meta, 'shot_plan.metadata.transition_palette') || null,
+        assembly_contract: getNestedValue(meta, 'shot_plan.metadata.assembly_contract') || null,
       };
     case 6: {
       // Count from actual worker-persisted maps (not legacy generatedMedia)
       const genVideos = (meta.generated_videos || {}) as Record<string, string>;
       const genImages = (meta.generated_images || {}) as Record<string, string>;
       const genMG = (meta.generated_motion_graphics || {}) as Record<string, string>;
+      const segmentationOutputs = (meta.segmentation_outputs || {}) as Record<string, unknown>;
       return {
         // Legacy array (if present)
         generatedMedia: meta.generatedMedia || [],
@@ -436,12 +442,19 @@ function extractStepOutputs(
         generated_images_count: Object.keys(genImages).length,
         generated_motion_graphics: genMG,
         generated_mg_count: Object.keys(genMG).length,
+        segmentation_outputs: segmentationOutputs,
+        segmentation_outputs_count: Object.keys(segmentationOutputs).length,
         totalMediaCount: Object.keys(genVideos).length +
           Object.keys(genImages).length +
           Object.keys(genMG).length,
         generated_image_provenance: meta.generated_image_provenance || null,
         resolved_prompts_count: Object.keys((meta.resolved_prompts || {}) as object).length,
         planner_diagnostics: getNestedValue(meta, 'shot_plan.metadata.planner_diagnostics') || null,
+        review_state: getNestedValue(meta, 'shot_plan.metadata.review_state') || null,
+        sequence_plan_count: getNestedValue(meta, 'shot_plan.metadata.sequence_plan.length') || 0,
+        continuity_anchor_count: getNestedValue(meta, 'shot_plan.metadata.continuity_anchors.length') || 0,
+        transition_palette: getNestedValue(meta, 'shot_plan.metadata.transition_palette') || null,
+        assembly_contract: getNestedValue(meta, 'shot_plan.metadata.assembly_contract') || null,
         // Scraped stock images (from asset-scout)
         scraped_stock_count: Object.keys((meta.scraped_stock_images || {}) as object).length,
         video_gen_stats: meta.video_gen_stats || null,

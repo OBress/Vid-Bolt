@@ -99,6 +99,18 @@ export interface PipelineGenerationResult {
   persistentGraphicState?: PersistentMotionGraphicState;
 }
 
+function isOverlayPosition(
+  routingTags: RoutingTag[],
+  contextHint?: string,
+): boolean {
+  const hint = (contextHint || '').toLowerCase();
+  return routingTags.includes('remotion_video_manipulation')
+    || routingTags.includes('remotion_image_manipulation')
+    || routingTags.includes('remotion_overlay')
+    || hint.includes('overlay')
+    || hint.includes('annotation');
+}
+
 // ============================================================
 // PROMPT ENRICHMENT
 // ============================================================
@@ -146,15 +158,16 @@ export function buildEnrichedMGPrompt(
   // Image assets — only for image/video manipulation tags
   const hasImageManipulation = routingTags.includes('remotion_image_manipulation');
   const hasVideoManipulation = routingTags.includes('remotion_video_manipulation');
+  const overlayPosition = isOverlayPosition(routingTags, contextHint);
 
   // Video overlay guidance — creative overlay composition on dynamic video
-  if (hasVideoManipulation) {
-    parts.push('\n\n⚠️ VIDEO OVERLAY MODE (CRITICAL — your component renders ON TOP of video footage):');
+  if (overlayPosition) {
+    parts.push('\n\n⚠️ OVERLAY MODE (CRITICAL — your component renders ON TOP of existing base media):');
     parts.push('\n⚠️ The <AbsoluteFill> ROOT MUST have style={{ background: "transparent" }}. NO EXCEPTIONS.');
-    parts.push('\n⚠️ Any solid/opaque background on the root element will COMPLETELY BLOCK the video beneath it.');
+    parts.push('\n⚠️ Any solid/opaque background on the root element will COMPLETELY BLOCK the base media beneath it.');
     parts.push('\n⚠️ VERIFY: no top-level container has an opaque backgroundColor. Only inner elements (text labels, badges, etc.) may have solid backgrounds.');
-    parts.push('\n⚠️ The base video already exists beneath your overlay in the editor timeline. Do NOT re-render the same video inside the motion graphic.');
-    parts.push('\n- Design elements that COMPLEMENT the underlying video, not compete with it');
+    parts.push('\n⚠️ The base media already exists beneath your overlay in the editor timeline. Do NOT re-render the same base media inside the motion graphic.');
+    parts.push('\n- Design elements that COMPLEMENT the underlying base media, not compete with it');
     parts.push('\n- Use semi-transparent backgrounds behind text for readability (e.g., rgba(0,0,0,0.6))');
     parts.push('\n');
     parts.push('\nCREATIVE OVERLAY TYPES you should create:');
@@ -173,6 +186,11 @@ export function buildEnrichedMGPrompt(
     parts.push('\n- Do NOT try to track or circle specific objects in the video — the video content is dynamic');
     parts.push('\n- Do NOT use position-specific annotations that assume knowledge of video content');
   }
+
+  parts.push('\n\nCOPY SAFETY (CRITICAL):');
+  parts.push('\n- All visible text must be clean, legible English unless the prompt explicitly asks for another language.');
+  parts.push('\n- Use short labels, chips, captions, or callouts. Do NOT generate fake paragraph text, full article body copy, or dense UI copy.');
+  parts.push('\n- If the concept needs readable text, render it as designed typography — not as text baked into an image texture.');
 
   if ((hasImageManipulation || hasVideoManipulation) && imageAssets.length > 0) {
     parts.push('\n\nAVAILABLE MEDIA ASSETS (use via Remotion\'s <Img> or <OffthreadVideo> components):');
@@ -320,6 +338,96 @@ export default StaticFallback;`;
   };
 }
 
+function fixTimingCollision(codeToCheck: string, shotIndex: number): string {
+  let updatedCode = codeToCheck;
+
+  if (/const\s+frame\s*=\s*useCurrentFrame\(\)/.test(updatedCode) && /const\s+frame\s*=\s*\{/.test(updatedCode)) {
+    console.log(`[PipelineMG] Shot ${shotIndex}: Detected "const frame = {}" collision — auto-renaming to TIMING`);
+    updatedCode = updatedCode.replace(/const\s+frame\s*=\s*\{/, 'const TIMING = {');
+    const timingObjMatch = updatedCode.match(/const\s+TIMING\s*=\s*\{([^}]*)\}/);
+    if (timingObjMatch) {
+      const keys = [...timingObjMatch[1].matchAll(/(\w+)\s*:/g)].map((m) => m[1]);
+      for (const key of keys) {
+        updatedCode = updatedCode.replace(new RegExp(`\\bframe\\.${key}\\b`, 'g'), `TIMING.${key}`);
+      }
+    }
+  }
+
+  return updatedCode;
+}
+
+function hasOpaqueRootBackground(code: string): boolean {
+  const absoluteFillStyleMatch = code.match(/<AbsoluteFill[^>]*style=\{\{([\s\S]*?)\}\}/);
+  if (!absoluteFillStyleMatch) return false;
+
+  const styleBlock = absoluteFillStyleMatch[1];
+  const backgroundValue = styleBlock.match(/background(?:Color)?\s*:\s*['"`]([^'"`]+)['"`]/i)?.[1]?.toLowerCase();
+  if (!backgroundValue) return false;
+
+  if (backgroundValue === 'transparent') return false;
+  if (/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0(?:\.0+)?\s*\)/.test(backgroundValue)) return false;
+
+  return true;
+}
+
+function collectMotionGraphicQualityIssues(
+  code: string,
+  routingTags: RoutingTag[],
+  contextHint?: string,
+): string[] {
+  const issues: string[] = [];
+
+  if (isOverlayPosition(routingTags, contextHint) && hasOpaqueRootBackground(code)) {
+    issues.push('overlay root uses an opaque background and would block the base media');
+  }
+
+  if (/placeholder:\/\//i.test(code)) {
+    issues.push('unresolved placeholder asset URL detected');
+  }
+
+  return issues;
+}
+
+function validateGeneratedMotionGraphicCode(
+  rawCode: string,
+  shotIndex: number,
+  routingTags: RoutingTag[],
+  contextHint: string | undefined,
+): { ok: true; code: string } | { ok: false; code: string; error: string } {
+  const cleanCode = stripMarkdownFences(rawCode);
+  const validation = validateCode(cleanCode);
+  let codeToCheck = validation.fixedCode || cleanCode;
+  codeToCheck = fixTimingCollision(codeToCheck, shotIndex);
+
+  if (!validation.isValid) {
+    return {
+      ok: false,
+      code: cleanCode,
+      error: `Code validation failed: ${validation.errors.join('; ')}`,
+    };
+  }
+
+  const qcIssues = collectMotionGraphicQualityIssues(codeToCheck, routingTags, contextHint);
+  if (qcIssues.length > 0) {
+    return {
+      ok: false,
+      code: codeToCheck,
+      error: `Motion graphic QC failed: ${qcIssues.join('; ')}`,
+    };
+  }
+
+  const syntaxResult = transpileCheck(codeToCheck);
+  if (!syntaxResult.valid) {
+    return {
+      ok: false,
+      code: codeToCheck,
+      error: `Syntax error: ${syntaxResult.error}`,
+    };
+  }
+
+  return { ok: true, code: codeToCheck };
+}
+
 // ============================================================
 // PIPELINE GENERATOR
 // ============================================================
@@ -387,8 +495,36 @@ export async function generateMotionGraphic(
       simplifiedRetry,
     });
 
+    if (!templateResult.success || !templateResult.remotionCode) {
+      return {
+        ...templateResult,
+        mgMode: templateResult.mgMode,
+        templateType: templateResult.templateType,
+        persistentGraphicState: templateResult.persistentGraphicState,
+      };
+    }
+
+    const validatedTemplate = validateGeneratedMotionGraphicCode(
+      templateResult.remotionCode,
+      shotIndex,
+      routingTags,
+      contextHint,
+    );
+    if (!validatedTemplate.ok) {
+      console.warn(`[PipelineMG] Shot ${shotIndex}: Template QC failed: ${validatedTemplate.error}`);
+      return {
+        success: false,
+        remotionCode: validatedTemplate.code,
+        error: validatedTemplate.error,
+        mgMode: templateResult.mgMode,
+        templateType: templateResult.templateType,
+        persistentGraphicState: templateResult.persistentGraphicState,
+      };
+    }
+
     return {
-      ...templateResult,
+      success: true,
+      remotionCode: validatedTemplate.code,
       mgMode: templateResult.mgMode,
       templateType: templateResult.templateType,
       persistentGraphicState: templateResult.persistentGraphicState,
@@ -520,56 +656,29 @@ Keep the content relevant to the narration above, but simplify the visual execut
     };
   }
 
-  // Strip markdown fences and validate syntax
-  const cleanCode = stripMarkdownFences(finalCode);
-  const validation = validateCode(cleanCode);
-  let codeToCheck = validation.fixedCode || cleanCode;
+  const validatedCode = validateGeneratedMotionGraphicCode(
+    finalCode,
+    shotIndex,
+    routingTags,
+    contextHint,
+  );
 
-  // Direct fix for #1 MG failure: AI names timing constants "frame",
-  // colliding with `const frame = useCurrentFrame()`.
-  // Rename to TIMING (matching prompt examples the AI references).
-  if (/const\s+frame\s*=\s*useCurrentFrame\(\)/.test(codeToCheck) && /const\s+frame\s*=\s*\{/.test(codeToCheck)) {
-    console.log(`[PipelineMG] Shot ${shotIndex}: Detected "const frame = {}" collision — auto-renaming to TIMING`);
-    codeToCheck = codeToCheck.replace(/const\s+frame\s*=\s*\{/, 'const TIMING = {');
-    const timingObjMatch = codeToCheck.match(/const\s+TIMING\s*=\s*\{([^}]*)\}/);
-    if (timingObjMatch) {
-      const keys = [...timingObjMatch[1].matchAll(/(\w+)\s*:/g)].map(m => m[1]);
-      for (const key of keys) {
-        codeToCheck = codeToCheck.replace(new RegExp(`\\bframe\\.${key}\\b`, 'g'), `TIMING.${key}`);
-      }
-    }
-  }
-
-  if (!validation.isValid) {
-    console.warn(`[PipelineMG] Shot ${shotIndex}: Code validation failed:`, validation.errors);
+  if (!validatedCode.ok) {
+    console.warn(`[PipelineMG] Shot ${shotIndex}: ${validatedCode.error}`);
     return {
       success: false,
-      remotionCode: cleanCode, // Return code anyway for debugging
-      error: `Code validation failed: ${validation.errors.join('; ')}`,
+      remotionCode: validatedCode.code,
+      error: validatedCode.error,
       mgMode: resolvedMode,
       templateType: resolvedTemplateType,
     };
   }
 
-  // Babel syntax check — catches ALL syntax errors the regex check misses.
-  // This is the #1 reason MG generation "succeeds" but fails at render time.
-  const syntaxResult = transpileCheck(codeToCheck);
-  if (!syntaxResult.valid) {
-    console.warn(`[PipelineMG] Shot ${shotIndex}: ❌ Babel check failed: ${syntaxResult.error}`);
-    return {
-      success: false,
-      remotionCode: codeToCheck,
-      error: `Syntax error: ${syntaxResult.error}`,
-      mgMode: resolvedMode,
-      templateType: resolvedTemplateType,
-    };
-  }
-
-  console.log(`[PipelineMG] Shot ${shotIndex}: ✅ Generation complete (${cleanCode.length} chars, ${skills.length} skills)`);
+  console.log(`[PipelineMG] Shot ${shotIndex}: ✅ Generation complete (${validatedCode.code.length} chars, ${skills.length} skills)`);
 
   return {
     success: true,
-    remotionCode: codeToCheck,
+    remotionCode: validatedCode.code,
     skills,
     durationFrames,
     usedIcons,

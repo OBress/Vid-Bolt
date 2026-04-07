@@ -12,6 +12,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getModelById } from '@/lib/constants/model-registry';
 import { callGpuImageEdit } from '@/lib/services/gpu-api-service';
 import { editImageViaReplicate, getReplicateApiKey } from '@/lib/services/replicate-client';
+import { generatePresignedPutUrl, generateVideoEditorMediaKey } from '@/lib/services/r2-storage';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: NextRequest) {
@@ -64,7 +65,8 @@ export async function POST(request: NextRequest) {
     if (modelDef.provider === 'local') {
       // GPU API
       const jobId = `editor-edit-${uuidv4().slice(0, 8)}`;
-      const saveUrl = `${process.env.R2_PUBLIC_URL || ''}/editor-gen/${user.id}/${jobId}.png`;
+      const outputKey = generateVideoEditorMediaKey(user.id, null, `${jobId}.png`);
+      const { putUrl, publicUrl } = await generatePresignedPutUrl(outputKey, 'image/png');
 
       const result = await callGpuImageEdit({
         job_id: jobId,
@@ -74,7 +76,7 @@ export async function POST(request: NextRequest) {
         seed: seed ?? undefined,
         lora_name: loraName ?? undefined,
         lora_strength: loraStrength ?? undefined,
-        save_url: saveUrl,
+        save_url: putUrl,
       });
 
       if (!result.success) {
@@ -85,7 +87,7 @@ export async function POST(request: NextRequest) {
       }
 
       return NextResponse.json({
-        url: result.publicUrl || saveUrl,
+        url: result.publicUrl || publicUrl,
         jobId: result.jobId,
         isAsync: result.isAsync,
         generationTime: result.generationTime,
