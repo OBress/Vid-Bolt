@@ -422,6 +422,26 @@ If your prompt reads like a still photo description, the output WILL behave like
 - ✓ "A man stands on a windy rooftop. His coat flaps in the wind. He adjusts his collar and steps forward as the camera tracks right." → dynamic, living output
 Action verbs reduce static outputs. ALWAYS include motion, even if subtle (breathing, wind, light shifting, particles drifting).
 
+## FREEZE-WORLD / STILL-SCENE TECHNIQUE
+A deliberate exception to the anti-static rule: the **world is frozen**, but the **camera is fully alive**. Every subject, environment element, and particle is locked perfectly still — yet the camera moves freely through that stillness, allowing the viewer to absorb the scene spatially.
+
+This is distinct from a lazy static shot. The camera is the only moving element; it carries all the motion energy.
+
+**How to prompt for freeze-world in LTX-2.3:**
+- Lock all subjects explicitly: "frozen perfectly still", "suspended mid-motion", "locked in place as if time has stopped", "not a hair moves"
+- Then drive the camera hard: "the camera slowly pushes forward", "drifting through the stillness", "orbiting the frozen tableau", "a smooth crane rising over the scene"
+- Describe what the camera discovers as it moves: "revealing the expression on the face", "exposing the scale of the environment behind him"
+
+Example prompt: "A market square is completely frozen — vendors suspended mid-gesture, birds halted in flight, fabric frozen mid-billow. Not a single element moves. The camera begins wide and slowly pushes forward through the stillness, threading between the frozen figures, drifting toward a lone man at the center whose eyes are the only thing that seem alive. Warm afternoon light is locked in place, long shadows perfectly still across the stone floor."
+
+**When to use this technique (use sparingly — it's powerful because it's rare):**
+- **Documentary / Factual**: Opening establishing shots for a new location or chapter. Slow spatial reveal before the action begins. Moments where visual context matters more than action.
+- **Drama / Narrative**: Just before a pivotal reveal. A character frozen mid-decision while the camera circles to show what they haven't seen yet. The beat before everything changes.
+- **Educational / Explainer**: Spatial overview of a complex environment, architecture, or layout — the camera tours the frozen space to show structure and scale.
+- **True crime / Investigation**: A crime scene, a location, a moment captured — the camera moves through a frozen reconstruction to let the viewer absorb evidence.
+
+**Signal to use it:** The shot planner will assign camera_motion "freeze_orbit". When you see this, apply the freeze-world technique above.
+
 ## CAMERA LANGUAGE VOCABULARY
 - Movement: follows, tracks, pans across, circles around, tilts upward, pushes in, pulls back, dollys, cranes, crash zoom, whip pan, rack focus, snap to
 - Style: handheld movement, static frame, overhead view, over-the-shoulder
@@ -464,13 +484,21 @@ LTX-2.3 rewards ambitious, directed scenes. You CAN:
 - Pacing: slow motion, lingering shot, dynamic movement
 - Atmosphere: fog, rain, dust particles, smoke, bokeh
 
-## EXAMPLE PROMPT
-"A woman in her 30s sits by the window of a small Parisian café. Rain runs down the glass behind her, each droplet catching warm tungsten interior light. She wears a soft cream wool sweater, slightly oversized, with visible knit texture at the cuffs. She slowly stirs her coffee with her right hand while glancing at her phone held in her left. The camera pushes in from a medium shot to a close-up, the background softening into warm bokeh of blurred café patrons and amber pendant lights. Fine strands of her dark hair fall across her forehead. A quiet murmur of café conversation and the gentle clink of porcelain fill the space."
+## TEXT ARTIFACT SUPPRESSION (CRITICAL)
+LTX-2.3 will spontaneously render visible text, captions, subtitles, title cards, and watermarks into video frames if not explicitly suppressed. This is a known artifact pattern that degrades the final edit.
+
+**ABSOLUTE RULES:**
+- NEVER write prompts that describe signage, text, labels, captions, or banners unless the narrative explicitly requires a readable sign as a set prop
+- If narration mentions a "document", "letter", "newspaper", "sign", or "screen" — describe the TEXTURE and APPEARANCE of the object, NOT its readable content
+  - ✗ Avoid: "A newspaper with the headline 'Emperor Julius Caesar Assassinated' in bold text"
+  - ✓ Use: "An aged yellowed newspaper page held in weathered hands, the paper texture worn and creased, unreadable text visible as texture only"
+- ALWAYS END every video prompt with: "No visible text, no captions, no subtitles, no watermarks, no on-screen labels."
+- This suffix must appear VERBATIM at the end of every motion_prompt.
 
 ## OUTPUT FORMAT
 Return valid JSON:
 {
-  "motion_prompt": "Rich, detailed paragraph with specific subjects, spatial blocking, textures, verb-driven action, and camera movement...",
+  "motion_prompt": "Rich, detailed paragraph with specific subjects, spatial blocking, textures, verb-driven action, camera movement, and ending EXACTLY with 'No visible text, no captions, no subtitles, no watermarks, no on-screen labels.'",
   "camera_motion": "pushes" | "tracks" | "pans" | "static" | "follows" | "dollys" | "handheld" | "tilts" | "circles",
   "motion_intensity": "subtle" | "moderate" | "dynamic",
   "loop_compatible": false,
@@ -478,6 +506,7 @@ Return valid JSON:
   "spatial_blocking": "Brief scene blocking: subject positions, facing directions, foreground/background layout",
   "texture_notes": "Key textures and materials emphasized in the prompt"
 }`;
+
 
 const MOTION_GRAPHIC_PROMPT_SYSTEM_PROMPT = `You are a motion graphics director designing COMPOSITIONS for documentary visuals.
 

@@ -97,6 +97,7 @@ const SceneShotOutput = z.object({
     'crane',
     'zoom_in',
     'zoom_out',
+    'freeze_orbit',
   ]).default('static'),
   lens_style: z.string().default(''),
   subject_focus: z.string().default(''),
@@ -308,7 +309,7 @@ export interface EnrichedPlannedShot {
   shot_role?: 'hook' | 'establish' | 'coverage' | 'insert' | 'bridge' | 'annotation' | 'payoff' | 'reaction' | 'graphic_explainer' | 'closing';
   framing?: 'extreme_wide' | 'wide' | 'medium_wide' | 'medium' | 'medium_close' | 'close_up' | 'extreme_close';
   camera_angle?: 'eye_level' | 'low_angle' | 'high_angle' | 'overhead' | 'top_down' | 'profile' | 'macro_detail' | 'first_person' | 'dutch';
-  camera_motion?: 'static' | 'push_in' | 'pull_out' | 'pan_left' | 'pan_right' | 'tilt_up' | 'tilt_down' | 'orbit' | 'tracking' | 'handheld' | 'crane' | 'zoom_in' | 'zoom_out';
+  camera_motion?: 'static' | 'push_in' | 'pull_out' | 'pan_left' | 'pan_right' | 'tilt_up' | 'tilt_down' | 'orbit' | 'tracking' | 'handheld' | 'crane' | 'zoom_in' | 'zoom_out' | 'freeze_orbit';
   lens_style?: string;
   subject_focus?: string;
   entry_transition_intent?: string;
@@ -557,6 +558,24 @@ DIRECTING GRAMMAR:
   - segment_video_fx for tracked effects on an existing video
   - segment_mask_prep when segmentation should prepare a mask/edit before another step
 
+FREEZE-WORLD TECHNIQUE (camera_motion: 'freeze_orbit'):
+A powerful cinematic tool where everything in the scene is perfectly still — frozen in time — while the camera moves freely through the environment. The world is paused; the lens is not.
+- Use this when you want the viewer to absorb a scene spatially without distraction from subject motion.
+- The camera can push in, pull back, orbit, crane, or drift — the subjects and environment remain statue-still.
+- Distinct from 'orbit' (which implies a living scene) — in freeze_orbit, nothing breathes.
+
+When to use freeze_orbit:
+- Documentary / Factual: Establishing overview shots at the start of a new location or chapter. Slow reveal of a scene before the action begins. "Pause the world" moments that let critical visual information land.
+- Drama / Narrative: Tension-building before a reveal. A character frozen mid-action while the camera circles to reveal something behind them. The moment before a pivotal event.
+- Educational / Explainer: Spatial overview of a structure, environment, or layout — the camera flies around to show all angles.
+- General rule: If the purpose is to let the viewer SEE THE WORLD rather than WATCH SOMETHING HAPPEN, freeze_orbit is the right choice.
+
+In visual_description, describe:
+1. What is frozen (scene, subjects, environment)
+2. How the camera moves through the stillness
+3. What the viewer is meant to discover or absorb
+Example: "A busy city intersection frozen mid-moment — pedestrians stopped mid-step, cars halted. The camera slowly orbits the frozen tableau from eye level, drifting forward through the stillness to reveal the lone figure at the center."
+
 SEGMENTATION TREATMENT:
 - Use segmentation_treatment only when it adds real editorial value.
 - Good use cases: highlighting an important character, circling/isolating a face, spotlighting evidence, desaturating the background around a subject, guided zoom into a detail, tracked annotation in motion.
@@ -611,7 +630,26 @@ PERSISTENT GRAPHICS:
   - remove_labels: labels/items that should be removed or marked resolved
   - focus_label: which label/item should be emphasized now
   - status: introduced, updated, revealed, or resolved
-- Only use persistent graphics when they add real narrative continuity. Do NOT force them into every scene.`);
+- Only use persistent graphics when they add real narrative continuity. Do NOT force them into every scene.
+
+SHOT DURATION & PACING:
+Each shot spans a natural narration segment. Keep these guidelines in mind:
+- hook: 1.5-3s ideal
+- establishing: 3-5s ideal
+- buildup / detail / transition: 2-4s ideal
+- reveal / reaction / climax: 3-6s ideal
+- resolution: 4-7s ideal
+- No single shot should exceed 10s unless the narration for that shot genuinely runs that long without pause
+- If a shot would be very long (8s+) and covers static content, consider splitting it into 2 shorter shots with different angles or framings
+
+MULTI-ANGLE COVERAGE (use I2V continuity proactively for long scenes):
+When a scene covers 15+ seconds in the same physical location, do NOT plan it as one long shot or a series of entirely separate keyframe generations.
+Instead, break it into 3-5 shorter shots using continuity_from_previous + angle_change + synthesis_mode I2V to create a multi-camera feel:
+- Example chain: wide establishing (T2V) → push in to medium (I2V, angle_change: push in to medium shot) → reframe to subject closeup (I2V, angle_change: shift to close-up on face) → pull back to wide again (I2V, angle_change: pull back to re-establish)
+- This is cinematically superior to 4 unrelated T2V shots because the world stays consistent while the camera moves
+- I2V chains also save generation cost and produce more coherent results than disconnected keyframes
+- The "angle_change" should be concise and camera-oriented: "push in to medium", "shift overhead", "pan left to reveal doorway", "pull back to wide", "detail crop to hands"`);
+
 
   return parts.join('\n');
 }
@@ -674,10 +712,11 @@ function inferCameraMotion(
   continuityFromPrevious: boolean,
 ): NonNullable<EnrichedPlannedShot['camera_motion']> {
   if (mediaType === 'motiongraphic') {
-    if (beat === 'detail' || beat === 'reveal' || beat === 'climax') return 'push_in';
-    if (beat === 'transition') return 'pan_right';
+    // MG compositions animate their internal elements — the "camera" is not moving.
+    // Only use non-static for specific beats where the design itself has a directional reveal.
+    if (beat === 'reveal' || beat === 'climax') return 'push_in';
     if (beat === 'establishing') return 'pull_out';
-    return 'pan_left';
+    return 'static'; // default: hold the composition, animate the elements within it
   }
   if (mediaType === 'image') {
     if (beat === 'detail' || beat === 'reveal' || beat === 'climax') return 'push_in';

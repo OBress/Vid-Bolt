@@ -67,6 +67,9 @@ const TIMEOUT_BENCHMARKS = {
   leniencyMultiplier: 2,
 };
 
+// How often to log which items are still pending (helps diagnose dropped webhooks)
+const WEBHOOK_WATCHDOG_INTERVAL_MS = 30_000;
+
 // Mode switch timeout (LTX-2 loading can take ~90s+)
 export const MODE_SWITCH_TIMEOUT_MS = 180_000;
 const MODE_POLL_INTERVAL_MS = 2_000;
@@ -99,6 +102,8 @@ export interface ShotForGpuGeneration {
   neighbor_context?: string;
   /** Video-level visual style context */
   visual_style?: string;
+  /** Directorial camera motion intent — used to preserve freeze_orbit / static decisions */
+  camera_motion?: string;
 }
 
 export interface GpuGenerationResult {
@@ -773,6 +778,8 @@ function enrichLtx2Prompt(
   shotIndex?: number,
   neighborContext?: string,
   visualStyle?: string,
+  /** Directorial camera motion intent from the shot planner */
+  cameraMotion?: string,
 ): string {
   const styleSignals = getStyleSignals(visualStyle, rawPrompt, neighborContext);
   const cleanedPrompt = styleSignals.nonPhotorealistic
@@ -844,8 +851,12 @@ function enrichLtx2Prompt(
     contextPrefix + cleanedPrompt.trim().replace(/\.$/, ''),
   ];
 
-  // LTX 2.3 anti-static: inject subtle action if prompt has no verbs
-  if (!hasActionVerbs) {
+  // LTX 2.3 anti-static guard — ONLY inject ambient motion when:
+  // 1. The shot has no action verbs already, AND
+  // 2. The director did NOT explicitly choose stillness (freeze_orbit or static)
+  // Respecting directorial intent is critical — freeze_orbit shots should be stone-still worlds.
+  const isDeliberatelyStill = cameraMotion === 'freeze_orbit' || cameraMotion === 'static';
+  if (!hasActionVerbs && !isDeliberatelyStill) {
     parts.push('Subtle natural movement in the scene — wind, breathing, ambient motion.');
   }
 
@@ -918,6 +929,7 @@ async function processVideoBatch(
           shot.segment_index,
           shot.neighbor_context,
           shot.visual_style,
+          shot.camera_motion,
         ),
         duration_seconds: Math.min(shot.duration_seconds || 5, 10),
         aspect_ratio: aspectRatio,
@@ -993,11 +1005,41 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
 ): Promise<GpuGenerationResult[]> {
   const logPrefix = `[GPU-Batch/Webhooks]`;
   const results: GpuGenerationResult[] = [];
-  
+
+  // Per-item timeout: computed dynamically per shot from calculateTimeout so
+  // long-form videos get proportionally more headroom. Using itemCount=1 gives
+  // a generous single-item estimate that overestimates intentionally.
+  // This is much shorter than the full batch timeout (which can be 30+ min for
+  // a large batch) but still handles extremely long clips correctly.
+  const getPerItemCap = (shot: ShotForGpuGeneration): number => calculateTimeout(
+    mediaType === 'video' ? 'video_generation' : 'image_generation',
+    1,
+    mediaType === 'video'
+      ? { avgDurationSec: shot.duration_seconds ?? 5, totalVideoDurationSec: shot.duration_seconds ?? 5 }
+      : undefined,
+  );
+
+  // Watchdog: track which items are still pending and log them periodically
+  const pendingItems = new Map<string, number>(
+    items.map(item => [item.item_id, Date.now()])
+  );
+  const watchdogInterval = setInterval(() => {
+    if (pendingItems.size === 0) return;
+    const pendingDetails = Array.from(pendingItems.entries()).map(([itemId, startedAt]) => {
+      const shot = itemIdToShot.get(itemId);
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      return `shot-${shot?.segment_index ?? '?'} (${elapsedSec}s)`;
+    });
+    console.warn(
+      `${logPrefix} [WATCHDOG] ${pendingItems.size}/${items.length} ${mediaType} webhooks still pending: ${pendingDetails.join(', ')}`,
+    );
+  }, WEBHOOK_WATCHDOG_INTERVAL_MS);
+
   // Create promises for all items
   const webhookPromises = items.map(async (item) => {
     const shot = itemIdToShot.get(item.item_id);
     if (!shot) {
+      pendingItems.delete(item.item_id);
       return {
         shot_index: -1,
         media_url: '',
@@ -1006,9 +1048,11 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
       };
     }
 
+    const perItemCap = getPerItemCap(shot);
     try {
-      const webhookResult = await waitForWebhookResult(item.item_id, timeoutMs);
-      
+      const webhookResult = await waitForWebhookResult(item.item_id, perItemCap);
+      pendingItems.delete(item.item_id);
+
       if (webhookResult.status === 'completed' && webhookResult.result?.save_url) {
         // Convert presigned PUT URL (upload-only) to public URL via custom domain
         // The webhook returns the same save_url we sent (a presigned PUT URL),
@@ -1018,9 +1062,9 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
           const key = getKeyFromUrl(publicUrl);
           publicUrl = getPublicUrl(key);
         } catch (e) {
-          console.error(`[GPU-Batch/Webhooks] Failed to convert save_url to public URL for shot ${shot.segment_index}:`, e);
+          console.error(`${logPrefix} Failed to convert save_url to public URL for shot ${shot.segment_index}:`, e);
         }
-        
+
         return {
           shot_index: shot.segment_index,
           media_url: publicUrl,
@@ -1037,12 +1081,23 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
         };
       }
     } catch (error) {
-      console.error(`${logPrefix} Webhook wait failed for shot ${shot.segment_index}:`, error);
+      pendingItems.delete(item.item_id);
+      const isTimeout = error instanceof Error && error.message.includes('Timeout');
+      if (isTimeout) {
+        console.error(
+          `${logPrefix} Shot ${shot.segment_index} DROPPED — no webhook after ${Math.round(perItemCap / 1000)}s. ` +
+          `GPU likely silently dropped this item. Treating as failed and unblocking batch.`,
+        );
+      } else {
+        console.error(`${logPrefix} Webhook wait failed for shot ${shot.segment_index}:`, error);
+      }
       return {
         shot_index: shot.segment_index,
         media_url: '',
         generation_status: 'failed' as const,
-        error_message: error instanceof Error ? error.message : 'Webhook timeout',
+        error_message: isTimeout
+          ? `Webhook timeout after ${Math.round(perItemCap / 1000)}s — GPU dropped this item`
+          : (error instanceof Error ? error.message : 'Webhook timeout'),
       };
     }
   });
@@ -1057,8 +1112,13 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
     onItemResolved?.(result);
     return result;
   });
-  const allResults = await Promise.all(trackedPromises);
-  results.push(...allResults);
+
+  try {
+    const allResults = await Promise.all(trackedPromises);
+    results.push(...allResults);
+  } finally {
+    clearInterval(watchdogInterval);
+  }
 
   return results;
 }

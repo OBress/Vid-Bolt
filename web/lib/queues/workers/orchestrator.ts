@@ -569,7 +569,6 @@ interface ShotPlanReflectionResult {
  */
 async function performShotPlanReflection(
   videoId: string,
-  shotCount: number,
   userId: string
 ): Promise<ShotPlanReflectionResult> {
   const LOG_PREFIX_REFLECT = '[ShotPlanReflect]';
@@ -593,7 +592,7 @@ async function performShotPlanReflection(
   const shots = shotPlan.shots as Array<Record<string, unknown>>;
   const totalDuration = (shotPlan.metadata as Record<string, unknown>)?.total_duration_seconds || 0;
 
-  // Serialize the shot plan for LLM review (include new fields)
+  // Serialize the shot plan for LLM review
   const serializedPlan = shots.map((shot, i) => ({
     index: i,
     media_type: shot.media_type,
@@ -604,6 +603,7 @@ async function performShotPlanReflection(
     angle_change: shot.angle_change || null,
     synthesis_mode: shot.synthesis_mode || 'T2V',
     duration: shot.duration_seconds,
+    camera_motion: shot.camera_motion || null,
     entity_refs: (shot.entity_refs as string[])?.length || 0,
     description: (shot.description || shot.summary || '').toString().substring(0, 100),
   }));
@@ -617,22 +617,7 @@ async function performShotPlanReflection(
     },
     {
       role: 'user',
-      content: `Review this ${shotCount}-shot plan (total audio: ${totalDuration}s) for issues:
-
-${JSON.stringify(serializedPlan, null, 2)}
-
-Check for:
-1. Missing coverage: any large gaps between shots?
-2. Unreasonable durations: shots <2s or >15s?
-3. Media type imbalance: are all shots the same type?
-4. Entity consistency: shots referencing characters but no entity_refs?
-5. Total coverage: do durations roughly sum to ${totalDuration}s?
-6. Scene structure: do shots with the same scene_id form coherent visual groups?
-7. Narrative beat variety: is there a pacing rollercoaster (varying energy), or are all beats the same?
-8. Continuity consistency: is angle_change only present when continuity=true? Is the first shot in each scene always continuity=false?
-9. Synthesis mode: are continuity shots using I2V and first-in-scene shots using T2V?
-
-Severity guidelines: "major" = fundamental plan errors that would produce unwatchable video. "minor" = imperfections that are acceptable. "none" = plan looks good.`,
+      content: `Review this ${shots.length}-shot plan (total audio: ${totalDuration}s) for issues:\n\n${JSON.stringify(serializedPlan, null, 2)}\n\nCheck for:\n1. Missing coverage: any large gaps between shots?\n2. Unreasonable durations: shots <2s or >15s?\n3. Media type imbalance: are all shots the same type?\n4. Entity consistency: shots referencing characters but no entity_refs?\n5. Total coverage: do durations roughly sum to ${totalDuration}s?\n6. Scene structure: do shots with the same scene_id form coherent visual groups?\n7. Narrative beat variety: is there a pacing rollercoaster (varying energy), or are all beats the same?\n8. Continuity consistency: is angle_change only present when continuity=true? Is the first shot in each scene always continuity=false?\n9. Synthesis mode: are continuity shots using I2V and first-in-scene shots using T2V?\n10. MG appropriateness: are any motiongraphic shots used for beats that should clearly be video (establishing, action, character, emotional)? Flag if 2+ consecutive motiongraphic shots appear where footage would be more impactful.\n11. Pacing monotony: are 3 or more consecutive shots the same media_type with the same camera_motion? That indicates mechanical planning.\n12. Duration vs beat: are any "hook" shots >5s, "buildup" or "detail" shots >7s, or "transition" shots >5s? These suggest the planner bundled too much into one shot.\n13. I2V underuse: are there 4+ consecutive video shots in the same scene_id where none use continuity_from_previous=true? Suggests a missed opportunity for multi-angle I2V chain.\n\nSeverity: "major" = fundamental errors producing unwatchable video. "minor" = acceptable imperfections. "none" = plan looks good.`,
     },
   ], {
     model: REFLECTION_MODEL,
@@ -2073,6 +2058,13 @@ async function executeProductionPhase(
       if (fundamentalFailures.length > 0) {
         console.log(`${LOG_PREFIX} Batch retrying ${fundamentalFailures.length} fundamental failures in single GPU pass`);
 
+        // Notify the UI that we're in error-correction mode
+        await updateTaskStatus(taskId, {
+          status: 'running',
+          current_step: `Fixing ${fundamentalFailures.length} shot${fundamentalFailures.length !== 1 ? 's' : ''} — re-generating with simplified prompts...`,
+          progress_percent: 72,
+        });
+
         // Build per-shot feedback map
         const retryFeedbackMap: Record<number, string> = {};
         const retryShotIndices: number[] = [];
@@ -2130,7 +2122,17 @@ async function executeProductionPhase(
           }
 
           state.total_retries = (state.total_retries || 0) + retriesSucceeded;
+          const retryFailed = fundamentalFailures.length - retriesSucceeded;
           console.log(`${LOG_PREFIX} Batch retry complete: ${retriesSucceeded}/${fundamentalFailures.length} succeeded`);
+
+          // Notify UI of retry outcome
+          await updateTaskStatus(taskId, {
+            status: 'running',
+            current_step: retryFailed > 0
+              ? `Shot fix complete — ${retriesSucceeded} fixed, ${retryFailed} flagged. Moving to assembly...`
+              : `All ${retriesSucceeded} shots fixed successfully. Moving to assembly...`,
+            progress_percent: 78,
+          });
         } catch (retryErr) {
           console.warn(`${LOG_PREFIX} Batch retry failed:`, retryErr);
           // Flag all failed shots with their original URLs
@@ -2142,6 +2144,13 @@ async function executeProductionPhase(
               allAttemptUrls: [f.mediaUrl],
             });
           }
+
+          // Notify UI that retry failed but we're continuing
+          await updateTaskStatus(taskId, {
+            status: 'running',
+            current_step: `Shot fix timed out — ${fundamentalFailures.length} shots flagged. Continuing to assembly...`,
+            progress_percent: 78,
+          });
         }
       }
     }
@@ -3058,7 +3067,6 @@ export const orchestratorProcessor: Processor<OrchestratorJobData> = async (
         try {
           const reflectionResult = await performShotPlanReflection(
             videoId,
-            shotResult.shotCount,
             userId
           );
 

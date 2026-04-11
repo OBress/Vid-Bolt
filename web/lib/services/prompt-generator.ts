@@ -82,6 +82,78 @@ function getWorkerOverride(manifest: CreativeManifest, workerKey: string): strin
   return `\n\nADDITIONAL USER INSTRUCTIONS:\n${override}`;
 }
 
+/**
+ * Detect cinematic/dramatic intent from manifest signals.
+ * Used to calibrate how aggressively MG use is discouraged.
+ */
+function detectCinematicIntent(manifest: CreativeManifest): 'cinematic' | 'explainer' | 'mixed' {
+  const corpus = [
+    manifest.style.visual_style,
+    manifest.directing_intent,
+    manifest.master_creative_prompt,
+    manifest.video_creative_prompt,
+    manifest.script_context?.genre,
+    manifest.script_context?.tone_style,
+    manifest.video_grammar_profile?.format_profile,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  const cinematicSignals = /\b(cinematic|documentary|dramatic|narrative|film|movie|thriller|historical|action|true crime|story|epic|drama|short film|trailer|3d render|blender|cgi)\b/i.test(corpus);
+  const explainerSignals = /\b(explainer|tutorial|educational|how.?to|explainer video|lesson|course|training|infographic|presentation|breakdown|guide|overview)\b/i.test(corpus);
+
+  if (cinematicSignals && !explainerSignals) return 'cinematic';
+  if (explainerSignals && !cinematicSignals) return 'explainer';
+  return 'mixed';
+}
+
+/**
+ * Build context-sensitive motion graphics decision guidance.
+ * Translates the user's creative manifest into actionable principles
+ * for when MG is and isn't the right tool — without any hardcoded quotas.
+ */
+function buildMgDecisionFramework(manifest: CreativeManifest): string {
+  const intent = detectCinematicIntent(manifest);
+  const mgWeight = manifest.media_weighting.motion_graphics;
+
+  const parts: string[] = [];
+  parts.push(`\n═══ MOTION GRAPHIC DECISION FRAMEWORK ═══`);
+  parts.push(`Before choosing motiongraphic for any shot, ask these questions in order:
+  1. Could a compelling VIDEO communicate this moment better? → If yes: use video.
+  2. Is this purely informational — a stat, a date, a key term, evidence, a map? → MG is valid.
+  3. Does the narration describe ACTION, a PERSON, a LOCATION, or an EVENT? → Use video, not MG.
+  4. Would a viewer watching a professional edit expect footage or a graphic here? → Match that expectation.
+  5. Would a back-to-back MG shot make the edit feel like a slideshow? → If yes: use video.
+
+MG is a TOOL for information design — not a substitute for cinematic footage.`);
+
+  if (intent === 'cinematic') {
+    parts.push(`
+CINEMATIC PROJECT — STRICT MG DISCIPLINE:
+This project has a cinematic/dramatic creative direction. In this context:
+- Motion graphics ONLY belong as: lower-thirds, key statistics, timeline markers, evidence callouts, location cards, quote cards, map overlays
+- Motion graphics DO NOT belong on: establishing shots, character scenes, action sequences, emotional beats, reveal moments, any beat where footage would be more impactful
+- If you're considering MG for an establishing or dramatic moment, stop — use video or a segmentation-treated image instead
+- One or two well-placed MG shots per minute is the right cadence; more than that starts to feel like an explainer video, not a film
+- The ${mgWeight <= 0.15 ? 'low' : mgWeight <= 0.3 ? 'moderate' : 'high'} motion graphics preference signal for this project means: use MG ${mgWeight <= 0.15 ? 'sparingly — only when no visual alternative exists' : mgWeight <= 0.3 ? 'selectively — only when the information genuinely requires a designed callout' : 'when it clearly improves information clarity or emphasis'}`);
+  } else if (intent === 'explainer') {
+    parts.push(`
+EXPLAINER PROJECT — MG AS PRIMARY TOOL:
+This project has an educational/explainer creative direction. In this context:
+- Motion graphics are appropriate whenever they make information clearer or more memorable
+- Even in explainer videos: if a concept can be shown with real-world footage plus an MG overlay, that is stronger than MG alone
+- Avoid making the video feel like a static presentation — vary between footage, MG overlays, and pure MG shots
+- The ${mgWeight <= 0.15 ? 'low' : mgWeight <= 0.3 ? 'moderate' : 'high'} motion graphics preference signal means: aim for roughly ${mgWeight <= 0.15 ? '1 in 6' : mgWeight <= 0.3 ? '1 in 4' : '1 in 2'} shots being MG-led`);
+  } else {
+    parts.push(`
+MIXED PROJECT — CONTEXTUAL MG USE:
+This project blends cinematic and informational elements. Apply MG judgment shot-by-shot:
+- For dramatic/narrative beats: prefer video, treat MG as an annotation layer
+- For information-heavy beats: MG is appropriate, especially for stats, data, or key terms
+- The media preference signal (motion_graphics: ${mgWeight.toFixed(1)}) is a taste guide — follow the narrative beat, not the number`);
+  }
+
+  return parts.join('\n');
+}
+
 function buildStyleGuardBlock(manifest: CreativeManifest): string {
   const signals = getStyleSignals(
     manifest.style.visual_style,
@@ -122,6 +194,14 @@ function describeCadence(value: number): string {
 
 function buildCreativePreferencesBlock(manifest: CreativeManifest): string {
   const grammar = manifest.video_grammar_profile;
+  const intent = detectCinematicIntent(manifest);
+
+  // Context-sensitive note that interprets what the MG weight MEANS for this specific style
+  const mgInterpretation = intent === 'cinematic'
+    ? `For this cinematic/dramatic project, "${describePreferenceWeight(manifest.media_weighting.motion_graphics)}" MG use means: reserve MG for designed callouts and data moments only — not for establishing, action, or emotional beats.`
+    : intent === 'explainer'
+    ? `For this educational/explainer project, "${describePreferenceWeight(manifest.media_weighting.motion_graphics)}" MG use means: MG is a primary tool — use it when it makes information clearer or more memorable.`
+    : `For this mixed-format project, apply MG contextually — prefer footage for narrative beats, MG for information-dense beats.`;
 
   return `CREATIVE PREFERENCES (signals from the user's style choices — not quotas to fill):
 The user's media preference leans toward:
@@ -130,6 +210,7 @@ The user's media preference leans toward:
 - Stock footage: ${describePreferenceWeight(manifest.media_weighting.stock_footage)} — use real-world footage when it materially improves credibility or specificity
 - AI image stills: ${describePreferenceWeight(manifest.media_weighting.ai_image_static)} — use as source material for segmentation, image edits, or editorial camera movement rather than dead final stills
 These preferences describe taste. They do NOT prescribe quotas.
+→ ${mgInterpretation}
 
 PACING PREFERENCES:
 - Hook: open strong within roughly the first ${manifest.pacing_rules.hook_duration_seconds}s.
@@ -174,6 +255,7 @@ ${manifest.style.color_palette.length > 0 ? `COLOR PALETTE: ${manifest.style.col
 
 ${buildStyleGuardBlock(manifest)}
 ${buildCreativePreferencesBlock(manifest)}
+${buildMgDecisionFramework(manifest)}
 
 ═══ DIRECTOR MINDSET ═══
 Think from a director's point of view. Every shot serves a purpose in the viewer's journey.

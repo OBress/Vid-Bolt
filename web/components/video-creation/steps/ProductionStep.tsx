@@ -553,7 +553,9 @@ export function ProductionStep({
                   ? "bg-gradient-to-r from-green-500 to-emerald-400"
                   : errorMessage
                     ? "bg-gradient-to-r from-red-500 to-red-400"
-                    : "bg-gradient-to-r from-blue-500 to-indigo-400"
+                    : currentStep?.toLowerCase().includes("fixing")
+                      ? "bg-gradient-to-r from-amber-500 to-orange-400"
+                      : "bg-gradient-to-r from-blue-500 to-indigo-400"
               }`}
               style={{ width: `${hasCompleted ? 100 : progress}%` }}
             />
@@ -562,11 +564,28 @@ export function ProductionStep({
             <span>
               {hasCompleted
                 ? "Complete"
-                : taskStatus === "running"
-                  ? "Processing..."
-                  : taskStatus || "Initializing..."}
+                : currentStep?.toLowerCase().includes("fixing")
+                  ? "Fixing errors..."
+                  : currentStep?.toLowerCase().includes("flagged")
+                    ? "Resuming..."
+                    : taskStatus === "running"
+                      ? "Processing..."
+                      : taskStatus || "Initializing..."}
             </span>
             <span>{Math.round(hasCompleted ? 100 : progress)}%</span>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Retry Banner — shown when orchestrator is actively fixing failed shots */}
+      {isRunning && currentStep?.toLowerCase().includes("fixing") && (
+        <div className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-amber-500/30 bg-amber-500/8 animate-pulse">
+          <RefreshCw className="w-4 h-4 text-amber-400 flex-shrink-0 animate-spin" />
+          <div className="flex-1">
+            <p className="text-sm text-amber-300 font-medium">Regenerating failed shots</p>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              {currentStep.replace(/phase\s+[ivxIVX\-]+\w*:\s*/gi, "")}
+            </p>
           </div>
         </div>
       )}

@@ -163,7 +163,7 @@ export async function expandSpineToScript(
   const { batchRateBeats, rewriteLowScorers } = await import('./quality-reviewer');
   const ratingResult = await batchRateBeats(userId, expandedBeats, {
     genre,
-    model: options.qualityReviewModel,
+    // model intentionally omitted — batchRateBeats uses its own flash model by default
     qualityPromptOverride: options.styleConfig?.systemPromptOverrides?.quality,
   });
   

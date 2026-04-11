@@ -182,12 +182,20 @@ export async function editImage(
 }
 
 export function normalizeAngleChangeInstruction(angleChange: string | undefined): string {
-  return (angleChange || '')
+  const base = (angleChange || '')
     .replace(/\s+/g, ' ')
     .trim()
     .split(' ')
     .slice(0, 12)
     .join(' ');
+
+  if (!base) return '';
+
+  // Append preservation anchors so Qwen-Edit reframes the camera
+  // without altering the subject's appearance, lighting, or world texture.
+  // This is critical for I2V continuity — the frame edit is setting the start
+  // frame for a new video generation; any subject drift here cascades forward.
+  return `${base}. Preserve subject appearance, clothing, lighting, and background environment exactly. Only adjust camera angle and framing. Do not add or remove scene elements. No text, no watermarks.`;
 }
 
 export interface ContinuityWaveShotInput {

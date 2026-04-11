@@ -431,3 +431,63 @@ const vehicleY = interpolate(
 6. **City data requires `loadCities()` first** — call it in `useEffect`, then use `getCityCoords()` / `getCityInfo()` synchronously after loading
 7. **Do NOT import d3-geo or topojson** — everything is already in scope
 8. **Render maps as `<svg>`** elements, not `<canvas>` — SVG plays well with Remotion's DOM rendering
+9. **Historical/Ancient Location Fallback (CRITICAL):** The city database only contains modern cities. Ancient, historical, or renamed locations (e.g., "Rome in 44 BC", "Carthage", "Constantinople", "Gaul", "Mesopotamia", "Han Dynasty China") will return `null` from `getCityCoords()`. **When a location is historical or ancient, you MUST hardcode the [lng, lat] coordinates directly.** Never allow `getCityCoords` to silently fail for historical content — the map will break.
+
+## Historical/Ancient Location Reference Coordinates
+
+When `getCityCoords()` returns null for a historical location, use these known coordinates as hardcoded fallbacks:
+
+```tsx
+// Use approximate modern geographic coordinates for the historical location.
+// Example: "Julius Caesar's Rome" → modern Rome, Italy
+const HISTORICAL_COORDS: Record<string, [number, number]> = {
+  // Ancient Rome / Italian Peninsula
+  "rome": [12.4964, 41.9028],
+  "carthage": [10.3237, 36.8528],
+  "athens": [23.7275, 37.9838],
+  "sparta": [22.4293, 37.0756],
+  "troy": [26.2385, 39.9577],
+  "babylon": [44.4213, 32.5364],
+  "nineveh": [43.3550, 36.3621],
+  "persepolis": [52.8878, 29.9352],
+  "alexandria": [29.9187, 31.2001],
+  "memphis-egypt": [31.2167, 29.8500],
+  "thebes-egypt": [32.6451, 25.6872],
+  "constantinople": [28.9784, 41.0082],
+  "byzantium": [28.9784, 41.0082],
+  "jerusalem": [35.2137, 31.7683],
+  "jericho": [35.4611, 31.8614],
+  "ur-mesopotamia": [46.1031, 30.9625],
+  "gaul-center": [2.3522, 46.2276],
+  "hispania-center": [-3.7038, 40.4168],
+  "londinium": [-0.1276, 51.5074], // Ancient London
+  "lutetia": [2.3522, 48.8566],    // Ancient Paris
+};
+
+// Usage pattern for historical locations:
+const cityName = "Rome"; // As mentioned in narration
+const coords = getCityCoords(cityName) ||
+  HISTORICAL_COORDS[cityName.toLowerCase()] ||
+  HISTORICAL_COORDS["rome"]; // Final fallback to Rome if completely unknown
+```
+
+**Pattern to use when city may be historical:**
+```tsx
+// Robust city coordinate lookup — handles both modern and historical locations
+function getCoords(cityName: string): [number, number] | null {
+  // Try modern database first
+  const modern = getCityCoords(cityName);
+  if (modern) return modern;
+
+  // Hardcode known historical locations (never allow silent null)
+  const historical: Record<string, [number, number]> = {
+    "rome": [12.4964, 41.9028],
+    "carthage": [10.3237, 36.8528],
+    "babylon": [44.4213, 32.5364],
+    "constantinople": [28.9784, 41.0082],
+    "alexandria": [29.9187, 31.2001],
+    // Add more as needed for the specific narrative
+  };
+  return historical[cityName.toLowerCase()] || null;
+}
+```

@@ -172,6 +172,7 @@ export const CameraMotion = z.enum([
   'crane',
   'zoom_in',
   'zoom_out',
+  'freeze_orbit',
 ]);
 export type CameraMotion = z.infer<typeof CameraMotion>;
 

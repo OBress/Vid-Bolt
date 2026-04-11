@@ -492,6 +492,8 @@ A single continuous moment. One camera, one subject, one atmosphere.
 Best when the power is in WATCHING something unfold - movement, emotion, scale.
 Creates atmosphere through cinematography: lighting, depth, motion, texture.
 
+Includes the **freeze-world** technique: the entire scene is frozen still while the camera moves freely through it — orbiting, pushing, drifting. Use when the viewer needs to absorb a scene spatially (overview shots, establishing shots, the beat before a pivotal moment, spatial reveals). The world is paused; the camera is not.
+
 **"motiongraphic"** - Composed visual storytelling
 Multiple elements working together. Images, text, graphics, annotations.
 Best when the power is in RELATIONSHIPS - connecting ideas, revealing patterns,
