@@ -117,7 +117,17 @@ export const VideoLayerContent: React.FC<VideoLayerContentProps> = ({
     return renderFallback('Media pending…');
   }
 
-  // Safety check - reject stringified objects / obviously invalid sources.
+  // Safety check - image file extensions (PNG, JPG, WEBP, etc.) cannot be decoded
+  // by OffthreadVideo (which expects a video container). This happens when a keyframe
+  // image URL (e.g. shot_0_keyframe.png) ends up as the clip src for a shot that
+  // has no generated video yet. Remotion fires MediaError code 4 (format error) if
+  // we mount OffthreadVideo with such a URL.
+  if (/\.(png|jpe?g|webp|gif|bmp|avif|svg)(\?|$)/i.test(overlay.src)) {
+    console.warn(`VideoLayerContent: src is an image URL, cannot render as video — falling back (id=${overlay.id}, src=${overlay.src.slice(-60)})`);
+    return renderFallback('Media pending…');
+  }
+
+
   // Remotion's VideoForPreview unconditionally fires console.error("Error occurred in video", {})
   // on any native <video> error, so we must prevent mounting with bad URLs.
   if (

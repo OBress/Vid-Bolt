@@ -22,6 +22,27 @@ import { generateJSON, QUALITY_REVIEW_MODEL } from '@/lib/ai/openrouter';
 import type { CreativeManifest } from '@/lib/types/closed-loop';
 
 // ============================================================================
+// DEBUG CAPTURE INTERFACE
+// ============================================================================
+
+/**
+ * Optional callbacks for capturing LLM call inputs/outputs during a debug run.
+ * Injected into core pipeline functions by the ShotPlannerDebugger dev tool.
+ * All fields are optional — the callbacks are never called in production
+ * because the parameter itself is never passed from any production call site.
+ */
+export interface DebugCapture {
+  /** Called with the full system prompt before each LLM attempt. */
+  onSystemPrompt?: (phase: string, attempt: number, prompt: string) => void;
+  /** Called with the full user prompt before each LLM attempt. */
+  onUserPrompt?: (phase: string, attempt: number, prompt: string) => void;
+  /** Called with the raw LLM response object after a successful attempt. */
+  onLLMResponse?: (phase: string, attempt: number, response: unknown) => void;
+  /** Called when an attempt fails before retrying. */
+  onError?: (phase: string, attempt: number, error: string) => void;
+}
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -378,7 +399,9 @@ export async function decomposeIntoScenes(
   script: string,
   wordTimestamps: WordTimestamp[],
   creativeContext: SceneDecompositionContext,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  /** Optional debug capture callbacks — never passed in production. */
+  debugCapture?: DebugCapture
 ): Promise<EnrichedScene[] | null> {
   const wordCount = wordTimestamps.length;
   if (wordCount === 0) {
@@ -410,6 +433,10 @@ export async function decomposeIntoScenes(
       onProgress?.(`Scene decomposition attempt ${i + 1}/5 (${model.split('/')[1]})...`);
       console.log(`${LOG_PREFIX} Attempt ${i + 1}/5 with ${model}`);
 
+      // Debug capture: emit prompts before the LLM call
+      debugCapture?.onSystemPrompt?.('scene_decomposer', i, systemPrompt);
+      debugCapture?.onUserPrompt?.('scene_decomposer', i, userPrompt);
+
       const raw = await generateJSON<SceneDecompositionOutput>(
         userId,
         systemPrompt,
@@ -423,10 +450,14 @@ export async function decomposeIntoScenes(
         }
       );
 
+      // Debug capture: emit raw response after the LLM call
+      debugCapture?.onLLMResponse?.('scene_decomposer', i, raw);
+
       // Validate with Zod
       const parsed = SceneDecompositionOutput.safeParse(raw);
       if (!parsed.success) {
         console.warn(`${LOG_PREFIX} Attempt ${i + 1} Zod validation failed:`, parsed.error.message);
+        debugCapture?.onError?.('scene_decomposer', i, `Zod validation failed: ${parsed.error.message}`);
         continue;
       }
 
@@ -435,6 +466,7 @@ export async function decomposeIntoScenes(
 
       if (enriched.length === 0) {
         console.warn(`${LOG_PREFIX} Attempt ${i + 1} produced 0 valid scenes after post-processing`);
+        debugCapture?.onError?.('scene_decomposer', i, 'Post-processing produced 0 valid scenes');
         continue;
       }
 
@@ -448,6 +480,7 @@ export async function decomposeIntoScenes(
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error(`${LOG_PREFIX} Attempt ${i + 1}/5 failed:`, errMsg);
+      debugCapture?.onError?.('scene_decomposer', i, errMsg);
 
       // Continue to next attempt
     }

@@ -22,6 +22,7 @@ import { MotionGraphicsTester } from "@/components/features/dev/MotionGraphicsTe
 import { VideoEditorTester } from "@/components/features/dev/VideoEditorTester";
 import { AudioCleaningTester } from "@/components/features/dev/AudioCleaningTester";
 import { PipelineDebugger } from "@/components/features/pipeline-debugger/PipelineDebugger";
+import { ShotPlannerDebugger } from "@/components/features/dev/ShotPlannerDebugger";
 
 type ActiveTester =
   | "universal"
@@ -32,6 +33,7 @@ type ActiveTester =
   | "video-editor"
   | "audio-cleaning"
   | "pipeline-debugger"
+  | "shot-planner-debugger"
   | null;
 
 // ============================================================================
@@ -75,6 +77,13 @@ const PIPELINE_TOOLS: ToolCard[] = [
     icon: Film,
     color: "cyan",
   },
+  {
+    id: "shot-planner-debugger",
+    name: "Shot Planner Debugger",
+    description: "Full prompt/response transparency for every LLM call in the shot planning pipeline.",
+    icon: Bug,
+    color: "violet",
+  },
 ];
 
 const INFRA_TOOLS: ToolCard[] = [
@@ -112,6 +121,10 @@ export function DevToolsTab() {
 
   if (activeTester === "pipeline-debugger") {
     return <PipelineDebugger onClose={() => setActiveTester(null)} />;
+  }
+
+  if (activeTester === "shot-planner-debugger") {
+    return <ShotPlannerDebugger onClose={() => setActiveTester(null)} />;
   }
 
   if (activeTester === "universal") {
@@ -284,6 +297,7 @@ function ToolCardComponent({
     orange: { bg: "bg-orange-500/10", text: "text-orange-500", btn: "bg-orange-600 hover:bg-orange-700" },
     blue: { bg: "bg-blue-500/10", text: "text-blue-500", btn: "bg-blue-600 hover:bg-blue-700" },
     green: { bg: "bg-green-500/10", text: "text-green-500", btn: "bg-green-600 hover:bg-green-700" },
+    violet: { bg: "bg-violet-500/10", text: "text-violet-500", btn: "bg-violet-600 hover:bg-violet-700" },
   };
   const colors = colorMap[tool.color] || colorMap.purple;
 

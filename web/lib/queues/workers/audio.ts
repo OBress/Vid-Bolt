@@ -15,6 +15,7 @@ import {
   type TaskLifecycleOwner,
 } from '@/lib/queues/shared';
 import { CostTracker } from '@/lib/queues/cost-tracker';
+import { CancellationError, checkCancelled } from '@/lib/queues/cancellation';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -102,6 +103,13 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
     const progressPerChunk = 80 / chunks.length;
 
     for (let i = 0; i < chunks.length; i++) {
+      // In closed-loop mode, check for task cancellation between chunks.
+      // This allows the worker to self-terminate immediately when the user
+      // stops production, rather than processing all N remaining chunks.
+      if (isClosedLoop) {
+        await checkCancelled(taskId);
+      }
+
       const chunk = chunks[i];
       const chunkStart = Date.now();
       console.log(`[Audio] === Chunk ${i + 1}/${chunks.length} === (${chunk.charCount} chars, elapsed: ${((Date.now() - jobStartTime) / 1000).toFixed(1)}s)`);
@@ -188,6 +196,10 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
         });
         console.log(`[Audio] Chunk ${i + 1}: complete (${Date.now() - chunkStart}ms total)`);
       } catch (error) {
+        // CancellationError must bubble up immediately — do not treat it as a
+        // recoverable chunk failure as it would be swallowed by the outer loop.
+        if (error instanceof CancellationError) throw error;
+
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         if (chunkStepId) await failStep(taskId, chunkStepId, errorMessage);
         console.error(`[Audio] Chunk ${i + 1} FAILED after ${Date.now() - chunkStart}ms:`, error);
@@ -294,6 +306,14 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
     };
 
   } catch (error) {
+    // CancellationError is a clean exit — don't overwrite the "cancelled"
+    // task status with a failure state. Re-throw so BullMQ marks the job
+    // as failed (expected behaviour for an interrupted job).
+    if (error instanceof CancellationError) {
+      console.log(`[Audio] Task ${taskId} cancelled — stopping TTS cleanly after ${((Date.now() - jobStartTime) / 1000).toFixed(1)}s`);
+      throw error;
+    }
+
     console.error(`[Audio] Failed for task ${taskId}:`, error);
     
     await updateTaskStatus(taskId, {

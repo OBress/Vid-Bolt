@@ -147,7 +147,7 @@ function buildMediaUrlMap(
       // KEY FIX: Pre-rendered motion graphics that have been converted to media files
       // by the GPU pipeline should render as regular media, not as motion-graphics.
       // Only keep 'motion-graphics' type if the clip actually has remotion_code
-      // (i.e., it should be dynamically rendered via Remotion/CompositionRenderer).
+      // (i.e., it should be dynamically rendered via Remotion/CompositionRenderer).\
       let effectiveType = type;
       if (type === 'motion-graphics' && url && media.remotion_code) {
         effectiveType = inferRenderableMediaType(media.media_url || url);
@@ -158,6 +158,17 @@ function buildMediaUrlMap(
         effectiveType = inferRenderableMediaType(media.media_url || url);
         console.log(`[WizardDataImport] Shot ${media.shot_index}: Pre-rendered MG with real URL → retyped as '${effectiveType}'`);
       }
+      // Safety retype: a 'video' entry whose URL is actually an image file
+      // (e.g. shot_N_keyframe.png stored as media_url when video generation failed)
+      // must NOT be fed to OffthreadVideo — retype it as 'image'.
+      if (type === 'video' && url) {
+        const inferredType = inferRenderableMediaType(url);
+        if (inferredType === 'image') {
+          effectiveType = 'image';
+          console.warn(`[WizardDataImport] Shot ${media.shot_index}: media_type=video but URL is an image (${url.slice(-40)}) — retyped as 'image'`);
+        }
+      }
+
       
       map.set(media.shot_index, {
         url,

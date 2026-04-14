@@ -1903,12 +1903,20 @@ async function executeProductionPhase(
         offVideoItemComplete: unsubscribeVideoComplete,
       } = await import('@/lib/queues/video-completion-emitter');
 
-      // Collect fundamental failures for batch retry
+      // Collect fundamental failures (verifier-rejected) for batch retry
       const fundamentalFailures: Array<{
         shot: typeof videoShots[0];
         shotKey: string;
         mediaUrl: string;
         feedback: string;
+      }> = [];
+
+      // Collect generation failures (no media URL returned) for batch retry
+      // These are shots that completely failed at the GPU stage (OOM, webhook
+      // timeout, mode switch failure) and never produced any media.
+      const generationFailures: Array<{
+        shot: typeof videoShots[0];
+        shotKey: string;
       }> = [];
 
       // Build a shot lookup by segment_index for O(1) matching in the callback
@@ -1927,6 +1935,8 @@ async function executeProductionPhase(
 
         if (!mediaUrl || gpuResult.generation_status === 'failed') {
           videosFailed++;
+          // Track for batch retry — these shots got no usable media at all
+          generationFailures.push({ shot, shotKey });
           return;
         }
 
@@ -2046,6 +2056,18 @@ async function executeProductionPhase(
       const generatedVideos = (updatedMeta.generated_videos || {}) as Record<string, string>;
       console.log(`${LOG_PREFIX} Video batch complete: ${Object.keys(generatedVideos).length} URLs in metadata`);
 
+      // Detect shots that were never generated (no entry in generated_videos
+      // AND not already tracked via the EventEmitter callback). This catches
+      // edge cases where the GPU skips items entirely without a webhook.
+      const generationFailureIndices = new Set(generationFailures.map(f => f.shot.segment_index));
+      for (const shot of videoShots) {
+        const shotKey = `shot-${shot.segment_index}`;
+        if (!generatedVideos[shotKey] && !generationFailureIndices.has(shot.segment_index)) {
+          generationFailures.push({ shot, shotKey });
+          console.warn(`${LOG_PREFIX} Shot ${shot.segment_index}: missing from generated_videos after batch — queuing for retry`);
+        }
+      }
+
       // 4. Await all pending verifications (most should already be done,
       //    since they ran in parallel with generation)
       if (pendingVerifications.length > 0) {
@@ -2054,21 +2076,60 @@ async function executeProductionPhase(
         console.log(`${LOG_PREFIX} All parallel verifications settled`);
       }
 
-      // 5. Batch retry all fundamental failures in ONE GPU pass
-      if (fundamentalFailures.length > 0) {
-        console.log(`${LOG_PREFIX} Batch retrying ${fundamentalFailures.length} fundamental failures in single GPU pass`);
+      // 5. Batch retry all failures (generation + verification) in ONE GPU pass
+      //    - fundamentalFailures: shots that generated media but were rejected by the verifier
+      //    - generationFailures: shots that never produced media (GPU OOM, webhook timeout, etc.)
+      const allFailuresForRetry: Array<{
+        shot: typeof videoShots[0];
+        shotKey: string;
+        feedback: string;
+        mediaUrl: string;
+        source: 'verification' | 'generation';
+      }> = [
+        ...fundamentalFailures.map(f => ({
+          shot: f.shot,
+          shotKey: f.shotKey,
+          feedback: f.feedback,
+          mediaUrl: f.mediaUrl,
+          source: 'verification' as const,
+        })),
+        ...generationFailures.map(f => ({
+          shot: f.shot,
+          shotKey: f.shotKey,
+          feedback: 'SIMPLIFY_PROMPT. Previous generation attempt returned no media (GPU failure/timeout). Use a simplified, shorter prompt.',
+          mediaUrl: '',
+          source: 'generation' as const,
+        })),
+      ];
+
+      // Deduplicate by shot index (a shot could appear in both lists if the
+      // EventEmitter reported failure AND the shot is also missing from metadata)
+      const seenRetryIndices = new Set<number>();
+      const deduplicatedRetries = allFailuresForRetry.filter(f => {
+        if (seenRetryIndices.has(f.shot.segment_index)) return false;
+        seenRetryIndices.add(f.shot.segment_index);
+        return true;
+      });
+
+      if (deduplicatedRetries.length > 0) {
+        const verificationCount = deduplicatedRetries.filter(f => f.source === 'verification').length;
+        const generationCount = deduplicatedRetries.filter(f => f.source === 'generation').length;
+        console.log(
+          `${LOG_PREFIX} Batch retrying ${deduplicatedRetries.length} failures ` +
+          `(${verificationCount} verification + ${generationCount} generation) in single GPU pass`
+        );
 
         // Notify the UI that we're in error-correction mode
         await updateTaskStatus(taskId, {
           status: 'running',
-          current_step: `Fixing ${fundamentalFailures.length} shot${fundamentalFailures.length !== 1 ? 's' : ''} — re-generating with simplified prompts...`,
+          current_step: `Fixing ${deduplicatedRetries.length} shot${deduplicatedRetries.length !== 1 ? 's' : ''} — re-generating with simplified prompts...`,
           progress_percent: 72,
         });
 
         // Build per-shot feedback map
         const retryFeedbackMap: Record<number, string> = {};
         const retryShotIndices: number[] = [];
-        for (const f of fundamentalFailures) {
+        for (const f of deduplicatedRetries) {
           retryShotIndices.push(f.shot.segment_index);
           retryFeedbackMap[f.shot.segment_index] = f.feedback;
         }
@@ -2089,12 +2150,12 @@ async function executeProductionPhase(
           });
 
           // Calculate timeout based on total retry duration
-          const totalRetryDuration = fundamentalFailures.reduce((sum, f) => sum + (f.shot.duration_seconds || 0), 0);
+          const totalRetryDuration = deduplicatedRetries.reduce((sum, f) => sum + (f.shot.duration_seconds || 0), 0);
           const retryLockState = await isGpuLockHeld(jobData.userId);
           const retryLockBufferMs = retryLockState.held ? (retryLockState.ttl * 1_000) + 60_000 : 60_000;
           const BATCH_RETRY_TIMEOUT_MS = Math.max(
             180_000,
-            totalRetryDuration * 20 * 1_000 + fundamentalFailures.length * 10_000
+            totalRetryDuration * 20 * 1_000 + deduplicatedRetries.length * 10_000
           ) + retryLockBufferMs;
 
           console.log(`${LOG_PREFIX} Dispatched batch retry job ${retryJob.id} for ${retryShotIndices.length} shots (timeout: ${Math.round(BATCH_RETRY_TIMEOUT_MS / 1000)}s)`);
@@ -2104,26 +2165,30 @@ async function executeProductionPhase(
           const retryResults = (retryResult?.retryResults || {}) as Record<string, string>;
           let retriesSucceeded = 0;
 
-          for (const f of fundamentalFailures) {
+          for (const f of deduplicatedRetries) {
             const retryUrl = retryResults[`shot-${f.shot.segment_index}`];
             if (retryUrl) {
               generatedVideos[f.shotKey] = retryUrl;
               generatedAssets.set(`placeholder://shot-${f.shot.segment_index}/asset-0`, retryUrl);
               retriesSucceeded++;
             } else {
-              // Batch retry failed for this shot: flag but still use original
+              // Batch retry failed for this shot: flag with context-appropriate message
               state.flagged_shots.push({
                 shotIndex: f.shot.segment_index,
-                issue: f.feedback || 'Failed verification and retry',
-                suggestions: f.feedback ? f.feedback.split('. ') : [],
-                allAttemptUrls: [f.mediaUrl],
+                issue: f.source === 'generation'
+                  ? 'Video generation failed — no media produced after retry'
+                  : (f.feedback || 'Failed verification and retry'),
+                suggestions: f.source === 'generation'
+                  ? ['Simplify the visual prompt', 'Check GPU availability']
+                  : (f.feedback ? f.feedback.split('. ') : []),
+                allAttemptUrls: f.mediaUrl ? [f.mediaUrl] : [],
               });
             }
           }
 
           state.total_retries = (state.total_retries || 0) + retriesSucceeded;
-          const retryFailed = fundamentalFailures.length - retriesSucceeded;
-          console.log(`${LOG_PREFIX} Batch retry complete: ${retriesSucceeded}/${fundamentalFailures.length} succeeded`);
+          const retryFailed = deduplicatedRetries.length - retriesSucceeded;
+          console.log(`${LOG_PREFIX} Batch retry complete: ${retriesSucceeded}/${deduplicatedRetries.length} succeeded`);
 
           // Notify UI of retry outcome
           await updateTaskStatus(taskId, {
@@ -2135,20 +2200,24 @@ async function executeProductionPhase(
           });
         } catch (retryErr) {
           console.warn(`${LOG_PREFIX} Batch retry failed:`, retryErr);
-          // Flag all failed shots with their original URLs
-          for (const f of fundamentalFailures) {
+          // Flag all failed shots
+          for (const f of deduplicatedRetries) {
             state.flagged_shots.push({
               shotIndex: f.shot.segment_index,
-              issue: f.feedback || 'Failed verification and batch retry',
-              suggestions: f.feedback ? f.feedback.split('. ') : [],
-              allAttemptUrls: [f.mediaUrl],
+              issue: f.source === 'generation'
+                ? 'Video generation failed — no media produced (retry also failed)'
+                : (f.feedback || 'Failed verification and batch retry'),
+              suggestions: f.source === 'generation'
+                ? ['Simplify the visual prompt', 'Check GPU availability']
+                : (f.feedback ? f.feedback.split('. ') : []),
+              allAttemptUrls: f.mediaUrl ? [f.mediaUrl] : [],
             });
           }
 
           // Notify UI that retry failed but we're continuing
           await updateTaskStatus(taskId, {
             status: 'running',
-            current_step: `Shot fix timed out — ${fundamentalFailures.length} shots flagged. Continuing to assembly...`,
+            current_step: `Shot fix timed out — ${deduplicatedRetries.length} shots flagged. Continuing to assembly...`,
             progress_percent: 78,
           });
         }

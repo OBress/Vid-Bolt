@@ -34,7 +34,7 @@ import {
   inferTemplateType,
   resolveMotionGraphicsMode,
 } from '@/lib/services/motion-graphics/strategy';
-import type { EnrichedScene, WordTimestamp } from './scene-decomposer';
+import type { EnrichedScene, WordTimestamp, DebugCapture } from './scene-decomposer';
 
 // ============================================================================
 // TYPES
@@ -1041,6 +1041,8 @@ export async function planSceneShots(
   adjacentContext: AdjacentContext,
   sceneIndex: number,
   globalSegmentOffset: number,
+  /** Optional debug capture callbacks — never passed in production. */
+  debugCapture?: DebugCapture,
 ): Promise<EnrichedPlannedShot[] | null> {
   const systemPrompt = buildSystemPrompt(orchestratorPrompt, scene, adjacentContext);
   const userPrompt = buildUserPrompt(scene);
@@ -1065,6 +1067,10 @@ export async function planSceneShots(
     try {
       console.log(`${LOG_PREFIX} Scene "${scene.scene_id}" attempt ${i + 1}/5 with ${model}`);
 
+      // Debug capture: emit prompts before the LLM call
+      debugCapture?.onSystemPrompt?.(`shot_planner:${scene.scene_id}`, i, systemPrompt);
+      debugCapture?.onUserPrompt?.(`shot_planner:${scene.scene_id}`, i, userPrompt);
+
       const raw = await generateJSON<SceneShotPlanOutput>(
         userId,
         systemPrompt,
@@ -1078,12 +1084,16 @@ export async function planSceneShots(
         }
       );
 
+      // Debug capture: emit raw response after the LLM call
+      debugCapture?.onLLMResponse?.(`shot_planner:${scene.scene_id}`, i, raw);
+
       const parsed = SceneShotPlanOutput.safeParse(raw);
       if (!parsed.success) {
         console.warn(
           `${LOG_PREFIX} Scene "${scene.scene_id}" attempt ${i + 1} Zod validation failed:`,
           parsed.error.message
         );
+        debugCapture?.onError?.(`shot_planner:${scene.scene_id}`, i, `Zod validation failed: ${parsed.error.message}`);
         continue;
       }
 
@@ -1097,6 +1107,7 @@ export async function planSceneShots(
 
       if (enriched.length === 0) {
         console.warn(`${LOG_PREFIX} Scene "${scene.scene_id}" attempt ${i + 1} produced 0 valid shots`);
+        debugCapture?.onError?.(`shot_planner:${scene.scene_id}`, i, 'Post-processing produced 0 valid shots');
         continue;
       }
 
@@ -1110,6 +1121,7 @@ export async function planSceneShots(
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error(`${LOG_PREFIX} Scene "${scene.scene_id}" attempt ${i + 1}/5 failed:`, errMsg);
+      debugCapture?.onError?.(`shot_planner:${scene.scene_id}`, i, errMsg);
     }
   }
 
@@ -1133,7 +1145,9 @@ export async function planAllSceneShots(
   scenes: EnrichedScene[],
   wordTimestamps: WordTimestamp[],
   orchestratorPrompt: string | undefined,
-  onProgress?: (message: string, sceneIndex: number) => void
+  onProgress?: (message: string, sceneIndex: number) => void,
+  /** Optional debug capture callbacks — never passed in production. */
+  debugCapture?: DebugCapture
 ): Promise<Array<{ scene: EnrichedScene; shots: EnrichedPlannedShot[] | null }>> {
   const results: Array<{ scene: EnrichedScene; shots: EnrichedPlannedShot[] | null }> = [];
   let globalSegmentOffset = 0;
@@ -1172,7 +1186,8 @@ export async function planAllSceneShots(
       orchestratorPrompt,
       adjacentContext,
       i,
-      globalSegmentOffset
+      globalSegmentOffset,
+      debugCapture
     );
 
     results.push({ scene, shots });

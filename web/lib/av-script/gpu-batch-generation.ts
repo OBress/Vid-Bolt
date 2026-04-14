@@ -1006,18 +1006,28 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
   const logPrefix = `[GPU-Batch/Webhooks]`;
   const results: GpuGenerationResult[] = [];
 
-  // Per-item timeout: computed dynamically per shot from calculateTimeout so
-  // long-form videos get proportionally more headroom. Using itemCount=1 gives
-  // a generous single-item estimate that overestimates intentionally.
-  // This is much shorter than the full batch timeout (which can be 30+ min for
-  // a large batch) but still handles extremely long clips correctly.
-  const getPerItemCap = (shot: ShotForGpuGeneration): number => calculateTimeout(
-    mediaType === 'video' ? 'video_generation' : 'image_generation',
-    1,
-    mediaType === 'video'
-      ? { avgDurationSec: shot.duration_seconds ?? 5, totalVideoDurationSec: shot.duration_seconds ?? 5 }
-      : undefined,
-  );
+  // Per-item timeout = the batch-level timeout (timeoutMs).
+  //
+  // WHY: The GPU processes items SEQUENTIALLY (1 at a time). All webhook
+  // promises start simultaneously at batch submission, so a per-item cap
+  // that only accounts for a single item's processing time will always
+  // fire prematurely for items waiting at the back of a large queue.
+  //
+  // Example (the bug this fixes): 53-image batch, GPU at ~15s/image.
+  //   Old: each item gets 300s → item 21 times out exactly when GPU starts it
+  //   New: each item gets 3180s (53×60s) → item 52 has 2385s headroom ✓
+  //
+  // This holds at any scale:
+  //   - 200 shots → 12000s per-item cap, ~3000s GPU time → 4× margin
+  //   - 600 shots → 36000s per-item cap, ~9000s GPU time → 4× margin
+  //
+  // The batch-level timeout (timeoutMs) is already computed by the caller
+  // via calculateTimeout(type, N) which scales O(N) for images and
+  // O(totalDuration) for videos — so the margin is constant at any scale.
+  //
+  // The outer BullMQ job timeout acts as the ultimate hard ceiling if the
+  // GPU genuinely hangs for longer than the batch-level budget.
+  const getPerItemCap = (_shot: ShotForGpuGeneration): number => timeoutMs;
 
   // Watchdog: track which items are still pending and log them periodically
   const pendingItems = new Map<string, number>(
@@ -1048,7 +1058,7 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
       };
     }
 
-    const perItemCap = getPerItemCap(shot);
+    const perItemCap = getPerItemCap(shot); // = timeoutMs (batch-level, scales with N)
     try {
       const webhookResult = await waitForWebhookResult(item.item_id, perItemCap);
       pendingItems.delete(item.item_id);
