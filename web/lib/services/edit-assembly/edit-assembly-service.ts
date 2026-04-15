@@ -103,7 +103,19 @@ export interface AssembleEditResult {
  * Generate an Edit Decision List for a video project using AI.
  * Returns the new EditorAgentEDL format. Legacy `edl` field is populated
  * by converting the agent EDL for backward compat.
+ *
+ * For videos with more than MAX_SINGLE_CALL_SHOTS shots, uses scene-chunked
+ * assembly: shots are grouped by scene_id (hard-capped at MAX_SHOTS_PER_GROUP),
+ * a partial EDL is generated for each group, then all partials are merged.
+ * This prevents output token overflow for long-form videos.
  */
+
+/** Single-call path threshold (shots ≤ this → one LLM call, no chunking) */
+const MAX_SINGLE_CALL_SHOTS = 15;
+
+/** Hard cap on shots per scene group even if the scene is large */
+const MAX_SHOTS_PER_GROUP = 15;
+
 export async function assembleEdit(request: AssembleEditRequest): Promise<AssembleEditResult> {
   const {
     shots,
@@ -119,33 +131,65 @@ export async function assembleEdit(request: AssembleEditRequest): Promise<Assemb
 
   console.log(`[EditAssembly] Starting EDL generation for "${videoTitle}" (${shots.length} shots, ${generatedMedia.length} media items)`);
 
+  // ── Small video: single call path (no regression) ──────────────────────────
+  if (shots.length <= MAX_SINGLE_CALL_SHOTS) {
+    return assembleEditSingleCall({ videoId: request.videoId, shots, generatedMedia, videoTitle, audioChunks, scriptText, fps, apiKey, model, shotTimeRange });
+  }
+
+  // ── Large video: scene-chunked path ────────────────────────────────────────
+  console.log(`[EditAssembly] ${shots.length} shots > ${MAX_SINGLE_CALL_SHOTS} — using scene-chunked assembly`);
+
   try {
-    // 1. Build context object
-    const context = buildContext(shots, generatedMedia, videoTitle, audioChunks, scriptText, fps, shotTimeRange);
+    const groups = groupShotsByScene(shots, MAX_SHOTS_PER_GROUP);
+    console.log(`[EditAssembly] Split into ${groups.length} scene group(s)`);
 
-    // 2. Build user prompt
-    const userPrompt = buildEditAssemblyUserPrompt(context);
+    const partialEdls: EditorAgentEDL[] = [];
 
-    console.log(`[EditAssembly] Context: ${context.shots.length} shots, ${context.failedShots.length} failed, ${context.audioChunks.length} audio chunks`);
+    for (let g = 0; g < groups.length; g++) {
+      const groupShots = groups[g];
+      console.log(`[EditAssembly] Group ${g + 1}/${groups.length}: shots ${groupShots[0].segment_index}–${groupShots[groupShots.length - 1].segment_index} (${groupShots.length} shots)`);
 
-    // 3. Call LLM for v2 format
-    let agentEdl = await callLLMv2(apiKey, model, EDIT_ASSEMBLY_SYSTEM_PROMPT, userPrompt, shots.length);
+      try {
+        const groupResult = await assembleEditSingleCall({
+          videoId: request.videoId,
+          shots: groupShots,
+          generatedMedia,
+          videoTitle,
+          audioChunks,
+          scriptText,
+          fps,
+          apiKey,
+          model,
+          shotTimeRange,
+        });
 
-    // 4. Validate and fix
+        if (groupResult.agentEdl) {
+          partialEdls.push(groupResult.agentEdl);
+        }
+      } catch (groupError) {
+        console.error(`[EditAssembly] Group ${g + 1} failed:`, groupError);
+        // Generate fallback for this group and continue
+        const fallback = generateFallbackAgentEDL(groupShots, generatedMedia, fps, scriptText);
+        partialEdls.push(fallback);
+      }
+    }
+
+    if (partialEdls.length === 0) {
+      throw new Error('All scene groups failed EDL generation');
+    }
+
+    // Merge all partial EDLs into one
+    let agentEdl = mergeSceneEdls(partialEdls, shots);
     agentEdl = validateAndFixV2(agentEdl, shots);
 
-    console.log(`[EditAssembly] Agent EDL: ${agentEdl.tracks.length} tracks, ${agentEdl.clips.length} clips, ${agentEdl.transitions.length} transitions, ${agentEdl.clips.filter(c => c.type === 'text').length} text clips`);
+    console.log(`[EditAssembly] Merged EDL: ${agentEdl.tracks.length} tracks, ${agentEdl.clips.length} clips, ${agentEdl.transitions.length} transitions`);
 
-    // 5. Convert to legacy format for backward compat
     const legacyEdl = agentEdlToLegacy(agentEdl);
-
     return { success: true, agentEdl, edl: legacyEdl };
-  } catch (error) {
-    console.error('[EditAssembly] EDL generation failed:', error);
 
-    // Fallback: generate a rich EDL without AI
+  } catch (error) {
+    console.error('[EditAssembly] Scene-chunked EDL generation failed:', error);
     try {
-      console.log('[EditAssembly] Falling back to enhanced fallback EDL');
       const agentEdl = generateFallbackAgentEDL(shots, generatedMedia, fps, scriptText);
       const legacyEdl = agentEdlToLegacy(agentEdl);
       return { success: true, agentEdl, edl: legacyEdl };
@@ -156,6 +200,197 @@ export async function assembleEdit(request: AssembleEditRequest): Promise<Assemb
       };
     }
   }
+}
+
+/**
+ * Original single-call EDL assembly (also used per-group in chunked mode).
+ */
+async function assembleEditSingleCall(request: AssembleEditRequest): Promise<AssembleEditResult> {
+  const {
+    shots,
+    generatedMedia,
+    videoTitle,
+    audioChunks,
+    scriptText = '',
+    fps = 24,
+    apiKey,
+    model = 'google/gemini-3-flash-preview',
+    shotTimeRange,
+  } = request;
+
+  try {
+    const context = buildContext(shots, generatedMedia, videoTitle, audioChunks, scriptText, fps, shotTimeRange);
+    const userPrompt = buildEditAssemblyUserPrompt(context);
+
+    console.log(`[EditAssembly] Context: ${context.shots.length} shots, ${context.failedShots.length} failed, ${context.audioChunks.length} audio chunks`);
+
+    let agentEdl = await callLLMv2(apiKey, model, EDIT_ASSEMBLY_SYSTEM_PROMPT, userPrompt, shots.length);
+    agentEdl = validateAndFixV2(agentEdl, shots);
+
+    console.log(`[EditAssembly] Agent EDL: ${agentEdl.tracks.length} tracks, ${agentEdl.clips.length} clips, ${agentEdl.transitions.length} transitions, ${agentEdl.clips.filter(c => c.type === 'text').length} text clips`);
+
+    const legacyEdl = agentEdlToLegacy(agentEdl);
+    return { success: true, agentEdl, edl: legacyEdl };
+  } catch (error) {
+    console.error('[EditAssembly] EDL generation failed:', error);
+    try {
+      const agentEdl = generateFallbackAgentEDL(shots, generatedMedia, fps, scriptText);
+      const legacyEdl = agentEdlToLegacy(agentEdl);
+      return { success: true, agentEdl, edl: legacyEdl };
+    } catch (_fallbackError) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'EDL generation failed',
+      };
+    }
+  }
+}
+
+// ============================================================
+// SCENE GROUPING
+// ============================================================
+
+/**
+ * Group shots by scene_id. Any group larger than maxPerGroup is split at
+ * the size boundary. Groups preserve original sort order.
+ */
+function groupShotsByScene(shots: ShotDataInput[], maxPerGroup: number): ShotDataInput[][] {
+  // Build scene groups preserving shot order
+  const sceneMap = new Map<string, ShotDataInput[]>();
+  const sceneOrder: string[] = [];
+
+  for (const shot of shots) {
+    const key = (shot as unknown as Record<string, unknown>).scene_id as string
+      || (shot as unknown as Record<string, unknown>).sceneId as string
+      || `__ungrouped`;
+    if (!sceneMap.has(key)) {
+      sceneMap.set(key, []);
+      sceneOrder.push(key);
+    }
+    sceneMap.get(key)!.push(shot);
+  }
+
+  // Flatten scene groups, splitting any that exceed maxPerGroup
+  const groups: ShotDataInput[][] = [];
+  for (const key of sceneOrder) {
+    const sceneShots = sceneMap.get(key)!;
+    for (let i = 0; i < sceneShots.length; i += maxPerGroup) {
+      groups.push(sceneShots.slice(i, i + maxPerGroup));
+    }
+  }
+
+  return groups;
+}
+
+// ============================================================
+// EDL MERGE
+// ============================================================
+
+/**
+ * Merge multiple partial EditorAgentEDLs (one per scene group) into a single
+ * cohesive EDL.
+ *
+ * Strategy:
+ * - Tracks: deduplicated by id (first occurrence wins for metadata)
+ * - Clips: concatenated in group order (timing is already globally absolute)
+ * - Transitions: concatenated; add standard cross-scene transitions at boundaries
+ * - AudioFades: concatenated, deduplicated by target+type+startTime
+ * - MediaIssues: concatenated
+ */
+function mergeSceneEdls(partials: EditorAgentEDL[], allShots: ShotDataInput[]): EditorAgentEDL {
+  const seenTrackIds = new Set<string>();
+  const mergedTracks: AgentTrack[] = [];
+  const mergedClips: AgentClip[] = [];
+  const mergedTransitions: AgentTransition[] = [];
+  const mergedAudioFades: EditorAgentEDL['audioFades'] = [];
+  const mergedMediaIssues: EditorAgentEDL['mediaIssues'] = [];
+
+  for (const partial of partials) {
+    // Tracks — deduplicate by id
+    for (const track of partial.tracks ?? []) {
+      if (!seenTrackIds.has(track.id)) {
+        seenTrackIds.add(track.id);
+        mergedTracks.push(track);
+      }
+    }
+
+    // Clips — append all (startTime is globally absolute from shot.start_seconds)
+    mergedClips.push(...(partial.clips ?? []));
+
+    // Transitions within scene — append all
+    mergedTransitions.push(...(partial.transitions ?? []));
+
+    // Audio fades
+    mergedAudioFades.push(...(partial.audioFades ?? []));
+
+    // Media issues
+    mergedMediaIssues.push(...(partial.mediaIssues ?? []));
+  }
+
+  // Add cross-scene transitions using exitTransitionIntent / entryTransitionIntent
+  // from adjacent shot boundary shots (already populated by the shot planner)
+  for (let g = 0; g < partials.length - 1; g++) {
+    // Last shot of group g, first shot of group g+1
+    const groupShots = getGroupBoundaryShots(partials, allShots, g);
+    if (groupShots.lastShot && groupShots.firstNextShot) {
+      const exitIntent = (groupShots.lastShot as unknown as Record<string, unknown>).exit_transition_intent as string | undefined
+        || (groupShots.lastShot as unknown as Record<string, unknown>).exitTransitionIntent as string | undefined;
+      const transitionType = exitIntent?.toLowerCase().includes('dissolve') ? 'crossDissolve'
+        : exitIntent?.toLowerCase().includes('fade') ? 'fade'
+        : 'cut';
+
+      mergedTransitions.push({
+        type: transitionType,
+        fromShotIndex: groupShots.lastShot.segment_index,
+        toShotIndex: groupShots.firstNextShot.segment_index,
+        duration: transitionType === 'cut' ? 0 : 0.5,
+      });
+    }
+  }
+
+  // Deduplicate audioFades by target+type+startTime
+  const audioFadesSeen = new Set<string>();
+  const dedupedAudioFades = mergedAudioFades.filter(f => {
+    const key = `${f.target}:${f.type}:${f.startTime}`;
+    if (audioFadesSeen.has(key)) return false;
+    audioFadesSeen.add(key);
+    return true;
+  });
+
+  // Sort tracks by order field
+  mergedTracks.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  return {
+    tracks: mergedTracks,
+    clips: mergedClips,
+    transitions: mergedTransitions,
+    audioFades: dedupedAudioFades,
+    mediaIssues: mergedMediaIssues,
+  };
+}
+
+/**
+ * Find the last shot of group g and first shot of group g+1 from the full shot list.
+ */
+function getGroupBoundaryShots(
+  partials: EditorAgentEDL[],
+  allShots: ShotDataInput[],
+  groupIndex: number,
+): { lastShot?: ShotDataInput; firstNextShot?: ShotDataInput } {
+  // Extract shot indices from clips in each group
+  const clipsInGroup = partials[groupIndex]?.clips ?? [];
+  const clipsInNextGroup = partials[groupIndex + 1]?.clips ?? [];
+
+  const groupShotIndices = clipsInGroup.map(c => c.shotIndex).filter((i): i is number => i != null);
+  const nextGroupShotIndices = clipsInNextGroup.map(c => c.shotIndex).filter((i): i is number => i != null);
+
+  const lastIndex = groupShotIndices.length > 0 ? Math.max(...groupShotIndices) : -1;
+  const firstNextIndex = nextGroupShotIndices.length > 0 ? Math.min(...nextGroupShotIndices) : -1;
+
+  return {
+    lastShot: lastIndex >= 0 ? allShots.find(s => s.segment_index === lastIndex) : undefined,
+    firstNextShot: firstNextIndex >= 0 ? allShots.find(s => s.segment_index === firstNextIndex) : undefined,
+  };
 }
 
 // ============================================================

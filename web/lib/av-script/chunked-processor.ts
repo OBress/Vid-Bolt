@@ -147,7 +147,11 @@ export interface ChunkProcessingResult {
 // ============================================================================
 
 export const DEFAULT_CHUNK_CONFIG: ChunkConfig = {
-  batchSize: 10,
+  // Quality-first: 4 shots per batch keeps LLM attention sharp on each shot.
+  // The schema per shot is large (30+ fields). At 10, the model fills the back
+  // half mechanically. At 4, every shot gets full creative focus.
+  // Token budget at worst case (4 × 900 tok/shot): 3,600 — safety margin 18×.
+  batchSize: 4,
   pastContextSize: 5,
   lookaheadSize: 5,
   maxRetries: 3,
@@ -320,6 +324,8 @@ function buildChunkContext(
 
 /**
  * Process a single chunk with retry logic.
+ * If the LLM response is truncated (finish_reason=length), automatically
+ * retries the chunk split into two half-size sub-chunks before giving up.
  */
 async function processChunkWithRetries(
   userId: string,
@@ -345,6 +351,30 @@ async function processChunkWithRetries(
       };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      const errMsg = lastError.message.toLowerCase();
+      
+      // Detect token truncation — auto-retry at half batch size before giving up
+      const isTruncation = errMsg.includes('truncated') || errMsg.includes('finish_reason=length') || errMsg.includes('length');
+      if (isTruncation && context.currentSegments.length > 1 && attempt === 0) {
+        console.warn(`[ChunkedProcessor] ⚠️ Chunk ${context.chunkIndex + 1} truncated — retrying as two half-batches (${Math.ceil(context.currentSegments.length / 2)} shots each)`);
+        try {
+          const midpoint = Math.ceil(context.currentSegments.length / 2);
+          const firstHalf = { ...context, currentSegments: context.currentSegments.slice(0, midpoint) };
+          const secondHalf = { ...context, currentSegments: context.currentSegments.slice(midpoint) };
+          const firstShots = await generateChunkShots(userId, firstHalf, outlineAssets, projectContext);
+          const secondShots = await generateChunkShots(userId, secondHalf, outlineAssets, projectContext);
+          return {
+            shots: [...firstShots, ...secondShots],
+            chunkIndex: context.chunkIndex,
+            retriesUsed: 1,
+            needsManualReview: false,
+          };
+        } catch (splitError) {
+          console.error(`[ChunkedProcessor] Half-batch retry also failed:`, splitError);
+          // Fall through to normal retry loop
+        }
+      }
+      
       console.error(`[ChunkedProcessor] Chunk ${context.chunkIndex + 1} attempt ${attempt + 1} failed:`, lastError.message);
       
       if (attempt < maxRetries - 1) {

@@ -630,28 +630,49 @@ export interface BatchRatingResult {
 }
 
 /**
- * Rate all beats in a single efficient LLM call.
- * Uses flash model for speed - much faster than rating each beat individually.
+ * Rate all beats in efficient LLM calls, chunked at 10 beats per call.
+ *
+ * Chunking rationale: Asking the LLM to rate 30+ beats in one pass produces
+ * anchored, normalized scores. At 10 beats the rater gives genuine per-beat
+ * attention. Cross-boundary repetition is caught by passing the last 3 beats
+ * of the previous chunk as read-only context.
  */
 export async function batchRateBeats(
   userId: string,
   beats: Array<{ beatIndex: number; narration: string }>,
   options: BatchRatingOptions
 ): Promise<BatchRatingResult> {
-  console.log(`[BatchRating] Rating ${beats.length} beats in single call...`);
+  if (beats.length === 0) return { scores: [], averageScore: 6 };
 
-  // Build a compact representation of all beats
-  const beatsText = beats
-    .map((b, i) => `--- SECTION ${i + 1} ---\n${b.narration.substring(0, 800)}${b.narration.length > 800 ? '...' : ''}`)
-    .join('\n\n');
+  const CHUNK_SIZE = 10;
+  const REPETITION_TAIL = 3; // beats from prev chunk passed as context
+  const allScores: number[] = [];
 
-  const systemPrompt = `You are a script quality rater. Rate each section on a 1-10 scale based on:
+  const totalChunks = Math.ceil(beats.length / CHUNK_SIZE);
+  console.log(`[BatchRating] Rating ${beats.length} beats in ${totalChunks} chunk(s) of ${CHUNK_SIZE}...`);
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunk = beats.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    const prevTail = i > 0 ? beats.slice(Math.max(0, i * CHUNK_SIZE - REPETITION_TAIL), i * CHUNK_SIZE) : [];
+
+    // Build compact representation of current chunk
+    const beatsText = chunk
+      .map((b, idx) => `--- SECTION ${i * CHUNK_SIZE + idx + 1} ---\n${b.narration.substring(0, 800)}${b.narration.length > 800 ? '...' : ''}`)
+      .join('\n\n');
+
+    // Build cross-boundary repetition context (read-only, not rated)
+    const prevContext = prevTail.length > 0
+      ? `\n\nPREVIOUS SECTIONS (already rated — check for cross-section repetition only, do NOT rate these):\n${prevTail.map((b, idx) => `--- PREV ${idx + 1} ---\n${b.narration.substring(0, 300)}`).join('\n\n')}\n\n`
+      : '';
+
+    const systemPrompt = `You are a script quality rater. Rate each section on a 1-10 scale based on:
 - Active genre: ${options.genre}
 - Genre expectations: ${getGenreStyleNotes(options.genre)}
 - Natural language (no AI-isms like "delve", "tapestry", "unprecedented", "journey")  
 - Engagement (keeps viewer watching)
 - Flow (smooth transitions, varied sentences)
 - Specificity (concrete details, not vague generalities)
+- Cross-section repetition: flag phrases repeated from previous sections
 
 Be strict but fair. Score meanings:
 - 9-10: Exceptional, publish-ready
@@ -659,67 +680,69 @@ Be strict but fair. Score meanings:
 - 5-6: Mediocre, needs work
 - 1-4: Poor, major issues
 
-Return a scores array with exactly ${beats.length} numbers.`;
+Return a scores array with exactly ${chunk.length} numbers (one per section in order).`;
 
-  const userPrompt = `Rate these ${beats.length} sections:\n\n${beatsText}`;
+    const userPrompt = `${prevContext}Rate these ${chunk.length} sections (sections ${i * CHUNK_SIZE + 1}–${i * CHUNK_SIZE + chunk.length} of ${beats.length}):\n\n${beatsText}`;
 
-  try {
-    const config: OpenRouterConfig = {
-      model: options.model || BATCH_RATING_MODEL,
-      temperature: 0.1,
-      maxTokens: 4000,
-      responseFormat: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'batch_rating',
-          strict: true,
-          schema: {
-            type: 'object',
-            required: ['scores'],
-            additionalProperties: false,
-            properties: {
-              scores: {
-                type: 'array',
-                items: { type: 'number' },
+    try {
+      const config: OpenRouterConfig = {
+        model: options.model || BATCH_RATING_MODEL,
+        temperature: 0.1,
+        maxTokens: 4000,
+        responseFormat: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'batch_rating',
+            strict: true,
+            schema: {
+              type: 'object',
+              required: ['scores'],
+              additionalProperties: false,
+              properties: {
+                scores: {
+                  type: 'array',
+                  items: { type: 'number' },
+                },
               },
             },
           },
         },
-      },
-    };
+      };
 
-    const response = await generateJSON<{ scores: number[] }>(
-      userId,
-      options.qualityPromptOverride
-        ? `${options.qualityPromptOverride}\n\n${systemPrompt}`
-        : systemPrompt,
-      userPrompt,
-      config
-    );
+      const response = await generateJSON<{ scores: number[] }>(
+        userId,
+        options.qualityPromptOverride
+          ? `${options.qualityPromptOverride}\n\n${systemPrompt}`
+          : systemPrompt,
+        userPrompt,
+        config
+      );
 
-    let scores = (response.scores || []).map((s: number) => {
-      const num = Math.round(Number(s));
-      return isNaN(num) ? 6 : Math.min(10, Math.max(1, num));
-    });
+      let chunkScores = (response.scores || []).map((s: number) => {
+        const num = Math.round(Number(s));
+        return isNaN(num) ? 6 : Math.min(10, Math.max(1, num));
+      });
 
-    // Ensure we have the right number of scores
-    while (scores.length < beats.length) {
-      scores.push(6); // Default to 6 if missing (meh)
+      // Pad / trim to match chunk length
+      while (chunkScores.length < chunk.length) chunkScores.push(6);
+      chunkScores = chunkScores.slice(0, chunk.length);
+
+      allScores.push(...chunkScores);
+      console.log(`[BatchRating] Chunk ${i + 1}/${totalChunks}: [${chunkScores.join(', ')}]`);
+
+    } catch (error) {
+      console.error(`[BatchRating] Chunk ${i + 1}/${totalChunks} failed:`, error);
+      // Default to 6 for failed chunk beats
+      allScores.push(...chunk.map(() => 6));
     }
-    scores = scores.slice(0, beats.length);
-
-    const averageScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-
-    console.log(`[BatchRating] Parsed scores: [${scores.join(', ')}], avg: ${averageScore.toFixed(1)}/10`);
-
-    return { scores, averageScore };
-
-  } catch (error) {
-    console.error('[BatchRating] Error rating beats:', error);
-    // Return default scores on error (6 = needs review)
-    const defaultScores = beats.map(() => 6);
-    return { scores: defaultScores, averageScore: 6 };
   }
+
+  const averageScore = allScores.length > 0
+    ? allScores.reduce((a, b) => a + b, 0) / allScores.length
+    : 6;
+
+  console.log(`[BatchRating] All scores: [${allScores.join(', ')}], avg: ${averageScore.toFixed(1)}/10`);
+  return { scores: allScores, averageScore };
 }
 
 // ============================================================================
