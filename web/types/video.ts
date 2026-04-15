@@ -72,15 +72,19 @@ export type MotionGraphicsMode = typeof MOTION_GRAPHICS_MODES[number];
 
 export const MOTION_GRAPHICS_TEMPLATE_TYPES = [
   'map_focus',
+  'route_trace',
+  'territory_map',
   'timeline',
   'evidence_board',
   'document_callout',
   'quote_card',
   'lower_third',
+  'character_dossier',
   'photo_montage',
   'comparison_board',
-  'route_trace',
   'process_diagram',
+  'slap_annotation',
+  'ghost_figure_reveal',
 ] as const;
 export type MotionGraphicsTemplateType = typeof MOTION_GRAPHICS_TEMPLATE_TYPES[number];
 

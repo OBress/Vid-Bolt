@@ -30,9 +30,9 @@ export async function GET(request: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Admin check
+  // Admin check — is_admin lives on the 'users' table, not 'profiles'
   const { data: profile } = await supabaseService
-    .from('profiles')
+    .from('users')
     .select('is_admin')
     .eq('id', user.id)
     .single();
@@ -48,24 +48,35 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'projectId is required' }, { status: 400 });
   }
 
-  // Fetch video projects for this channel belonging to this user
+  // Fetch video projects for this channel belonging to this user.
+  // NOTE: the FK column linking video_projects to media_projects is `project_id`,
+  // not `media_project_id`. The display name column is `name`, not `title`.
+  console.log(`[ShotPlannerDebug/videos] Fetching videos for user=${user.id} projectId=${projectId}`);
+
   const { data: videos, error } = await supabaseService
     .from('video_projects')
-    .select('id, title, metadata')
+    .select('id, name, metadata')
     .eq('user_id', user.id)
-    .eq('media_project_id', projectId)
+    .eq('project_id', projectId)
     .order('created_at', { ascending: false })
     .limit(50);
 
   if (error) {
+    console.error(`[ShotPlannerDebug/videos] Supabase error:`, error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const result = (videos || []).map((v: { id: string; title: string; metadata: Record<string, unknown> }) => ({
-    id: v.id,
-    title: v.title || 'Untitled Video',
-    hasTimestamps: Array.isArray(v.metadata?.word_timestamps) && v.metadata.word_timestamps.length > 0,
-  }));
+  console.log(`[ShotPlannerDebug/videos] Found ${videos?.length ?? 0} raw video project(s)`);
+
+  const result = (videos || []).map((v: { id: string; name: string; metadata: Record<string, unknown> }) => {
+    const hasTimestamps = Array.isArray(v.metadata?.word_timestamps) && (v.metadata.word_timestamps as unknown[]).length > 0;
+    console.log(`[ShotPlannerDebug/videos]  • ${v.id} "${v.name}" hasTimestamps=${hasTimestamps}`);
+    return {
+      id: v.id,
+      title: v.name || 'Untitled Video',
+      hasTimestamps,
+    };
+  });
 
   return NextResponse.json({ videos: result });
 }

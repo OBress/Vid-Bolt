@@ -1136,7 +1136,18 @@ async function executeProductionPhase(
   });
   const imageShots = shots.filter(s => {
     const treatment = resolveVisualTreatment(s);
-    return treatment === 'ai_image' || s.media_type === 'image';
+    // Standard image shots
+    if (treatment === 'ai_image' || s.media_type === 'image') return true;
+    // I2V video shots with image_edit_instruction need a keyframe pre-generated
+    // in the image phase so the edit is applied BEFORE video generation.
+    // Without this, generated_images[shot-X] is empty when the creative edit
+    // step runs, causing the IMG-EDIT to be silently skipped.
+    if (
+      treatment === 'ai_video' &&
+      s.synthesis_mode === 'I2V' &&
+      s.image_edit_instruction?.trim()
+    ) return true;
+    return false;
   });
   const segmentMaskPrepShots = shots.filter(s =>
     s.segmentation_treatment?.execution_mode === 'segment_mask_prep'

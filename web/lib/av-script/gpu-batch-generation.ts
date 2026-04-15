@@ -787,6 +787,7 @@ function enrichLtx2Prompt(
       .replace(/\bphotoreal(?:istic|ism)\b/gi, 'stylized')
       .replace(/\brealistic\b/gi, 'stylized')
     : rawPrompt;
+
   // Check if agent already specified detailed camera motion
   const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot|orbit|sweep|glide)\b/i.test(cleanedPrompt);
 
@@ -808,7 +809,7 @@ function enrichLtx2Prompt(
   const styleRenderHint = styleSignals.nonPhotorealistic
     ? 'Cinematic staging, cohesive non-photorealistic rendering, and smooth continuous motion that stays inside the declared art style.'
     : 'Cinematic quality, photorealistic rendering, smooth continuous motion.';
-  const textSafetyHint = 'No watermarks, no text overlays, no readable document paragraphs, no CGI artifacts.';
+  const textSafetyHint = 'No watermarks, no text overlays, no readable letters or words on any surface, no paper with legible text, no stamps or labels with readable content, no subtitles, no CGI artifacts.';
   const historicalAuthenticityHint = styleSignals.historical
     ? 'Era-authentic costumes, props, grooming, and environments only. No modern clothing, no modern haircuts, no contemporary signage or UI.'
     : undefined;

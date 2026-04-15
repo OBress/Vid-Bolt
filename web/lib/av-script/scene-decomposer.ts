@@ -114,7 +114,8 @@ const LOG_PREFIX = '[SceneDecomposer]';
 
 function buildSystemPrompt(
   wordCount: number,
-  creativeContext: SceneDecompositionContext
+  creativeContext: SceneDecompositionContext,
+  wordsPerSecond: number
 ): string {
   const parts: string[] = [];
 
@@ -187,6 +188,26 @@ CRITICAL RULES:
 - AI image (static): ${Math.round(mw.image * 100)}%`);
   }
 
+  // Temporal pacing — give the LLM real numbers to reason about
+  const approxSecondsPerWord = (1 / wordsPerSecond).toFixed(3);
+  parts.push(`\nTEMPORAL PACING — CRITICAL FOR SHOT COUNT:
+This script runs at approximately ${wordsPerSecond.toFixed(2)} words/second (~${approxSecondsPerWord}s per word).
+
+When assigning suggested_shot_count, think in TIME as well as narrative beats.
+A scene's approximate duration = (end_word_index - start_word_index + 1) / ${wordsPerSecond.toFixed(2)}
+
+Shot count guidance by duration:
+- ~5s scene  → 1-2 shots
+- ~10s scene → 2-3 shots
+- ~20s scene → 3-5 shots
+- ~40s scene → 6-9 shots
+- ~60s scene → 10-15 shots
+- 60s+ scene → consider splitting into sub-scenes; scenes over ~50s become very hard to plan well
+
+A 30-second scene with 2 shots forces 15-second static holds — a viewer experience failure.
+A single dramatic revelation CAN hold for 8-10s if the narration demands it.
+But the default should be active editing — shots that breathe and move.`);
+
   parts.push(`\nDIRECTOR MINDSET:
 - Think like a premium YouTube director. Every scene should serve a narrative purpose.
 - Design a pacing rollercoaster — oscillate between high-energy and low-energy moments.
@@ -201,15 +222,18 @@ CRITICAL RULES:
 
 function buildUserPrompt(
   script: string,
-  wordTimestamps: WordTimestamp[]
+  wordTimestamps: WordTimestamp[],
+  wordsPerSecond: number
 ): string {
-  // Provide the script with word indices annotated for context
-  // We include word-level timing so the LLM can make informed pacing decisions
   const totalDuration = wordTimestamps.length > 0
     ? wordTimestamps[wordTimestamps.length - 1].end_seconds
     : 0;
+  const exampleWords = Math.round(wordsPerSecond * 5);
 
-  return `Here is the script (${wordTimestamps.length} words, ${totalDuration.toFixed(1)}s total duration):
+  return `Here is the script (${wordTimestamps.length} words, ${totalDuration.toFixed(1)}s total, ~${wordsPerSecond.toFixed(2)} words/second):
+
+Use the narration rate to estimate scene durations when assigning shot counts.
+Example: ${exampleWords} words ≈ 5 seconds. A 100-word scene ≈ ${(100 / wordsPerSecond).toFixed(0)}s at this pace.
 
 ---
 ${script}
@@ -282,6 +306,110 @@ export function buildContextFromManifest(manifest: CreativeManifest): SceneDecom
 // ============================================================================
 // POST-PROCESSING: Semantic validation & timing computation
 // ============================================================================
+
+/**
+ * Enforce minimum shot counts based on scene duration.
+ * Never reduces — only raises suggested_shot_count when the LLM assigned too few.
+ * Uses a soft 9-second average as the density target.
+ */
+function enforceMinimumShotCounts(
+  scenes: EnrichedScene[],
+  wordsPerSecond: number
+): EnrichedScene[] {
+  const TARGET_SECONDS_PER_SHOT = 9; // soft ceiling on avg shot duration
+  return scenes.map(scene => {
+    const durationSeconds = scene.end_seconds - scene.start_seconds;
+    const minRequired = Math.ceil(durationSeconds / TARGET_SECONDS_PER_SHOT);
+    if (scene.suggested_shot_count < minRequired) {
+      console.warn(
+        `${LOG_PREFIX} Scene "${scene.scene_id}" had ${scene.suggested_shot_count} shots ` +
+        `for ${durationSeconds.toFixed(1)}s — raising to ${minRequired}`
+      );
+      return { ...scene, suggested_shot_count: minRequired };
+    }
+    return scene;
+  });
+}
+
+/**
+ * Split any scene exceeding MAX_SCENE_DURATION_SECONDS into two contiguous sub-scenes.
+ * Splits at the word midpoint, distributes shots proportionally, preserves all other fields.
+ * Runs recursively until no scene exceeds the threshold.
+ */
+const MAX_SCENE_DURATION_SECONDS = 50;
+
+function splitOversizedScenes(
+  scenes: EnrichedScene[],
+  wordTimestamps: WordTimestamp[],
+  wordsPerSecond: number,
+  iteration = 0
+): EnrichedScene[] {
+  if (iteration > 4) return scenes; // guard against infinite recursion
+  const words = wordTimestamps.map(w => w.word);
+  let didSplit = false;
+  const result: EnrichedScene[] = [];
+
+  for (const scene of scenes) {
+    const duration = scene.end_seconds - scene.start_seconds;
+    if (duration <= MAX_SCENE_DURATION_SECONDS || scene.end_word_index <= scene.start_word_index + 1) {
+      result.push(scene);
+      continue;
+    }
+
+    // Split at natural word midpoint
+    const midWord = Math.floor((scene.start_word_index + scene.end_word_index) / 2);
+    const midStartSec = wordTimestamps[midWord + 1]?.start_seconds ?? wordTimestamps[midWord].end_seconds;
+    const firstHalfDur = midStartSec - scene.start_seconds;
+    const secondHalfDur = scene.end_seconds - midStartSec;
+    const totalDur = scene.end_seconds - scene.start_seconds;
+    const firstShots = Math.max(1, Math.round(scene.suggested_shot_count * (firstHalfDur / totalDur)));
+    const secondShots = Math.max(1, scene.suggested_shot_count - firstShots);
+
+    // Derive distinct descriptions for each half using their opening narration words.
+    // Without this, both sub-scenes inherit the parent's identical description verbatim,
+    // causing the shot planner to plan duplicate shots across different narrative content.
+    const ANCHOR_WORDS = 12;
+    const anchorA = words
+      .slice(scene.start_word_index, Math.min(scene.start_word_index + ANCHOR_WORDS, midWord + 1))
+      .join(' ');
+    const anchorB = words
+      .slice(midWord + 1, Math.min(midWord + 1 + ANCHOR_WORDS, scene.end_word_index + 1))
+      .join(' ');
+
+    const sceneA: EnrichedScene = {
+      ...scene,
+      scene_id: `${scene.scene_id}_a`,
+      description: `${scene.description} — opening: "${anchorA}\u2026"`,
+      narrative_purpose: `${scene.narrative_purpose} (first half)`,
+      end_word_index: midWord,
+      end_seconds: wordTimestamps[midWord].end_seconds,
+      text: words.slice(scene.start_word_index, midWord + 1).join(' '),
+      suggested_shot_count: firstShots,
+    };
+    const sceneB: EnrichedScene = {
+      ...scene,
+      scene_id: `${scene.scene_id}_b`,
+      description: `${scene.description} — continuing: "${anchorB}\u2026"`,
+      narrative_purpose: `${scene.narrative_purpose} (second half)`,
+      start_word_index: midWord + 1,
+      start_seconds: midStartSec,
+      text: words.slice(midWord + 1, scene.end_word_index + 1).join(' '),
+      suggested_shot_count: secondShots,
+    };
+
+    console.warn(
+      `${LOG_PREFIX} Scene "${scene.scene_id}" (${duration.toFixed(1)}s) split into ` +
+      `"${sceneA.scene_id}" (${(sceneA.end_seconds - sceneA.start_seconds).toFixed(1)}s, ${firstShots} shots) ` +
+      `and "${sceneB.scene_id}" (${(sceneB.end_seconds - sceneB.start_seconds).toFixed(1)}s, ${secondShots} shots)`
+    );
+
+    result.push(sceneA, sceneB);
+    didSplit = true;
+  }
+
+  // Recurse if any scene was split (might still exceed threshold)
+  return didSplit ? splitOversizedScenes(result, wordTimestamps, wordsPerSecond, iteration + 1) : result;
+}
 
 /**
  * Validate and fix the LLM's scene decomposition output.
@@ -409,8 +537,12 @@ export async function decomposeIntoScenes(
     return null;
   }
 
-  const systemPrompt = buildSystemPrompt(wordCount, creativeContext);
-  const userPrompt = buildUserPrompt(script, wordTimestamps);
+  // Compute narration rate from word timestamps
+  const totalDuration = wordTimestamps[wordCount - 1].end_seconds;
+  const wordsPerSecond = totalDuration > 0 ? wordCount / totalDuration : 2.5;
+
+  const systemPrompt = buildSystemPrompt(wordCount, creativeContext, wordsPerSecond);
+  const userPrompt = buildUserPrompt(script, wordTimestamps, wordsPerSecond);
   const responseFormat = getResponseFormat();
 
   // 5-attempt strategy: 3 × Flash, 2 × Pro
@@ -462,13 +594,19 @@ export async function decomposeIntoScenes(
       }
 
       // Post-process: clamp indices, fill gaps, compute timestamps
-      const enriched = postProcess(parsed.data, wordTimestamps, script);
+      let enriched = postProcess(parsed.data, wordTimestamps, script);
 
       if (enriched.length === 0) {
         console.warn(`${LOG_PREFIX} Attempt ${i + 1} produced 0 valid scenes after post-processing`);
         debugCapture?.onError?.('scene_decomposer', i, 'Post-processing produced 0 valid scenes');
         continue;
       }
+
+      // Split any scenes exceeding MAX_SCENE_DURATION_SECONDS (~50s)
+      enriched = splitOversizedScenes(enriched, wordTimestamps, wordsPerSecond);
+
+      // Raise suggested_shot_count where the LLM under-allocated for the duration
+      enriched = enforceMinimumShotCounts(enriched, wordsPerSecond);
 
       console.log(
         `${LOG_PREFIX} Success: ${enriched.length} scenes decomposed ` +

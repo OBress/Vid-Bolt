@@ -456,7 +456,8 @@ interface AdjacentContext {
 function buildSystemPrompt(
   orchestratorPrompt: string | undefined,
   scene: EnrichedScene,
-  adjacentContext: AdjacentContext
+  adjacentContext: AdjacentContext,
+  wordsPerSecond: number
 ): string {
   const parts: string[] = [];
 
@@ -464,6 +465,11 @@ function buildSystemPrompt(
   if (orchestratorPrompt) {
     parts.push(orchestratorPrompt);
   }
+
+  const sceneDuration = scene.end_seconds - scene.start_seconds;
+  const wordsInScene = scene.end_word_index - scene.start_word_index + 1;
+  const approxWordsPerShot = Math.round(wordsInScene / scene.suggested_shot_count);
+  const approxSecondsPerShot = (approxWordsPerShot / wordsPerSecond).toFixed(1);
 
   // Scene-specific directives
   parts.push(`\n═══ SCENE-SPECIFIC CONTEXT ═══
@@ -474,7 +480,9 @@ NARRATIVE PURPOSE: ${scene.narrative_purpose}
 PACING INTENT: ${scene.pacing_intent}
 SUGGESTED SHOT COUNT: ${scene.suggested_shot_count}
 VISUAL CONTINUITY: ${scene.visual_continuity ? 'YES — shots in this scene can share visual DNA' : 'NO — each shot is visually independent'}
-WORD RANGE: ${scene.start_word_index} to ${scene.end_word_index} (${scene.end_word_index - scene.start_word_index + 1} words)`);
+WORD RANGE: ${scene.start_word_index} to ${scene.end_word_index} (${wordsInScene} words)
+DURATION: ${sceneDuration.toFixed(1)}s (${scene.start_seconds.toFixed(1)}s → ${scene.end_seconds.toFixed(1)}s in the video)
+NARRATION RATE: ${wordsPerSecond.toFixed(2)} words/second (~${(wordsInScene / wordsPerSecond / scene.suggested_shot_count).toFixed(1)}s avg per shot at suggested count)`);
 
   // Adjacent scene context
   if (adjacentContext.previousScene) {
@@ -534,6 +542,49 @@ FINAL LANE RULE:
 - Otherwise, prefer render_strategy "ai_video" so the final output is moving footage.
 - Only use render_strategy "ai_image" when the still is clearly an intermediate source asset and not the intended final viewer experience.
 
+VIDEO TEXT RULE — ONE SIMPLE RULE:
+When writing visual_description for ANY render_strategy: "ai_video" shot, NEVER mention text, signs,
+labels, banners, stamps, words, letters, captions, or readable characters of any kind.
+
+The LTX-2.3 video model cannot reliably generate readable text from scratch. The safest and most
+foolproof approach is: do not describe text in the video prompt at all. Text appears in video ONLY if
+it is already present in the start-frame or end-frame image — LTX will preserve whatever it sees in
+those frames without being told about it. You never need to mention it in visual_description.
+
+THE COMPLETE RULE FOR EACH CASE:
+
+  CASE: Text should appear in the video (e.g. a STOP sign, a label, a short word)
+    ✓ Use image_edit_instruction to bake the text onto the keyframe image.
+    ✓ Use synthesis_mode: "I2V" so the keyframe is used as the start frame.
+    ✓ In visual_description: describe ONLY the camera motion, subjects, and physical world.
+       Do NOT mention the text, the sign, or the label anywhere in visual_description.
+    ✓ LTX will preserve whatever is in the start frame automatically.
+
+    Example — STOP sign pull-back:
+      image_edit_instruction: "Place a clay-paper STOP sign prop in the foreground"
+      synthesis_mode: "I2V"
+      visual_description: "The camera pulls back rapidly to reveal the entire Senate
+                           diorama on a wooden desk. Workshop tools are visible around
+                           the edges. The lighting shifts to flat overhead workshop light."
+      ← Notice: NO mention of the STOP sign or any text in visual_description.
+
+  CASE: A lot of text is needed (paragraph, multiple lines, dense copy)
+    ✓ Route to render_strategy: "motiongraphic" — Remotion handles all typography perfectly.
+    ✓ OR just don't include that text in the shot at all.
+
+  CASE: Text would be nice but isn't critical to the shot
+    ✓ Just remove it. Describe the physical scene without any text references.
+       The shot will be cleaner for it.
+
+ABSOLUTE PROHIBITIONS in visual_description for ai_video shots:
+  ✗ Any prop with readable text: "a sign reading '...'" / "a note with '...'" / "stamped with '...'"
+  ✗ Any text appearing, emerging, or slamming: "text slaps in" / "letters appear" / "stamp hits"
+  ✗ Any text that is 'already visible': even referencing text as pre-existing is risky —
+     just don't mention it. The keyframe handles it silently.
+  ✗ image_edit_instruction on synthesis_mode: "T2V" shots — T2V has no keyframe to edit.
+
+
+
 DIRECTING GRAMMAR:
 - shot_role: what this shot does in the sequence (hook, establish, coverage, insert, bridge, annotation, payoff, reaction, graphic_explainer, closing)
 - framing: choose the visual scale intentionally
@@ -576,23 +627,52 @@ In visual_description, describe:
 3. What the viewer is meant to discover or absorb
 Example: "A busy city intersection frozen mid-moment — pedestrians stopped mid-step, cars halted. The camera slowly orbits the frozen tableau from eye level, drifting forward through the stillness to reveal the lone figure at the center."
 
-SEGMENTATION TREATMENT:
-- Use segmentation_treatment only when it adds real editorial value.
-- Good use cases: highlighting an important character, circling/isolating a face, spotlighting evidence, desaturating the background around a subject, guided zoom into a detail, tracked annotation in motion.
-- Prefer object_prompts over a generic text prompt whenever more than one subject could be in frame or when the target could be ambiguous.
-- Each object_prompts.label must be short, stable, and snake_case, such as "lead_detective", "left_witness", or "red_folder".
-- Each object_prompts.text should be concise, usually 2-8 words.
-- If multiple people are present, describe them only in this order as needed: role/name, left/right or foreground/background, distinctive clothing/color, action.
-- preset examples:
-  - focus_reveal = spotlight + guided zoom + subtle reveal
-  - detail_callout = annotation/outline around an important detail
-  - subject_isolation = subject stays vivid while background changes
-  - progressive_reveal = effect gradually reveals the point
-  - tracked_annotation = tracked highlight in a moving shot
-  - danger_emphasis = ominous focus on a person/object, often with background desaturation
-- If using segmentation_treatment, choose the matching render_strategy.
-- Default to subtle or moderate intensity unless the story beat truly needs strong emphasis.
-- Use segment_mask_prep only when segmentation should prepare a mask for image editing or later compositing before the final lane continues.
+SEGMENTATION TREATMENT — SURGICAL USE ONLY (1–2 shots per scene maximum):
+Segmentation adds a post-processing layer to isolate, highlight, or stylize subjects. Use it ONLY when the effect
+cannot be achieved by writing it in visual_description — and only on one focal subject per shot.
+Budget: roughly 1 segmentation shot per 8–10 shots across the full plan.
+
+TRIGGER PATTERNS — the only scenarios that justify segmentation (works across all genres):
+1. Key subject must STAND OUT from a visually busy or distracting background
+   → subject_isolation | ops: [{type:"bokeh",target:"background",strength:0.6}] or [{type:"color_grade",target:"background",saturation:-0.8}]
+   Use dark_base or a desaturated version of primary_accent on the background. Works for: drama, vlog, product, interview, anchor on set.
+2. A single OBJECT, DETAIL, or PRODUCT needs to be spotlit while the surroundings recede
+   → detail_callout | ops: [{type:"spotlight",target:"mask",strength:0.8,color:primary_accent_rgb}] or [{type:"outline",target:"mask",thickness:2,color:primary_accent_rgb}]
+   Use primary_accent for the highlight color. Works for: product shots, evidence callouts, UI highlights, prop reveals, diagrams.
+3. A THREATENING, ominous, or antagonist figure enters frame and needs visual weight
+   → danger_emphasis | ops: [{type:"color_grade",target:"background",saturation:-0.9}] or [{type:"bokeh",target:"background",strength:0.7}]
+   Drain background color without touching the subject. Works for: thrillers, crime, horror, villain reveal, dramatic confrontation.
+4. EMOTIONAL PIVOT — betrayal, loss, death, realization, heartbreak — the world drains around the subject
+   → subject_isolation | ops: [{type:"color_grade",target:"background",saturation:-0.9,brightness:-0.1}] | intensity: moderate
+   Works for: drama, true crime, sports loss, music video emotional climax, documentary death/fall.
+5. Face CLOSE-UP on an important subject where pulling focus adds emotional gravity
+   → focus_reveal | allow_guided_zoom: true | allow_background_desaturation: true
+   Works for: interview, documentary, drama, reality, music video, product launch reveal.
+6. A STILL IMAGE (portrait, screenshot, archive photo, diagram, product render) needs to feel alive
+   → segment_animate | render_strategy: "segment_animate"
+   Works for: historical archive, product catalog, news article, social media screenshot, infographic still.
+
+CHANNEL COLOR REFERENCE — always use these for operations.color fields:
+See "CHANNEL SEGMENTATION COLORS" block in this prompt for pre-converted RGB arrays.
+- Glow, outline, spotlight on subject → primary_accent RGB
+- Background color_overlay, color_grade → dark_base RGB or desaturated secondary_accent
+- If primary_accent is dark (lum < 0.3) → use secondary_accent for highlight operations
+- Never use hardcoded [255,255,255] or [0,0,0] — always use the channel palette
+
+HARD STOPS — never use segmentation on these shots (skip entirely):
+- More than 3 distinct moving subjects in frame (crowd, group shot, battle, audience) — mask quality degrades
+- Any I2V continuity shot (continuity_from_previous: true) — already chained from prior frame
+- Any motiongraphic shot — MG handles its own compositing pipeline
+- Any extreme_wide or wide establishing shot — no singular focal subject to isolate
+- When the desired effect can be described in ≤10 words in visual_description
+- When you have already used segmentation on the previous shot in this scene
+
+OBJECT PROMPTS (always use these over text_prompt for subject precision):
+- label: short snake_case — "lead_character", "key_product", "left_figure", "glowing_screen", "red_folder"
+- text: 2–8 words — "woman in yellow jacket foreground", "product on white table", "man in dark coat left"
+- Set the matching render_strategy: "segment_animate" (still source) or "segment_video_fx" (video source)
+- intensity: subtle or moderate by default — only use strong for the single most dramatic beat of the scene
+- Keep operations to 1–2 simple effects; avoid complex chains except at the scene's true climax moment
 
 STOCK MEDIA:
 - stock_worthy: true ONLY when the narration references specific real-world entities (people, places, events)
@@ -654,10 +734,29 @@ Instead, break it into 3-5 shorter shots using continuity_from_previous + angle_
   return parts.join('\n');
 }
 
-function buildUserPrompt(scene: EnrichedScene): string {
+function buildUserPrompt(scene: EnrichedScene, wordsPerSecond: number): string {
+  const durationSeconds = scene.end_seconds - scene.start_seconds;
+  const wordsInScene = scene.end_word_index - scene.start_word_index + 1;
+  const approxWordsPerShot = Math.round(wordsInScene / scene.suggested_shot_count);
+  const approxSecsPerShot = (approxWordsPerShot / wordsPerSecond).toFixed(1);
+  const isLongScene = durationSeconds > 25;
+
+  const densityNote = isLongScene
+    ? `⚠️  This scene runs ${durationSeconds.toFixed(1)}s. Plan at least ${scene.suggested_shot_count} shots.
+    At ${wordsPerSecond.toFixed(2)} wps, every ~${Math.round(wordsPerSecond * 5)} words ≈ 5 seconds.
+    Distribute your word ranges so no single shot spans more than ~12 seconds.`
+    : `Targeting ~${approxSecsPerShot}s per shot (${scene.suggested_shot_count} shots over ${durationSeconds.toFixed(1)}s).`;
+
   return `Plan the shots for this scene:
 
-SCENE TEXT (word indices ${scene.start_word_index}-${scene.end_word_index}):
+SCENE TIMING:
+- Duration: ${durationSeconds.toFixed(1)}s (${scene.start_seconds.toFixed(1)}s → ${scene.end_seconds.toFixed(1)}s)
+- Narration rate: ${wordsPerSecond.toFixed(2)} words/second
+- Word range: indices ${scene.start_word_index}–${scene.end_word_index} (${wordsInScene} words)
+- Suggested shots: ${scene.suggested_shot_count}
+- ${densityNote}
+
+SCENE TEXT:
 "${scene.text}"
 
 Generate the shot plan JSON for this scene.`;
@@ -866,6 +965,34 @@ function postProcessSceneShots(
     shots[0].angle_change = '';
   }
 
+  // ── Emergency bisect safety net ──────────────────────────────────────────
+  // Fires ONLY for shots exceeding 15s — a clear index error, not a creative choice.
+  // Deliberate slow-burn establishing shots (8-12s) are never touched.
+  const EMERGENCY_MAX_SHOT_SECONDS = 15;
+  let ei = 0;
+  while (ei < shots.length) {
+    const s = shots[ei];
+    if (s.end_word_index <= s.start_word_index + 2) { ei++; continue; } // too short to bisect
+    const shotDur = wordTimestamps[s.end_word_index].end_seconds
+                  - wordTimestamps[s.start_word_index].start_seconds;
+    if (shotDur > EMERGENCY_MAX_SHOT_SECONDS) {
+      const mid = Math.floor((s.start_word_index + s.end_word_index) / 2);
+      const splitSecond = {
+        ...s,
+        start_word_index: mid + 1,
+        continuity_from_previous: true,
+        synthesis_mode: 'I2V' as const,
+        angle_change: 'push in to medium',
+      };
+      s.end_word_index = mid;
+      shots.splice(ei + 1, 0, splitSecond);
+      // Don't advance — re-check this slot (first half might still be >15s)
+    } else {
+      ei++;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Convert to enriched shots
   return shots.map((shot, i): EnrichedPlannedShot => {
     const startSec = wordTimestamps[shot.start_word_index].start_seconds;
@@ -1044,8 +1171,13 @@ export async function planSceneShots(
   /** Optional debug capture callbacks — never passed in production. */
   debugCapture?: DebugCapture,
 ): Promise<EnrichedPlannedShot[] | null> {
-  const systemPrompt = buildSystemPrompt(orchestratorPrompt, scene, adjacentContext);
-  const userPrompt = buildUserPrompt(scene);
+  // Compute narration rate; fall back to 2.5 wps if timestamps are thin
+  const totalWords = wordTimestamps.length;
+  const totalSecs = totalWords > 0 ? wordTimestamps[totalWords - 1].end_seconds : 0;
+  const wordsPerSecond = totalSecs > 0 ? totalWords / totalSecs : 2.5;
+
+  const systemPrompt = buildSystemPrompt(orchestratorPrompt, scene, adjacentContext, wordsPerSecond);
+  const userPrompt = buildUserPrompt(scene, wordsPerSecond);
   const responseFormat = getResponseFormat();
 
   // 5-attempt strategy

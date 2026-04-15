@@ -205,6 +205,14 @@ export function buildEnrichedMGPrompt(
     parts.push('\n- For image compositions, use <Img src={url} /> and build the layout around the provided assets.');
     parts.push('\n- For video-overlay shots, treat any provided video URL as CONTEXT ONLY unless explicitly told otherwise — the editor already places the base video underneath the overlay.');
     parts.push('\n- Do NOT create placeholder images or dummy URLs.');
+    // Asset constant injection: force the LLM to embed URLs as named TypeScript
+    // constants so Pass 2 string-replace always finds them reliably.
+    parts.push('\n\nDECLARE THESE ASSET CONSTANTS at the top of your component (before the export):');
+    imageAssets.forEach((asset, i) => {
+      parts.push(`\nconst ASSET_SRC_${i} = ${JSON.stringify(asset.url)}; // ${asset.description.substring(0, 60)}`);
+    });
+    parts.push('\nReference them as: <Img src={ASSET_SRC_0} /> or <OffthreadVideo src={ASSET_SRC_0} />');
+    parts.push('\nNever inline URL strings directly \u2014 always use the ASSET_SRC_N constants.');
   }
 
   return parts.join('');
@@ -370,6 +378,24 @@ function hasOpaqueRootBackground(code: string): boolean {
   return true;
 }
 
+/**
+ * Auto-patch an opaque root background on AbsoluteFill to transparent.
+ * Only patches the top-level AbsoluteFill — nested containers are left untouched.
+ * This avoids a full LLM retry for what is a trivially correctable issue.
+ */
+function patchOpaqueRootBackground(code: string): string {
+  // Match the first AbsoluteFill style block and replace its background/backgroundColor value
+  return code.replace(
+    /(<AbsoluteFill[^>]*style=\{\{)([\s\S]*?)(\}\}>)/,
+    (match, open, styleContent, close) => {
+      const patched = styleContent
+        .replace(/backgroundColor\s*:\s*['"`][^'"`]*['"`]/g, "backgroundColor: 'transparent'")
+        .replace(/background(?!Color)\s*:\s*['"`][^'"`]*['"`]/g, "background: 'transparent'");
+      return open + patched + close;
+    },
+  );
+}
+
 function collectMotionGraphicQualityIssues(
   code: string,
   routingTags: RoutingTag[],
@@ -405,6 +431,15 @@ function validateGeneratedMotionGraphicCode(
       code: cleanCode,
       error: `Code validation failed: ${validation.errors.join('; ')}`,
     };
+  }
+
+  // Auto-patch transparent root before QC check — avoids triggering retry for a trivial fix
+  if (isOverlayPosition(routingTags, contextHint) && hasOpaqueRootBackground(codeToCheck)) {
+    const patched = patchOpaqueRootBackground(codeToCheck);
+    if (!hasOpaqueRootBackground(patched)) {
+      console.log(`[PipelineMG] Shot ${shotIndex}: Auto-patched opaque root background → transparent`);
+      codeToCheck = patched;
+    }
   }
 
   const qcIssues = collectMotionGraphicQualityIssues(codeToCheck, routingTags, contextHint);

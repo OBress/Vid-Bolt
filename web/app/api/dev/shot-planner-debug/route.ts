@@ -43,13 +43,25 @@ interface RequestBody {
   wordTimestamps?: WordTimestamp[];
   /** media_project.id — loads full channel ProjectSettings and builds CreativeManifest */
   projectSettingsId?: string;
+  /**
+   * video_projects.id — when set, the route fetches real word_timestamps and
+   * script_content from that video row, overriding the body `script` and
+   * `wordTimestamps` fields with production-exact data.
+   */
+  importFromVideoId?: string;
   /** Manual creative context (used when no channel is loaded) */
   creativeContext?: SceneDecompositionContext;
-  /** Per-video creative prompt (from imported video or manual input) */
+  /**
+   * Full VideoCreativeOverrides object — mirrors the closed-loop production route.
+   * When provided alongside projectSettingsId, all fields override channel defaults
+   * (visual style, LoRA, MG theme, media weighting, directing intent, etc.)
+   */
+  videoCreativeOverrides?: import('@/lib/types/closed-loop').VideoCreativeOverrides;
+  /** @deprecated — pass videoCreativeOverrides.videoCreativePrompt instead */
   videoCreativePrompt?: string;
-  /** Directing intent (from imported video or manual input) */
+  /** @deprecated — pass videoCreativeOverrides.directingIntent instead */
   directingIntent?: string;
-  /** Aspect ratio override */
+  /** Aspect ratio override (kept as top-level since it's a manifest-level field) */
   aspectRatio?: '16:9' | '9:16';
   /** Script metadata for buildCreativeManifest */
   scriptMeta?: {
@@ -105,13 +117,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Admin check
+  // Admin check — is_admin lives on the 'users' table, not 'profiles'
   const supabaseService = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
   const { data: profile } = await supabaseService
-    .from('profiles')
+    .from('users')
     .select('is_admin')
     .eq('id', user.id)
     .single();
@@ -128,9 +140,46 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { script, wordTimestamps: providedTimestamps, projectSettingsId,
-    creativeContext: manualContext, videoCreativePrompt, directingIntent,
+  let { script, wordTimestamps: providedTimestamps } = body;
+  const { projectSettingsId, importFromVideoId,
+    creativeContext: manualContext, videoCreativeOverrides,
+    videoCreativePrompt, directingIntent,
     aspectRatio, scriptMeta } = body;
+
+  // ── Import real word timestamps + script from an existing video project ──
+  if (importFromVideoId) {
+    console.log(`[ShotPlannerDebug] importFromVideoId=${importFromVideoId} — fetching video row`);
+    const { data: videoRow, error: videoErr } = await supabaseService
+      .from('video_projects')
+      .select('script_content, metadata')
+      .eq('id', importFromVideoId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (videoErr) {
+      console.error(`[ShotPlannerDebug] Failed to fetch video ${importFromVideoId}:`, videoErr);
+      return NextResponse.json({ error: `Failed to fetch video: ${videoErr.message}` }, { status: 500 });
+    }
+    if (!videoRow) {
+      return NextResponse.json({ error: `Video ${importFromVideoId} not found or not owned by you` }, { status: 404 });
+    }
+
+    const meta = (videoRow.metadata || {}) as Record<string, unknown>;
+    const rawTimestamps = meta.word_timestamps;
+    if (Array.isArray(rawTimestamps) && rawTimestamps.length > 0) {
+      providedTimestamps = rawTimestamps as WordTimestamp[];
+      console.log(`[ShotPlannerDebug] Loaded ${providedTimestamps.length} real word timestamps from video`);
+    } else {
+      console.warn(`[ShotPlannerDebug] Video ${importFromVideoId} has no word_timestamps in metadata — will simulate`);
+    }
+
+    if (videoRow.script_content?.trim()) {
+      script = videoRow.script_content;
+      console.log(`[ShotPlannerDebug] Overriding script with video's script_content (${script.length} chars)`);
+    } else {
+      console.warn(`[ShotPlannerDebug] Video ${importFromVideoId} has no script_content — using body script`);
+    }
+  }
 
   if (!script?.trim()) {
     return NextResponse.json({ error: 'script is required' }, { status: 400 });
@@ -161,11 +210,18 @@ export async function POST(request: NextRequest) {
           if (settingsRow?.settings) {
             const ps = settingsRow.settings as ProjectSettings;
             const channelDefaults = ps.visuals?.creativeDirection;
-            const videoOverrides = videoCreativePrompt || directingIntent ? {
-              videoCreativePrompt,
-              directingIntent,
-              ...(aspectRatio ? { mediaWeightingOverride: undefined } : {}),
-            } as Record<string, unknown> : undefined;
+
+            // Merge full VideoCreativeOverrides object (Option B) with legacy individual fields
+            const videoOverrides = {
+              ...videoCreativeOverrides,
+              // Individual fields as fallback for backward compat
+              ...(videoCreativePrompt && !videoCreativeOverrides?.videoCreativePrompt
+                ? { videoCreativePrompt } : {}),
+              ...(directingIntent && !videoCreativeOverrides?.directingIntent
+                ? { directingIntent } : {}),
+            } as import('@/lib/types/closed-loop').VideoCreativeOverrides;
+
+            const hasOverrides = Object.keys(videoOverrides).length > 0;
 
             const basicInfoAspectRatio = aspectRatio || ps.basic_info?.aspectRatio;
             const resolvedScriptMeta = scriptMeta || {
@@ -180,7 +236,7 @@ export async function POST(request: NextRequest) {
               projectSettingsId,
               undefined,
               channelDefaults,
-              videoOverrides as never,
+              hasOverrides ? videoOverrides : undefined,
               ps.visuals,
               basicInfoAspectRatio,
               resolvedScriptMeta,

@@ -242,14 +242,18 @@ Rules:
 Template families:
 - map_focus: world/regional map backdrop with location chips and context labels
 - route_trace: route/travel progression graphic with destination labels
+- territory_map: full-width geographic map with animated colored faction zones spreading organically + timeline scrubber at bottom. Use items[] for factions (label=name, detail=hex color). Use timeline_entries[] for date markers. Use location_labels[] for region chips.
 - timeline: linear progression of events or beats
 - evidence_board: board/wall/card layout with multiple evidence items
 - document_callout: single doc/screenshot with annotations and side notes
 - quote_card: typographic quote or statement card
 - lower_third: transparent or semi-transparent title/location/identity overlay
+- character_dossier: two-column portrait card. Left: portrait image. Right: title (name), subtitle (role/dates), highlight_label (status stamp e.g. DICTATOR). accent_color drives stamp color.
 - photo_montage: layered image composition using multiple stills
 - comparison_board: side-by-side comparison with 2-3 key points
-- process_diagram: boxes/arrows explaining a system or flow`;
+- process_diagram: boxes/arrows explaining a system or flow
+- slap_annotation: annotation entering from off-screen. title=text. subtitle=secondary. notes[0]=style hint (masking tape|torn paper|stamp). accent_color drives color.
+- ghost_figure_reveal: translucent silhouette of absent subject. title=name. subtitle=absence context.`;
 
   const userPrompt = [
     `Template type: ${templateType}`,
@@ -1082,6 +1086,215 @@ export const DynamicAnimation = () => {
 export default DynamicAnimation;`;
 }
 
+
+function renderCharacterDossier(spec: TemplateSpec, assetBundle: MotionGraphicsAssetBundleItem[]): string {
+  const overlayMode = spec.overlay_mode || 'standalone';
+  const portraitUrl = resolveTemplateAssetUrl(assetBundle, 0, 0);
+  const stampText = (spec.highlight_label || 'UNKNOWN').toUpperCase();
+  const stampColor = spec.accent_color || '#dc2626';
+  return `import React from 'react';
+import { AbsoluteFill, Img, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+
+const NAME = ${escape(spec.title || 'Unknown')};
+const ROLE = ${escape(spec.subtitle || '')};
+const STAMP = ${escape(stampText)};
+const STAMP_COLOR = ${escape(stampColor)};
+const PORTRAIT_URL = ${escape(portraitUrl)};
+const NOTES = ${escape((spec.notes || []).slice(0, 3))};
+
+export const DynamicAnimation = () => {
+  const frame = useCurrentFrame();
+  const { fps, width, height } = useVideoConfig();
+  const cardProgress = spring({ frame, fps, config: { damping: 18, stiffness: 110 } });
+  const stampProgress = spring({ frame: frame - 10, fps, config: { damping: 8, stiffness: 280 } });
+  const stampScale = 2.2 - stampProgress * 1.2;
+  const stampOpacity = Math.min(1, stampProgress * 3);
+  const cardY = (1 - cardProgress) * 48;
+
+  return (
+    <AbsoluteFill style={{ background: ${escape(backgroundForOverlayMode(overlayMode))}, alignItems: 'center', justifyContent: 'center', padding: 48 }}>
+      <div style={{ display: 'flex', width: Math.min(width * 0.84, 1080), height: height * 0.72, borderRadius: 24, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.42)', transform: \`translateY(\${cardY}px)\`, opacity: cardProgress }}>
+        <div style={{ flex: '0 0 40%', position: 'relative', background: 'rgba(15,23,42,0.96)', borderRight: \`3px solid \${STAMP_COLOR}\` }}>
+          {PORTRAIT_URL ? <Img src={PORTRAIT_URL} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.88 }} /> : <div style={{ width: '100%', height: '100%', background: 'linear-gradient(160deg, #1e293b, #0f172a)' }} />}
+        </div>
+        <div style={{ flex: 1, background: 'rgba(10,14,26,0.97)', padding: '42px 36px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>
+          <div style={{ fontSize: 42, fontWeight: 800, color: '#f8fafc', letterSpacing: '-0.03em', lineHeight: 1.1 }}>{NAME}</div>
+          {ROLE ? <div style={{ fontSize: 18, color: 'rgba(203,213,225,0.80)', marginTop: 10 }}>{ROLE}</div> : null}
+          {NOTES.length > 0 && (
+            <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {NOTES.map((n, i) => (
+                <div key={i} style={{ fontSize: 15, color: 'rgba(148,163,184,0.86)', paddingLeft: 12, borderLeft: '2px solid rgba(255,255,255,0.12)' }}>{n}</div>
+              ))}
+            </div>
+          )}
+          <div style={{ position: 'absolute', top: 32, right: 32, padding: '10px 18px', border: \`4px solid \${STAMP_COLOR}\`, color: STAMP_COLOR, fontSize: 22, fontWeight: 900, letterSpacing: '0.12em', transform: \`rotate(-12deg) scale(\${stampScale})\`, opacity: stampOpacity, transformOrigin: 'center', whiteSpace: 'nowrap' }}>
+            {STAMP}
+          </div>
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+export default DynamicAnimation;`;
+}
+
+function renderTerritoryMap(spec: TemplateSpec, assetBundle: MotionGraphicsAssetBundleItem[]): string {
+  const overlayMode = spec.overlay_mode || 'standalone';
+  const mapUrl = resolveTemplateAssetUrl(assetBundle, 0, 0);
+  const factionColors = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7'];
+  const factions = (spec.items || []).slice(0, 5).map((item, i) => ({
+    label: item.label,
+    color: item.detail || factionColors[i % factionColors.length],
+  }));
+  const dateEntries = (spec.timeline_entries || []).slice(0, 6);
+  const factionPositions = [
+    { left: '12%', top: '22%' }, { left: '56%', top: '18%' },
+    { left: '28%', top: '58%' }, { left: '68%', top: '52%' }, { left: '42%', top: '38%' },
+  ];
+  return `import React from 'react';
+import { AbsoluteFill, Img, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
+
+const MAP_URL = ${escape(mapUrl)};
+const TITLE = ${escape(spec.title || 'Territory')};
+const FACTIONS = ${escape(factions)};
+const DATE_ENTRIES = ${escape(dateEntries)};
+const FACTION_POSITIONS = ${escape(factionPositions)};
+const ACCENT = ${escape(spec.accent_color || '#e2b714')};
+
+export const DynamicAnimation = () => {
+  const frame = useCurrentFrame();
+  const { fps, durationInFrames, width, height } = useVideoConfig();
+
+  return (
+    <AbsoluteFill style={{ background: ${escape(backgroundForOverlayMode(overlayMode))} }}>
+      {MAP_URL ? (
+        <Img src={MAP_URL} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.68 }} />
+      ) : (
+        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, #1a2744 0%, #0b1120 100%)' }} />
+      )}
+      <div style={{ position: 'absolute', top: 32, left: 40, padding: '10px 18px', background: 'rgba(10,14,26,0.86)', borderLeft: \`4px solid \${ACCENT}\`, color: '#f8fafc', fontSize: 22, fontWeight: 700 }}>{TITLE}</div>
+      {FACTIONS.map((faction, i) => {
+        const startFrame = Math.round((i / Math.max(FACTIONS.length, 1)) * durationInFrames * 0.6);
+        const coverage = interpolate(frame, [startFrame, startFrame + Math.round(fps * 1.2)], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+        const pos = FACTION_POSITIONS[i % FACTION_POSITIONS.length];
+        return (
+          <div key={i} style={{ position: 'absolute', ...pos, width: \`\${18 + coverage * 22}%\`, height: \`\${14 + coverage * 18}%\`, background: faction.color, opacity: coverage * 0.36, borderRadius: '40% 60% 55% 45% / 50% 45% 55% 50%', filter: 'blur(18px)', transform: \`scale(\${0.6 + coverage * 0.4})\` }} />
+        );
+      })}
+      {FACTIONS.map((faction, i) => {
+        const labelProgress = interpolate(frame, [Math.round(fps * (0.4 + i * 0.3)), Math.round(fps * (0.7 + i * 0.3))], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+        const pos = FACTION_POSITIONS[i % FACTION_POSITIONS.length];
+        return (
+          <div key={'l' + i} style={{ position: 'absolute', ...pos, padding: '5px 12px', background: faction.color, color: '#fff', fontSize: 13, fontWeight: 700, borderRadius: 6, opacity: labelProgress, whiteSpace: 'nowrap', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{faction.label}</div>
+        );
+      })}
+      {DATE_ENTRIES.length > 0 && (
+        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 56, background: 'rgba(10,14,26,0.88)', display: 'flex', alignItems: 'center', paddingInline: 40 }}>
+          <div style={{ position: 'absolute', left: 40, right: 40, height: 2, background: 'rgba(255,255,255,0.18)', top: '50%' }} />
+          {DATE_ENTRIES.map((entry, i) => {
+            const xPct = DATE_ENTRIES.length > 1 ? i / (DATE_ENTRIES.length - 1) : 0.5;
+            const dotProgress = interpolate(frame, [Math.round(fps * (0.3 + i * 0.25)), Math.round(fps * (0.6 + i * 0.25))], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+            return (
+              <div key={'d' + i} style={{ position: 'absolute', left: \`calc(40px + \${xPct} * (100% - 80px))\`, top: '50%', transform: 'translateX(-50%) translateY(-50%)', opacity: dotProgress, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: ACCENT }} />
+                <div style={{ fontSize: 11, color: 'rgba(226,232,240,0.86)', whiteSpace: 'nowrap', marginTop: 14 }}>{entry.label}</div>
+              </div>
+            );
+          })}
+          <div style={{ position: 'absolute', left: \`calc(40px + \${interpolate(frame, [0, durationInFrames], [0, 1], { extrapolateRight: 'clamp' })} * (100% - 80px))\`, top: '50%', transform: 'translateY(-50%)', width: 14, height: 14, borderRadius: '50%', background: ACCENT, boxShadow: \`0 0 10px \${ACCENT}\` }} />
+        </div>
+      )}
+    </AbsoluteFill>
+  );
+};
+
+export default DynamicAnimation;`;
+}
+
+function renderSlapAnnotation(spec: TemplateSpec, assetBundle: MotionGraphicsAssetBundleItem[]): string {
+  const overlayMode = spec.overlay_mode || 'standalone';
+  const baseUrl = resolveTemplateAssetUrl(assetBundle, 0, 0);
+  const styleHint = ((spec.notes || [])[0] || '').toLowerCase();
+  const isMaskingTape = styleHint.includes('masking tape') || styleHint.includes('tape');
+  const isStamp = styleHint.includes('stamp');
+  const annotBg = isMaskingTape ? '#c9aa7a' : (isStamp ? 'transparent' : '#f8fafc');
+  const annotFont = isMaskingTape ? 'monospace' : 'Inter, Arial, sans-serif';
+  const annotRotation = isMaskingTape ? 2 : (isStamp ? 3 : -2);
+  const stampBorder = isStamp
+    ? `4px solid ${spec.accent_color || '#e2b714'}`
+    : 'none';
+  const textColor = isStamp ? (spec.accent_color || '#e2b714') : '#111827';
+  return `import React from 'react';
+import { AbsoluteFill, Img, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+
+const ANNOTATION_TEXT = ${escape((spec.title || 'NOTE').toUpperCase())};
+const SECONDARY_TEXT = ${escape(spec.subtitle || '')};
+const BASE_URL = ${escape(baseUrl)};
+const ANNOT_BG = ${escape(annotBg)};
+const ANNOT_FONT = ${escape(annotFont)};
+const ANNOT_ROTATION = ${escape(annotRotation)};
+const STAMP_BORDER = ${escape(stampBorder)};
+const TEXT_COLOR = ${escape(textColor)};
+
+export const DynamicAnimation = () => {
+  const frame = useCurrentFrame();
+  const { fps, width, height } = useVideoConfig();
+  const slamProgress = spring({ frame: frame - 4, fps, config: { damping: 10, stiffness: 300 } });
+  const slideX = (1 - slamProgress) * (width * 0.6);
+
+  return (
+    <AbsoluteFill style={{ background: ${escape(backgroundForOverlayMode(overlayMode))} }}>
+      {BASE_URL ? <Img src={BASE_URL} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
+      <div style={{ position: 'absolute', left: width * 0.08, top: height * 0.32, transform: \`translateX(\${slideX}px) rotate(\${ANNOT_ROTATION}deg)\`, background: ANNOT_BG, border: STAMP_BORDER, color: TEXT_COLOR, fontFamily: ANNOT_FONT, fontSize: 36, fontWeight: 900, letterSpacing: '0.06em', padding: '16px 28px', boxShadow: '0 6px 28px rgba(0,0,0,0.36)', maxWidth: width * 0.72 }}>
+        {ANNOTATION_TEXT}
+        {SECONDARY_TEXT ? <div style={{ fontSize: 20, fontWeight: 600, marginTop: 6, opacity: 0.78 }}>{SECONDARY_TEXT}</div> : null}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+export default DynamicAnimation;`;
+}
+
+function renderGhostFigureReveal(spec: TemplateSpec, assetBundle: MotionGraphicsAssetBundleItem[]): string {
+  const overlayMode = spec.overlay_mode || 'standalone';
+  const subjectUrl = resolveTemplateAssetUrl(assetBundle, 0, 0);
+  return `import React from 'react';
+import { AbsoluteFill, Img, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+
+const NAME = ${escape(spec.title || 'Unknown')};
+const CONTEXT = ${escape(spec.subtitle || '')};
+const SUBJECT_URL = ${escape(subjectUrl)};
+const ACCENT = ${escape(spec.accent_color || '#64748b')};
+
+export const DynamicAnimation = () => {
+  const frame = useCurrentFrame();
+  const { fps, durationInFrames, height } = useVideoConfig();
+  const fadeInProgress = spring({ frame, fps, config: { damping: 20, stiffness: 80 } });
+  const labelProgress = spring({ frame: frame - 12, fps, config: { damping: 16, stiffness: 100 } });
+  const fadeOutStart = Math.round(durationInFrames * 0.72);
+  const fadeOut = interpolate(frame, [fadeOutStart, durationInFrames], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  const ghostOpacity = fadeInProgress * 0.26 * fadeOut;
+  const labelY = (1 - labelProgress) * 20;
+
+  return (
+    <AbsoluteFill style={{ background: ${escape(backgroundForOverlayMode(overlayMode))} }}>
+      {SUBJECT_URL ? (
+        <Img src={SUBJECT_URL} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: ghostOpacity, filter: 'grayscale(80%) saturate(0.2) hue-rotate(220deg) brightness(0.7)' }} />
+      ) : null}
+      <div style={{ position: 'absolute', bottom: height * 0.22, left: '50%', transform: \`translateX(-50%) translateY(\${labelY}px)\`, opacity: labelProgress * fadeOut, background: 'rgba(10,14,26,0.86)', border: \`1px solid \${ACCENT}\`, borderRadius: 10, padding: '12px 24px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+        <div style={{ color: '#f8fafc', fontSize: 22, fontWeight: 700, letterSpacing: '-0.01em' }}>{NAME}</div>
+        {CONTEXT ? <div style={{ color: 'rgba(203,213,225,0.76)', fontSize: 14, marginTop: 4 }}>{CONTEXT}</div> : null}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+export default DynamicAnimation;`;
+}
+
+
 function renderTemplate(spec: TemplateSpec, assetBundle: MotionGraphicsAssetBundleItem[]): string {
   switch (spec.template_type) {
     case 'lower_third':
@@ -1099,6 +1312,14 @@ function renderTemplate(spec: TemplateSpec, assetBundle: MotionGraphicsAssetBund
     case 'map_focus':
     case 'route_trace':
       return renderMap(spec);
+    case 'territory_map':
+      return renderTerritoryMap(spec, assetBundle);
+    case 'character_dossier':
+      return renderCharacterDossier(spec, assetBundle);
+    case 'slap_annotation':
+      return renderSlapAnnotation(spec, assetBundle);
+    case 'ghost_figure_reveal':
+      return renderGhostFigureReveal(spec, assetBundle);
     case 'process_diagram':
       return renderProcessDiagram(spec);
     case 'photo_montage':

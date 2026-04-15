@@ -25,6 +25,10 @@ const QUOTE_KEYWORDS = /\b(quote|statement|said|says|according to|caption|callou
 const LOWER_THIRD_KEYWORDS = /\b(lower third|location tag|name card|chapter slate|title card|overlay|badge|label)\b/i;
 const PROCESS_KEYWORDS = /\b(process|pipeline|system|flow|mechanism|how it works|diagram|architecture)\b/i;
 const MONTAGE_KEYWORDS = /\b(montage|collage|parallax|photo|gallery|album|evidence wall|scrapbook)\b/i;
+const DOSSIER_KEYWORDS = /\b(dossier|character dossier|portrait card|profile card|status stamp|editorial stamp|character card)\b/i;
+const TERRITORY_KEYWORDS = /\b(territory map|territory|faction map|faction zone|conquest|civil war zone|control zone|spread zone)\b/i;
+const SLAP_ANNOTATION_KEYWORDS = /\b(slap annotation|annotation slam|masking tape|torn paper|stamp reveal|slap stamp|editorial overlay)\b/i;
+const GHOST_FIGURE_KEYWORDS = /\b(ghost figure|ghost placeholder|translucent figure|silhouette|absent character|ghost reveal)\b/i;
 
 /** Generic contextHint values that should NOT influence template type routing */
 const GENERIC_CONTEXT_HINTS = new Set([
@@ -52,6 +56,10 @@ export function isTemplateCandidate(input: MotionGraphicsStrategyInput): boolean
 
   return (
     MAP_KEYWORDS.test(prompt) ||
+    TERRITORY_KEYWORDS.test(prompt) ||
+    DOSSIER_KEYWORDS.test(prompt) ||
+    SLAP_ANNOTATION_KEYWORDS.test(prompt) ||
+    GHOST_FIGURE_KEYWORDS.test(prompt) ||
     TIMELINE_KEYWORDS.test(prompt) ||
     DOCUMENT_KEYWORDS.test(prompt) ||
     EVIDENCE_KEYWORDS.test(prompt) ||
@@ -76,6 +84,12 @@ export function inferTemplateType(input: MotionGraphicsStrategyInput): MotionGra
     const mapped = templateTypeFromPersistentGraphicType(persistentType);
     if (mapped) return mapped;
   }
+
+  // New types take priority — check before general keyword rules to avoid mis-routing
+  if (DOSSIER_KEYWORDS.test(prompt)) return 'character_dossier';
+  if (TERRITORY_KEYWORDS.test(prompt)) return 'territory_map';
+  if (SLAP_ANNOTATION_KEYWORDS.test(prompt)) return 'slap_annotation';
+  if (GHOST_FIGURE_KEYWORDS.test(prompt)) return 'ghost_figure_reveal';
 
   if (MAP_KEYWORDS.test(prompt)) return /route|travel|path|journey|flight/i.test(prompt) ? 'route_trace' : 'map_focus';
   if (TIMELINE_KEYWORDS.test(prompt)) return 'timeline';
@@ -137,7 +151,12 @@ export function getRecommendedPlaceholderCount(
     case 'document_callout':
     case 'route_trace':
     case 'map_focus':
+    case 'territory_map':
       return Math.max(2, requested);
+    case 'character_dossier':
+    case 'slap_annotation':
+    case 'ghost_figure_reveal':
+      return Math.max(1, requested);
     default:
       return requested;
   }

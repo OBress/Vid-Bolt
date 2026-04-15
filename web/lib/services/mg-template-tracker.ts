@@ -180,8 +180,9 @@ export function recordStyle(
 
 /**
  * Build a consistency prompt fragment for a composition type.
- * If a previous MG of this type exists, returns instructions to match it.
- * If not, returns instructions to establish the template.
+ * If a previous MG of this type exists, enforces brand DNA (colors, font, mode)
+ * while leaving layout and animation free to vary per shot.
+ * If not, returns instructions to establish the brand tokens.
  */
 export function buildMgConsistencyPrompt(
   registry: MgTemplateRegistry,
@@ -191,22 +192,47 @@ export function buildMgConsistencyPrompt(
   const existing = getExistingStyle(registry, compositionType);
 
   if (!existing) {
-    return `\n## TEMPLATE ESTABLISHMENT
+    return `\n## BRAND ESTABLISHMENT
 You are creating the FIRST "${compositionType}" in this video.
-Your style decisions will be the template for ALL future "${compositionType}" compositions.
-Be deliberate: choose colors, fonts, padding, animation timing, and layout that can be consistently replicated.
-Document your style decisions clearly in style_notes.`;
+Establish a BRAND TOKEN SET that future instances will inherit — document it in style_notes:
+- accent_color: the exact hex value for borders, stamps, and emphasis
+- font_family: the font name (e.g. "Inter", "Roboto Mono")
+- border_radius_system: sharp (2-4px), medium (10-16px), or rounded (20-28px)
+- dark_mode: true if background is near-black, false if near-white
+Your LAYOUT, animation type, element count, and composition can be original for this shot.
+Future instances will match your brand tokens but not your layout.`;
   }
 
-  return `\n## TEMPLATE ENFORCEMENT (CRITICAL)
-A "${compositionType}" template already exists from Shot ${existing.firstInstanceShotIndex + 1}:
-Style: ${existing.styleNotes}
-${existing.styleDecisions.backgroundColor ? `Background: ${existing.styleDecisions.backgroundColor}` : ''}
-${existing.styleDecisions.primaryColor ? `Primary Color: ${existing.styleDecisions.primaryColor}` : ''}
-${existing.styleDecisions.fontFamily ? `Font: ${existing.styleDecisions.fontFamily}` : ''}
-${existing.styleDecisions.animationStyle ? `Animation: ${existing.styleDecisions.animationStyle}` : ''}
+  return `\n## BRAND TOKEN ENFORCEMENT
+This "${compositionType}" must match the brand DNA from Shot ${existing.firstInstanceShotIndex + 1}:
+${existing.styleNotes}
 
-You MUST match this template EXACTLY. This is instance #${existing.instanceCount + 1}.
-Use the same layout, colors, fonts, padding, and animation timing.
-The viewer should not be able to tell that different instances of "${compositionType}" were generated separately.`;
+MUST match exactly:
+${existing.styleDecisions.accentColor ? `- Accent color: ${existing.styleDecisions.accentColor}` : ''}
+${existing.styleDecisions.fontFamily ? `- Font: ${existing.styleDecisions.fontFamily}` : ''}
+${existing.styleDecisions.backgroundColor ? `- Background mode: ${existing.styleDecisions.backgroundColor}` : ''}
+
+FREE to vary (make it unique for this shot's content):
+- Layout composition (columns, card positions, arrangement)
+- Animation type (slide, scale, fade — choose what best fits this content)
+- Number and size of elements
+- Which elements receive emphasis
+
+Goal: visual continuity in brand identity; compositional variety in execution.
+This is instance #${existing.instanceCount + 1}.`;
+}
+
+/**
+ * Check if the same composition type has been used too many times.
+ * Used to prevent repetitive template selection — if this returns true,
+ * the caller should consider an alternate template type for variety.
+ */
+export function hasTooManyRecentInstances(
+  registry: MgTemplateRegistry,
+  compositionType: string,
+  threshold: number = 3,
+): boolean {
+  const record = registry.templates[compositionType];
+  if (!record) return false;
+  return record.instanceCount >= threshold;
 }
