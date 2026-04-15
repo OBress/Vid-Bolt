@@ -12,7 +12,7 @@ import {
 } from "./types";
 import { analyzeContentStructure } from "./analyzer";
 import { segmentTimeline, getSegmentStats } from "./segmenter";
-import { generateVisualPrompts } from "./prompt-gen";
+import { generateVisualPrompts, type OutlineAssets, type CreativeManifestContext } from "./prompt-gen";
 
 // ============================================================================
 // MAIN ENTRY POINT
@@ -24,16 +24,20 @@ import { generateVisualPrompts } from "./prompt-gen";
  * Pipeline:
  * 1. Analyze content structure (lists, comparisons, transitions, emotional beats)
  * 2. Segment timeline based on analysis
- * 3. Generate visual prompts for each segment
+ * 3. Generate visual prompts for each segment (with optional entity consistency)
  * 4. Return structured shot list
  * 
- * @param userId - User ID for AI prompt generation
- * @param input - Script, word timestamps, and total duration
+ * @param userId        - User ID for AI prompt generation
+ * @param input         - Script, word timestamps, and total duration
+ * @param outlineAssets - Optional entity profiles for Visual Consistency Bible
+ * @param creative      - Optional creative manifest for style consistency
  * @returns Complete shot list with visual prompts
  */
 export async function generateShotList(
   userId: string,
-  input: ShotListInput
+  input: ShotListInput,
+  outlineAssets?: OutlineAssets,
+  creative?: CreativeManifestContext,
 ): Promise<ShotListOutput> {
   const { script, word_timestamps, total_duration_seconds } = input;
   
@@ -58,9 +62,9 @@ export async function generateShotList(
   const segments = segmentTimeline(word_timestamps, analysis);
   console.log(`[ShotList] Created ${segments.length} segments`);
   
-  // Step 3: Generate visual prompts
+  // Step 3: Generate visual prompts (with optional entity profiles)
   console.log("[ShotList] Step 3: Generating visual prompts...");
-  const segmentsWithPrompts = await generateVisualPrompts(userId, segments);
+  const segmentsWithPrompts = await generateVisualPrompts(userId, segments, outlineAssets, creative);
   console.log(`[ShotList] Generated ${segmentsWithPrompts.filter(s => s.visual_prompt).length} visual prompts`);
   
   // Step 4: Calculate metadata

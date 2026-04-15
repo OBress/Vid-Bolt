@@ -27,19 +27,22 @@ export interface OutlineAssets {
     role?: string;
     physicalCharacteristics?: {
       demographics?: { age?: number | string; gender?: string; ethnicity?: string };
+      bodyStructure?: { height?: string; build?: string };
       hair?: { color?: string; length?: string; style?: string };
-      faceFeatures?: { eyeColor?: string; skinTone?: string };
+      faceFeatures?: { eyeColor?: string; skinTone?: string; notableFeatures?: string };
       distinguishingFeatures?: string[];
     };
-    wardrobe?: { defaultOutfit?: string };
     expressions?: { neutral?: string };
+    wardrobe?: { defaultOutfit?: string };
     visualInstructions?: { consistencyAnchors?: string[]; styleNotes?: string };
   }>;
   locations?: Array<{
     id: string;
     name: string;
     type?: string;
+    scale?: string;
     essence?: string;
+    structuralDetails?: { materials?: string; keyElements?: string[] };
     lighting?: { natural?: string; mood?: string };
     environmentalDetails?: { weatherAtmosphere?: string };
     visualInstructions?: { consistencyAnchors?: string[] };
@@ -48,7 +51,8 @@ export interface OutlineAssets {
     id: string;
     name: string;
     type?: string;
-    physicalDescription?: { detailedDescription?: string; color?: string };
+    physicalDescription?: { detailedDescription?: string; color?: string; shape?: string; notableFeatures?: string[] };
+    visualInstructions?: { consistencyAnchors?: string[] };
   }>;
 }
 
@@ -176,44 +180,86 @@ function buildVisualBible(
       const pc = c.physicalCharacteristics;
       if (pc) {
         const demo = pc.demographics;
-        if (demo?.age || demo?.gender) parts.push(`  ${[demo.age, demo.gender, demo.ethnicity].filter(Boolean).join(', ')}`);
-        if (pc.hair?.color) parts.push(`  Hair: ${[pc.hair.color, pc.hair.length, pc.hair.style].filter(Boolean).join(', ')}`);
-        if (pc.faceFeatures?.skinTone) parts.push(`  Skin: ${pc.faceFeatures.skinTone}`);
-        if (pc.distinguishingFeatures?.length) parts.push(`  Distinctive: ${pc.distinguishingFeatures.join(', ')}`);
+        // Age/gender/ethnicity on one line
+        if (demo?.age || demo?.gender || demo?.ethnicity) {
+          parts.push(`  ${[demo.age, demo.gender, demo.ethnicity].filter(Boolean).join(', ')}`);
+        }
+        // Body structure
+        if (pc.bodyStructure?.height || pc.bodyStructure?.build) {
+          parts.push(`  Build: ${[pc.bodyStructure.height, pc.bodyStructure.build].filter(Boolean).join(', ')}`);
+        }
+        // Hair (most visually identifiable)
+        if (pc.hair?.color) {
+          parts.push(`  Hair: ${[pc.hair.color, pc.hair.length, pc.hair.style].filter(Boolean).join(', ')}`);
+        }
+        // Skin tone
+        if (pc.faceFeatures?.skinTone) {
+          const eyeStr = pc.faceFeatures.eyeColor ? `, ${pc.faceFeatures.eyeColor} eyes` : '';
+          parts.push(`  Skin: ${pc.faceFeatures.skinTone}${eyeStr}`);
+        }
+        // Notable face features
+        if (pc.faceFeatures?.notableFeatures) {
+          parts.push(`  Face: ${pc.faceFeatures.notableFeatures}`);
+        }
+        // Distinguishing features (max 3 to stay concise)
+        if (pc.distinguishingFeatures?.length) {
+          parts.push(`  Distinctive: ${pc.distinguishingFeatures.slice(0, 3).join(', ')}`);
+        }
       }
+      // Wardrobe
       if (c.wardrobe?.defaultOutfit) parts.push(`  Outfit: ${c.wardrobe.defaultOutfit}`);
+      // Consistency anchors — highest-priority, always rendered last
       if (c.visualInstructions?.consistencyAnchors?.length) {
-        parts.push(`  Consistency: ${c.visualInstructions.consistencyAnchors.join('. ')}`);
+        parts.push(`  MUST ALWAYS SHOW: ${c.visualInstructions.consistencyAnchors.join('. ')}`);
       }
       return parts.join('\n');
     });
-    sections.push(`CHARACTERS (always describe consistently):\n${charLines.join('\n')}`);
+    sections.push(`CHARACTERS (describe consistently across all shots):\n${charLines.join('\n')}`);
   }
 
   // Locations
   const locs = outlineAssets?.locations;
   if (locs && locs.length > 0) {
     const locLines = locs.map(l => {
-      const parts: string[] = [`• ${l.name}${l.type ? ` (${l.type})` : ''}`];
+      const parts: string[] = [`• ${l.name}${l.type ? ` (${l.type}${l.scale ? ', ' + l.scale : ''})` : ''}` ];
       if (l.essence) parts.push(`  ${l.essence}`);
-      if (l.lighting?.natural) parts.push(`  Lighting: ${l.lighting.natural}${l.lighting.mood ? `, ${l.lighting.mood} mood` : ''}`);
+      // Structural key elements (most actionable for prompt writing)
+      if (l.structuralDetails?.keyElements?.length) {
+        parts.push(`  Key elements: ${l.structuralDetails.keyElements.join(', ')}`);
+      }
+      if (l.structuralDetails?.materials) {
+        parts.push(`  Materials: ${l.structuralDetails.materials}`);
+      }
+      // Lighting
+      if (l.lighting?.natural || l.lighting?.mood) {
+        parts.push(`  Lighting: ${[l.lighting.natural, l.lighting.mood ? `${l.lighting.mood} mood` : ''].filter(Boolean).join(', ')}`);
+      }
+      // Weather/atmosphere
+      if (l.environmentalDetails?.weatherAtmosphere) {
+        parts.push(`  Atmosphere: ${l.environmentalDetails.weatherAtmosphere}`);
+      }
+      // Consistency anchors
       if (l.visualInstructions?.consistencyAnchors?.length) {
-        parts.push(`  Anchors: ${l.visualInstructions.consistencyAnchors.join('. ')}`);
+        parts.push(`  MUST ALWAYS SHOW: ${l.visualInstructions.consistencyAnchors.join('. ')}`);
       }
       return parts.join('\n');
     });
-    sections.push(`LOCATIONS (always describe consistently):\n${locLines.join('\n')}`);
+    sections.push(`LOCATIONS (describe consistently across all shots):\n${locLines.join('\n')}`);
   }
 
-  // Objects
+  // Objects — kept concise: one-liners with consistency anchors
   const objs = outlineAssets?.objects;
   if (objs && objs.length > 0) {
     const objLines = objs.map(o => {
-      const desc = o.physicalDescription?.detailedDescription || '';
-      const color = o.physicalDescription?.color || '';
-      return `• ${o.name}: ${[desc, color].filter(Boolean).join(', ')}`;
+      const desc = [o.physicalDescription?.detailedDescription, o.physicalDescription?.color, o.physicalDescription?.shape]
+        .filter(Boolean).join(', ');
+      const anchors = o.visualInstructions?.consistencyAnchors?.length
+        ? ` | ALWAYS: ${o.visualInstructions.consistencyAnchors.slice(0, 2).join(', ')}` : '';
+      const notables = o.physicalDescription?.notableFeatures?.length
+        ? ` | Notable: ${o.physicalDescription.notableFeatures.slice(0, 2).join(', ')}` : '';
+      return `• ${o.name}: ${desc || o.type || 'key prop'}${notables}${anchors}`;
     });
-    sections.push(`KEY OBJECTS:\n${objLines.join('\n')}`);
+    sections.push(`KEY OBJECTS (render visually accurately):\n${objLines.join('\n')}`);
   }
 
   if (sections.length === 0) return '';

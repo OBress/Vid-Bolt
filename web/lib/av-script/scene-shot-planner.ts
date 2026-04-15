@@ -442,6 +442,16 @@ function getResponseFormat() {
 
 const LOG_PREFIX = '[SceneShotPlanner]';
 
+/**
+ * Thin entity roster — only what the shot planner needs to make
+ * framing/naming decisions. Physical details are withheld; those
+ * belong exclusively in the Visual Bible for prompt expansion.
+ */
+export interface ThinEntityRoster {
+  characters?: Array<{ name: string; role: string }>;
+  locations?: Array<{ name: string; type?: string; scale?: string; essence?: string; lightingMood?: string }>;
+}
+
 interface AdjacentContext {
   previousScene?: {
     description: string;
@@ -457,7 +467,8 @@ function buildSystemPrompt(
   orchestratorPrompt: string | undefined,
   scene: EnrichedScene,
   adjacentContext: AdjacentContext,
-  wordsPerSecond: number
+  wordsPerSecond: number,
+  entityRoster?: ThinEntityRoster,
 ): string {
   const parts: string[] = [];
 
@@ -500,6 +511,28 @@ Last shot: "${lastShot?.summary || 'N/A'}" (${lastShot?.media_type || 'unknown'}
 → Consider how your LAST shot transitions into this.`);
   } else {
     parts.push(`\nThis is the LAST scene. End with resolution or a strong closing visual.`);
+  }
+
+  // Named entity roster — names+roles only so the planner uses them in
+  // visual_description without guessing, and picks framing based on location scale.
+  // Physical appearance details are deliberately omitted here (they belong in prompt-gen).
+  if (entityRoster && (entityRoster.characters?.length || entityRoster.locations?.length)) {
+    const rosterLines: string[] = ['\n═══ NAMED ENTITIES IN THIS VIDEO ═══'];
+    if (entityRoster.characters?.length) {
+      rosterLines.push('Characters (use their names in visual_description when they appear):');
+      for (const c of entityRoster.characters) {
+        rosterLines.push(`  • ${c.name} — ${c.role}`);
+      }
+    }
+    if (entityRoster.locations?.length) {
+      rosterLines.push('Locations (use scale/type to inform framing and camera_motion choices):');
+      for (const l of entityRoster.locations) {
+        const details = [l.type, l.scale, l.essence, l.lightingMood ? `lighting: ${l.lightingMood}` : undefined]
+          .filter(Boolean).join(', ');
+        rosterLines.push(`  • ${l.name}${details ? ` [${details}]` : ''}`);
+      }
+    }
+    parts.push(rosterLines.join('\n'));
   }
 
   // Shot planning rules
@@ -1170,13 +1203,15 @@ export async function planSceneShots(
   globalSegmentOffset: number,
   /** Optional debug capture callbacks — never passed in production. */
   debugCapture?: DebugCapture,
+  /** Thin entity roster: character names+roles and location types only. */
+  entityRoster?: ThinEntityRoster,
 ): Promise<EnrichedPlannedShot[] | null> {
   // Compute narration rate; fall back to 2.5 wps if timestamps are thin
   const totalWords = wordTimestamps.length;
   const totalSecs = totalWords > 0 ? wordTimestamps[totalWords - 1].end_seconds : 0;
   const wordsPerSecond = totalSecs > 0 ? totalWords / totalSecs : 2.5;
 
-  const systemPrompt = buildSystemPrompt(orchestratorPrompt, scene, adjacentContext, wordsPerSecond);
+  const systemPrompt = buildSystemPrompt(orchestratorPrompt, scene, adjacentContext, wordsPerSecond, entityRoster);
   const userPrompt = buildUserPrompt(scene, wordsPerSecond);
   const responseFormat = getResponseFormat();
 
@@ -1279,7 +1314,9 @@ export async function planAllSceneShots(
   orchestratorPrompt: string | undefined,
   onProgress?: (message: string, sceneIndex: number) => void,
   /** Optional debug capture callbacks — never passed in production. */
-  debugCapture?: DebugCapture
+  debugCapture?: DebugCapture,
+  /** Thin entity roster: character names+roles and location types only. */
+  entityRoster?: ThinEntityRoster,
 ): Promise<Array<{ scene: EnrichedScene; shots: EnrichedPlannedShot[] | null }>> {
   const results: Array<{ scene: EnrichedScene; shots: EnrichedPlannedShot[] | null }> = [];
   let globalSegmentOffset = 0;
@@ -1319,7 +1356,8 @@ export async function planAllSceneShots(
       adjacentContext,
       i,
       globalSegmentOffset,
-      debugCapture
+      debugCapture,
+      entityRoster,
     );
 
     results.push({ scene, shots });

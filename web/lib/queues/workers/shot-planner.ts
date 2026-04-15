@@ -34,7 +34,9 @@ import {
 } from '@/lib/av-script/scene-decomposer';
 import {
   planAllSceneShots,
+  type ThinEntityRoster,
 } from '@/lib/av-script/scene-shot-planner';
+import type { AssetRegistry, CharacterProfile, LocationProfile } from '@/lib/queues/writing/types';
 import { listEntities } from '@/lib/services/gcm';
 import { enrichShotPlan } from '@/lib/services/shot-plan-enrichment';
 import {
@@ -132,6 +134,25 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
         }
       }
 
+      // Build thin entity roster for the shot planner from outline_assets.
+      // Characters: name + role only (physical details belong in prompt-gen's Visual Bible).
+      // Locations: name, type, scale, essence, lighting.mood only (drives framing decisions).
+      // Objects: omitted — they don't influence shot structure.
+      const outlineAssetsRaw = metadata.outline_assets as AssetRegistry | undefined;
+      const entityRoster: ThinEntityRoster | undefined = outlineAssetsRaw ? {
+        characters: (outlineAssetsRaw.characters || []).map((c: CharacterProfile) => ({
+          name: c.name,
+          role: c.role,
+        })),
+        locations: (outlineAssetsRaw.locations || []).map((l: LocationProfile) => ({
+          name: l.name,
+          type: l.type,
+          scale: l.scale,
+          essence: l.essence,
+          lightingMood: l.lighting?.mood,
+        })),
+      } : undefined;
+
       // Add aspect ratio from job data
       if (job.data.aspectRatio) {
         creativeContext.aspectRatio = job.data.aspectRatio;
@@ -211,7 +232,9 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
               progress_percent: pct,
             }).catch(() => {});
           }
-        }
+        },
+        undefined, // debugCapture — not used in production
+        entityRoster,
       );
 
       // =====================================================================
