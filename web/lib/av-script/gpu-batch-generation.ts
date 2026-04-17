@@ -809,7 +809,16 @@ function enrichLtx2Prompt(
   const styleRenderHint = styleSignals.nonPhotorealistic
     ? 'Cinematic staging, cohesive non-photorealistic rendering, and smooth continuous motion that stays inside the declared art style.'
     : 'Cinematic quality, photorealistic rendering, smooth continuous motion.';
-  const textSafetyHint = 'No watermarks, no text overlays, no readable letters or words on any surface, no paper with legible text, no stamps or labels with readable content, no subtitles, no CGI artifacts.';
+  // IMPORTANT: Never mention text/letters/words in the LTX-2 prompt — even as negations.
+  // LTX-2 hallucinates garbled characters when text tokens appear in the prompt,
+  // regardless of context. Start/end frame images guide surface appearance implicitly.
+  // Only block compositional artifacts (overlays, subtitles) that the frame can't prevent.
+  //
+  // For non-photorealistic styles (clay, animation, etc.), also prohibit photorealistic human
+  // elements — per verifier logs, these are the second most common style-contract violation.
+  const textSafetyHint = styleSignals.nonPhotorealistic
+    ? 'No baked-in text overlays, no garbled characters, no digital UI elements, no subtitles. No photorealistic human skin, hands, or faces — render all human elements in the declared art style only.'
+    : 'No watermarks, no digital overlays, no subtitles, no CGI artifacts.';
   const historicalAuthenticityHint = styleSignals.historical
     ? 'Era-authentic costumes, props, grooming, and environments only. No modern clothing, no modern haircuts, no contemporary signage or UI.'
     : undefined;
@@ -912,6 +921,14 @@ async function processVideoBatch(
         error_message: 'No start frame image for video generation',
       });
       continue;
+    }
+
+    // I2V+edited shots go through 3 sequential GPU phases (image gen → image edit → video gen).
+    // They will always be last to complete in a mixed batch — this is expected, not a hang.
+    const isI2VEdited = (shot as Record<string, unknown>).imageEditInstruction
+      || (shot as Record<string, unknown>).image_edit_instruction;
+    if (isI2VEdited) {
+      console.log(`${logPrefix} Shot ${shot.segment_index} is I2V+edited — 3-phase GPU path (image→edit→video). Will be last to complete.`);
     }
 
     const itemId = `shot-${shot.segment_index}-${uuidv4().slice(0, 8)}`;

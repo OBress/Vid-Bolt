@@ -221,7 +221,7 @@ export async function POST(request: NextRequest) {
                 ? { directingIntent } : {}),
             } as import('@/lib/types/closed-loop').VideoCreativeOverrides;
 
-            const hasOverrides = Object.keys(videoOverrides).length > 0;
+            const hasOverrides = Object.keys(videoOverrides ?? {}).length > 0;
 
             const basicInfoAspectRatio = aspectRatio || ps.basic_info?.aspectRatio;
             const resolvedScriptMeta = scriptMeta || {

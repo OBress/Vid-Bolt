@@ -81,6 +81,71 @@ function getResolvedPromptForShot(
     || `Video for segment ${shot.segment_index as number}`;
 }
 
+/**
+ * Tokens that — when present in an LTX-2 video prompt — cause garbled text
+ * overlays to appear baked into the generated video. LTX-2 hallucinates
+ * characters/glyphs whenever text-related concepts appear in the prompt,
+ * even if they're framed as "no text" negations.
+ *
+ * On SIMPLIFY_PROMPT retries, these are stripped from the prompt entirely.
+ */
+const VIDEO_TEXT_TRIGGER_TOKENS = [
+  'document', 'text', 'writing', 'lettering', 'inscription', 'label', 'labels',
+  'caption', 'captions', 'heading', 'headline', 'sign', 'signs', 'signage',
+  'poster', 'banner', 'words', 'word', 'printed', 'handwriting', 'seal',
+  'readable', 'legible', 'stamp', 'stamps', 'ticker', 'subtitle', 'subtitles',
+  'watermark', 'overlay', 'overlays', 'annotation', 'annotations',
+  'calendar', 'newspaper', 'magazine', 'report', 'letter', 'note', 'memo',
+  'dossier', 'indictment', 'certificate', 'diploma', 'contract', 'form',
+];
+
+/**
+ * Build a regex that matches any of the text-trigger tokens as whole words.
+ * Compiled once and reused across all shots in a retry batch.
+ */
+const VIDEO_TEXT_TRIGGER_RE = new RegExp(
+  `\\b(${VIDEO_TEXT_TRIGGER_TOKENS.join('|')})\\b`,
+  'gi',
+);
+
+/**
+ * Sanitize a visual prompt for a SIMPLIFY_PROMPT retry:
+ *   1. Strip text-generating token vocabulary (whole-word match, case-insensitive)
+ *   2. Collapse multiple spaces/commas left behind
+ *   3. Trim to the first two sentences so the prompt is shorter but still meaningful
+ *
+ * @param fullPrompt   - The original resolved visual prompt
+ * @param visualStyle  - Optional style string to detect non-photorealistic projects
+ * @returns Sanitized, shortened prompt ready for GPU retry
+ */
+function sanitizePromptForRetry(fullPrompt: string, visualStyle?: string): string {
+  // Step 1: Remove text-trigger tokens
+  let sanitized = fullPrompt.replace(VIDEO_TEXT_TRIGGER_RE, '');
+
+  // Step 2: Clean up punctuation artifacts (dangling commas, colons, double spaces)
+  sanitized = sanitized
+    .replace(/,\s*,/g, ',')
+    .replace(/,\s*\./g, '.')
+    .replace(/:+\s*,/g, '.')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  // Step 3: Trim to first two sentences
+  const sentences = sanitized.split(/(?<=[.!?])\s+/);
+  const twoSentences = sentences.slice(0, 2).join(' ').trim() || sanitized;
+
+  // Step 4: Style-specific enforcement suffix
+  const isNonPhotorealistic = /\b(clay|claymation|stop.?motion|animated|cartoon|illustrated|illustration|stylized|cel.?shaded|anime|3d.?render|blender|diorama|miniature|handcrafted|crafted|plasticine)\b/i.test(
+    (visualStyle || '') + ' ' + twoSentences,
+  );
+
+  const suffix = isNonPhotorealistic
+    ? 'No baked-in text, no garbled characters, no digital overlays. No photorealistic human hands or faces — use stylized clay or mannequin equivalents only.'
+    : 'No baked-in text, no garbled characters, no digital overlays.';
+
+  return `${twoSentences}. ${suffix}`;
+}
+
 export const videoGenProcessor: Processor<VideoGenJobData> = async (
   job: Job<VideoGenJobData>
 ) => {
@@ -200,8 +265,10 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         const segmentIndex = s.segment_index as number;
         const keyframeUrl = generatedImages[`shot-${segmentIndex}`];
 
-        // For retries, check if the verifier suggested prompt simplification
-        // (catastrophic failures like frozen/corrupted video are often caused by overly complex prompts)
+        // For retries, check if the verifier suggested prompt simplification.
+        // SIMPLIFY_PROMPT signals that the model hallucinated garbled text or produced a
+        // corrupted/frozen output — the root cause is almost always text-trigger tokens
+        // in the prompt activating LTX-2's text-rendering pathways.
         let feedbackPrefix = '';
         let shouldSimplify = false;
         if (isBatchRetry && retryFeedbackMap?.[segmentIndex]) {
@@ -213,14 +280,18 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           feedbackPrefix = shouldSimplify ? '' : `[RETRY GUIDANCE: ${previousFeedback}] `;
         }
 
-        // Build the visual prompt — simplify if verifier flagged prompt complexity as the issue
+        // Build the visual prompt — sanitize if verifier flagged text overlay artifacts.
+        // sanitizePromptForRetry strips text-generating token vocabulary so LTX-2 can't
+        // hallucinate garbled characters, and appends an explicit no-overlay enforcement suffix.
         const fullPrompt = getResolvedPromptForShot(metadata, s);
         let visualPrompt: string;
         if (shouldSimplify) {
-          // Strip to first sentence only — removes complex lighting/mood/camera details
-          const firstSentence = fullPrompt.split(/[.!?]/)[0]?.trim() || fullPrompt;
-          visualPrompt = firstSentence;
-          console.log(`${LOG_PREFIX} Shot ${segmentIndex}: Simplified prompt for retry (was ${fullPrompt.length} chars → ${visualPrompt.length} chars)`);
+          visualPrompt = sanitizePromptForRetry(fullPrompt, visualStyle);
+          console.log(
+            `${LOG_PREFIX} Shot ${segmentIndex}: Sanitized prompt for retry ` +
+            `(${fullPrompt.length} chars → ${visualPrompt.length} chars). ` +
+            `Text-trigger tokens stripped.`,
+          );
         } else {
           visualPrompt = feedbackPrefix + fullPrompt;
         }

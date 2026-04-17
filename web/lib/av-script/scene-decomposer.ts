@@ -20,6 +20,7 @@
 import { z } from 'zod';
 import { generateJSON, QUALITY_REVIEW_MODEL } from '@/lib/ai/openrouter';
 import type { CreativeManifest } from '@/lib/types/closed-loop';
+import { getFormatProfile, type FormatProfile } from './format-profiles';
 
 // ============================================================================
 // DEBUG CAPTURE INTERFACE
@@ -67,8 +68,19 @@ export type DecomposedScene = z.infer<typeof DecomposedScene>;
 
 /**
  * Full scene decomposition output from the LLM.
+ * The LLM first maps the emotional arc (Step 1), then builds scenes around it (Step 2).
+ * emotional_arc is optional — if the model omits it the pipeline continues without issue.
  */
 const SceneDecompositionOutput = z.object({
+  emotional_arc: z.array(z.object({
+    label: z.string(),
+    register: z.enum([
+      'neutral', 'intrigue', 'tension', 'grief',
+      'revelation', 'climax', 'resolution', 'anger', 'awe', 'hope',
+    ]),
+    position_pct: z.number(),
+    requires_human_perspective: z.boolean(),
+  })).optional(),
   scenes: z.array(DecomposedScene),
 });
 export type SceneDecompositionOutput = z.infer<typeof SceneDecompositionOutput>;
@@ -193,29 +205,78 @@ CRITICAL RULES:
   parts.push(`\nTEMPORAL PACING — CRITICAL FOR SHOT COUNT:
 This script runs at approximately ${wordsPerSecond.toFixed(2)} words/second (~${approxSecondsPerWord}s per word).
 
-When assigning suggested_shot_count, think in TIME as well as narrative beats.
+When assigning suggested_shot_count, think in TIME and pacing_intent together.
 A scene's approximate duration = (end_word_index - start_word_index + 1) / ${wordsPerSecond.toFixed(2)}
 
-Shot count guidance by duration:
+Shot count guidance by duration AND pacing intent:
+- fast / climactic scenes: target a shot every 1–4 seconds
+- building / moderate scenes: target a shot every 2–7 seconds
+- slow scenes: target a shot every 4–11 seconds
+
+General scale reference:
 - ~5s scene  → 1-2 shots
-- ~10s scene → 2-3 shots
-- ~20s scene → 3-5 shots
-- ~40s scene → 6-9 shots
-- ~60s scene → 10-15 shots
-- 60s+ scene → consider splitting into sub-scenes; scenes over ~50s become very hard to plan well
+- ~10s scene → 2-3 shots (fast) / 1-2 shots (slow)
+- ~20s scene → 4-8 shots (fast) / 2-4 shots (slow)
+- ~40s scene → 8-16 shots (fast) / 4-8 shots (slow)
+- ~60s scene → 12-24 shots (fast) / 6-12 shots (slow)
+- 60s+ scene → NEVER acceptable. Any section over 60s contains multiple distinct emotional beats.
 
 A 30-second scene with 2 shots forces 15-second static holds — a viewer experience failure.
-A single dramatic revelation CAN hold for 8-10s if the narration demands it.
-But the default should be active editing — shots that breathe and move.`);
+A single dramatic revelation CAN hold for 8-10s if the narration genuinely demands stillness.
+But the default should be active editing — shots that breathe and move.
+
+SCENE SIZE HARD LIMIT: No scene may exceed 60 seconds (~${Math.round(wordsPerSecond * 60)} words).
+If you feel a section only deserves one scene, look harder — it almost certainly has 2-4
+distinct beats hiding inside it. Find them. Separate them.`);
 
   parts.push(`\nDIRECTOR MINDSET:
-- Think like a premium YouTube director. Every scene should serve a narrative purpose.
+- Think like a premium documentary director. Every scene must serve a clear narrative purpose.
 - Design a pacing rollercoaster — oscillate between high-energy and low-energy moments.
-- The hook (first scene) should be fast-paced with quick visual changes.
+- Emotional pivot points in the script are natural scene boundaries. Grief, revelation, and
+  climax beats must not be absorbed into longer mixed-purpose scenes — they earn their own space.
+- The hook (first scene) should be fast-paced and visceral. Do not open with exposition.
 - Transitions between major topics deserve their own short scene.
 - A single dramatic line can be its own scene with 1 shot.
 - A long explanatory section might be one scene with 5+ shots.
-- Let the narrative rhythm drive your decisions, not arbitrary rules.`);
+- Let the narrative rhythm drive your decisions, not arbitrary rules.
+- THE FINAL ACT deserves the same granularity as the opening. A conclusion is NOT a single
+  "reflective" blob — it has distinct beats: the verdict, the settlement, the new revelation,
+  the lasting warning. Each of those is a separate scene with a separate emotional register.`);
+
+  // Format editorial brief — natural language creative context, not constraints
+  if (creativeContext.formatProfile) {
+    const fp = creativeContext.formatProfile;
+    parts.push(`\nFORMAT: ${fp.name.toUpperCase()}
+${fp.editorialBrief}
+
+PACING CHARACTER: ${fp.pacingCharacter}
+B-ROLL PHILOSOPHY: ${fp.brollPhilosophy}
+HUMAN PERSPECTIVE: ${fp.humanPerspectiveGuidance}
+MOTION GRAPHICS: ${fp.mgPhilosophy}`);
+  }
+
+  parts.push(`\nSTEP 1 — READ THE EMOTIONAL SHAPE:
+Before defining scene boundaries, briefly identify 6–10 key emotional moments in the script.
+For each moment, note:
+  - label: a brief name for the moment ("The crash", "Victim count revealed")
+  - register: the emotional character (neutral / intrigue / tension / grief / revelation / climax / resolution / anger / awe / hope)
+  - position_pct: roughly where it falls in the video (0–100%)
+  - requires_human_perspective: true if a named individual's experience would make this moment more human
+
+Emotional pivot points are natural scene boundaries.
+Grief, revelation, and climax beats must not be absorbed into longer exposition scenes.
+Record this arc in the emotional_arc field before writing any scenes.
+
+Pay particular attention to the FINAL ACT. Closing sections almost always contain multiple
+distinct emotional registers — relief, grief, civic judgment, hope. Do not collapse the
+entire conclusion into one generic "reflection" scene. A 130-second final act with one scene
+entry is a decomposition failure. Find the distinct beats inside it.
+
+STEP 2 — BUILD SCENES THAT HONOUR THE SHAPE:
+Use the emotional arc from Step 1 to decide where scene boundaries fall.
+Each scene should serve one emotional register, not several competing ones.
+Your scenes should reflect the arc — do not override it with arbitrary groupings.
+Verify before submitting: does any scene exceed 60 seconds? If so, split it.`);
 
   return parts.join('\n');
 }
@@ -259,6 +320,7 @@ export interface SceneDecompositionContext {
   loraName?: string;
   transitionPalette?: string[];
   shotVocab?: string[];
+  formatProfile?: FormatProfile;
   pacingRules?: {
     hookDuration: number;
     maxConsecutiveStatic: number;
@@ -276,10 +338,11 @@ export interface SceneDecompositionContext {
  * Build creative context from a CreativeManifest.
  */
 export function buildContextFromManifest(manifest: CreativeManifest): SceneDecompositionContext {
+  const genre = manifest.script_context?.genre;
   return {
     style: manifest.style?.visual_style,
     aspectRatio: manifest.style?.aspect_ratio,
-    genre: manifest.script_context?.genre,
+    genre,
     tone: manifest.script_context?.tone_style,
     targetAudience: manifest.script_context?.target_audience,
     masterCreativePrompt: manifest.master_creative_prompt,
@@ -289,6 +352,7 @@ export function buildContextFromManifest(manifest: CreativeManifest): SceneDecom
     loraName: manifest.lora?.name,
     transitionPalette: manifest.video_grammar_profile?.transition_palette,
     shotVocab: manifest.video_grammar_profile?.shot_vocab,
+    formatProfile: getFormatProfile(genre),
     pacingRules: manifest.pacing_rules ? {
       hookDuration: manifest.pacing_rules.hook_duration_seconds,
       maxConsecutiveStatic: manifest.pacing_rules.max_consecutive_static_images,
@@ -308,33 +372,83 @@ export function buildContextFromManifest(manifest: CreativeManifest): SceneDecom
 // ============================================================================
 
 /**
- * Enforce minimum shot counts based on scene duration.
- * Never reduces — only raises suggested_shot_count when the LLM assigned too few.
- * Uses a soft 9-second average as the density target.
+ * Math guardrails for shot count bounds — derived from pacing_intent.
+ * These prevent timing contradictions (a 15-second "fast" shot) without
+ * encoding any editorial taste. All creative decisions remain with the LLM.
+ *
+ * floor: minimum shots = ceil(duration / maxSecondsPerShot)
+ * ceiling: maximum shots = floor(duration / minSecondsPerShot)
  */
-function enforceMinimumShotCounts(
+const PACING_DENSITY: Record<PacingIntent, {
+  maxSecondsPerShot: number;
+  minSecondsPerShot: number;
+}> = {
+  fast:      { maxSecondsPerShot: 3.5,  minSecondsPerShot: 0.8 },
+  building:  { maxSecondsPerShot: 5.5,  minSecondsPerShot: 1.5 },
+  climactic: { maxSecondsPerShot: 4.0,  minSecondsPerShot: 1.0 },
+  moderate:  { maxSecondsPerShot: 7.0,  minSecondsPerShot: 2.5 },
+  slow:      { maxSecondsPerShot: 11.0, minSecondsPerShot: 4.0 },
+};
+
+/**
+ * Enforce shot count bounds based on scene duration and pacing_intent.
+ * Raises suggested_shot_count when too few, caps when absurdly many.
+ * Never overrides the LLM when it's within valid range.
+ */
+function enforceShotCountBounds(
   scenes: EnrichedScene[],
   wordsPerSecond: number
 ): EnrichedScene[] {
-  const TARGET_SECONDS_PER_SHOT = 9; // soft ceiling on avg shot duration
   return scenes.map(scene => {
     const durationSeconds = scene.end_seconds - scene.start_seconds;
-    const minRequired = Math.ceil(durationSeconds / TARGET_SECONDS_PER_SHOT);
-    if (scene.suggested_shot_count < minRequired) {
+    const density = PACING_DENSITY[scene.pacing_intent];
+    const minRequired = Math.max(1, Math.ceil(durationSeconds / density.maxSecondsPerShot));
+    const maxAllowed = Math.max(minRequired, Math.floor(durationSeconds / density.minSecondsPerShot));
+    let adjusted = scene.suggested_shot_count;
+    if (adjusted < minRequired) {
       console.warn(
-        `${LOG_PREFIX} Scene "${scene.scene_id}" had ${scene.suggested_shot_count} shots ` +
+        `${LOG_PREFIX} Scene "${scene.scene_id}" [${scene.pacing_intent}] had ${adjusted} shots ` +
         `for ${durationSeconds.toFixed(1)}s — raising to ${minRequired}`
       );
-      return { ...scene, suggested_shot_count: minRequired };
+      adjusted = minRequired;
+    } else if (adjusted > maxAllowed) {
+      console.warn(
+        `${LOG_PREFIX} Scene "${scene.scene_id}" [${scene.pacing_intent}] had ${adjusted} shots ` +
+        `for ${durationSeconds.toFixed(1)}s — capping to ${maxAllowed}`
+      );
+      adjusted = maxAllowed;
     }
-    return scene;
+    return adjusted !== scene.suggested_shot_count
+      ? { ...scene, suggested_shot_count: adjusted }
+      : scene;
   });
 }
 
 /**
+ * Derive a reasonable shot count for a sub-scene from its duration and pacing intent.
+ * Uses the PACING_DENSITY midpoint to avoid inheriting a corrupted shot count from
+ * a parent scene that was planned for a completely different duration.
+ */
+function deriveShotCountFromPacing(pacing: PacingIntent, durationSeconds: number): number {
+  const density = PACING_DENSITY[pacing] ?? PACING_DENSITY['moderate'];
+  const midpoint = (density.minSecondsPerShot + density.maxSecondsPerShot) / 2;
+  return Math.max(1, Math.round(durationSeconds / midpoint));
+}
+
+/**
+ * Strip accumulated split suffixes from a description or narrative_purpose string
+ * so that recursive splits don't double-append "— opening" / "(first half)" labels.
+ */
+function stripSplitSuffix(str: string): string {
+  return str
+    .replace(/\s+— (opening|continuing): "[^"]*\u2026"$/, '')
+    .replace(/\s+\((first|second) half\)$/, '');
+}
+
+/**
  * Split any scene exceeding MAX_SCENE_DURATION_SECONDS into two contiguous sub-scenes.
- * Splits at the word midpoint, distributes shots proportionally, preserves all other fields.
- * Runs recursively until no scene exceeds the threshold.
+ * Splits at the word midpoint, recalculates shot counts from PACING_DENSITY, preserves
+ * all other fields. Runs recursively until no scene exceeds the threshold.
  */
 const MAX_SCENE_DURATION_SECONDS = 50;
 
@@ -362,12 +476,15 @@ function splitOversizedScenes(
     const firstHalfDur = midStartSec - scene.start_seconds;
     const secondHalfDur = scene.end_seconds - midStartSec;
     const totalDur = scene.end_seconds - scene.start_seconds;
-    const firstShots = Math.max(1, Math.round(scene.suggested_shot_count * (firstHalfDur / totalDur)));
-    const secondShots = Math.max(1, scene.suggested_shot_count - firstShots);
+    // Derive shot counts fresh from PACING_DENSITY rather than inheriting proportionally from
+    // the parent. The parent's suggested_shot_count was set for the original (much longer)
+    // duration, so proportional inheritance produces shot counts that are far too low.
+    const firstShots = deriveShotCountFromPacing(scene.pacing_intent, firstHalfDur);
+    const secondShots = deriveShotCountFromPacing(scene.pacing_intent, secondHalfDur);
 
     // Derive distinct descriptions for each half using their opening narration words.
-    // Without this, both sub-scenes inherit the parent's identical description verbatim,
-    // causing the shot planner to plan duplicate shots across different narrative content.
+    // Strip any accumulated split suffixes from a prior recursive pass first — without this,
+    // a second split produces double-labels like "— opening: '...' — opening: '...'".
     const ANCHOR_WORDS = 12;
     const anchorA = words
       .slice(scene.start_word_index, Math.min(scene.start_word_index + ANCHOR_WORDS, midWord + 1))
@@ -375,12 +492,14 @@ function splitOversizedScenes(
     const anchorB = words
       .slice(midWord + 1, Math.min(midWord + 1 + ANCHOR_WORDS, scene.end_word_index + 1))
       .join(' ');
+    const baseDescription = stripSplitSuffix(scene.description);
+    const basePurpose = stripSplitSuffix(scene.narrative_purpose);
 
     const sceneA: EnrichedScene = {
       ...scene,
       scene_id: `${scene.scene_id}_a`,
-      description: `${scene.description} — opening: "${anchorA}\u2026"`,
-      narrative_purpose: `${scene.narrative_purpose} (first half)`,
+      description: `${baseDescription} — opening: "${anchorA}\u2026"`,
+      narrative_purpose: `${basePurpose} (first half)`,
       end_word_index: midWord,
       end_seconds: wordTimestamps[midWord].end_seconds,
       text: words.slice(scene.start_word_index, midWord + 1).join(' '),
@@ -389,8 +508,8 @@ function splitOversizedScenes(
     const sceneB: EnrichedScene = {
       ...scene,
       scene_id: `${scene.scene_id}_b`,
-      description: `${scene.description} — continuing: "${anchorB}\u2026"`,
-      narrative_purpose: `${scene.narrative_purpose} (second half)`,
+      description: `${baseDescription} — continuing: "${anchorB}\u2026"`,
+      narrative_purpose: `${basePurpose} (second half)`,
       start_word_index: midWord + 1,
       start_seconds: midStartSec,
       text: words.slice(midWord + 1, scene.end_word_index + 1).join(' '),
@@ -507,6 +626,183 @@ function postProcess(
 }
 
 // ============================================================================
+// SMART SCENE REFINEMENT — LLM-driven split for oversized scenes
+// ============================================================================
+
+/**
+ * Builds a short, targeted system prompt for refining a single oversized scene.
+ * Deliberately concise — the model only needs to find 2-4 beat boundaries
+ * within one section of text, not reason about the entire video.
+ */
+function buildRefinementSystemPrompt(
+  parentScene: EnrichedScene,
+  durationSeconds: number,
+  wordCount: number,
+  wordsPerSecond: number
+): string {
+  return `You are a documentary editor reviewing a scene that is too long for effective visual planning.
+
+The scene "${parentScene.scene_id}" runs ${durationSeconds.toFixed(0)} seconds (words ${parentScene.start_word_index}–${parentScene.end_word_index}) and covers multiple distinct narrative registers that were incorrectly collapsed into one.
+
+Your job: Read the narration text below and identify 2–5 genuine emotional or narrative beat boundaries within it. Split it into sub-scenes at those boundaries.
+
+CRITICAL RULES (MUST FOLLOW):
+- Word indices must be integers in range [${parentScene.start_word_index}, ${parentScene.end_word_index}]
+- Sub-scenes must be contiguous — no gaps, no overlaps
+- First sub-scene MUST start at word index ${parentScene.start_word_index}
+- Last sub-scene MUST end at word index ${parentScene.end_word_index}
+- Each sub-scene MUST have a unique scene_id (use format: ${parentScene.scene_id}_1, ${parentScene.scene_id}_2, etc.)
+- Each sub-scene should serve ONE emotional register, not multiple
+- Prefer natural sentence boundaries for cuts
+- Aim for sub-scenes between 20–55 seconds (~${Math.round(wordsPerSecond * 20)}–${Math.round(wordsPerSecond * 55)} words each)
+- suggested_shot_count should match the sub-scene's duration and pacing_intent
+
+Return ONLY the JSON array of sub-scenes — no commentary.`;
+}
+
+/**
+ * Builds the sub-scene JSON schema for constrained decoding in refinement calls.
+ * Mirrors DecomposedScene but returns an array directly.
+ */
+function getRefinementResponseFormat() {
+  const subSceneSchema = z.object({
+    scenes: z.array(z.object({
+      scene_id: z.string(),
+      description: z.string(),
+      narrative_purpose: z.string(),
+      start_word_index: z.number().int(),
+      end_word_index: z.number().int(),
+      suggested_shot_count: z.number().int(),
+      pacing_intent: PacingIntent,
+      visual_continuity: z.boolean(),
+    })),
+  });
+  const schema = z.toJSONSchema(subSceneSchema);
+  const { $schema: _, ...structuralSchema } = schema as Record<string, unknown>;
+  return {
+    type: 'json_schema' as const,
+    json_schema: {
+      name: 'scene_refinement',
+      strict: true,
+      schema: structuralSchema,
+    },
+  };
+}
+
+/**
+ * For each scene that exceeds MAX_SCENE_DURATION_SECONDS, make a targeted
+ * LLM call with just that scene's narration text and ask the model to find
+ * the real narrative beats inside it.
+ *
+ * This is fundamentally better than mechanical midpoint splitting because:
+ * - The model reads the ACTUAL narration it failed to decompose
+ * - Split points are semantically meaningful (sentence boundaries, register shifts)
+ * - Output scene IDs, descriptions, and purposes are all freshly generated
+ * - No label corruption, no duplicate descriptions
+ *
+ * Falls back to the mechanical split if the refinement call itself fails or
+ * still produces oversized output.
+ */
+async function refineLongScenes(
+  scenes: EnrichedScene[],
+  wordTimestamps: WordTimestamp[],
+  wordsPerSecond: number,
+  userId: string,
+  onProgress?: (message: string) => void,
+  debugCapture?: DebugCapture
+): Promise<EnrichedScene[]> {
+  const oversized = scenes.filter(s => (s.end_seconds - s.start_seconds) > MAX_SCENE_DURATION_SECONDS);
+
+  if (oversized.length === 0) return scenes;
+
+  const words = wordTimestamps.map(w => w.word);
+  const responseFormat = getRefinementResponseFormat();
+  let result = [...scenes];
+
+  for (const scene of oversized) {
+    const duration = scene.end_seconds - scene.start_seconds;
+    const sceneText = words.slice(scene.start_word_index, scene.end_word_index + 1).join(' ');
+    const wordCount = scene.end_word_index - scene.start_word_index + 1;
+
+    onProgress?.(`Refining oversized scene "${scene.scene_id}" (${duration.toFixed(0)}s)...`);
+    console.log(`${LOG_PREFIX} Refining "${scene.scene_id}" (${duration.toFixed(0)}s, ${wordCount} words)`);
+
+    const systemPrompt = buildRefinementSystemPrompt(scene, duration, wordCount, wordsPerSecond);
+    const userPrompt = `Here is the narration text for this scene (words ${scene.start_word_index}–${scene.end_word_index}, ${duration.toFixed(0)}s):\n\n"${sceneText}"\n\nAt ${wordsPerSecond.toFixed(2)} words/second, this runs ${duration.toFixed(0)} seconds.\n\nIdentify the distinct narrative beats within this text and split it into 2–5 sub-scenes. Return the JSON.`;
+
+    try {
+      const raw = await generateJSON<{ scenes: typeof scenes }>(  
+        userId,
+        systemPrompt,
+        userPrompt,
+        {
+          model: PRIMARY_MODEL,
+          responseFormat,
+          temperature: 0.3,
+          maxTokens: 8192,
+          maxRetries: 2,
+        }
+      );
+
+      // Validate the refinement output
+      const refinedScenes = (raw as { scenes: DecomposedScene[] }).scenes;
+      if (!Array.isArray(refinedScenes) || refinedScenes.length < 2) {
+        console.warn(`${LOG_PREFIX} Refinement for "${scene.scene_id}" returned invalid data — falling back to mechanical split`);
+        continue; // leave the oversized scene in place; splitOversizedScenes handles it
+      }
+
+      // Verify coverage: first must start at parent's start, last must end at parent's end
+      const sorted = [...refinedScenes].sort((a, b) => a.start_word_index - b.start_word_index);
+      const coversStart = sorted[0].start_word_index === scene.start_word_index;
+      const coversEnd = sorted[sorted.length - 1].end_word_index === scene.end_word_index;
+
+      if (!coversStart || !coversEnd) {
+        // Clamp boundaries to guarantee coverage
+        sorted[0].start_word_index = scene.start_word_index;
+        sorted[sorted.length - 1].end_word_index = scene.end_word_index;
+        // Patch any resulting gaps
+        for (let i = 1; i < sorted.length; i++) {
+          if (sorted[i].start_word_index > sorted[i - 1].end_word_index + 1) {
+            sorted[i - 1].end_word_index = sorted[i].start_word_index - 1;
+          }
+          if (sorted[i].start_word_index <= sorted[i - 1].end_word_index) {
+            sorted[i].start_word_index = sorted[i - 1].end_word_index + 1;
+          }
+        }
+        console.warn(`${LOG_PREFIX} Refinement boundaries clamped for "${scene.scene_id}"`);
+      }
+
+      // Enrich the refined sub-scenes with timestamps and text
+      const enrichedRefined: EnrichedScene[] = sorted.map(s => ({
+        ...s,
+        start_seconds: wordTimestamps[Math.max(0, Math.min(wordTimestamps.length - 1, s.start_word_index))].start_seconds,
+        end_seconds: wordTimestamps[Math.max(0, Math.min(wordTimestamps.length - 1, s.end_word_index))].end_seconds,
+        text: words.slice(s.start_word_index, s.end_word_index + 1).join(' '),
+      }));
+
+      // Replace the oversized scene in the result array
+      const idx = result.findIndex(s => s.scene_id === scene.scene_id);
+      if (idx !== -1) {
+        result.splice(idx, 1, ...enrichedRefined);
+        console.log(
+          `${LOG_PREFIX} "${scene.scene_id}" refined into ${enrichedRefined.length} sub-scenes: ` +
+          enrichedRefined.map(s => `"${s.scene_id}" (${(s.end_seconds - s.start_seconds).toFixed(0)}s)`).join(', ')
+        );
+      }
+
+      debugCapture?.onLLMResponse?.('scene_decomposer', -1, { refinement_for: scene.scene_id, sub_scenes: enrichedRefined });
+
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`${LOG_PREFIX} Refinement LLM call failed for "${scene.scene_id}": ${msg} — falling back to mechanical split`);
+      // Leave oversized scene in place; splitOversizedScenes will handle it
+    }
+  }
+
+  return result;
+}
+
+// ============================================================================
 // MAIN EXPORT
 // ============================================================================
 
@@ -602,11 +898,20 @@ export async function decomposeIntoScenes(
         continue;
       }
 
-      // Split any scenes exceeding MAX_SCENE_DURATION_SECONDS (~50s)
+      // Primary strategy: LLM-driven refinement of any oversized scenes.
+      // This makes a targeted follow-up LLM call with the actual narration text
+      // of each oversized scene, asking the model to find the real narrative beats.
+      // The mechanical midpoint split below is only a last-resort fallback.
+      enriched = await refineLongScenes(
+        enriched, wordTimestamps, wordsPerSecond, userId, onProgress, debugCapture
+      );
+
+      // Fallback: mechanical split for any scenes that the refinement call
+      // itself still left oversized (e.g. API failure or model returned only 1 sub-scene).
       enriched = splitOversizedScenes(enriched, wordTimestamps, wordsPerSecond);
 
-      // Raise suggested_shot_count where the LLM under-allocated for the duration
-      enriched = enforceMinimumShotCounts(enriched, wordsPerSecond);
+      // Enforce shot count bounds based on pacing_intent (raises floor, caps ceiling)
+      enriched = enforceShotCountBounds(enriched, wordsPerSecond);
 
       console.log(
         `${LOG_PREFIX} Success: ${enriched.length} scenes decomposed ` +

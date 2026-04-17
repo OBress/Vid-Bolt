@@ -294,13 +294,20 @@ PASS — Everything else, which should be almost all videos.
 - Thematic consistency: only SOFT_FAIL if a shot looks like it's from a completely different production.
 
 FAILURE TYPE CLASSIFICATION (only for FAIL verdicts):
-- "fundamental": The video is catastrophically broken (frozen, black, corrupted).
+- "fundamental": The video requires full regeneration from a corrected prompt. Applies to:
+    - Frozen, black screen, or fully corrupted output (zero motion, unwatchable)
+    - Garbled, unreadable, or hallucinated text overlays as a focal element
+    - Style-contract violations (e.g., photoreal human inside a clay/animation world)
+    - Subject is completely wrong (totally different scene from description)
+  → ALWAYS include "SIMPLIFY_PROMPT" as the FIRST item in suggested_corrections.
+- "recoverable": Minor correctable issues that don't require a prompt change (rare).
 For SOFT_FAIL verdicts, set failure_type to null — the media is accepted.
 For PASS verdicts, set failure_type to null.
 
 PROMPT SIMPLIFICATION:
-When a video FAIL is caused by visual artifacts (frozen, static, corrupted frames),
-include "SIMPLIFY_PROMPT" as the first suggested_correction.
+When a video FAIL is "fundamental", ALWAYS include "SIMPLIFY_PROMPT" as the first
+suggested_correction. This signals the retry path to strip text-generating token vocabulary
+from the prompt before regenerating, which eliminates the most common garbled text failure.
 
 Respond ONLY with valid JSON matching this schema:
 {

@@ -98,6 +98,8 @@ const SceneShotOutput = z.object({
     'zoom_in',
     'zoom_out',
     'freeze_orbit',
+    'whip_pan',
+    'ken_burns',
   ]).default('static'),
   lens_style: z.string().default(''),
   subject_focus: z.string().default(''),
@@ -309,7 +311,7 @@ export interface EnrichedPlannedShot {
   shot_role?: 'hook' | 'establish' | 'coverage' | 'insert' | 'bridge' | 'annotation' | 'payoff' | 'reaction' | 'graphic_explainer' | 'closing';
   framing?: 'extreme_wide' | 'wide' | 'medium_wide' | 'medium' | 'medium_close' | 'close_up' | 'extreme_close';
   camera_angle?: 'eye_level' | 'low_angle' | 'high_angle' | 'overhead' | 'top_down' | 'profile' | 'macro_detail' | 'first_person' | 'dutch';
-  camera_motion?: 'static' | 'push_in' | 'pull_out' | 'pan_left' | 'pan_right' | 'tilt_up' | 'tilt_down' | 'orbit' | 'tracking' | 'handheld' | 'crane' | 'zoom_in' | 'zoom_out' | 'freeze_orbit';
+  camera_motion?: 'static' | 'push_in' | 'pull_out' | 'pan_left' | 'pan_right' | 'tilt_up' | 'tilt_down' | 'orbit' | 'tracking' | 'handheld' | 'crane' | 'zoom_in' | 'zoom_out' | 'freeze_orbit' | 'whip_pan' | 'ken_burns';
   lens_style?: string;
   subject_focus?: string;
   entry_transition_intent?: string;
@@ -624,6 +626,7 @@ DIRECTING GRAMMAR:
 - camera_angle and camera_motion: describe how the audience is meant to perceive the shot
 - subject_focus: what exact person/object/detail deserves attention
 - entry_transition_intent and exit_transition_intent: why this cut is motivated
+  • match_cut: "match cut from [element A] to [element B]" — two shots share a visual in the same screen position. Reveals connection, causality, or hidden similarity.
 - bridge_subject: repeated person/object/location/detail used to connect adjacent shots
 - visual_motif: recurring visual idea that should carry through the sequence
 - trim_priority: hold, balanced, or tight based on editorial pacing
@@ -641,6 +644,11 @@ DIRECTING GRAMMAR:
   - segment_animate for still-image emphasis/reveal shots
   - segment_video_fx for tracked effects on an existing video
   - segment_mask_prep when segmentation should prepare a mask/edit before another step
+- camera_motion vocabulary:
+  • whip_pan: aggressive fast pan — urgency, kinetic energy, rapid location or perspective shifts.
+  • ken_burns: slow graceful pan+zoom across a still image — archival, memorial, evidence photo reveals.
+    When using ken_burns, set render_strategy: "ai_image".
+  • freeze_orbit: see FREEZE-WORLD TECHNIQUE below.
 
 FREEZE-WORLD TECHNIQUE (camera_motion: 'freeze_orbit'):
 A powerful cinematic tool where everything in the scene is perfectly still — frozen in time — while the camera moves freely through the environment. The world is paused; the lens is not.
@@ -660,30 +668,23 @@ In visual_description, describe:
 3. What the viewer is meant to discover or absorb
 Example: "A busy city intersection frozen mid-moment — pedestrians stopped mid-step, cars halted. The camera slowly orbits the frozen tableau from eye level, drifting forward through the stillness to reveal the lone figure at the center."
 
-SEGMENTATION TREATMENT — SURGICAL USE ONLY (1–2 shots per scene maximum):
-Segmentation adds a post-processing layer to isolate, highlight, or stylize subjects. Use it ONLY when the effect
-cannot be achieved by writing it in visual_description — and only on one focal subject per shot.
+SEGMENTATION — WHEN IT SERVES THE STORY:
+Segmentation adds a post-processing layer to visually separate, isolate, or emphasize a subject.
+Use it when the subject matters more than what surrounds it, and the camera alone
+cannot make that distinction clear.
+
+Ask yourself: "Would this moment be stronger if the subject stood apart from the world around it?"
+If yes — use it. If the effect can be described in visual_description — don't.
+
 Budget: roughly 1 segmentation shot per 8–10 shots across the full plan.
 
-TRIGGER PATTERNS — the only scenarios that justify segmentation (works across all genres):
-1. Key subject must STAND OUT from a visually busy or distracting background
-   → subject_isolation | ops: [{type:"bokeh",target:"background",strength:0.6}] or [{type:"color_grade",target:"background",saturation:-0.8}]
-   Use dark_base or a desaturated version of primary_accent on the background. Works for: drama, vlog, product, interview, anchor on set.
-2. A single OBJECT, DETAIL, or PRODUCT needs to be spotlit while the surroundings recede
-   → detail_callout | ops: [{type:"spotlight",target:"mask",strength:0.8,color:primary_accent_rgb}] or [{type:"outline",target:"mask",thickness:2,color:primary_accent_rgb}]
-   Use primary_accent for the highlight color. Works for: product shots, evidence callouts, UI highlights, prop reveals, diagrams.
-3. A THREATENING, ominous, or antagonist figure enters frame and needs visual weight
-   → danger_emphasis | ops: [{type:"color_grade",target:"background",saturation:-0.9}] or [{type:"bokeh",target:"background",strength:0.7}]
-   Drain background color without touching the subject. Works for: thrillers, crime, horror, villain reveal, dramatic confrontation.
-4. EMOTIONAL PIVOT — betrayal, loss, death, realization, heartbreak — the world drains around the subject
-   → subject_isolation | ops: [{type:"color_grade",target:"background",saturation:-0.9,brightness:-0.1}] | intensity: moderate
-   Works for: drama, true crime, sports loss, music video emotional climax, documentary death/fall.
-5. Face CLOSE-UP on an important subject where pulling focus adds emotional gravity
-   → focus_reveal | allow_guided_zoom: true | allow_background_desaturation: true
-   Works for: interview, documentary, drama, reality, music video, product launch reveal.
-6. A STILL IMAGE (portrait, screenshot, archive photo, diagram, product render) needs to feel alive
-   → segment_animate | render_strategy: "segment_animate"
-   Works for: historical archive, product catalog, news article, social media screenshot, infographic still.
+HARD STOPS — never use segmentation on these (pipeline constraints, not taste):
+- More than 3 distinct moving subjects in frame (crowd, group shot, battle, audience) — mask quality degrades
+- Any I2V continuity shot (continuity_from_previous: true) — already chained from prior frame
+- Any motiongraphic shot — MG handles its own compositing pipeline
+- Any extreme_wide or wide establishing shot — no singular focal subject to isolate
+- When the desired effect can be described in ≤10 words in visual_description
+- When you have already used segmentation on the previous shot in this scene
 
 CHANNEL COLOR REFERENCE — always use these for operations.color fields:
 See "CHANNEL SEGMENTATION COLORS" block in this prompt for pre-converted RGB arrays.
@@ -691,14 +692,6 @@ See "CHANNEL SEGMENTATION COLORS" block in this prompt for pre-converted RGB arr
 - Background color_overlay, color_grade → dark_base RGB or desaturated secondary_accent
 - If primary_accent is dark (lum < 0.3) → use secondary_accent for highlight operations
 - Never use hardcoded [255,255,255] or [0,0,0] — always use the channel palette
-
-HARD STOPS — never use segmentation on these shots (skip entirely):
-- More than 3 distinct moving subjects in frame (crowd, group shot, battle, audience) — mask quality degrades
-- Any I2V continuity shot (continuity_from_previous: true) — already chained from prior frame
-- Any motiongraphic shot — MG handles its own compositing pipeline
-- Any extreme_wide or wide establishing shot — no singular focal subject to isolate
-- When the desired effect can be described in ≤10 words in visual_description
-- When you have already used segmentation on the previous shot in this scene
 
 OBJECT PROMPTS (always use these over text_prompt for subject precision):
 - label: short snake_case — "lead_character", "key_product", "left_figure", "glowing_screen", "red_folder"
@@ -745,15 +738,45 @@ PERSISTENT GRAPHICS:
   - status: introduced, updated, revealed, or resolved
 - Only use persistent graphics when they add real narrative continuity. Do NOT force them into every scene.
 
-SHOT DURATION & PACING:
-Each shot spans a natural narration segment. Keep these guidelines in mind:
-- hook: 1.5-3s ideal
-- establishing: 3-5s ideal
-- buildup / detail / transition: 2-4s ideal
-- reveal / reaction / climax: 3-6s ideal
-- resolution: 4-7s ideal
-- No single shot should exceed 10s unless the narration for that shot genuinely runs that long without pause
-- If a shot would be very long (8s+) and covers static content, consider splitting it into 2 shorter shots with different angles or framings
+PRE-PLANNING BRIEF — reason through this before planning any shot:
+
+Before assigning media types, framings, or camera moves, ask yourself:
+
+1. EMOTIONAL REGISTER
+   What is the viewer meant to FEEL at each moment in this scene?
+   Map the emotional arc — does it rise, peak, resolve, or hold a single sustained register?
+   Let that answer drive hold time, pacing, and shot rhythm. Don't label it.
+   Just let the feeling dictate how long each shot breathes.
+
+2. HIERARCHY OF IMPORTANCE
+   Which moment in this scene is the single most important thing?
+   The most critical fact. The most powerful image. The most significant human moment.
+   That moment deserves the most deliberate visual treatment: the tightest frame,
+   the longest hold, the most precise camera choice.
+   Only one moment can be the most important. If everything is emphasised, nothing is.
+
+3. HUMAN SCALE
+   Is there a named person experiencing what this narration describes?
+   If so — can the viewer see that experience from the inside?
+   An aerial of a burning building tells us something happened.
+   A person looking out a window as the light changes outside tells us what it felt like.
+   You don't need to call it anything. Just ask: does this moment need a human face?
+
+4. VISUAL RHYTHM
+   Does the sequence have a pulse — tension and release, fast and slow?
+   Does pacing_intent: "${scene.pacing_intent}" actually feel true in the shots you're planning?
+   A climactic scene with 3 slow wide shots is not climactic.
+   A slow scene with 12 rapid cuts is not slow.
+
+Reason through these before planning. The JSON is the result of that reasoning,
+not a template fill. Use whatever shot types, framings, and movements your answers
+require — the vocabulary is a toolbox, not a checklist.
+
+PACING CONTEXT FOR THIS SCENE (${scene.pacing_intent}):
+The system has validated that ${scene.suggested_shot_count} shots fits this scene's
+duration and pacing intent. Hold times that contradict the pacing label (e.g. a
+12-second shot in a "fast" scene) are timing contradictions — avoid them.
+Within the validated range, trust your creative judgment.
 
 MULTI-ANGLE COVERAGE (use I2V continuity proactively for long scenes):
 When a scene covers 15+ seconds in the same physical location, do NOT plan it as one long shot or a series of entirely separate keyframe generations.
@@ -1027,7 +1050,7 @@ function postProcessSceneShots(
   // ─────────────────────────────────────────────────────────────────────────
 
   // Convert to enriched shots
-  return shots.map((shot, i): EnrichedPlannedShot => {
+  const enrichedShots = shots.map((shot, i): EnrichedPlannedShot => {
     const startSec = wordTimestamps[shot.start_word_index].start_seconds;
     const endSec = wordTimestamps[shot.end_word_index].end_seconds;
     const text = words.slice(shot.start_word_index, shot.end_word_index + 1).join(' ');
@@ -1179,6 +1202,81 @@ function postProcessSceneShots(
       entity_refs: [],
     };
   });
+
+  // ── Synthesis consistency pass ─────────────────────────────────────────────
+  // Corrects four classes of LLM mismatch that the model occasionally produces.
+  // All fixes are silent corrections logged for debugger visibility.
+  // This runs AFTER enrichment so every field is already resolved.
+  for (const s of enrichedShots) {
+    const label = `[Shot seg=${s.segment_index} scene=${s.scene_id}]`;
+
+    // ❶ image_edit_instruction on a pure T2V shot
+    // T2V generates from scratch — there is no keyframe to apply an edit to.
+    // The instruction would be silently ignored downstream; strip it now so the
+    // debug output is honest about what will actually execute.
+    if (
+      s.image_edit_instruction &&
+      s.synthesis_mode === 'T2V' &&
+      !s.continuity_from_previous &&
+      s.media_type !== 'motiongraphic'
+    ) {
+      console.warn(
+        `${LOG_PREFIX} ${label} SYNTHESIS FIX: image_edit_instruction present on T2V shot ` +
+        `(no keyframe to edit). Promoting to I2V continuity so the edit can execute.`
+      );
+      // Promote: the edit instruction implies the shot should chain from a keyframe.
+      // The most sensible interpretation is "generate a keyframe, then apply the edit,
+      // then animate from it" — which is exactly the I2V + image_edit_instruction pattern.
+      s.synthesis_mode = 'I2V';
+      s.continuity_from_previous = true;
+      s.anchor_strategy = 'prev_frame';
+      s.continuity_level = 'strict';
+    }
+
+    // ❷ segmentation_treatment present but render_strategy doesn't match its execution_mode
+    // The model sometimes writes segmentation_treatment AND separately sets render_strategy
+    // to ai_video/ai_image, forgetting the two must agree.
+    if (s.segmentation_treatment?.execution_mode) {
+      const expectedStrategy = s.segmentation_treatment.execution_mode; // segment_animate | segment_video_fx | segment_mask_prep
+      if (s.render_strategy !== expectedStrategy) {
+        console.warn(
+          `${LOG_PREFIX} ${label} SYNTHESIS FIX: render_strategy="${s.render_strategy}" ` +
+          `conflicts with segmentation execution_mode="${expectedStrategy}". Correcting.`
+        );
+        s.render_strategy = expectedStrategy;
+      }
+    }
+
+    // ❸ segmentation_treatment present on a motiongraphic shot
+    // MG has its own compositing pipeline. Segmentation cannot run on top of a Remotion render.
+    if (s.media_type === 'motiongraphic' && s.segmentation_treatment) {
+      console.warn(
+        `${LOG_PREFIX} ${label} SYNTHESIS FIX: segmentation_treatment on motiongraphic shot ` +
+        `is not executable. Stripping segmentation and correcting render_strategy to "motiongraphic".`
+      );
+      s.segmentation_treatment = undefined;
+      s.render_strategy = 'motiongraphic';
+    }
+
+    // ❹ render_strategy is in segmentation lane but no segmentation_treatment is defined
+    // The model chose a segmentation render_strategy without providing the required config.
+    // Fall back to ai_video so the shot still generates something useful.
+    if (
+      (s.render_strategy === 'segment_animate' ||
+       s.render_strategy === 'segment_video_fx' ||
+       s.render_strategy === 'segment_mask_prep') &&
+      !s.segmentation_treatment
+    ) {
+      console.warn(
+        `${LOG_PREFIX} ${label} SYNTHESIS FIX: render_strategy="${s.render_strategy}" ` +
+        `with no segmentation_treatment defined. Falling back to "ai_video".`
+      );
+      s.render_strategy = 'ai_video';
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
+  return enrichedShots;
 }
 
 // ============================================================================

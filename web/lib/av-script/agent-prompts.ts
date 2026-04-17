@@ -454,11 +454,13 @@ Every video clip must have **clear, intentional camera movement** that serves th
 - Match motion to meaning: tense narration demands dynamic, purposeful camera work. Calm narration earns slow, atmospheric drifts.
 - The camera should feel like it has a REASON to move — following a subject's gaze, revealing new information, creating intimacy or distance.
 
-**Motion intensity by content energy:**
-- High energy (reveals, shocking facts, confrontation): DYNAMIC — crash zooms, quick pans, handheld energy
-- Medium energy (explanation, narrative, context): MODERATE — steady pushes, tracking, slow pans
-- Low energy (emotional weight, reflection): SUBTLE — gentle drift, barely perceptible zoom, stillness with atmosphere
-- Default to MODERATE when unsure — it's the most versatile
+**Motion language — tendencies, not rules:**
+- High-energy content (reveals, rapid action, confrontation) tends toward dynamic camera work
+- Explanatory content tends toward steady, moderate movement
+- Emotional weight sometimes calls for deliberate stillness — a shot that refuses to move
+  can be more powerful than one that chases the energy
+- Default to MODERATE when reading signals is genuinely ambiguous
+- Trust the narration and scene context over these tendencies
 
 ## NATIVE PORTRAIT SUPPORT
 LTX-2.3 supports native vertical video (up to 1080×1920), trained on vertical data.
