@@ -248,6 +248,7 @@ For each section, also consider the VISUAL dimension — your script will be tur
 - Never have two consecutive LOW energy sections — the audience needs variation
 - **MICRO-CLIFFHANGERS**: Build open loops every 60-90 seconds — tease a question, delay the answer, pay it off later
 - **VISUAL VARIETY IN WRITING**: Vary the SCALE and SPECIFICITY of your descriptions so each sentence suggests a DIFFERENT visual (don't describe the same scene for 5 sentences straight)
+- **ATMOSPHERIC ANCHORING**: Every section's contentSummary should include at least one concrete atmospheric anchor — a specific place, a physical texture, a time-of-day lighting condition, or an environmental detail. This gives the downstream visual layer a grounding composition even for abstract content. For LOW energy sections, lean toward observational, environmental descriptions (aftermath, silence, empty spaces). For HIGH energy sections, include at least one "held moment" — a frozen detail, a close-up reaction — that gives the visual layer a still beat amidst the kinetic sequence.
 
 ## ENGAGEMENT CHECKLIST (verify ALL before submitting):
 ✓ Could you explain in ONE sentence why viewers should care about this video?
@@ -529,15 +530,24 @@ Every single sentence must earn its place. Apply these tests:
    - End sections with hooks, not summaries
    - Create curiosity gaps that pull viewer forward
 
-6. **VISUAL VARIETY IN WRITING** (IMPORTANT):
-   - Write so each sentence suggests a DIFFERENT visual — vary the scale (macro to micro), perspective, and subject
-   - AVOID 3+ consecutive sentences describing the same scene from the same perspective
-   - Include specific sensory details (sounds, textures, movement) that the visual and audio layer can enhance
-   - Think: "What would a viewer SEE during this sentence?" — if the answer is the same for 3 sentences, rewrite
-   - **SCENE CHANGE BUDGET**: For every ~150 words, introduce at least 2 distinct visual scene changes.
-     A scene change means the camera would cut to a DIFFERENT subject, location, scale, or perspective.
-     Abstract philosophizing or internal monologue with no concrete visual anchor is a DEAD ZONE — rewrite it
-     to include a specific person, place, object, or action the viewer can see on screen.
+6. **WRITING FOR VISUAL COMPOSITION** (IMPORTANT):
+   Each sentence you write becomes a separate visual composition on screen. Write accordingly:
+   - Each sentence should suggest a distinct FRAME — not just a different subject, but a different composition:
+     different scale (wide → close-up), different depth (foreground detail → background environment),
+     different lighting, different texture. The shot planner needs compositional variety to create cuts.
+   - Plant ATMOSPHERIC ANCHORS: environmental detail that gives the visual layer material to build atmosphere.
+     Weather, time of day, ambient sound cues, physical textures (worn leather, cracked concrete, flickering
+     fluorescent light, rain-streaked glass). These let the visual layer create rich, filmable compositions
+     without needing described subject motion.
+   - AVOID 3+ consecutive sentences that would produce the same visual frame.
+     Ask: "What would a viewer SEE during this sentence?" — if the answer is identical for 3 sentences, rewrite.
+   - **SCENE CHANGE BUDGET**: For every ~150 words, introduce at least 2 distinct visual composition changes.
+     A composition change means the camera would cut to a DIFFERENT frame — subject, location, scale, or
+     perspective. Abstract philosophizing or internal monologue with no concrete visual anchor is a DEAD ZONE —
+     rewrite it to include a specific person, place, object, or environmental detail the viewer can see.
+   - Prefer FILMABLE detail over described action when both work. "Rain streaking down the office window"
+     is a stronger visual cue than "he paced nervously" — the first is a cinematic composition the visual
+     layer can render at high fidelity; the second requires complex subject motion.
 
 ## SECTION CONTEXT
 You are writing SECTION {beatIndex} of {totalBeats}.

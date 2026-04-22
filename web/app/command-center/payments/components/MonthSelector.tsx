@@ -180,12 +180,15 @@ export function MonthSelector({
                   <Folder className="w-4 h-4 shrink-0" />
                 )}
                 <span className="flex-1 text-left">{group.year}</span>
-                <button
-                  onClick={(e) => handleExportCsv(group.year, e)}
-                  disabled={exportingYear === group.year}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); handleExportCsv(group.year, e as unknown as React.MouseEvent); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); handleExportCsv(group.year, e as unknown as React.MouseEvent); } }}
+                  aria-disabled={exportingYear === group.year}
                   className={cn(
-                    "p-1 rounded-md transition-all duration-150 hover:bg-muted",
-                    exportingYear === group.year && "opacity-50 cursor-wait"
+                    "p-1 rounded-md transition-all duration-150 hover:bg-muted cursor-pointer",
+                    exportingYear === group.year && "opacity-50 cursor-wait pointer-events-none"
                   )}
                   title={`Export ${group.year} as CSV`}
                 >
@@ -194,7 +197,7 @@ export function MonthSelector({
                   ) : (
                     <Download className="w-3.5 h-3.5 text-muted-foreground hover:text-primary" />
                   )}
-                </button>
+                </div>
                 <span
                   className={cn(
                     "text-[10px] font-medium px-1.5 py-0.5 rounded-full",

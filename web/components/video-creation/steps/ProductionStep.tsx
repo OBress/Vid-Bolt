@@ -295,9 +295,9 @@ export function ProductionStep({
 
   if (isRunning || hasCompleted || (progress > 0 && !errorMessage)) {
     return (
-      <div className="flex h-full w-full min-h-0">
+      <div className="flex h-full w-full min-h-0 justify-center">
         <div
-          className="flex-1 overflow-y-auto flex flex-col gap-5 px-8 py-8"
+          className="w-4/5 max-w-5xl overflow-y-auto flex flex-col gap-5 px-8 py-8"
           style={{ scrollbarWidth: "thin", scrollbarColor: "rgb(38 38 38) transparent" }}
         >
           {/* Status header */}
@@ -375,7 +375,8 @@ export function ProductionStep({
 
   return (
     <div
-      className="flex-1 overflow-hidden"
+      className="flex-1 overflow-y-auto"
+      style={{ scrollbarWidth: "thin", scrollbarColor: "rgb(38 38 38) transparent" }}
     >
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-8 py-10 h-full">
         {/* Page heading — error shown as inline icon with hover tooltip */}

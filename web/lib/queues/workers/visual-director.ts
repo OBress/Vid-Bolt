@@ -213,7 +213,7 @@ export const visualDirectorProcessor: Processor<VisualDirectorJobData> = async (
   console.log(`${LOG_PREFIX} Starting job ${job.id} for video ${videoId} (GPU: ${gpuEnabled})`);
 
   // Cost tracking for Step 6 (Visual Director / GPU)
-  const costTracker = new CostTracker(6);
+  const costTracker = new CostTracker(6, userId);
 
   try {
     const result = await costTracker.run(async () => {

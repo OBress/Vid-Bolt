@@ -51,8 +51,8 @@ export interface HarmonizationResult {
 const LOG_PREFIX = '[SceneHarmonizer]';
 const SIMILARITY_THRESHOLD = 0.25;
 const MIN_SEQUENCE_SIZE = 2;
-/** Timeout per image edit webhook (Qwen-Edit: ~3-5s per edit) */
-const EDIT_TIMEOUT_MS = 30_000;
+/** Timeout per image edit webhook (Qwen-Edit warmed up: ~15-30s; 90s gives ample headroom) */
+const EDIT_TIMEOUT_MS = 90_000;
 
 function groupPlannerFirstSequences(imageShots: PlannedShot[]): number[][] {
   const clusterGroups = new Map<string, number[]>();

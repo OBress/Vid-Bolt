@@ -155,16 +155,6 @@ ${Object.entries(CONTENT_TYPE_GUIDANCE).map(([_type, guidance]) => guidance).joi
  *
  * Zero LLM cost — pure string building from already-existing profile data.
  */
-/**
- * Tokens that — when present in a consistencyAnchor or keyElement — would
- * inject text-related language into the LTX-2 video prompt, triggering
- * character hallucination artifacts.
- *
- * Rule: text is allowed in start/end frame images (visually guided).
- *       It must NEVER appear as a token in the LTX-2 generation prompt.
- */
-const VISUAL_TEXT_TRIGGER =
-  /\b(document|text|writing|lettering|inscription|indictment|check|label|caption|heading|sign|poster|words?|printed|handwriting|seal|readable|legible|stamp|ticker|banner|subtitle|watermark)\b/i;
 
 function buildVisualBible(
   outlineAssets?: OutlineAssets,
@@ -221,8 +211,8 @@ function buildVisualBible(
       if (c.wardrobe?.defaultOutfit) parts.push(`  Outfit: ${c.wardrobe.defaultOutfit}`);
       // Consistency anchors — filter text-trigger tokens before injecting
       if (c.visualInstructions?.consistencyAnchors?.length) {
-        const safeAnchors = c.visualInstructions.consistencyAnchors.filter(a => !VISUAL_TEXT_TRIGGER.test(a));
-        if (safeAnchors.length) parts.push(`  MUST ALWAYS SHOW: ${safeAnchors.join('. ')}`);
+        const anchors = c.visualInstructions.consistencyAnchors;
+        if (anchors.length) parts.push(`  MUST ALWAYS SHOW: ${anchors.join('. ')}`);
       }
       return parts.join('\n');
     });
@@ -237,8 +227,8 @@ function buildVisualBible(
       if (l.essence) parts.push(`  ${l.essence}`);
       // Structural key elements — filter text-trigger tokens
       if (l.structuralDetails?.keyElements?.length) {
-        const safeElements = l.structuralDetails.keyElements.filter(el => !VISUAL_TEXT_TRIGGER.test(el));
-        if (safeElements.length) parts.push(`  Key elements: ${safeElements.join(', ')}`);
+        const keyElements = l.structuralDetails.keyElements;
+        if (keyElements.length) parts.push(`  Key elements: ${keyElements.join(', ')}`);
       }
       if (l.structuralDetails?.materials) {
         parts.push(`  Materials: ${l.structuralDetails.materials}`);
@@ -253,8 +243,8 @@ function buildVisualBible(
       }
       // Consistency anchors — filter text-trigger tokens
       if (l.visualInstructions?.consistencyAnchors?.length) {
-        const safeAnchors = l.visualInstructions.consistencyAnchors.filter(a => !VISUAL_TEXT_TRIGGER.test(a));
-        if (safeAnchors.length) parts.push(`  MUST ALWAYS SHOW: ${safeAnchors.join('. ')}`);
+        const anchors = l.visualInstructions.consistencyAnchors;
+        if (anchors.length) parts.push(`  MUST ALWAYS SHOW: ${anchors.join('. ')}`);
       }
       return parts.join('\n');
     });
@@ -267,14 +257,11 @@ function buildVisualBible(
     const objLines = objs.map(o => {
       const desc = [o.physicalDescription?.detailedDescription, o.physicalDescription?.color, o.physicalDescription?.shape]
         .filter(Boolean).join(', ');
-      // Filter text-trigger tokens from object anchors and notables
-      const safeObjAnchors = (o.visualInstructions?.consistencyAnchors ?? [])
-        .filter(a => !VISUAL_TEXT_TRIGGER.test(a)).slice(0, 2);
-      const anchors = safeObjAnchors.length ? ` | ALWAYS: ${safeObjAnchors.join(', ')}` : '';
-      const safeNotables = (o.physicalDescription?.notableFeatures ?? [])
-        .filter(n => !VISUAL_TEXT_TRIGGER.test(n)).slice(0, 2);
-      const notables = safeNotables.length ? ` | Notable: ${safeNotables.join(', ')}` : '';
-      return `• ${o.name}: ${desc || o.type || 'key prop'}${notables}${anchors}`;
+      const objAnchors = (o.visualInstructions?.consistencyAnchors ?? []).slice(0, 2);
+      const anchors = objAnchors.length ? ` | ALWAYS: ${objAnchors.join(', ')}` : '';
+      const notablesArr = (o.physicalDescription?.notableFeatures ?? []).slice(0, 2);
+      const notableStr = notablesArr.length ? ` | Notable: ${notablesArr.join(', ')}` : '';
+      return `• ${o.name}: ${desc || o.type || 'key prop'}${notableStr}${anchors}`;
     });
     sections.push(`KEY OBJECTS (render visually accurately):\n${objLines.join('\n')}`);
   }

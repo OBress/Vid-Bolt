@@ -14,7 +14,7 @@
  * This runs between Phase IV (Production) and Phase V (Assembly).
  */
 
-import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { getLlmProviderConfig } from '@/lib/services/api-keys';
 import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 import { getSupabaseServiceClient } from '@/lib/queues/shared';
 
@@ -82,9 +82,9 @@ export async function trimClip(
     }
 
     // Step 2: Ask VLM to identify the best segment
-    const apiKey = await getOpenRouterApiKey(userId);
+    const { apiKey, provider } = await getLlmProviderConfig(userId);
     const trimResult = await analyzeTrimPoints(
-      frames, shotIndex, shotDescription, durationSeconds, frameCount, apiKey
+      frames, shotIndex, shotDescription, durationSeconds, frameCount, apiKey, provider
     );
 
     if (!trimResult.wasTrimmed) {
@@ -206,7 +206,8 @@ async function analyzeTrimPoints(
   shotDescription: string,
   durationSeconds: number,
   frameCount: number,
-  apiKey: string
+  apiKey: string,
+  provider: import('@/lib/ai/providers/types').LlmProvider = 'openrouter'
 ): Promise<ClipTrimResult> {
   // Build multimodal content with frame images
   const imageContent = frameUrls.map((url, i) => ([
@@ -263,7 +264,7 @@ Identify the best CONTIGUOUS segment of this clip:
         },
       },
     },
-  });
+  }, provider);
 
   const content = response.content;
 

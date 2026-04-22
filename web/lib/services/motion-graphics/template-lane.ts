@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
+import type { LlmProvider } from '@/lib/ai/openrouter';
 import type {
   GraphicStatePatch,
   MotionGraphicsAssetBundleItem,
@@ -69,6 +70,8 @@ export interface TemplateLaneRequest {
     previousState?: PersistentMotionGraphicState;
   };
   simplifiedRetry?: boolean;
+  /** Which LLM provider to use. Defaults to 'openrouter'. */
+  provider?: LlmProvider;
 }
 
 export interface TemplateLaneResult {
@@ -115,6 +118,12 @@ function inferOverlayMode(
   }
   if (routingTags.includes('remotion_image_manipulation') || /image manipulation/i.test(hint)) {
     return 'image';
+  }
+  // remotion_overlay = transparent element rendered ON TOP of existing base media.
+  // Must return 'video' so backgroundForOverlayMode() produces 'transparent' rather
+  // than the standalone dark-gradient backdrop, which would completely block the video.
+  if (routingTags.includes('remotion_overlay')) {
+    return 'video';
   }
   return 'standalone';
 }
@@ -206,16 +215,13 @@ function toAssetBundle(request: TemplateLaneRequest): MotionGraphicsAssetBundleI
 }
 
 function responseFormat() {
-  const schema = z.toJSONSchema(TemplateSpecSchema);
-  const { $schema: _, ...structuralSchema } = schema as Record<string, unknown>;
-  return {
-    type: 'json_schema' as const,
-    json_schema: {
-      name: 'motion_graphics_template_spec',
-      strict: true,
-      schema: structuralSchema,
-    },
-  };
+  // Use json_object rather than json_schema strict mode.
+  // Gemini Flash does NOT support json_schema+strict via OpenRouter — when sent an
+  // unsupported format, OpenRouter silently falls back to unguided generation, causing
+  // the model to produce verbose freeform output up to its hard 65,536-token output cap.
+  // json_object correctly constrains output to valid JSON; the TemplateSpecSchema.safeParse()
+  // call below already handles structural validation on the output.
+  return { type: 'json_object' as const };
 }
 
 async function generateTemplateSpec(
@@ -283,10 +289,11 @@ Template families:
     {
       model: request.model || 'google/gemini-3-flash-preview',
       temperature: 0.1,
-      maxTokens: 65536,
+      maxTokens: 131072,
       xTitle: 'Vid-Bolt MG Templates',
       responseFormat: responseFormat() as any,
     },
+    request.provider || 'openrouter'
   );
 
   const parsed = safeJsonParse<unknown>(response.content);

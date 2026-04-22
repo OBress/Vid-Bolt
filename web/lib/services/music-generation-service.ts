@@ -42,7 +42,6 @@ import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
 const LOG_PREFIX = '[MusicGen]';
 const MODE_SWITCH_TIMEOUT_MS = 120_000; // 2 min to switch to audio_creation
 const MODE_POLL_INTERVAL_MS = 2_000;
-const POST_SWITCH_DELAY_MS = 3_000;
 const MUSIC_GEN_TIMEOUT_MS = 900_000;   // 15 min per segment (long music can take a while)
 const MAX_PLANNING_RETRIES = 3;
 const DEFAULT_SHARED_BPM = 58;
@@ -389,8 +388,9 @@ async function ensureAudioMode(): Promise<boolean> {
     if (switchResult.success) {
       const ready = await waitForModeReady('audio_creation');
       if (ready) {
-        console.log(`${LOG_PREFIX} Mode switch complete, stabilizing for ${POST_SWITCH_DELAY_MS / 1000}s...`);
-        await new Promise(resolve => setTimeout(resolve, POST_SWITCH_DELAY_MS));
+        // No post-switch delay needed: waitForModeReady polls until is_switching=False,
+        // which the GPU API only sets after load_models() + _run_warmup() complete.
+        console.log(`${LOG_PREFIX} Mode switch complete — model loaded and warmed up.`);
       }
       return ready;
     }

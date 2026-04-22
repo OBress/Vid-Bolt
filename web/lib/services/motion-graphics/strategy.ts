@@ -16,7 +16,10 @@ export interface MotionGraphicsStrategyInput {
   persistentGraphicType?: PersistentGraphicType;
 }
 
-const MAP_KEYWORDS = /\b(map|route|travel|location|geography|country|city|world|globe|border|capital)\b/i;
+// Map keywords: intentionally narrow. Generic terms like 'location', 'route', 'city', 'country'
+// appear in almost every documentary shot and must NOT trigger a world-map template.
+// Only match when the prompt is *explicitly* about a geographic map as its primary visual.
+const MAP_KEYWORDS = /\b(world map|regional map|geographic map|geography|globe|border crossing|capital city)\b/i;
 const TIMELINE_KEYWORDS = /\b(timeline|history|sequence|step|progression|before|after|then|event|era|phase)\b/i;
 const DOCUMENT_KEYWORDS = /\b(document|memo|email|report|file|dossier|screenshot|headline|paper|article|record)\b/i;
 const EVIDENCE_KEYWORDS = /\b(evidence|crime|investigation|suspect|clue|board|relationship|conspiracy|case|profile)\b/i;
@@ -91,7 +94,10 @@ export function inferTemplateType(input: MotionGraphicsStrategyInput): MotionGra
   if (SLAP_ANNOTATION_KEYWORDS.test(prompt)) return 'slap_annotation';
   if (GHOST_FIGURE_KEYWORDS.test(prompt)) return 'ghost_figure_reveal';
 
-  if (MAP_KEYWORDS.test(prompt)) return /route|travel|path|journey|flight/i.test(prompt) ? 'route_trace' : 'map_focus';
+  if (MAP_KEYWORDS.test(prompt)) {
+    // Only use route_trace when the prompt explicitly describes a geographic route/path in map-context
+    return /\b(route trace|flight path|travel route|journey on (?:a )?map|mapped path)\b/i.test(prompt) ? 'route_trace' : 'map_focus';
+  }
   if (TIMELINE_KEYWORDS.test(prompt)) return 'timeline';
   if (PROCESS_KEYWORDS.test(prompt)) return 'process_diagram';
   if (COMPARISON_KEYWORDS.test(prompt)) return 'comparison_board';

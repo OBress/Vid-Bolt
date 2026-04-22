@@ -95,32 +95,24 @@ function buildBreakdownPromptNote(shot: PlannedShot): string {
   ].join(' ');
 }
 
-function buildDirectingPromptNote(shot: PlannedShot): string {
-  const parts = [
-    shot.shot_role ? `Shot role: ${shot.shot_role}.` : '',
-    shot.framing ? `Framing: ${shot.framing}.` : '',
-    shot.camera_angle ? `Angle: ${shot.camera_angle}.` : '',
-    shot.camera_motion ? `Camera motion: ${shot.camera_motion}.` : '',
-    shot.subject_focus ? `Focus on: ${shot.subject_focus}.` : '',
-    shot.entry_transition_intent ? `Enter via: ${shot.entry_transition_intent}.` : '',
-    shot.exit_transition_intent ? `Exit via: ${shot.exit_transition_intent}.` : '',
-    shot.visual_motif ? `Carry the motif: ${shot.visual_motif}.` : '',
-  ].filter(Boolean);
-  return parts.join(' ');
-}
+// NOTE: buildDirectingPromptNote was removed.
+// Directing metadata (shot_role, framing, camera_angle, camera_motion) is stored as
+// structured fields on PlannedShot and consumed directly by enrichLtx2Prompt().
+// Injecting them as label strings ("Shot role: X", "Framing: Y") into the visual
+// prompt caused LTX 2.3 to hallucinate those labels as rendered on-screen text.
 
 function buildSegmentationPromptNote(shot: PlannedShot): string {
   const treatment = shot.segmentation_treatment;
   if (!treatment?.execution_mode) return '';
 
+  // Only inject natural-language behavioral directions — not label-style metadata.
+  // Strings like "Preset: X" and "Segmentation prompt: Y" are technical identifiers
+  // that LTX 2.3 will attempt to render as on-screen text. Behavioral instructions
+  // (desaturation, zoom, annotation style) are safe because they read as scene direction.
   const parts = [
-    `This shot is segmentation-led (${treatment.execution_mode}).`,
-    treatment.preset ? `Preset: ${treatment.preset}.` : '',
-    treatment.subject_focus ? `Segment around: ${treatment.subject_focus}.` : '',
-    treatment.text_prompt ? `Segmentation prompt: ${treatment.text_prompt}.` : '',
-    treatment.allow_background_desaturation ? 'Allow the background to desaturate while the subject stays emphasized.' : '',
-    treatment.allow_guided_zoom ? 'Use a guided zoom toward the segmented subject/detail.' : '',
-    treatment.allow_tracked_annotation ? 'Use tracked annotation/highlight language rather than generic motion.' : '',
+    treatment.allow_background_desaturation ? 'The background desaturates while the subject stays emphasized.' : '',
+    treatment.allow_guided_zoom ? 'A guided zoom moves toward the segmented subject or detail.' : '',
+    treatment.allow_tracked_annotation ? 'Use tracked annotation or highlight language rather than generic motion.' : '',
     treatment.notes || '',
   ].filter(Boolean);
 
@@ -135,7 +127,7 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}${isClosedLoop ? ' (closed-loop)' : ''}`);
 
-  const costTracker = new CostTracker(4); // Step 4 in the pipeline
+  const costTracker = new CostTracker(4, userId); // Step 4 in the pipeline
 
   try {
     const result = await costTracker.run(async () => {
@@ -287,7 +279,7 @@ export const assetScoutProcessor: Processor<AssetScoutJobData> = async (
           neighborCtx.compactNote,
           buildClusterPromptNote(shots, i),
           buildBreakdownPromptNote(shot),
-          buildDirectingPromptNote(shot),
+          // buildDirectingPromptNote removed — directing metadata is consumed by enrichLtx2Prompt
           buildSegmentationPromptNote(shot),
         ].filter(Boolean);
         const enrichedPromptWithContext = promptNotes.length > 0

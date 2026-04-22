@@ -32,7 +32,7 @@ import {
   ImageIcon,
   ExternalLink,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
 import {
   CostItem,
@@ -103,6 +103,39 @@ export function FinancialForm({ currentDate, initialStatement, defaultCosts = []
   const [uploadingProof, setUploadingProof] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [errors, setErrors] = useState<Set<string>>(new Set());
+
+  // ── Auto-Tracked Costs import state ──
+  const [autoTracked, setAutoTracked] = useState<{ key: string; name: string; amountUsd: number }[]>([]);
+  const [autoTrackedTotal, setAutoTrackedTotal] = useState(0);
+  const [autoTrackedLoading, setAutoTrackedLoading] = useState(false);
+  const [autoTrackedOpen, setAutoTrackedOpen] = useState(false);
+
+  const fetchAutoTracked = useCallback(async () => {
+    setAutoTrackedLoading(true);
+    try {
+      const res = await fetch(`/api/analytics/costs/monthly-summary?month=${currentDate}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setAutoTracked(data.asLineItems || []);
+      setAutoTrackedTotal(data.totalCostUsd || 0);
+    } catch {
+      // silence — non-blocking
+    } finally {
+      setAutoTrackedLoading(false);
+    }
+  }, [currentDate]);
+
+  const handleImportAutoTracked = () => {
+    if (isReadOnly) return;
+    const newItems: CostItemFormState[] = autoTracked.map((item) => ({
+      id: crypto.randomUUID(),
+      name: item.name,
+      amount: item.amountUsd.toFixed(4),
+      isCustom: true,
+    }));
+    setCosts((prev) => [...prev, ...newItems]);
+    setAutoTrackedOpen(false);
+  };
   
   // Derived state
   const status: PaymentStatus = initialStatement?.status || "draft";
@@ -335,7 +368,73 @@ export function FinancialForm({ currentDate, initialStatement, defaultCosts = []
         </CardContent>
       </Card>
 
-      {/* ─── Costs Card ─── */}
+      {/* ─── Auto-Tracked Costs panel ─── */}
+      {!isReadOnly && (
+        <Card className="border-blue-500/20">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <DollarSign className="w-4 h-4 text-blue-500" />
+                  Auto-Tracked API Costs
+                </CardTitle>
+                <CardDescription className="mt-0.5">
+                  Costs automatically recorded from your Vid-Bolt pipeline runs this month.
+                </CardDescription>
+              </div>
+              <button
+                onClick={() => {
+                  setAutoTrackedOpen(!autoTrackedOpen);
+                  if (!autoTracked.length) fetchAutoTracked();
+                }}
+                className="text-xs text-blue-400 hover:text-blue-300 border border-blue-500/30 rounded-lg px-3 py-1.5 transition-colors"
+              >
+                {autoTrackedOpen ? "Hide" : "View & Import"}
+              </button>
+            </div>
+          </CardHeader>
+          {autoTrackedOpen && (
+            <CardContent>
+              {autoTrackedLoading ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : autoTracked.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  No tracked costs found for this month yet.
+                </p>
+              ) : (
+                <>
+                  <div className="space-y-1.5 mb-4">
+                    {autoTracked.map((item) => (
+                      <div key={item.key} className="flex items-center justify-between text-sm py-1.5 border-b border-border/50">
+                        <span className="text-muted-foreground">{item.name}</span>
+                        <span className="font-mono font-medium">${item.amountUsd.toFixed(4)}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between text-sm font-semibold pt-1">
+                      <span>Total auto-tracked</span>
+                      <span className="text-red-500">${autoTrackedTotal.toFixed(4)}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    ⚠️ These are estimates based on API usage. Actual provider invoices may differ slightly.
+                  </p>
+                  <button
+                    onClick={handleImportAutoTracked}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Import as Cost Items
+                  </button>
+                </>
+              )}
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
           <div className="space-y-1">

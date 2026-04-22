@@ -10,7 +10,7 @@
 
 import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus, updateTaskOutput } from '@/lib/queues/shared';
-import { getOpenRouterApiKey, getUserApiKeys } from '@/lib/services/api-keys';
+import { getLlmProviderConfig, getUserApiKeys } from '@/lib/services/api-keys';
 import type { ShotForGpuGeneration } from '@/lib/av-script/gpu-batch-generation';
 import { CostTracker } from '@/lib/queues/cost-tracker';
 
@@ -149,7 +149,7 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
   console.log(`${logPrefix} Starting job ${job.id} for video ${videoId} (mode: ${mode})`);
 
   // Cost tracking for Step 5 (AV Script)
-  const costTracker = new CostTracker(5);
+  const costTracker = new CostTracker(5, userId);
 
   try {
     const result = await costTracker.run(async () => {
@@ -775,20 +775,21 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
           });
         }
 
-        // Fetch user's OpenRouter API key (user DB → env var fallback) + model
+        // Fetch user's LLM provider config (user DB → env var fallback) + model
         const { generateMotionGraphic } = await import('@/lib/services/motion-graphics/pipeline-motion-graphics');
 
         let openrouterKey: string | undefined;
         let openrouterModel = 'google/gemini-3.1-pro-preview';
         try {
-          openrouterKey = await getOpenRouterApiKey(userId);
+          const providerConfig = await getLlmProviderConfig(userId);
+          openrouterKey = providerConfig.apiKey;
           // Also fetch model preference if user has one
           const userKeys = await getUserApiKeys(userId);
           if ((userKeys as any)?.openrouter_model) {
             openrouterModel = (userKeys as any).openrouter_model;
           }
         } catch (keyErr) {
-          console.error(`${logPrefix} Failed to get OpenRouter API key:`, keyErr);
+          console.error(`${logPrefix} Failed to get LLM API key:`, keyErr);
         }
 
         if (!openrouterKey) {

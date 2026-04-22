@@ -31,9 +31,10 @@ import {
   getKeyFromUrl,
   STORAGE_PATHS,
 } from '@/lib/services/r2-storage';
-import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
+import { waitForWebhookResult, abortPendingListener } from '@/lib/queues/webhook-listener';
 import { CancellationError, checkCancelled } from '@/lib/queues/cancellation';
 import { getStyleSignals } from '@/lib/services/style-signals';
+
 
 // ============================================================================
 // CONFIGURATION
@@ -73,8 +74,8 @@ const WEBHOOK_WATCHDOG_INTERVAL_MS = 30_000;
 // Mode switch timeout (LTX-2 loading can take ~90s+)
 export const MODE_SWITCH_TIMEOUT_MS = 180_000;
 const MODE_POLL_INTERVAL_MS = 2_000;
-// Stabilization delay after mode switch completes (GPU needs a moment)
-const POST_SWITCH_DELAY_MS = 5_000;
+// NOTE: No post-switch delay needed — waitForModeReady() polls until is_switching=False,
+// which the GPU API only sets after load_models() + _run_warmup() both complete.
 
 // ============================================================================
 // TYPES
@@ -261,12 +262,12 @@ async function ensureMode(targetMode: 'image_generation' | 'image_editing' | 'vi
     return false;
   }
   
-  // Wait for switch to complete
+  // Wait for switch to complete — no additional delay needed after this.
+  // waitForModeReady polls until is_switching=False, which the GPU API only
+  // sets after both load_models() and _run_warmup() complete in ltx2_generator.py.
   const ready = await waitForModeReady(targetMode);
   if (ready) {
-    // Brief stabilization delay after mode switch
-    console.log(`[GPU-Batch] Mode switch complete, stabilizing for ${POST_SWITCH_DELAY_MS / 1000}s...`);
-    await new Promise(resolve => setTimeout(resolve, POST_SWITCH_DELAY_MS));
+    console.log(`[GPU-Batch] Mode switch complete — model loaded and warmed up, submitting batch.`);
   }
   return ready;
 }
@@ -368,26 +369,34 @@ export async function processGpuBatchGeneration(
   // =========================================================================
   // STEP 1: Generate keyframe images for ALL shots
   // =========================================================================
-  onProgress?.('Switching to image generation mode...', 10);
-  
-  const imageModeReady = await ensureMode('image_generation');
-  if (!imageModeReady) {
-    console.error(`${logPrefix} Failed to switch to image_generation mode`);
-    // Fallback everything to failures — never mask with placeholder URLs
-    for (const shot of shots) {
-      const isVideo = shot.media_type === 'video';
-      results.push({
-        shot_index: shot.segment_index,
-        media_url: '',
-        generation_status: 'failed',
-        error_message: 'Failed to switch GPU to image_generation mode',
-      });
-      if (isVideo) stats.videosFailed++;
-      else stats.imagesFailed++;
+
+  // Skip image mode switch entirely when no images are needed.
+  // Every single-shot continuity retry has 0 keyframes — switching to image mode
+  // then immediately back to video mode wastes ~17-25s with zero benefit.
+  if (allShotsForImages.length > 0) {
+    onProgress?.('Switching to image generation mode...', 10);
+
+    const imageModeReady = await ensureMode('image_generation');
+    if (!imageModeReady) {
+      console.error(`${logPrefix} Failed to switch to image_generation mode`);
+      // Fallback everything to failures — never mask with placeholder URLs
+      for (const shot of shots) {
+        const isVideo = shot.media_type === 'video';
+        results.push({
+          shot_index: shot.segment_index,
+          media_url: '',
+          generation_status: 'failed',
+          error_message: 'Failed to switch GPU to image_generation mode',
+        });
+        if (isVideo) stats.videosFailed++;
+        else stats.imagesFailed++;
+      }
+      console.log(`${logPrefix} Complete: ${stats.imagesGenerated} images, ${stats.videosGenerated} videos generated`);
+      console.log(`${logPrefix} Failed: ${stats.imagesFailed} images, ${stats.videosFailed} videos`);
+      return { results, keyframeImages, stats };
     }
-    console.log(`${logPrefix} Complete: ${stats.imagesGenerated} images, ${stats.videosGenerated} videos generated`);
-    console.log(`${logPrefix} Failed: ${stats.imagesFailed} images, ${stats.videosFailed} videos`);
-    return { results, keyframeImages, stats };
+  } else {
+    console.log(`${logPrefix} Skipping image_generation mode switch (0 images needed, going directly to video mode)`);
   }
 
   onProgress?.(`Generating ${allShotsForImages.length} keyframe images...`, 20);
@@ -643,11 +652,27 @@ async function processImageBatch(
     }));
   }
 
-  // Submit batch
+  // Calculate timeout before pre-registration (needed for per-item timeouts)
+  const timeout = calculateTimeout('image_generation', items.length);
+  console.log(`${logPrefix} Webhook timeout: ${Math.round(timeout / 1000)}s for ${items.length} items (dynamic, OOM-aware)`);
+
+  // PRE-REGISTER webhook listeners BEFORE batch submission.
+  // Race condition fix: the GPU processes item_0 immediately after submission (~15s).
+  // If we register listeners AFTER submission, the webhook for item_0 arrives before
+  // pendingListeners.set() is called → Redis pub/sub message is silently discarded.
+  const preRegistered = new Map<string, ReturnType<typeof waitForWebhookResult>>();
+  for (const item of items) {
+    preRegistered.set(item.item_id, waitForWebhookResult(item.item_id, timeout));
+  }
+  console.log(`${logPrefix} Pre-registered ${preRegistered.size} webhook listeners`);
+
+  // Submit batch (listeners are already watching)
   const submitResult = await callGpuBatchImageGenerate(batchId, items, webhookUrl, webhookSecret);
   
   if (!submitResult.success) {
     console.error(`${logPrefix} Batch submission failed: ${submitResult.errorMessage}`);
+    // Clean up pre-registered listeners to avoid dangling timeouts
+    for (const item of items) abortPendingListener?.(item.item_id, 'Batch submission failed');
     return shots.map(shot => ({
       shot_index: shot.segment_index,
       media_url: '',
@@ -658,14 +683,10 @@ async function processImageBatch(
 
   console.log(`${logPrefix} Batch ${batchId} submitted (${items.length} items), waiting for webhooks...`);
 
-  // Wait for all webhooks with dynamic timeout (OOM-aware: ~30s/item worst case × 2x leniency)
-  const timeout = calculateTimeout('image_generation', items.length);
-  console.log(`${logPrefix} Webhook timeout: ${Math.round(timeout / 1000)}s for ${items.length} items (dynamic, OOM-aware)`);
-
   // Force-update GPU activity before long webhook wait to prevent VM shutdown
   forceUpdateGpuActivity().catch(() => {});
 
-  const results = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'image', onItemComplete);
+  const results = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'image', onItemComplete, undefined, preRegistered);
 
   return results;
 }
@@ -781,12 +802,35 @@ function enrichLtx2Prompt(
   /** Directorial camera motion intent from the shot planner */
   cameraMotion?: string,
 ): string {
-  const styleSignals = getStyleSignals(visualStyle, rawPrompt, neighborContext);
+  // Pass rawPrompt through directly — no token blocklist stripping.
+  // The enricher's stylePrefix, suffix hints, and upstream metadata cleanup
+  // (buildDirectingPromptNote removed from resolved_prompts) handle style enforcement.
+  const ltxSafePrompt = rawPrompt;
+
+  const styleSignals = getStyleSignals(visualStyle, ltxSafePrompt, neighborContext);
   const cleanedPrompt = styleSignals.nonPhotorealistic
-    ? rawPrompt
+    ? ltxSafePrompt
       .replace(/\bphotoreal(?:istic|ism)\b/gi, 'stylized')
       .replace(/\brealistic\b/gi, 'stylized')
-    : rawPrompt;
+    : ltxSafePrompt;
+
+  // Style enforcement prefix for non-photorealistic art styles.
+  // LTX-2 attends most strongly to the beginning of the prompt (autoregressive).
+  // Having "clay animation, stop-motion style" at the START activates the style
+  // much more effectively than only having it in the suffix as a safety hint.
+  // This prefix is built from the actual visual_style string so it's project-specific.
+  let stylePrefix = '';
+  if (styleSignals.nonPhotorealistic && visualStyle) {
+    // Extract the core style name for the prefix (e.g., "clay animation" from longer descriptions)
+    const coreStyle = visualStyle
+      .replace(/\b(style|aesthetic|look|feel|mode)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 60); // cap so it doesn't dominate the prompt
+    if (coreStyle) {
+      stylePrefix = `${coreStyle} style. `;
+    }
+  }
 
   // Check if agent already specified detailed camera motion
   const hasMotionLanguage = /\b(camera|pan|track|zoom|dolly|tilt|push|pull|follow|crane|handheld|close-?up|wide shot|medium shot|orbit|sweep|glide)\b/i.test(cleanedPrompt);
@@ -809,16 +853,11 @@ function enrichLtx2Prompt(
   const styleRenderHint = styleSignals.nonPhotorealistic
     ? 'Cinematic staging, cohesive non-photorealistic rendering, and smooth continuous motion that stays inside the declared art style.'
     : 'Cinematic quality, photorealistic rendering, smooth continuous motion.';
-  // IMPORTANT: Never mention text/letters/words in the LTX-2 prompt — even as negations.
-  // LTX-2 hallucinates garbled characters when text tokens appear in the prompt,
-  // regardless of context. Start/end frame images guide surface appearance implicitly.
-  // Only block compositional artifacts (overlays, subtitles) that the frame can't prevent.
-  //
-  // For non-photorealistic styles (clay, animation, etc.), also prohibit photorealistic human
-  // elements — per verifier logs, these are the second most common style-contract violation.
+  // For non-photorealistic styles (clay, animation, etc.), prohibit photorealistic human
+  // elements in the suffix — this is a positive style instruction the model responds to correctly.
   const textSafetyHint = styleSignals.nonPhotorealistic
-    ? 'No baked-in text overlays, no garbled characters, no digital UI elements, no subtitles. No photorealistic human skin, hands, or faces — render all human elements in the declared art style only.'
-    : 'No watermarks, no digital overlays, no subtitles, no CGI artifacts.';
+    ? 'No photorealistic human skin, hands, or faces — render all human elements in the declared art style only.'
+    : 'Cinematic output only. No CGI artifacts.';
   const historicalAuthenticityHint = styleSignals.historical
     ? 'Era-authentic costumes, props, grooming, and environments only. No modern clothing, no modern haircuts, no contemporary signage or UI.'
     : undefined;
@@ -826,7 +865,8 @@ function enrichLtx2Prompt(
   // If the agent already provided camera motion, preserve it
   if (hasMotionLanguage) {
     const parts = [
-      contextPrefix + cleanedPrompt.trim().replace(/\.$/, ''),
+      // stylePrefix first: LTX-2 attends to beginning of prompt most strongly
+      stylePrefix + contextPrefix + cleanedPrompt.trim().replace(/\.$/, ''),
       pacingHint,
     ];
 
@@ -858,7 +898,9 @@ function enrichLtx2Prompt(
     : cameraStyles[(shotIndex || 0) % cameraStyles.length];
 
   const parts = [
-    contextPrefix + cleanedPrompt.trim().replace(/\.$/, ''),
+    // stylePrefix first: LTX-2 attends to beginning of prompt most strongly.
+    // For clay/animation/stop-motion, this anchors the art style before the scene description.
+    stylePrefix + contextPrefix + cleanedPrompt.trim().replace(/\.$/, ''),
   ];
 
   // LTX 2.3 anti-static guard — ONLY inject ambient motion when:
@@ -971,11 +1013,33 @@ async function processVideoBatch(
     return skippedShots;
   }
 
-  // Submit batch
+  // Calculate timeout before pre-registration (needed for per-item timeouts)
+  const totalVideoDuration = shots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0);
+  const avgDuration = totalVideoDuration / shots.length;
+  const timeout = calculateTimeout('video_generation', items.length, {
+    avgDurationSec: avgDuration,
+    totalVideoDurationSec: totalVideoDuration,
+  }) + MODE_SWITCH_TIMEOUT_MS;
+
+  // PRE-REGISTER webhook listeners BEFORE batch submission.
+  // Critical race condition fix: the GPU processes item_0 immediately after batch submission
+  // (~15s for a single video). If listeners are registered after submission, the webhook
+  // for item_0 arrives before pendingListeners.set() and is permanently discarded by the
+  // Redis pub/sub handler (line 117 in webhook-listener.ts: 'ignore if no listener found').
+  // This caused shot-0 to be silently dropped on every single render.
+  const preRegistered = new Map<string, ReturnType<typeof waitForWebhookResult>>();
+  for (const item of items) {
+    preRegistered.set(item.item_id, waitForWebhookResult(item.item_id, timeout));
+  }
+  console.log(`${logPrefix} Pre-registered ${preRegistered.size} webhook listeners (race-condition-safe)`);
+
+  // Submit batch (listeners are already watching when GPU starts processing item_0)
   const submitResult = await callGpuBatchVideoGenerate(batchId, items, webhookUrl, webhookSecret);
   
   if (!submitResult.success) {
     console.error(`${logPrefix} Batch submission failed: ${submitResult.errorMessage}`);
+    // Clean up pre-registered listeners to avoid dangling timeouts
+    for (const item of items) abortPendingListener?.(item.item_id, 'Batch submission failed');
     const allFailed = shots.map(shot => ({
       shot_index: shot.segment_index,
       media_url: '',
@@ -986,24 +1050,11 @@ async function processVideoBatch(
   }
 
   console.log(`${logPrefix} Batch ${batchId} submitted, waiting for webhooks...`);
-
-  // Calculate timeout based on total video content duration (not just count)
-  const totalVideoDuration = shots.reduce((sum, s) => sum + (s.duration_seconds || 5), 0);
-  const avgDuration = totalVideoDuration / shots.length;
-  // Add MODE_SWITCH_TIMEOUT_MS to account for the image→video mode switch that
-  // occurs BEFORE video generation begins. Webhook listeners start counting
-  // immediately, but the GPU doesn't produce videos until after the switch.
-  // Without this buffer, individual webhooks can timeout before the orchestrator's
-  // overall batch timeout, causing the entire batch to fail on the last item.
-  const timeout = calculateTimeout('video_generation', items.length, {
-    avgDurationSec: avgDuration,
-    totalVideoDurationSec: totalVideoDuration,
-  }) + MODE_SWITCH_TIMEOUT_MS;
   
   // Force-update GPU activity before long webhook wait to prevent VM shutdown
   forceUpdateGpuActivity().catch(() => {});
   
-  const webhookResults = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'video', onItemComplete, onItemResolved);
+  const webhookResults = await waitForBatchWebhooks(items, itemIdToShot, timeout, 'video', onItemComplete, onItemResolved, preRegistered);
 
   return [...webhookResults, ...skippedShots];
 }
@@ -1020,6 +1071,12 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
   onItemComplete?: (event: ItemCompleteEvent) => void,
   /** Streaming callback — fires with full result for each resolved item */
   onItemResolved?: (result: GpuGenerationResult) => void,
+  /**
+   * Pre-registered webhook promises, created BEFORE batch submission to avoid
+   * the race condition where item_0's webhook fires before its listener is registered.
+   * When provided, these promises are used instead of creating new waitForWebhookResult calls.
+   */
+  preRegistered?: Map<string, ReturnType<typeof waitForWebhookResult>>,
 ): Promise<GpuGenerationResult[]> {
   const logPrefix = `[GPU-Batch/Webhooks]`;
   const results: GpuGenerationResult[] = [];
@@ -1078,7 +1135,10 @@ async function waitForBatchWebhooks<T extends { item_id: string }>(
 
     const perItemCap = getPerItemCap(shot); // = timeoutMs (batch-level, scales with N)
     try {
-      const webhookResult = await waitForWebhookResult(item.item_id, perItemCap);
+      // Use pre-registered promise if available (avoids race with early GPU webhooks)
+      const resultPromise = preRegistered?.get(item.item_id)
+        ?? waitForWebhookResult(item.item_id, perItemCap);
+      const webhookResult = await resultPromise;
       pendingItems.delete(item.item_id);
 
       if (webhookResult.status === 'completed' && webhookResult.result?.save_url) {

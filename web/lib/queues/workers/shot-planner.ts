@@ -102,7 +102,7 @@ export const shotPlannerProcessor: Processor<ShotPlannerJobData> = async (
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId} (${wordTimestamps.length} words, ${totalDurationSeconds}s)${isClosedLoop ? ' (closed-loop)' : ''}`);
 
-  const costTracker = new CostTracker(3); // Step 3 in the pipeline
+  const costTracker = new CostTracker(3, userId); // Step 3 in the pipeline
 
   try {
     const result = await costTracker.run(async () => {

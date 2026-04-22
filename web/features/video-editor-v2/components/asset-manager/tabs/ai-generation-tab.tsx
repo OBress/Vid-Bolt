@@ -21,8 +21,8 @@
  *  - Drag-and-drop generated results onto the timeline
  */
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import type { AIGenerationMode } from '../../../stores/ai-generation-store';
+import React, { useState, useEffect, useCallback, useRef, useMemo, DragEvent } from 'react';
+import type { AIGenerationMode, GenerationResult } from '../../../stores/ai-generation-store';
 import {
   Image as ImageIcon,
   Pencil,
@@ -46,6 +46,16 @@ import {
   Pause,
   CloudOff,
   Info,
+  Link2,
+  MousePointerClick,
+  Upload,
+  History,
+  X,
+  Zap,
+  ToggleLeft,
+  ToggleRight,
+  Camera,
+  Clock,
 } from 'lucide-react';
 import { cn } from '../../../utils/general/utils';
 import { Button } from '../../ui/button';
@@ -73,7 +83,7 @@ import {
   getModelById,
   type ModelDefinition,
 } from '@/lib/constants/model-registry';
-import { startMediaDrag, endDrag } from '../../../stores/video-editor-store';
+import { startMediaDrag, endDrag, useVideoEditorStore } from '../../../stores/video-editor-store';
 import { useGCPVM } from '@/providers/GCPVMProvider';
 import { useVramMode } from '@/hooks/use-vram-mode';
 
@@ -530,6 +540,450 @@ function InlineNumberInput({
         step={step}
         className="flex-1 h-7 bg-neutral-900/60 border border-neutral-800 rounded px-2 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-primary/50"
       />
+    </div>
+  );
+}
+
+// ============================================================================
+// MEDIA INPUT WIDGET (tri-path: paste URL | drag-from-timeline | use selected)
+// ============================================================================
+
+interface MediaInputWidgetProps {
+  label: string;
+  value: string;
+  onChange: (url: string) => void;
+  accept?: 'image' | 'video' | 'any';
+  disabled?: boolean;
+  placeholder?: string;
+}
+
+function MediaInputWidget({
+  label,
+  value,
+  onChange,
+  accept = 'any',
+  disabled,
+  placeholder,
+}: MediaInputWidgetProps) {
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // Read selected clip from the timeline
+  const selectedClipId = useVideoEditorStore((s) => s.selection.clipIds[0] ?? null);
+  const selectedClip = useVideoEditorStore((s) =>
+    selectedClipId ? s.clips[selectedClipId] : null
+  );
+
+  const canUseSelectedClip = useMemo(() => {
+    if (!selectedClip) return false;
+    const clipType = selectedClip.type;
+    if (accept === 'image') return clipType === 'image';
+    if (accept === 'video') return clipType === 'video';
+    return clipType === 'image' || clipType === 'video';
+  }, [selectedClip, accept]);
+
+  const handleUseSelected = useCallback(() => {
+    if (!selectedClip) return;
+    const url = selectedClip.media?.src || selectedClip.thumbnailUrl || '';
+    if (url) onChange(url);
+  }, [selectedClip, onChange]);
+
+  const handleDrop = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setIsDragOver(false);
+      const json = e.dataTransfer.getData('application/json');
+      if (json) {
+        try {
+          const data = JSON.parse(json);
+          const src = data.data?.src || data.src || '';
+          if (src) { onChange(src); return; }
+        } catch {}
+      }
+      const text = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+      if (text?.startsWith('http')) onChange(text.trim());
+    },
+    [onChange]
+  );
+
+  const hasUrl = value.trim().length > 0;
+
+  return (
+    <div className="space-y-1.5">
+      <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+        {label}
+      </label>
+
+      {/* Drop zone + URL input */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={handleDrop}
+        className={cn(
+          'relative rounded-md border transition-colors',
+          isDragOver
+            ? 'border-primary/70 bg-primary/5'
+            : hasUrl
+              ? 'border-neutral-700 bg-neutral-900/60'
+              : 'border-neutral-800 border-dashed bg-neutral-900/40'
+        )}
+      >
+        <input
+          type="url"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder || `Paste URL or drop a clip here…`}
+          disabled={disabled}
+          className="w-full h-8 bg-transparent px-2.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none"
+        />
+        {/* Thumbnail preview when URL is set */}
+        {hasUrl && (accept === 'image' || accept === 'any') && (
+          <div className="absolute right-2 top-1 h-6 w-10 rounded overflow-hidden border border-neutral-700">
+            <img
+              src={value}
+              alt=""
+              className="w-full h-full object-cover"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+            />
+          </div>
+        )}
+        {/* Clear button */}
+        {hasUrl && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="absolute right-1 top-1.5 text-neutral-600 hover:text-neutral-300 transition-colors p-0.5"
+            title="Clear"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+
+      {/* Action pills */}
+      <div className="flex items-center gap-1.5">
+        <TooltipProvider>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={handleUseSelected}
+                disabled={!canUseSelectedClip || disabled}
+                className={cn(
+                  'flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors',
+                  canUseSelectedClip && !disabled
+                    ? 'bg-primary/15 text-primary hover:bg-primary/25 border border-primary/30'
+                    : 'bg-neutral-800/60 text-neutral-600 border border-neutral-800 cursor-not-allowed'
+                )}
+              >
+                <MousePointerClick className="h-2.5 w-2.5" />
+                Use Selected
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="bg-neutral-800 border-neutral-700 text-[10px]">
+              {canUseSelectedClip
+                ? 'Use the currently selected timeline clip'
+                : selectedClip
+                  ? `Selected clip type (${selectedClip.type}) doesn't match — need ${accept}`
+                  : 'Select a clip on the timeline first'}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
+        <span className="text-[9px] text-neutral-700">·</span>
+        <span className="text-[9px] text-neutral-600 flex items-center gap-1">
+          <Upload className="h-2.5 w-2.5" /> Drop from timeline
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// RESOLUTION PRESET SELECTOR (LTX-2 64px-aligned)
+// ============================================================================
+
+// LTX-2 requires dimensions that are multiples of 32; prefer 64px-aligned.
+// These presets cover the main production use-cases.
+const LTX_RESOLUTION_PRESETS: Record<string, Array<{ label: string; w: number; h: number }>> = {
+  '16-9': [
+    { label: '1280×720', w: 1280, h: 720 },
+    { label: '960×544',  w: 960,  h: 544 },
+    { label: '768×432',  w: 768,  h: 432 },
+  ],
+  '9-16': [
+    { label: '720×1280', w: 720, h: 1280 },
+    { label: '544×960',  w: 544, h: 960  },
+    { label: '432×768',  w: 432, h: 768  },
+  ],
+  '1-1': [
+    { label: '768×768',  w: 768, h: 768  },
+    { label: '512×512',  w: 512, h: 512  },
+  ],
+  '4-3': [
+    { label: '1024×768', w: 1024, h: 768 },
+    { label: '768×576',  w: 768,  h: 576 },
+  ],
+  '3-4': [
+    { label: '768×1024', w: 768, h: 1024 },
+    { label: '576×768',  w: 576, h: 768  },
+  ],
+};
+
+// Fallback presets for image gen (not constrained to LTX multiples)
+const IMAGE_RESOLUTION_PRESETS: Record<string, Array<{ label: string; w: number; h: number }>> = {
+  '16-9': [
+    { label: '1920×1080', w: 1920, h: 1080 },
+    { label: '1280×720',  w: 1280, h: 720  },
+    { label: '854×480',   w: 854,  h: 480  },
+  ],
+  '9-16': [
+    { label: '1080×1920', w: 1080, h: 1920 },
+    { label: '720×1280',  w: 720,  h: 1280 },
+  ],
+  '1-1': [
+    { label: '1024×1024', w: 1024, h: 1024 },
+    { label: '768×768',   w: 768,  h: 768  },
+    { label: '512×512',   w: 512,  h: 512  },
+  ],
+  '4-3': [
+    { label: '1024×768',  w: 1024, h: 768  },
+  ],
+  '3-4': [
+    { label: '768×1024',  w: 768,  h: 1024 },
+  ],
+};
+
+interface ResolutionPresetSelectorProps {
+  aspectRatio: string;
+  value: string | null; // key like '1280x720'
+  onChange: (key: string | null) => void;
+  mode: 'video' | 'image';
+  disabled?: boolean;
+}
+
+function ResolutionPresetSelector({
+  aspectRatio,
+  value,
+  onChange,
+  mode,
+  disabled,
+}: ResolutionPresetSelectorProps) {
+  const presets =
+    mode === 'video'
+      ? LTX_RESOLUTION_PRESETS[aspectRatio] || LTX_RESOLUTION_PRESETS['16-9']
+      : IMAGE_RESOLUTION_PRESETS[aspectRatio] || IMAGE_RESOLUTION_PRESETS['16-9'];
+
+  return (
+    <div className="space-y-1">
+      <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+        Resolution {mode === 'video' && <span className="text-[9px] text-neutral-600 normal-case font-normal">(64px-aligned)</span>}
+      </label>
+      <div className="flex flex-wrap gap-1">
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          disabled={disabled}
+          className={cn(
+            'px-2 py-0.5 rounded text-[10px] border transition-colors',
+            value === null
+              ? 'border-primary/50 bg-primary/10 text-primary'
+              : 'border-neutral-800 bg-neutral-900/60 text-neutral-500 hover:text-neutral-300'
+          )}
+        >
+          Auto
+        </button>
+        {presets.map((p) => {
+          const key = `${p.w}x${p.h}`;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onChange(key)}
+              disabled={disabled}
+              className={cn(
+                'px-2 py-0.5 rounded text-[10px] border font-mono transition-colors',
+                value === key
+                  ? 'border-primary/50 bg-primary/10 text-primary'
+                  : 'border-neutral-800 bg-neutral-900/60 text-neutral-500 hover:text-neutral-300'
+              )}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+      {mode === 'video' && (
+        <p className="text-[9px] text-neutral-600">
+          LTX-2 requires multiples of 32. "Auto" uses the aspect ratio default.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// GENERATION HISTORY GALLERY (per-mode, draggable)
+// ============================================================================
+
+function HistoryThumb({ item, index }: { item: GenerationResult; index: number }) {
+  const handleDragStart = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      const isVideo = item.type === 'video';
+      const isAudio = item.type === 'audio';
+      const dragData = {
+        isNewItem: true,
+        type: item.type,
+        label: `AI ${item.type.charAt(0).toUpperCase() + item.type.slice(1)}`,
+        duration: item.durationSeconds || (isVideo ? 5 : 5),
+        data: {
+          src: item.normalizedAudioUrl || item.url,
+          thumbnail: isAudio ? undefined : item.url,
+          isAiGenerated: true,
+        },
+      };
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+
+      startMediaDrag(
+        item.type as 'image' | 'video' | 'audio',
+        item.normalizedAudioUrl || item.url,
+        {
+          duration: item.durationSeconds || 5,
+          name: `AI ${item.type}`,
+          thumbnailUrl: isAudio ? undefined : item.url,
+        }
+      );
+    },
+    [item]
+  );
+
+  const handleDragEnd = useCallback(() => endDrag(), []);
+
+  return (
+    <div
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      title={item.prompt}
+      className={cn(
+        'relative group cursor-grab active:cursor-grabbing shrink-0 rounded overflow-hidden border',
+        'border-neutral-800 hover:border-primary/50 transition-colors',
+        item.type === 'audio' ? 'w-14 h-14 bg-neutral-800/60' : 'w-14 h-10'
+      )}
+    >
+      {item.type === 'video' ? (
+        <video src={item.url} className="w-full h-full object-cover" muted playsInline />
+      ) : item.type === 'image' ? (
+        <img src={item.url} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex flex-col items-center justify-center gap-0.5">
+          <Music className="h-4 w-4 text-primary" />
+          <span className="text-[8px] text-neutral-500 font-mono">
+            {item.durationSeconds ? `${item.durationSeconds}s` : 'audio'}
+          </span>
+        </div>
+      )}
+      {/* Index badge */}
+      <div className="absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-sm bg-black/70 flex items-center justify-center">
+        <span className="text-[7px] text-white font-bold">{index + 1}</span>
+      </div>
+      {/* Drag hint */}
+      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+        <GripVertical className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+      </div>
+    </div>
+  );
+}
+
+function GenerationHistoryGallery({ mode }: { mode: AIGenerationMode }) {
+  const { history, clearHistory } = useAIGenerationStore();
+  const items = history[mode] ?? [];
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="space-y-1 mt-3">
+      <div className="flex items-center justify-between">
+        <label className="flex items-center gap-1 text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+          <History className="h-2.5 w-2.5" /> History
+        </label>
+        <button
+          type="button"
+          onClick={() => clearHistory(mode)}
+          className="text-[9px] text-neutral-600 hover:text-neutral-400 transition-colors"
+        >
+          Clear
+        </button>
+      </div>
+      <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+        {items.map((item, i) => (
+          <HistoryThumb key={item.timestamp} item={item} index={i} />
+        ))}
+      </div>
+      <p className="text-[9px] text-neutral-600">
+        Drag any result back to the timeline
+      </p>
+    </div>
+  );
+}
+
+// ============================================================================
+// CAMERA ANGLE PANEL (for multiple-angles LoRA)
+// ============================================================================
+
+const ANGLE_PRESETS = [
+  { label: 'Front',      suffix: 'front view, straight-on angle' },
+  { label: 'Side',       suffix: 'side profile, 90° lateral view' },
+  { label: '3/4 Front',  suffix: 'three-quarter front view' },
+  { label: '3/4 Back',   suffix: 'three-quarter rear view' },
+  { label: 'Over Shoulder', suffix: 'over-the-shoulder perspective' },
+  { label: 'Low Angle',  suffix: 'low-angle shot, looking up' },
+  { label: 'High Angle', suffix: 'high-angle bird\'s eye shot' },
+  { label: 'Back',       suffix: 'rear view, facing away from camera' },
+] as const;
+
+interface CameraAnglePanelProps {
+  prompt: string;
+  onPromptChange: (p: string) => void;
+  loraName: string | null;
+}
+
+function CameraAnglePanel({ prompt, onPromptChange, loraName }: CameraAnglePanelProps) {
+  const isAnglesLora = loraName === 'multiple-angles';
+  if (!isAnglesLora) return null;
+
+  const applyAngle = (suffix: string) => {
+    // Remove any existing angle suffix first, then append
+    const base = prompt
+      .replace(/,?\s*(front|side|rear|back|low-angle|high-angle|bird|over-the-shoulder|three-quarter|lateral|straight-on|looking up|facing away)[^,]*/gi, '')
+      .replace(/,\s*$/, '')
+      .trim();
+    onPromptChange(base ? `${base}, ${suffix}` : suffix);
+  };
+
+  return (
+    <div className="space-y-1 p-2 rounded-md border border-amber-500/20 bg-amber-500/5">
+      <div className="flex items-center gap-1 mb-1.5">
+        <Camera className="h-2.5 w-2.5 text-amber-400" />
+        <span className="text-[10px] text-amber-400 font-semibold uppercase tracking-wider">
+          Camera Angles
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {ANGLE_PRESETS.map((a) => (
+          <button
+            key={a.label}
+            type="button"
+            onClick={() => applyAngle(a.suffix)}
+            className="px-1.5 py-0.5 rounded text-[10px] border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-colors"
+          >
+            {a.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-[9px] text-amber-400/60">
+        Appends the camera orientation to your prompt
+      </p>
     </div>
   );
 }
@@ -1016,7 +1470,7 @@ const DURATION_OPTIONS = [
 ];
 
 function AudioGenForm() {
-  const { audioGen, updateAudioGen, isGenerating, lastResult, error, setGenerating, setResult, setError } =
+  const { audioGen, updateAudioGen, isGenerating, lastResult, error, setGenerating, setResult, setError, pushToHistory, activeMode } =
     useAIGenerationStore();
 
   const handleGenerate = useCallback(async () => {
@@ -1043,18 +1497,23 @@ function AudioGenForm() {
       }
 
       const data = await res.json();
-      setResult({
-        type: 'audio',
+      const result = {
+        mode: activeMode,
+        type: 'audio' as const,
         url: data.url,
         mimeType: 'audio/wav',
         prompt: audioGen.prompt,
         modelId: 'acestep-v15-turbo',
         timestamp: Date.now(),
-      });
+        durationSeconds: audioGen.durationSeconds,
+        normalizedAudioUrl: data.normalizedUrl || null,
+      };
+      setResult(result);
+      pushToHistory(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Audio generation failed');
     }
-  }, [audioGen, setGenerating, setResult, setError]);
+  }, [audioGen, setGenerating, setResult, setError, pushToHistory, activeMode]);
 
   return (
     <div className="space-y-3">
@@ -1123,9 +1582,9 @@ function AudioGenForm() {
           <input
             type="number"
             value={audioGen.bpm}
-            onChange={(e) => updateAudioGen({ bpm: Math.max(50, Math.min(70, Number(e.target.value) || 58)) })}
-            min={50}
-            max={70}
+            onChange={(e) => updateAudioGen({ bpm: Math.max(40, Math.min(200, Number(e.target.value) || 85)) })}
+            min={40}
+            max={200}
             className="w-full h-8 bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-primary/50"
             disabled={isGenerating}
           />
@@ -1196,6 +1655,8 @@ function AudioGenForm() {
       {lastResult && lastResult.type === 'audio' && (
         <AudioResultPreview result={lastResult} />
       )}
+
+      <GenerationHistoryGallery mode="audio" />
     </div>
   );
 }
@@ -1213,7 +1674,7 @@ interface ImageGenFormProps {
 }
 
 function ImageGenForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName, isGpuOnline }: ImageGenFormProps) {
-  const { imageGen, updateImageGen, isGenerating, lastResult, error, setGenerating, setResult, setError } =
+  const { imageGen, updateImageGen, isGenerating, lastResult, error, setGenerating, setResult, setError, autoEnhance, pushToHistory, activeMode } =
     useAIGenerationStore();
 
   const handleGenerate = useCallback(async () => {
@@ -1221,13 +1682,36 @@ function ImageGenForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName,
 
     setGenerating(true, 'Starting image generation...');
     try {
+      // Auto-enhance if enabled
+      let finalPrompt = imageGen.prompt;
+      if (autoEnhance) {
+        try {
+          const enhRes = await fetch('/api/video-editor/enhance-prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: imageGen.prompt, generationType: 'image', projectId }),
+          });
+          if (enhRes.ok) {
+            const enhData = await enhRes.json();
+            if (enhData.enhancedPrompt) finalPrompt = enhData.enhancedPrompt;
+          }
+        } catch {}
+      }
+
       const res = await fetch('/api/video-editor/generate/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: imageGen.prompt,
+          prompt: finalPrompt,
+          negativePrompt: imageGen.negativePrompt || undefined,
           model: imageGen.modelId,
           aspectRatio: imageGen.aspectRatio,
+          ...(imageGen.resolutionPreset
+            ? {
+                width: parseInt(imageGen.resolutionPreset.split('x')[0], 10),
+                height: parseInt(imageGen.resolutionPreset.split('x')[1], 10),
+              }
+            : {}),
           loraName: imageGen.loraName,
           loraStrength: imageGen.loraStrength,
           seed: imageGen.seed,
@@ -1241,18 +1725,21 @@ function ImageGenForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName,
       }
 
       const data = await res.json();
-      setResult({
-        type: 'image',
+      const result = {
+        mode: activeMode,
+        type: 'image' as const,
         url: data.url,
         mimeType: 'image/png',
-        prompt: imageGen.prompt,
+        prompt: finalPrompt,
         modelId: imageGen.modelId,
         timestamp: Date.now(),
-      });
+      };
+      setResult(result);
+      pushToHistory(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Image generation failed');
     }
-  }, [imageGen, setGenerating, setResult, setError]);
+  }, [imageGen, autoEnhance, projectId, setGenerating, setResult, setError, pushToHistory, activeMode]);
 
   return (
     <div className="space-y-3">
@@ -1280,6 +1767,21 @@ function ImageGenForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName,
         />
       </div>
 
+      {/* Negative Prompt */}
+      <div className="space-y-1">
+        <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+          Negative Prompt
+        </label>
+        <textarea
+          value={imageGen.negativePrompt}
+          onChange={(e) => updateImageGen({ negativePrompt: e.target.value })}
+          placeholder="blurry, watermark, low quality, distorted…"
+          rows={2}
+          className="w-full bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 py-2 text-xs text-neutral-200 placeholder:text-neutral-600 resize-none focus:outline-none focus:ring-1 focus:ring-primary/50"
+          disabled={isGenerating}
+        />
+      </div>
+
       {/* Model */}
       <CompactModelSelect
         category="image"
@@ -1297,12 +1799,15 @@ function ImageGenForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName,
         defaultLoraName={defaultLoraName}
       />
 
-      {/* Aspect Ratio */}
+      {/* Aspect Ratio + Resolution */}
       <div className="space-y-1">
         <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
           Aspect Ratio
         </label>
-        <Select value={imageGen.aspectRatio} onValueChange={(v) => updateImageGen({ aspectRatio: v })}>
+        <Select
+          value={imageGen.aspectRatio}
+          onValueChange={(v) => updateImageGen({ aspectRatio: v, resolutionPreset: null })}
+        >
           <SelectTrigger className="h-8 text-xs bg-neutral-900/60 border-neutral-800">
             <SelectValue />
           </SelectTrigger>
@@ -1315,6 +1820,14 @@ function ImageGenForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName,
           </SelectContent>
         </Select>
       </div>
+
+      <ResolutionPresetSelector
+        aspectRatio={imageGen.aspectRatio}
+        value={imageGen.resolutionPreset}
+        onChange={(k) => updateImageGen({ resolutionPreset: k })}
+        mode="image"
+        disabled={isGenerating}
+      />
 
       {/* Advanced */}
       <AdvancedSection>
@@ -1382,6 +1895,8 @@ function ImageGenForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName,
       {lastResult && lastResult.type === 'image' && (
         <GenerationResultPreview result={lastResult} />
       )}
+
+      <GenerationHistoryGallery mode="image-gen" />
     </div>
   );
 }
@@ -1399,7 +1914,7 @@ interface ImageEditFormProps {
 }
 
 function ImageEditForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName, isGpuOnline }: ImageEditFormProps) {
-  const { imageEdit, updateImageEdit, isGenerating, lastResult, error, setGenerating, setResult, setError } =
+  const { imageEdit, updateImageEdit, isGenerating, lastResult, error, setGenerating, setResult, setError, autoEnhance, pushToHistory, activeMode } =
     useAIGenerationStore();
 
   const handleGenerate = useCallback(async () => {
@@ -1407,11 +1922,26 @@ function ImageEditForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName
 
     setGenerating(true, 'Starting image edit...');
     try {
+      let finalPrompt = imageEdit.prompt;
+      if (autoEnhance) {
+        try {
+          const enhRes = await fetch('/api/video-editor/enhance-prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: imageEdit.prompt, generationType: 'image-edit', projectId }),
+          });
+          if (enhRes.ok) {
+            const enhData = await enhRes.json();
+            if (enhData.enhancedPrompt) finalPrompt = enhData.enhancedPrompt;
+          }
+        } catch {}
+      }
+
       const res = await fetch('/api/video-editor/generate/image-edit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: imageEdit.prompt,
+          prompt: finalPrompt,
           model: imageEdit.modelId,
           inputImageUrl: imageEdit.inputImageUrl,
           maskImageUrl: imageEdit.maskImageUrl || undefined,
@@ -1427,35 +1957,33 @@ function ImageEditForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName
       }
 
       const data = await res.json();
-      setResult({
-        type: 'image',
+      const result = {
+        mode: activeMode,
+        type: 'image' as const,
         url: data.url,
         mimeType: 'image/png',
-        prompt: imageEdit.prompt,
+        prompt: finalPrompt,
         modelId: imageEdit.modelId,
         timestamp: Date.now(),
-      });
+      };
+      setResult(result);
+      pushToHistory(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Image edit failed');
     }
-  }, [imageEdit, setGenerating, setResult, setError]);
+  }, [imageEdit, autoEnhance, projectId, setGenerating, setResult, setError, pushToHistory, activeMode]);
 
   return (
     <div className="space-y-3">
-      {/* Input Image URL */}
-      <div className="space-y-1">
-        <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
-          Input Image URL
-        </label>
-        <input
-          type="url"
-          value={imageEdit.inputImageUrl}
-          onChange={(e) => updateImageEdit({ inputImageUrl: e.target.value })}
-          placeholder="https://... or paste image URL"
-          className="w-full h-8 bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-primary/50"
-          disabled={isGenerating}
-        />
-      </div>
+      {/* Input Image — tri-path widget */}
+      <MediaInputWidget
+        label="Input Image"
+        value={imageEdit.inputImageUrl}
+        onChange={(url) => updateImageEdit({ inputImageUrl: url })}
+        accept="image"
+        disabled={isGenerating}
+        placeholder="Paste URL or drop a clip from the timeline…"
+      />
 
       {/* Prompt */}
       <div className="space-y-1">
@@ -1496,6 +2024,13 @@ function ImageEditForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName
         onChange={(v) => updateImageEdit({ loraName: v })}
         groups={loraGroups}
         defaultLoraName={defaultLoraName}
+      />
+
+      {/* Camera Angle panel — only shown for multiple-angles LoRA */}
+      <CameraAnglePanel
+        prompt={imageEdit.prompt}
+        onPromptChange={(p) => updateImageEdit({ prompt: p })}
+        loraName={imageEdit.loraName}
       />
 
       {/* Advanced */}
@@ -1552,6 +2087,8 @@ function ImageEditForm({ hasReplicateKey, projectId, loraGroups, defaultLoraName
       {lastResult && lastResult.type === 'image' && (
         <GenerationResultPreview result={lastResult} />
       )}
+
+      <GenerationHistoryGallery mode="image-edit" />
     </div>
   );
 }
@@ -1566,8 +2103,8 @@ interface VideoGenFormProps {
   isGpuOnline: boolean;
 }
 
-function VideoGenForm({ hasReplicateKey, projectId, isGpuOnline }: VideoGenFormProps) {
-  const { videoGen, updateVideoGen, isGenerating, lastResult, error, setGenerating, setResult, setError } =
+function VideoGenForm({ hasReplicateKey, projectId, isGpuOnline, loraGroups, defaultLoraName }: VideoGenFormProps & { loraGroups: LoRAGroup[]; defaultLoraName?: string }) {
+  const { videoGen, updateVideoGen, isGenerating, lastResult, error, setGenerating, setResult, setError, autoEnhance, pushToHistory, activeMode } =
     useAIGenerationStore();
 
   const handleGenerate = useCallback(async () => {
@@ -1575,16 +2112,40 @@ function VideoGenForm({ hasReplicateKey, projectId, isGpuOnline }: VideoGenFormP
 
     setGenerating(true, 'Starting video generation...');
     try {
+      let finalPrompt = videoGen.prompt;
+      if (autoEnhance) {
+        try {
+          const enhRes = await fetch('/api/video-editor/enhance-prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: videoGen.prompt, generationType: 'video', projectId }),
+          });
+          if (enhRes.ok) {
+            const enhData = await enhRes.json();
+            if (enhData.enhancedPrompt) finalPrompt = enhData.enhancedPrompt;
+          }
+        } catch {}
+      }
+
       const res = await fetch('/api/video-editor/generate/video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: videoGen.prompt,
+          prompt: finalPrompt,
+          negativePrompt: videoGen.negativePrompt || undefined,
           model: videoGen.modelId,
           startFrameUrl: videoGen.startFrameUrl || undefined,
           endFrameUrl: videoGen.endFrameUrl || undefined,
           durationSeconds: videoGen.durationSeconds,
           aspectRatio: videoGen.aspectRatio,
+          ...(videoGen.resolutionPreset
+            ? {
+                width: parseInt(videoGen.resolutionPreset.split('x')[0], 10),
+                height: parseInt(videoGen.resolutionPreset.split('x')[1], 10),
+              }
+            : {}),
+          loraName: videoGen.loraName,
+          loraStrength: videoGen.loraStrength,
           fps: videoGen.fps,
           seed: videoGen.seed,
         }),
@@ -1596,18 +2157,22 @@ function VideoGenForm({ hasReplicateKey, projectId, isGpuOnline }: VideoGenFormP
       }
 
       const data = await res.json();
-      setResult({
-        type: 'video',
+      const result = {
+        mode: activeMode,
+        type: 'video' as const,
         url: data.url,
         mimeType: 'video/mp4',
-        prompt: videoGen.prompt,
+        prompt: finalPrompt,
         modelId: videoGen.modelId,
         timestamp: Date.now(),
-      });
+        durationSeconds: videoGen.durationSeconds,
+      };
+      setResult(result);
+      pushToHistory(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Video generation failed');
     }
-  }, [videoGen, setGenerating, setResult, setError]);
+  }, [videoGen, autoEnhance, projectId, setGenerating, setResult, setError, pushToHistory, activeMode]);
 
   return (
     <div className="space-y-3">
@@ -1635,6 +2200,21 @@ function VideoGenForm({ hasReplicateKey, projectId, isGpuOnline }: VideoGenFormP
         />
       </div>
 
+      {/* Negative Prompt */}
+      <div className="space-y-1">
+        <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
+          Negative Prompt
+        </label>
+        <textarea
+          value={videoGen.negativePrompt}
+          onChange={(e) => updateVideoGen({ negativePrompt: e.target.value })}
+          placeholder="blurry, flickering, low quality, duplicate, distorted…"
+          rows={2}
+          className="w-full bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 py-2 text-xs text-neutral-200 placeholder:text-neutral-600 resize-none focus:outline-none focus:ring-1 focus:ring-primary/50"
+          disabled={isGenerating}
+        />
+      </div>
+
       {/* Model */}
       <CompactModelSelect
         category="video"
@@ -1644,35 +2224,33 @@ function VideoGenForm({ hasReplicateKey, projectId, isGpuOnline }: VideoGenFormP
         isGpuOnline={isGpuOnline}
       />
 
-      {/* Start Frame URL */}
-      <div className="space-y-1">
-        <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
-          Start Frame URL (Optional)
-        </label>
-        <input
-          type="url"
-          value={videoGen.startFrameUrl}
-          onChange={(e) => updateVideoGen({ startFrameUrl: e.target.value })}
-          placeholder="https://... first frame image"
-          className="w-full h-8 bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-primary/50"
-          disabled={isGenerating}
-        />
-      </div>
+      {/* LoRA */}
+      <LoRASelector
+        value={videoGen.loraName}
+        onChange={(v) => updateVideoGen({ loraName: v })}
+        groups={loraGroups}
+        defaultLoraName={defaultLoraName}
+      />
 
-      {/* End Frame URL */}
-      <div className="space-y-1">
-        <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
-          End Frame URL (Optional)
-        </label>
-        <input
-          type="url"
-          value={videoGen.endFrameUrl}
-          onChange={(e) => updateVideoGen({ endFrameUrl: e.target.value })}
-          placeholder="https://... last frame image"
-          className="w-full h-8 bg-neutral-900/60 border border-neutral-800 rounded-md px-2.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-primary/50"
-          disabled={isGenerating}
-        />
-      </div>
+      {/* Start Frame URL — tri-path widget */}
+      <MediaInputWidget
+        label="Start Frame (Optional)"
+        value={videoGen.startFrameUrl}
+        onChange={(url) => updateVideoGen({ startFrameUrl: url })}
+        accept="image"
+        disabled={isGenerating}
+        placeholder="First frame image URL…"
+      />
+
+      {/* End Frame URL — tri-path widget */}
+      <MediaInputWidget
+        label="End Frame (Optional)"
+        value={videoGen.endFrameUrl}
+        onChange={(url) => updateVideoGen({ endFrameUrl: url })}
+        accept="image"
+        disabled={isGenerating}
+        placeholder="Last frame image URL…"
+      />
 
       {/* Duration & Aspect Ratio */}
       <div className="grid grid-cols-2 gap-2">
@@ -1700,7 +2278,10 @@ function VideoGenForm({ hasReplicateKey, projectId, isGpuOnline }: VideoGenFormP
           <label className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">
             Aspect Ratio
           </label>
-          <Select value={videoGen.aspectRatio} onValueChange={(v) => updateVideoGen({ aspectRatio: v })}>
+          <Select
+            value={videoGen.aspectRatio}
+            onValueChange={(v) => updateVideoGen({ aspectRatio: v, resolutionPreset: null })}
+          >
             <SelectTrigger className="h-8 text-xs bg-neutral-900/60 border-neutral-800">
               <SelectValue />
             </SelectTrigger>
@@ -1714,6 +2295,15 @@ function VideoGenForm({ hasReplicateKey, projectId, isGpuOnline }: VideoGenFormP
           </Select>
         </div>
       </div>
+
+      {/* Resolution Presets (LTX-2 64px-aligned) */}
+      <ResolutionPresetSelector
+        aspectRatio={videoGen.aspectRatio}
+        value={videoGen.resolutionPreset}
+        onChange={(k) => updateVideoGen({ resolutionPreset: k })}
+        mode="video"
+        disabled={isGenerating}
+      />
 
       {/* Advanced */}
       <AdvancedSection>
@@ -1774,6 +2364,8 @@ function VideoGenForm({ hasReplicateKey, projectId, isGpuOnline }: VideoGenFormP
       {lastResult && lastResult.type === 'video' && (
         <GenerationResultPreview result={lastResult} />
       )}
+
+      <GenerationHistoryGallery mode="video-gen" />
     </div>
   );
 }
@@ -1840,15 +2432,32 @@ export function AIGenerationTab() {
     return () => { cancelled = true; };
   }, []);
 
-  // Auto-select the project's default LoRA on first load
-  const { imageGen, updateImageGen } = useAIGenerationStore();
-  const hasAutoSelectedRef = useRef(false);
+  // Channel defaults seeding — runs once per session on first mount
+  const {
+    imageGen, updateImageGen, updateVideoGen,
+    autoEnhance, setAutoEnhance,
+    channelDefaultsSeeded, markChannelDefaultsSeeded,
+  } = useAIGenerationStore();
+
   useEffect(() => {
-    if (!hasAutoSelectedRef.current && defaultLoraName && imageGen.loraName === null) {
+    if (channelDefaultsSeeded || settingsLoading || !settings) return;
+
+    // Seed default LoRA from project creative direction
+    if (defaultLoraName && imageGen.loraName === null) {
       updateImageGen({ loraName: defaultLoraName });
-      hasAutoSelectedRef.current = true;
+      updateVideoGen({ loraName: defaultLoraName });
     }
-  }, [defaultLoraName, imageGen.loraName, updateImageGen]);
+
+    // Seed aspect ratio from project basic info (already in '16-9' dash format)
+    const projectAspect = settings?.basic_info?.aspectRatio;
+    if (projectAspect) {
+      updateImageGen({ aspectRatio: projectAspect });
+      updateVideoGen({ aspectRatio: projectAspect });
+    }
+
+    markChannelDefaultsSeeded();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelDefaultsSeeded, settingsLoading, settings]);
 
   // Build grouped LoRA list for the selector
   const loraGroups = useMemo((): Array<{ label: string; items: Array<{ name: string; displayName?: string }> }> => {
@@ -1883,8 +2492,8 @@ export function AIGenerationTab() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* Sub-tab switcher */}
-      <div className="flex-shrink-0 px-3 pt-3 pb-2">
+      {/* Sub-tab switcher + Auto-Enhance toggle */}
+      <div className="flex-shrink-0 px-3 pt-3 pb-2 space-y-2">
         <div className="flex flex-wrap gap-1">
           {SUB_TABS.map(({ id, label, icon: Icon, comingSoon }) => (
             <button
@@ -1909,6 +2518,48 @@ export function AIGenerationTab() {
             </button>
           ))}
         </div>
+
+        {/* Auto-Enhance toggle (only relevant for gen modes) */}
+        {['image-gen', 'image-edit', 'video-gen'].includes(activeMode) && (
+          <div className="flex items-center justify-between">
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setAutoEnhance(!autoEnhance)}
+                    className={cn(
+                      'flex items-center gap-1.5 text-[10px] font-medium transition-colors',
+                      autoEnhance
+                        ? 'text-orange-400'
+                        : 'text-neutral-500 hover:text-neutral-300'
+                    )}
+                  >
+                    {autoEnhance ? (
+                      <Zap className="h-3 w-3" />
+                    ) : (
+                      <Sparkles className="h-3 w-3" />
+                    )}
+                    Auto-Enhance
+                    <span
+                      className={cn(
+                        'ml-0.5 px-1 rounded text-[8px] font-semibold',
+                        autoEnhance
+                          ? 'bg-orange-500/20 text-orange-400'
+                          : 'bg-neutral-800 text-neutral-600'
+                      )}
+                    >
+                      {autoEnhance ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="bg-neutral-800 border-neutral-700 text-[10px] max-w-[220px]">
+                  Automatically enhance prompts with project style before each generation. Requires OpenRouter key.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -1994,6 +2645,8 @@ export function AIGenerationTab() {
             hasReplicateKey={hasReplicateKey}
             projectId={projectId}
             isGpuOnline={isGpuReady}
+            loraGroups={loraGroups}
+            defaultLoraName={defaultLoraName}
           />
         ) : activeMode === 'motion' ? (
           <React.Suspense fallback={

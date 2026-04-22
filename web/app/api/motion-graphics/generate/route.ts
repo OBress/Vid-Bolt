@@ -10,8 +10,8 @@
 
 import { NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
-import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { getLlmProviderConfig } from '@/lib/services/api-keys';
 import { motionGraphicsService, type GenerationRequest } from '@/lib/services/motion-graphics/motion-graphics-service';
 
 // Disable body size limit for this route (code can be large)
@@ -51,30 +51,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Get OpenRouter API key
-    let apiKey = request.headers.get('x-openrouter-key');
-    
-    if (!apiKey) {
-      // Fall back to getting key from database
-      const serviceClient = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-      );
+    // 2. Resolve LLM provider config (respects user's active provider)
+    let resolvedApiKey: string;
+    let resolvedProvider: import('@/lib/ai/providers/types').LlmProvider;
 
-      const { data: apiKeyData } = await serviceClient
-        .from('user_api_keys')
-        .select('openrouter_key')
-        .eq('user_id', user.id)
-        .single();
-
-      apiKey = apiKeyData?.openrouter_key;
+    const headerKey = request.headers.get('x-openrouter-key');
+    if (headerKey) {
+      // Legacy header path — treat as OpenRouter
+      resolvedApiKey = headerKey;
+      resolvedProvider = 'openrouter';
+    } else {
+      const config = await getLlmProviderConfig(user.id);
+      resolvedApiKey = config.apiKey;
+      resolvedProvider = config.provider;
     }
 
-    if (!apiKey) {
+    if (!resolvedApiKey) {
       return new Response(
-        JSON.stringify({ 
-          error: 'OpenRouter API key not configured. Please add your API key in Settings > API Keys.',
-          type: 'api' 
+        JSON.stringify({
+          error: 'LLM API key not configured. Please add your API key in Settings → API Keys.',
+          type: 'api'
         }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
@@ -123,7 +119,7 @@ export async function POST(request: NextRequest) {
             previouslyUsedSkills,
           };
 
-          await motionGraphicsService.streamGeneration(sendSSE, apiKey!, generationRequest);
+          await motionGraphicsService.streamGeneration(sendSSE, resolvedApiKey, generationRequest, resolvedProvider);
         } catch (error) {
           console.error('[MotionGraphics API] Stream error:', error);
           const sendSSEOnError = (data: Record<string, unknown>) => {

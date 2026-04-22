@@ -139,6 +139,14 @@ export async function checkForInactiveVMs(): Promise<{ checked: number; shutdown
       console.log(`[GPU Shutdown Checker] User ${user_id}: INACTIVE - initiating shutdown`);
       
       try {
+        // Record VM session cost BEFORE shutting down
+        try {
+          const { closeVmSession } = await import('@/lib/costs/close-vm-session');
+          await closeVmSession(user_id);
+        } catch (costErr) {
+          console.warn(`[GPU Shutdown Checker] User ${user_id}: VM cost recording failed (non-blocking):`, costErr);
+        }
+
         // Get a valid GCP token for this user
         const gcpToken = await getValidGCPToken(user_id, null);
         

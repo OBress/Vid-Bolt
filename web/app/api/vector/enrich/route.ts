@@ -42,7 +42,8 @@ export async function POST(req: Request) {
       ],
       {
         model: ENRICH_MODEL,
-        temperature: 0.2
+        temperature: 0.2,
+        trackingUserId: user.id,
       }
     );
 

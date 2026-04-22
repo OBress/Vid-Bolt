@@ -241,7 +241,13 @@ distinct beats hiding inside it. Find them. Separate them.`);
 - Let the narrative rhythm drive your decisions, not arbitrary rules.
 - THE FINAL ACT deserves the same granularity as the opening. A conclusion is NOT a single
   "reflective" blob — it has distinct beats: the verdict, the settlement, the new revelation,
-  the lasting warning. Each of those is a separate scene with a separate emotional register.`);
+  the lasting warning. Each of those is a separate scene with a separate emotional register.
+
+PACING ≠ ON-SCREEN MOTION:
+"fast" pacing means more frequent cuts between shots — not faster movement within each shot.
+A rapid montage of still shots cut at 1.5 seconds each is extremely high energy.
+"slow" pacing means longer holds — the camera lingers and the composition breathes.
+The shot planner will handle motion decisions; your job is editorial rhythm.`);
 
   // Format editorial brief — natural language creative context, not constraints
   if (creativeContext.formatProfile) {

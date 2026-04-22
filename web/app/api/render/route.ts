@@ -8,7 +8,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient as createAuthClient } from '@/lib/supabase/server';
+import { createClient } from '@supabase/supabase-js';
 import { videoRenderQueue } from '@/lib/queues/queues';
 import { serializeRenderProps, validateRenderProps } from '@/lib/services/render/render-serializer';
 import { lambdaConfig } from '@/lib/services/render/lambda-config';
@@ -24,11 +25,11 @@ import { renderLimiter } from '@/lib/utils/rate-limiters';
 export async function POST(request: NextRequest) {
   try {
     // 1. Authenticate
-    const supabase = await createClient();
+    const supabaseAuth = await createAuthClient();
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await supabaseAuth.auth.getUser();
 
     if (authError || !user) {
       return NextResponse.json(
@@ -40,6 +41,14 @@ export async function POST(request: NextRequest) {
     // Rate limit check
     const rateLimited = renderLimiter.check(user.id);
     if (rateLimited) return rateLimited;
+
+    // Service client for DB operations
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
+    }
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     // 2. Parse request body
     const body = await request.json();
@@ -133,11 +142,32 @@ export async function POST(request: NextRequest) {
     const timestamp = Date.now();
     const outputKey = `renders/${user.id}/${videoId}/${timestamp}.mp4`;
 
+    // 5.5. Create task in database for taskbar tracking
+    const taskId = uuid();
+    const { error: taskError } = await supabase
+      .from('tasks')
+      .insert({
+        id: taskId,
+        user_id: user.id,
+        type: 'export',
+        name: `Export: ${videoId.substring(0, 8)}`,
+        status: 'pending',
+        steps: [],
+        input_data: { videoId },
+        output_data: {},
+      });
+
+    if (taskError) {
+      console.error('[API/render] Failed to create export task:', taskError);
+      // Non-blocking: continue with render even if task tracking fails
+    }
+
     // 6. Enqueue render job
     const job = await videoRenderQueue.add(
       'render',
       {
         jobId,
+        taskId: taskError ? undefined : taskId,
         userId: user.id,
         videoId,
         inputProps,

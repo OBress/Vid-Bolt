@@ -82,68 +82,18 @@ function getResolvedPromptForShot(
 }
 
 /**
- * Tokens that — when present in an LTX-2 video prompt — cause garbled text
- * overlays to appear baked into the generated video. LTX-2 hallucinates
- * characters/glyphs whenever text-related concepts appear in the prompt,
- * even if they're framed as "no text" negations.
+ * Amend a visual prompt for a retry by appending verifier corrections as
+ * natural-language prose. The original prompt is kept intact — its scene
+ * description, style language, and entity context are all still needed.
  *
- * On SIMPLIFY_PROMPT retries, these are stripped from the prompt entirely.
+ * @param fullPrompt  - The original resolved visual prompt (unchanged)
+ * @param corrections - Parsed verifier correction strings (SIMPLIFY_PROMPT stripped out)
+ * @returns Amended prompt with corrections appended as plain sentences
  */
-const VIDEO_TEXT_TRIGGER_TOKENS = [
-  'document', 'text', 'writing', 'lettering', 'inscription', 'label', 'labels',
-  'caption', 'captions', 'heading', 'headline', 'sign', 'signs', 'signage',
-  'poster', 'banner', 'words', 'word', 'printed', 'handwriting', 'seal',
-  'readable', 'legible', 'stamp', 'stamps', 'ticker', 'subtitle', 'subtitles',
-  'watermark', 'overlay', 'overlays', 'annotation', 'annotations',
-  'calendar', 'newspaper', 'magazine', 'report', 'letter', 'note', 'memo',
-  'dossier', 'indictment', 'certificate', 'diploma', 'contract', 'form',
-];
-
-/**
- * Build a regex that matches any of the text-trigger tokens as whole words.
- * Compiled once and reused across all shots in a retry batch.
- */
-const VIDEO_TEXT_TRIGGER_RE = new RegExp(
-  `\\b(${VIDEO_TEXT_TRIGGER_TOKENS.join('|')})\\b`,
-  'gi',
-);
-
-/**
- * Sanitize a visual prompt for a SIMPLIFY_PROMPT retry:
- *   1. Strip text-generating token vocabulary (whole-word match, case-insensitive)
- *   2. Collapse multiple spaces/commas left behind
- *   3. Trim to the first two sentences so the prompt is shorter but still meaningful
- *
- * @param fullPrompt   - The original resolved visual prompt
- * @param visualStyle  - Optional style string to detect non-photorealistic projects
- * @returns Sanitized, shortened prompt ready for GPU retry
- */
-function sanitizePromptForRetry(fullPrompt: string, visualStyle?: string): string {
-  // Step 1: Remove text-trigger tokens
-  let sanitized = fullPrompt.replace(VIDEO_TEXT_TRIGGER_RE, '');
-
-  // Step 2: Clean up punctuation artifacts (dangling commas, colons, double spaces)
-  sanitized = sanitized
-    .replace(/,\s*,/g, ',')
-    .replace(/,\s*\./g, '.')
-    .replace(/:+\s*,/g, '.')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-
-  // Step 3: Trim to first two sentences
-  const sentences = sanitized.split(/(?<=[.!?])\s+/);
-  const twoSentences = sentences.slice(0, 2).join(' ').trim() || sanitized;
-
-  // Step 4: Style-specific enforcement suffix
-  const isNonPhotorealistic = /\b(clay|claymation|stop.?motion|animated|cartoon|illustrated|illustration|stylized|cel.?shaded|anime|3d.?render|blender|diorama|miniature|handcrafted|crafted|plasticine)\b/i.test(
-    (visualStyle || '') + ' ' + twoSentences,
-  );
-
-  const suffix = isNonPhotorealistic
-    ? 'No baked-in text, no garbled characters, no digital overlays. No photorealistic human hands or faces — use stylized clay or mannequin equivalents only.'
-    : 'No baked-in text, no garbled characters, no digital overlays.';
-
-  return `${twoSentences}. ${suffix}`;
+function amendPromptForRetry(fullPrompt: string, corrections: string[]): string {
+  if (corrections.length === 0) return fullPrompt;
+  const amendment = corrections.join('. ');
+  return `${fullPrompt.trim().replace(/\.$/, '')}. ${amendment}.`;
 }
 
 export const videoGenProcessor: Processor<VideoGenJobData> = async (
@@ -158,7 +108,7 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
 
-  const costTracker = new CostTracker(6); // Step 6 in the pipeline
+  const costTracker = new CostTracker(6, userId); // Step 6 in the pipeline
 
   try {
     const result = await costTracker.run(async () => {
@@ -265,35 +215,36 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         const segmentIndex = s.segment_index as number;
         const keyframeUrl = generatedImages[`shot-${segmentIndex}`];
 
-        // For retries, check if the verifier suggested prompt simplification.
-        // SIMPLIFY_PROMPT signals that the model hallucinated garbled text or produced a
-        // corrupted/frozen output — the root cause is almost always text-trigger tokens
-        // in the prompt activating LTX-2's text-rendering pathways.
-        let feedbackPrefix = '';
-        let shouldSimplify = false;
+        // Build verifier corrections for all retry types.
+        // The corrections are the semicolon-delimited strings after SIMPLIFY_PROMPT.
+        // They are appended to the full prompt as plain prose — no brackets, no truncation.
+        let corrections: string[] = [];
         if (isBatchRetry && retryFeedbackMap?.[segmentIndex]) {
           const feedback = retryFeedbackMap[segmentIndex];
-          shouldSimplify = feedback.includes('SIMPLIFY_PROMPT');
-          feedbackPrefix = shouldSimplify ? '' : `[RETRY GUIDANCE: ${feedback}] `;
+          corrections = feedback
+            .split(';')
+            .map((s: string) => s.trim())
+            .filter((s: string) => s && s !== 'SIMPLIFY_PROMPT');
         } else if (isSingleShotRetry && previousFeedback) {
-          shouldSimplify = previousFeedback.includes('SIMPLIFY_PROMPT');
-          feedbackPrefix = shouldSimplify ? '' : `[RETRY GUIDANCE: ${previousFeedback}] `;
+          corrections = previousFeedback
+            .split(';')
+            .map((s: string) => s.trim())
+            .filter((s: string) => s && s !== 'SIMPLIFY_PROMPT');
         }
 
-        // Build the visual prompt — sanitize if verifier flagged text overlay artifacts.
-        // sanitizePromptForRetry strips text-generating token vocabulary so LTX-2 can't
-        // hallucinate garbled characters, and appends an explicit no-overlay enforcement suffix.
+        // Build the visual prompt: keep the full original prompt, append corrections.
+        // enrichLtx2Prompt() will then wrap this with the style prefix, camera motion,
+        // pacing hints, and style safety suffix as usual.
         const fullPrompt = getResolvedPromptForShot(metadata, s);
         let visualPrompt: string;
-        if (shouldSimplify) {
-          visualPrompt = sanitizePromptForRetry(fullPrompt, visualStyle);
+        if (isRetry && corrections.length > 0) {
+          visualPrompt = amendPromptForRetry(fullPrompt, corrections);
           console.log(
-            `${LOG_PREFIX} Shot ${segmentIndex}: Sanitized prompt for retry ` +
-            `(${fullPrompt.length} chars → ${visualPrompt.length} chars). ` +
-            `Text-trigger tokens stripped.`,
+            `${LOG_PREFIX} Shot ${segmentIndex}: Appending ${corrections.length} verifier correction(s). ` +
+            `Prompt: ${fullPrompt.length} chars → ${visualPrompt.length} chars.`,
           );
         } else {
-          visualPrompt = feedbackPrefix + fullPrompt;
+          visualPrompt = fullPrompt;
         }
 
         // Build neighbor context for style continuity across adjacent shots
@@ -315,12 +266,25 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           start_frame_url: keyframeUrl, // Will be undefined for T2V shots
           visual_elements: s.visual_elements as import('@/types/video').RoutingTag[] | undefined,
           narration_text: s.text as string | undefined,
-          neighbor_context: shouldSimplify ? undefined : (neighborCtx.compactNote || undefined),
+          neighbor_context: neighborCtx.compactNote || undefined,
         };
       });
 
       const withKeyframe = gpuShots.filter(s => s.start_frame_url).length;
+      const t2vShots = gpuShots.filter(s => !s.start_frame_url && s.synthesis_mode !== 'I2V');
+      const i2vMissingFrame = gpuShots.filter(s => !s.start_frame_url && s.synthesis_mode === 'I2V');
       console.log(`${LOG_PREFIX} ${withKeyframe}/${gpuShots.length} video shots have keyframe images (FF2V mode)`);
+      if (t2vShots.length > 0) {
+        console.log(`${LOG_PREFIX} [KEYFRAME-DEBUG] ${t2vShots.length} T2V shots (no keyframe needed): [${t2vShots.map(s => s.segment_index).join(', ')}]`);
+      }
+      // ❌ Only flag I2V shots missing their start frame — these will be silently dropped by the GPU
+      if (i2vMissingFrame.length > 0) {
+        console.error(`${LOG_PREFIX} [KEYFRAME-DEBUG] ❌ ${i2vMissingFrame.length} I2V shot(s) have no start_frame_url — GPU will silently drop these: [${i2vMissingFrame.map(s => s.segment_index).join(', ')}]`);
+        for (const s of i2vMissingFrame) {
+          console.error(`${LOG_PREFIX} [KEYFRAME-DEBUG]   shot-${s.segment_index}: synthesis_mode=I2V, start_frame=MISSING`);
+        }
+      }
+
 
       // =====================================================================
       // STEP 3: Run GPU batch video generation

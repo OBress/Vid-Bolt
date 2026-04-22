@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useGCPVM } from "@/hooks/use-gcp-vm";
 import ApiKeyInput from "@/components/ApiKeyInput";
+import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
+import type { SaveStatus } from "@/hooks/use-project-settings";
 import {
   Shield,
   Terminal,
@@ -44,6 +46,7 @@ import axios from "axios";
 
 interface ApiKeys {
   openrouter_key: string;
+  inworld_router_key: string;  // LLM Router (separate from TTS key)
   elevenlabs_key: string;
   genai_key: string;
   inworld_tts_key: string;
@@ -56,6 +59,7 @@ interface ApiKeys {
 export function ApiKeysTab() {
   const [keys, setKeys] = useState<ApiKeys>({
     openrouter_key: "",
+    inworld_router_key: "",
     elevenlabs_key: "",
     genai_key: "",
     inworld_tts_key: "",
@@ -64,6 +68,8 @@ export function ApiKeysTab() {
     groq_key: "",
     valyu_key: "",
   });
+  const [llmProvider, setLlmProvider] = useState<'openrouter' | 'inworld'>('openrouter');
+  const [providerSaving, setProviderSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const supabase = createClient();
@@ -92,6 +98,32 @@ export function ApiKeysTab() {
   const [_isAdmin, setIsAdmin] = useState(false);
   const [_isSaving, setIsSaving] = useState(false);
   const [_gcpConnectLoading, setGcpConnectLoading] = useState(false);
+
+  // GCP Project ID save status
+  const [projectIdSaveStatus, setProjectIdSaveStatus] = useState<SaveStatus>("idle");
+  const projectIdSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const projectIdStatusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleSaveProjectId = async (value: string) => {
+    if (!userId || !value.trim()) return;
+    if (projectIdSaveTimeoutRef.current) clearTimeout(projectIdSaveTimeoutRef.current);
+    if (projectIdStatusTimeoutRef.current) clearTimeout(projectIdStatusTimeoutRef.current);
+    setProjectIdSaveStatus("saving");
+    projectIdSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        const { error } = await supabase.from("user_gcp_config").upsert(
+          { user_id: userId, project_id: value.trim(), updated_at: new Date().toISOString() },
+          { onConflict: "user_id" },
+        );
+        if (error) throw error;
+        setProjectIdSaveStatus("saved");
+      } catch {
+        setProjectIdSaveStatus("error");
+      } finally {
+        projectIdStatusTimeoutRef.current = setTimeout(() => setProjectIdSaveStatus("idle"), 2500);
+      }
+    }, 600);
+  };
 
   // YouTube OAuth state
   const [ytClientId, setYtClientId] = useState("");
@@ -158,6 +190,7 @@ export function ApiKeysTab() {
       if (keyData) {
         setKeys({
           openrouter_key: keyData.openrouter_key || "",
+          inworld_router_key: keyData.inworld_router_key || "",
           elevenlabs_key: keyData.elevenlabs_key || "",
           genai_key: keyData.genai_key || "",
           inworld_tts_key: keyData.inworld_tts_key || "",
@@ -166,6 +199,7 @@ export function ApiKeysTab() {
           groq_key: keyData.groq_key || "",
           valyu_key: keyData.valyu_key || "",
         });
+        setLlmProvider((keyData.llm_provider as 'openrouter' | 'inworld') || 'openrouter');
       }
 
       // Load user profile to check admin status
@@ -421,9 +455,12 @@ export function ApiKeysTab() {
               <div className="space-y-4">
                 {/* Project ID */}
                 <div className="space-y-3">
-                  <label className="text-[10px] text-neutral-500 font-mono uppercase">
-                    GCP Project ID
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] text-neutral-500 font-mono uppercase">
+                      GCP Project ID
+                    </label>
+                    <SaveStatusIndicator status={projectIdSaveStatus} />
+                  </div>
                   <div className="flex gap-2 items-center">
                     <input
                       type="text"
@@ -431,6 +468,10 @@ export function ApiKeysTab() {
                       onChange={(e) => {
                         setProjectId(e.target.value);
                         setCheckResults(null); // Reset check on change
+                      }}
+                      onBlur={(e) => handleSaveProjectId(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                       }}
                       placeholder="e.g. vidbolt-dev-1"
                       className="flex-1 bg-black/40 border border-neutral-800 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-orange-500 transition-colors font-mono"
@@ -850,19 +891,75 @@ export function ApiKeysTab() {
               </div>
             </CardHeader>
             <CardContent className="pt-8 pb-10 space-y-10">
+              {/* === LLM Provider Toggle === */}
+              <div className="space-y-3 p-4 bg-orange-500/5 border border-orange-500/20 rounded-lg">
+                <div>
+                  <p className="text-[10px] font-bold text-orange-400 font-mono uppercase tracking-widest mb-1">LLM Provider</p>
+                  <p className="text-[10px] text-neutral-500 font-mono">
+                    Select which router powers all AI generation. OpenRouter is the default.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {(['openrouter', 'inworld'] as const).map((p) => (
+                    <button
+                      key={p}
+                      onClick={async () => {
+                        if (providerSaving || !userId) return;
+                        setProviderSaving(true);
+                        try {
+                          const { error } = await supabase.from('user_api_keys').upsert(
+                            { user_id: userId, llm_provider: p, updated_at: new Date().toISOString() },
+                            { onConflict: 'user_id' }
+                          );
+                          if (!error) {
+                            setLlmProvider(p);
+                            toast.success(`Switched to ${p === 'openrouter' ? 'OpenRouter' : 'Inworld Router'}`);
+                          } else {
+                            toast.error('Failed to update provider: ' + error.message);
+                          }
+                        } finally {
+                          setProviderSaving(false);
+                        }
+                      }}
+                      disabled={providerSaving}
+                      className={`flex-1 py-2 px-3 rounded-lg text-[11px] font-bold font-mono uppercase tracking-widest transition-all border ${
+                        llmProvider === p
+                          ? 'bg-orange-500/20 border-orange-500 text-orange-300'
+                          : 'bg-black/20 border-neutral-700 text-neutral-500 hover:border-neutral-500 hover:text-neutral-300'
+                      }`}
+                    >
+                      {p === 'openrouter' ? 'OpenRouter' : 'Inworld Router'}
+                      {llmProvider === p && <span className="ml-1.5 text-orange-400">✓</span>}
+                    </button>
+                  ))}
+                </div>
+                {llmProvider === 'inworld' && !keys.inworld_router_key && (
+                  <p className="text-[10px] text-yellow-400 font-mono">
+                    ⚠ Add your Inworld Router key below to activate this provider.
+                  </p>
+                )}
+              </div>
+
               <ApiKeyInput
                 label="OPENROUTER API KEY"
                 value={keys.openrouter_key}
                 onSave={(val) => handleSaveKey("openrouter_key", val)}
                 placeholder="sk-or-v1-..."
-                tooltip="Required for the primary LLM intelligence that powers the agent's conversational abilities."
+                tooltip="Required for the primary LLM intelligence that powers the agent's conversational abilities. Default provider."
+              />
+              <ApiKeyInput
+                label="INWORLD ROUTER KEY (LLM)"
+                value={keys.inworld_router_key}
+                onSave={(val) => handleSaveKey("inworld_router_key", val)}
+                placeholder="Enter Inworld Router key..."
+                tooltip="Inworld AI LLM Router key — separate from the TTS key. Used when Inworld Router is selected as the active LLM provider."
               />
               <ApiKeyInput
                 label="INWORLD TTS API KEY"
                 value={keys.inworld_tts_key}
                 onSave={(val) => handleSaveKey("inworld_tts_key", val)}
-                placeholder="Enter Inworld key..."
-                tooltip="Required for generating realistic text-to-speech voices for the agent."
+                placeholder="Enter Inworld TTS key..."
+                tooltip="Required for generating realistic text-to-speech voices. Separate from the LLM Router key for better usage tracking."
               />
               <ApiKeyInput
                 label="VALYU API KEY"

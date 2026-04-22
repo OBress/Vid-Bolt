@@ -3,9 +3,15 @@
  * ============================================================================
  * Retrieves API keys from Supabase user_api_keys table with fallback to
  * platform default environment variables.
+ *
+ * Key function for LLM routing:
+ *   getLlmProviderConfig(userId) — returns the user's active LLM provider
+ *   and resolved API key in a single call. Use this in API routes instead of
+ *   getOpenRouterApiKey() to support all providers transparently.
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import type { LlmProvider } from "@/lib/ai/providers/types";
 
 let supabaseClient: SupabaseClient | null = null;
 
@@ -25,13 +31,21 @@ function getSupabaseServiceClient(): SupabaseClient {
 
 export interface UserApiKeys {
   openrouter_key?: string | null;
+  inworld_router_key?: string | null;  // LLM Router key (separate from TTS key)
+  llm_provider?: LlmProvider | null;   // Active LLM provider; defaults to 'openrouter'
   elevenlabs_key?: string | null;
   genai_key?: string | null;
-  inworld_tts_key?: string | null;
+  inworld_tts_key?: string | null;     // Voice TTS key (unchanged)
   replicate_key?: string | null;
   google_cloud_credentials?: string | null;
   groq_key?: string | null;
   valyu_key?: string | null;
+}
+
+/** Resolved provider config returned by getLlmProviderConfig(). */
+export interface LlmProviderConfig {
+  provider: LlmProvider;
+  apiKey: string;
 }
 
 /**
@@ -124,10 +138,14 @@ export async function getGenAiApiKey(userId: string): Promise<string> {
 /**
  * Get OpenRouter API key for a user.
  * Falls back to platform default if user doesn't have their own key.
+ *
+ * @deprecated For most cases, prefer getLlmProviderConfig() which respects
+ * the user's active provider choice. Use getOpenRouterApiKey() only when
+ * you explicitly need OpenRouter (e.g., web-search features).
  */
 export async function getOpenRouterApiKey(userId: string): Promise<string> {
   const userKeys = await getUserApiKeys(userId);
-  
+
   if (userKeys?.openrouter_key) {
     return userKeys.openrouter_key;
   }
@@ -135,11 +153,51 @@ export async function getOpenRouterApiKey(userId: string): Promise<string> {
   const platformKey = process.env.OPENROUTER_API_KEY;
   if (!platformKey) {
     throw new Error(
-      "No OpenRouter API key found. Please configure your OpenRouter key in Settings → API Keys."
+      "No OpenRouter API key found. Please configure your OpenRouter key in Settings \u2192 API Keys."
     );
   }
 
   return platformKey;
+}
+
+/**
+ * Get the user's active LLM provider config.
+ *
+ * This is the primary function API routes and services should call to resolve
+ * which provider to use for a given user. It reads the user's `llm_provider`
+ * preference and returns the appropriate API key.
+ *
+ * Usage in an API route:
+ * ```ts
+ * const { apiKey, provider } = await getLlmProviderConfig(user.id);
+ * const result = await callLLMWithKey(apiKey, messages, config, provider);
+ * ```
+ *
+ * @param userId  Authenticated user ID.
+ * @returns       Resolved { provider, apiKey } for the user's active LLM.
+ */
+export async function getLlmProviderConfig(userId: string): Promise<LlmProviderConfig> {
+  const userKeys = await getUserApiKeys(userId);
+  const provider = (userKeys?.llm_provider ?? 'openrouter') as LlmProvider;
+
+  if (provider === 'inworld') {
+    const key = userKeys?.inworld_router_key;
+    if (!key) {
+      throw new Error(
+        "Inworld Router API key not configured. Please add your Inworld Router key in Settings \u2192 API Keys."
+      );
+    }
+    return { provider: 'inworld', apiKey: key };
+  }
+
+  // Default: OpenRouter (with platform fallback for shared deployments)
+  const key = userKeys?.openrouter_key || process.env.OPENROUTER_API_KEY;
+  if (!key) {
+    throw new Error(
+      "No OpenRouter API key found. Please configure your OpenRouter key in Settings \u2192 API Keys."
+    );
+  }
+  return { provider: 'openrouter', apiKey: key };
 }
 
 /**

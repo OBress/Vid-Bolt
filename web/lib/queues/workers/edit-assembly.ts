@@ -35,7 +35,7 @@ import type {
   AgentTrack,
 } from '@/lib/services/edit-assembly/editor-capability-manifest';
 import type { GeneratedMedia } from '@/types/video';
-import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { getLlmProviderConfig } from '@/lib/services/api-keys';
 import { CostTracker } from '@/lib/queues/cost-tracker';
 import { PROJECT_FPS } from '@/lib/constants/video';
 
@@ -67,7 +67,7 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
 
   try {
     // Cost tracking for Step 7 (Edit Assembly)
-    const costTracker = new CostTracker(7);
+    const costTracker = new CostTracker(7, userId);
     const result = await costTracker.run(async () => {
     // =====================================================================
     // PHASE 1: Context Analysis (0-10%)
@@ -96,9 +96,10 @@ export const editAssemblyProcessor: Processor<EditAssemblyJobData> = async (
     // Get API key for LLM calls (user setting with env var fallback)
     let apiKey: string;
     try {
-      apiKey = await getOpenRouterApiKey(userId);
+      const providerConfig = await getLlmProviderConfig(userId);
+      apiKey = providerConfig.apiKey;
     } catch {
-      throw new Error('OpenRouter API key not configured. Set it in Settings → API Keys.');
+      throw new Error('LLM API key not configured. Set it in Settings → API Keys.');
     }
 
     // Parse project metadata

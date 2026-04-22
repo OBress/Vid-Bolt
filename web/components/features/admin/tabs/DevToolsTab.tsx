@@ -13,6 +13,7 @@ import {
   Bug,
   Wrench,
   Settings,
+  Youtube,
 } from "lucide-react";
 import { UniversalScriptTester } from "@/components/features/dev/UniversalScriptTester";
 import { AVScriptTester } from "@/components/features/dev/AVScriptTester";
@@ -23,6 +24,7 @@ import { VideoEditorTester } from "@/components/features/dev/VideoEditorTester";
 import { AudioCleaningTester } from "@/components/features/dev/AudioCleaningTester";
 import { PipelineDebugger } from "@/components/features/pipeline-debugger/PipelineDebugger";
 import { ShotPlannerDebugger } from "@/components/features/dev/ShotPlannerDebugger";
+import { YoutubeShotPlanner } from "@/components/features/dev/YoutubeShotPlanner";
 
 type ActiveTester =
   | "universal"
@@ -34,6 +36,7 @@ type ActiveTester =
   | "audio-cleaning"
   | "pipeline-debugger"
   | "shot-planner-debugger"
+  | "yt-shot-scraper"
   | null;
 
 // ============================================================================
@@ -84,6 +87,13 @@ const PIPELINE_TOOLS: ToolCard[] = [
     icon: Bug,
     color: "violet",
   },
+  {
+    id: "yt-shot-scraper",
+    name: "YouTube Shot Scraper",
+    description: "Analyze YouTube videos shot-by-shot with Gemini 2.5 Flash. Save plans by genre for pipeline benchmarking.",
+    icon: Youtube,
+    color: "red",
+  },
 ];
 
 const INFRA_TOOLS: ToolCard[] = [
@@ -125,6 +135,14 @@ export function DevToolsTab() {
 
   if (activeTester === "shot-planner-debugger") {
     return <ShotPlannerDebugger onClose={() => setActiveTester(null)} />;
+  }
+
+  if (activeTester === "yt-shot-scraper") {
+    return (
+      <div className="flex flex-col h-full">
+        <YoutubeShotPlanner onClose={() => setActiveTester(null)} />
+      </div>
+    );
   }
 
   if (activeTester === "universal") {
@@ -298,6 +316,7 @@ function ToolCardComponent({
     blue: { bg: "bg-blue-500/10", text: "text-blue-500", btn: "bg-blue-600 hover:bg-blue-700" },
     green: { bg: "bg-green-500/10", text: "text-green-500", btn: "bg-green-600 hover:bg-green-700" },
     violet: { bg: "bg-violet-500/10", text: "text-violet-500", btn: "bg-violet-600 hover:bg-violet-700" },
+    red: { bg: "bg-red-500/10", text: "text-red-500", btn: "bg-red-600 hover:bg-red-700" },
   };
   const colors = colorMap[tool.color] || colorMap.purple;
 

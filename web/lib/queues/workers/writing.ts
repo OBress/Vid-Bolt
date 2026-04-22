@@ -58,7 +58,7 @@ export const writingProcessor: Processor<WritingWorkflowJobData> = async (job: J
   console.log(`[WritingWorkflow] Script type: ${scriptType}, Chapters: ${numberOfChapters}`);
 
   // Cost tracking for Step 3 (Script Writing)
-  const costTracker = new CostTracker(3);
+  const costTracker = new CostTracker(3, userId);
 
   try {
     // Wrap in costTracker.run() so all LLM calls are automatically recorded

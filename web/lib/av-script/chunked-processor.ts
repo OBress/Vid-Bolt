@@ -650,18 +650,23 @@ AUDIO (optional):
 - "sound_effects" → SFX (whoosh, impact, etc.)
 - "music" → Background music/score
 
-## WHEN TO USE OVERLAYS (CRITICAL — READ CAREFULLY)
+## REMOTION TOOLS — CAPABILITIES (use your director's judgment)
 
-Motion graphics overlays are one of the most powerful tools. Use them at PRECISE moments that match the narration:
+These tools exist to serve the scene when they genuinely add value. No trigger rules. Decide based on what makes this specific shot — given its genre, emotional register, pacing, and the shots around it — as cinematically powerful as possible.
 
-- When the narrator NAMES a location → use remotion_overlay with a location tag overlay on video/image
-- When showing someone's face → use remotion_overlay for a lower-third with their name/title
-- When presenting data/statistics → use remotion_overlay for animated stat badges, charts, or progress bars
-- When transitioning between topics → use remotion_overlay for a cinematic title card
-- When building suspense or emphasis → use remotion_overlay for lens effects, vignettes, or visual accents
-- When comparing things → use remotion_image_manipulation for split-screen or before/after layouts
+remotion_overlay: Transparent animated elements that live on top of base video/images.
+Capabilities: location chips, lower-thirds, animated data badges, cinematic title cards, subtle lens effects, vignettes, info overlays, countdown timers, animated borders.
+Ask yourself: does adding a layer ON TOP of this shot make it more powerful — or does it clutter a shot that's already strong on its own?
 
-Overlays should NOT be generic — they should react to and complement what the narrator is saying at that exact moment.
+remotion_image_manipulation: The shot IS the image composition — no base video beneath it.
+Capabilities: Ken Burns zoom on a single photo, side-by-side/before-after layouts, photo montages, annotated images with callouts, parallax layers.
+When to consider: the moment calls for a curated image or collection of images as the primary visual, not a generated video scene.
+
+remotion_video_manipulation: Full-frame production compositing on top of video.
+Capabilities: broadcast-style HUDs, cinematic color washes/tints, glitch or distortion effects, letterboxing, animated lower-thirds synced to video motion.
+When to consider: the video itself needs a production design layer that's integral to the shot's identity.
+
+A strong AI video shot with no overlay often lands harder than the same shot buried under graphics. These tools exist for moments when adding them is the best creative choice — not as a default accompaniment.
 
 ## SOUND DESIGN
 
@@ -770,7 +775,7 @@ Return JSON:
       "stock_search_query": "Donald Trump",
       "reuse_entity": "Donald Trump",
       "visual_description": "Cinematic slow-motion shot of the subject speaking at a podium with dramatic lighting",
-      "visual_elements": ["ai_video", "remotion_overlay"],
+      "visual_elements": ["ai_video"],
       "sound_effects": [
         {
           "type": "paper rustle",

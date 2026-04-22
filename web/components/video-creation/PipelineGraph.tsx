@@ -44,10 +44,10 @@ const NODE_PHASE_MAP: Record<string, string[]> = {
 // SVG VIEWBOX DIMENSIONS
 // ============================================================================
 
-const DESKTOP_SVG_WIDTH = 820;
+const DESKTOP_SVG_WIDTH = 736;
 const DESKTOP_SVG_HEIGHT = 240;
-const MOBILE_SVG_WIDTH = 240;
-const MOBILE_SVG_HEIGHT = 530;
+const MOBILE_SVG_WIDTH = 260;
+const MOBILE_SVG_HEIGHT = 550;
 
 // ============================================================================
 // EDGE PATH GENERATION
@@ -58,12 +58,21 @@ const MOBILE_SVG_HEIGHT = 530;
  * Lines exit from right edge (center.x + HALF_W) and enter at
  * left edge (center.x - HALF_W).
  */
-const NODE_HALF_W = 58;
+const NODE_HALF_W = 50;
 
 /**
- * Generate SVG path for an edge.
- * Handles row-1 horizontals, fan-out from Scripting to Pair 1,
- * cross-wires between parallel pairs, and merge into Assembling.
+ * Generate SVG path for an edge using orthogonal (right-angle) routing.
+ *
+ * Rules:
+ *  - Same-row nodes: simple horizontal line, right-exit → left-entry.
+ *  - Row-1 → Row-2 fan-out (Scripting → Designing/Scoring):
+ *      Exit from Scripting's RIGHT edge.
+ *      Travel right to a shared "trunk" column (past Scripting right edge).
+ *      Drop vertically down to target row's Y.
+ *      Travel left horizontally to target's left-entry point.
+ *      Path: M exitX exitY  H trunkX  V targetY  H entryX
+ *  - Different rows (cross-wires, merges): smooth bezier from right-exit
+ *      to left-entry so they curve neatly without right-angle overlaps.
  */
 function generateEdgePath(
   fromId: string,
@@ -74,27 +83,19 @@ function generateEdgePath(
   const t = positions[toId];
   if (!f || !t) return "";
 
-  const exitX = f.x + NODE_HALF_W;
-  const exitY = f.y;
-  const entryX = t.x - NODE_HALF_W;
+  const exitX  = f.x + NODE_HALF_W;  // right edge of source node
+  const exitY  = f.y;
+  const entryX = t.x - NODE_HALF_W;  // left edge of target node
   const entryY = t.y;
 
-  // ── Scripting → Designing (loopback: right → down → left → enter) ──
-  if (fromId === "scripting" && toId === "designing") {
-    const r = 595;               // right turn past Scripting
-    const cy = f.y + 44;         // corridor below row 1
-    const l = 15;                // far-left corridor
-    const entryLeft = t.x - NODE_HALF_W;
-    return `M ${exitX} ${exitY} L ${r} ${exitY} L ${r} ${cy} L ${l} ${cy} L ${l} ${entryY} L ${entryLeft} ${entryY}`;
-  }
-
-  // ── Scripting → Scoring (same loopback, enters Scoring from left) ──
-  if (fromId === "scripting" && toId === "scoring") {
-    const r = 595;
-    const cy = f.y + 44;
-    const l = 15;
-    const entryLeft = t.x - NODE_HALF_W;
-    return `M ${exitX} ${exitY} L ${r} ${exitY} L ${r} ${cy} L ${l} ${cy} L ${l} ${entryY} L ${entryLeft} ${entryY}`;
+  // ── Scripting → Designing / Scoring  (U-route: right → mid-lane → left → down → right) ──
+  // The wire exits Scripting's RIGHT edge, drops to a mid-lane Y (between the two rows),
+  // travels LEFT past Preparing's left edge (x=70), drops down to the target node's Y,
+  // then enters from the LEFT. This keeps wires cleanly between both row bands.
+  if (fromId === "scripting" && (toId === "designing" || toId === "scoring")) {
+    const midY   = 98;  // between Row-1 (y=52) and Row-2 (y=145)
+    const trunkX = 46;  // left of Preparing's left edge (96 - NODE_HALF_W)
+    return `M ${exitX} ${exitY} H ${exitX + 20} V ${midY} H ${trunkX} V ${entryY} H ${entryX}`;
   }
 
   // ── Same row (horizontal): straight line right-exit → left-entry ──
@@ -102,7 +103,7 @@ function generateEdgePath(
     return `M ${exitX} ${exitY} L ${entryX} ${entryY}`;
   }
 
-  // ── Different row (cross-wires / merge): bezier from right-exit to left-entry ──
+  // ── Different row (cross-wires / merge): smooth bezier ──
   const midX = (exitX + entryX) / 2;
   return `M ${exitX} ${exitY} C ${midX} ${exitY}, ${midX} ${entryY}, ${entryX} ${entryY}`;
 }
@@ -286,7 +287,27 @@ function getNodeSubLabel(
   return undefined;
 }
 
-function deriveEdgeStatus(fromStatus: NodeStatus, toStatus: NodeStatus): EdgeStatus {
+/**
+ * ROW-1 → ROW-2 cross-row edges are special: they must NOT activate while
+ * the source node is still `running` — only once it is `completed`.
+ * This prevents Scripting from falsely illuminating its downstream wires
+ * while it is still processing.
+ */
+const ROW1_TO_ROW2_TARGETS = new Set(["designing", "scoring", "animating", "rendering"]);
+
+function deriveEdgeStatus(
+  fromStatus: NodeStatus,
+  toStatus: NodeStatus,
+  toId?: string
+): EdgeStatus {
+  // Cross-row edges: only activate when the source is fully done
+  if (toId && ROW1_TO_ROW2_TARGETS.has(toId)) {
+    if (fromStatus === "completed" && toStatus === "completed") return "completed";
+    if (fromStatus === "completed") return "active";
+    return "pending";
+  }
+
+  // Same-row / merge edges: standard logic
   if (fromStatus === "completed" && toStatus === "completed") return "completed";
   if (fromStatus === "completed" && (toStatus === "running" || toStatus === "failed"))
     return "active";
@@ -340,7 +361,7 @@ export function PipelineGraph({
   );
 
   // foreignObject dimensions in viewBox units — large enough for any node chip
-  const foWidth = 200;
+  const foWidth = 170;
   const foHeight = 60;
 
   return (
@@ -349,11 +370,11 @@ export function PipelineGraph({
         Pipeline
       </h3>
 
-      <div className="w-full px-2 pb-2">
+      <div className="w-full px-2 pb-2 overflow-hidden">
         <svg
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
           className="w-full h-auto block"
-          style={{ overflow: "visible" }}
+          style={{ overflow: "hidden" }}
           preserveAspectRatio="xMidYMid meet"
         >
           <defs>
@@ -370,7 +391,7 @@ export function PipelineGraph({
             if (!edge.pathData) return null;
             const fromStatus = nodeStatuses[edge.from] || "pending";
             const toStatus = nodeStatuses[edge.to] || "pending";
-            const edgeStatus = deriveEdgeStatus(fromStatus, toStatus);
+            const edgeStatus = deriveEdgeStatus(fromStatus, toStatus, edge.to);
 
             return (
               <PipelineGraphEdge
@@ -409,6 +430,8 @@ export function PipelineGraph({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    transform: "scale(0.88)",
+                    transformOrigin: "center center",
                   }}
                 >
                   <PipelineGraphNode

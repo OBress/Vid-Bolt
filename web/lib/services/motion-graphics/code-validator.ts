@@ -545,7 +545,7 @@ export function validateCode(code: string): ValidationResult {
     // renameFrameConstantCollision() (line 142) intentionally renames
     // `const frame = { ... }` → `const TIMING = { ... }` to avoid collision
     // with useCurrentFrame(). Having TIMING here undid that fix.
-    { pattern: /\bTimeline\b(?!\s*[.])/, label: 'Timeline is not a Remotion API — use Sequence or interpolate()' },
+    { pattern: /\bTimeline\b(?!\s*[.])/, label: 'Timeline is not a Remotion API — replaced with Sequence', replacement: 'Sequence' },
     { pattern: /\bgsap\b/, label: 'gsap is not available — use spring()/interpolate() from Remotion' },
     { pattern: /\banime\b(?!\s*\()/, label: 'anime.js is not available — use spring()/interpolate() from Remotion' },
     { pattern: /\bTweenMax\b/, label: 'TweenMax (GSAP) is not available — use spring()/interpolate()' },

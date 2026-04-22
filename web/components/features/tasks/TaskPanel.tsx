@@ -123,7 +123,7 @@ export function TaskPanel({
                 </div>
                 <div className="space-y-2">
                   {activeTasks.map((task) => (
-                    <TaskCard key={task.id} task={task} />
+                    <TaskCard key={task.id} task={task} onClose={onClose} />
                   ))}
                 </div>
               </div>
@@ -144,7 +144,7 @@ export function TaskPanel({
                 </div>
                 <div className="space-y-1.5">
                   {historyTasks.map((task) => (
-                    <TaskCard key={task.id} task={task} />
+                    <TaskCard key={task.id} task={task} onClose={onClose} />
                   ))}
                 </div>
               </div>

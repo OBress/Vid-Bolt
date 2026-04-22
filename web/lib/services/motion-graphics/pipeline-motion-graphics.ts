@@ -112,6 +112,77 @@ function isOverlayPosition(
 }
 
 // ============================================================
+// TEMPLATE VARIETY TRACKER (Fix 5 — diversity guard)
+// ============================================================
+
+/**
+ * Prevents the same Remotion template type from dominating consecutive MG shots.
+ *
+ * Maintains a rolling window of the last N template types used. When a requested
+ * type has appeared too many times within that window, `isSaturated()` returns true
+ * so the caller can pick an alternative via `suggestAlternative()`.
+ *
+ * Usage (in the orchestrator MG loop):
+ *   const tracker = new TemplateVarietyTracker();
+ *   for (const shot of mgShots) {
+ *     if (tracker.isSaturated(resolvedTemplateType)) {
+ *       resolvedTemplateType = tracker.suggestAlternative(resolvedTemplateType, promptText);
+ *     }
+ *     // ... run generation ...
+ *     tracker.record(actualTemplateType);
+ *   }
+ */
+export class TemplateVarietyTracker {
+  private recent: MotionGraphicsTemplateType[] = [];
+  private readonly windowSize: number;
+  private readonly maxRepeat: number;
+
+  constructor(windowSize = 5, maxRepeat = 2) {
+    this.windowSize = windowSize;
+    this.maxRepeat = maxRepeat;
+  }
+
+  record(templateType: MotionGraphicsTemplateType): void {
+    this.recent.push(templateType);
+    if (this.recent.length > this.windowSize) {
+      this.recent.shift();
+    }
+  }
+
+  isSaturated(templateType: MotionGraphicsTemplateType): boolean {
+    const count = this.recent.filter(t => t === templateType).length;
+    return count >= this.maxRepeat;
+  }
+
+  /**
+   * Suggest a content-aware fallback template when the requested type is saturated.
+   * Prefers types that haven't appeared recently at all.
+   */
+  suggestAlternative(
+    saturated: MotionGraphicsTemplateType,
+    prompt: string,
+  ): MotionGraphicsTemplateType {
+    const recentSet = new Set(this.recent);
+    const candidates: MotionGraphicsTemplateType[] = [
+      'lower_third', 'quote_card', 'timeline',
+      'evidence_board', 'comparison_board', 'document_callout',
+      'photo_montage', 'process_diagram',
+    ];
+    // Prefer content-appropriate types based on rough prompt signals
+    if (/\b(quote|said|says|according to)\b/i.test(prompt)) return 'quote_card';
+    if (/\b(step|process|how|system|flow)\b/i.test(prompt)) return 'process_diagram';
+    if (/\b(before|after|then|sequence|history)\b/i.test(prompt)) return 'timeline';
+    if (/\b(evidence|suspect|investigation|crime|case)\b/i.test(prompt)) return 'evidence_board';
+    if (/\b(compare|versus|vs|contrast|difference)\b/i.test(prompt)) return 'comparison_board';
+    // Fall back to a fresh type not recently used
+    const fresh = candidates.filter(t => t !== saturated && !recentSet.has(t));
+    return fresh[0] ?? 'lower_third';
+  }
+}
+
+
+
+// ============================================================
 // PROMPT ENRICHMENT
 // ============================================================
 

@@ -11,8 +11,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
-import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { getLlmProviderConfig } from '@/lib/services/api-keys';
 import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 
 
@@ -152,27 +152,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. Get OpenRouter API key
-    let apiKey = request.headers.get('x-openrouter-key');
-    
-    if (!apiKey) {
-      const serviceClient = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-      );
+    // 2. Resolve LLM provider config (respects user's active provider)
+    let resolvedApiKey: string;
+    let resolvedProvider: import('@/lib/ai/providers/types').LlmProvider;
 
-      const { data: apiKeyData } = await serviceClient
-        .from('user_api_keys')
-        .select('openrouter_key')
-        .eq('user_id', user.id)
-        .single();
-
-      apiKey = apiKeyData?.openrouter_key;
+    const headerKey = request.headers.get('x-openrouter-key');
+    if (headerKey) {
+      // Legacy header path — treat as OpenRouter
+      resolvedApiKey = headerKey;
+      resolvedProvider = 'openrouter';
+    } else {
+      const config = await getLlmProviderConfig(user.id);
+      resolvedApiKey = config.apiKey;
+      resolvedProvider = config.provider;
     }
 
-    if (!apiKey) {
+    if (!resolvedApiKey) {
       return NextResponse.json(
-        { error: 'OpenRouter API key not configured.' },
+        { error: 'LLM API key not configured.' },
         { status: 400 }
       );
     }
@@ -241,8 +238,8 @@ export async function POST(request: NextRequest) {
       },
     ];
 
-    // 5. Call OpenRouter with vision model
-    const qcResponse = await callOpenRouterWithKey(apiKey, [
+    // 5. Call LLM with vision model (respects active provider)
+    const qcResponse = await callOpenRouterWithKey(resolvedApiKey, [
       {
         role: 'system',
         content: VISUAL_QC_PROMPT,
@@ -263,7 +260,8 @@ export async function POST(request: NextRequest) {
       maxTokens: 2000,
       xTitle: 'Vid-Bolt Visual QC',
       responseFormat: { type: 'json_object' },
-    });
+      trackingUserId: user.id,
+    }, resolvedProvider);
 
     const content = qcResponse.content;
 

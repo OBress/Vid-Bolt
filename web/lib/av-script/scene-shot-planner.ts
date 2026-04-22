@@ -479,6 +479,36 @@ function buildSystemPrompt(
     parts.push(orchestratorPrompt);
   }
 
+  // Gap 1: Translate creative direction into directorial craft
+  parts.push(`
+═══ TRANSLATING CREATIVE DIRECTION INTO DIRECTORIAL CRAFT ═══
+The creative context above contains implicit directorial instructions. Before planning any shot,
+derive what it tells you about your specific craft decisions. Do not treat it as visual style —
+treat it as a directing brief. Extract four signals:
+
+PACING SIGNAL: What does the creative direction imply about shot rhythm and editing tempo?
+  → "rapid cuts", "kinetic", "montage", "urgent", "high-energy" → bias toward tight holds, more cuts, trim_priority: "tight"
+  → "cinematic", "premium", "deliberate", "slow burn", "atmospheric" → longer holds, let moments breathe, trim_priority: "hold" on key beats
+  → "documentary", "observational" → mix of fast b-roll sequences and sustained observational holds — not uniform
+
+MOTION GRAPHICS SIGNAL: What does the creative direction imply about MG density?
+  → "explainer", "data", "diagrams", "text overlay", "infographic" → MGs are expected and frequent; apply the decision test with a generous threshold
+  → "cinematic", "immersive", "archival", "raw", "documentary feel" → MGs should be rare and only used when footage genuinely cannot carry the information
+  → "minimal text", "footage-driven", "visual storytelling" → almost no MGs; each one is a significant editorial decision
+
+CAMERA REGISTER SIGNAL: What does the creative direction imply about how the camera behaves?
+  → "handheld", "raw", "gritty" → handheld camera_motion, urgency, human-scale framing
+  → "cinematic", "precise", "deliberate" → every camera move is motivated; avoid gratuitous movement
+  → "diorama", "miniature", "stop-motion", "3D world" → freeze_orbit and wide orbiting shots to showcase the constructed space
+  → "POV", "immersive", "first-person", "you are there" → first_person angles, eyewitness compositions, subjective framing
+
+HUMAN PERSPECTIVE SIGNAL: What does the creative direction imply about where the viewer stands?
+  → "humanize", "personal story", "lived experience", "eyewitness" → actively seek POV compositions, reaction shots, foreground-subject frames
+  → "observational", "objective", "investigative" → external framing; the camera observes rather than inhabits
+  → no strong signal → apply Question 3 of the pre-planning brief individually for each scene
+
+Commit to these four positions before writing your first shot. They should be consistent across all shots in this scene.`);
+
   const sceneDuration = scene.end_seconds - scene.start_seconds;
   const wordsInScene = scene.end_word_index - scene.start_word_index + 1;
   const approxWordsPerShot = Math.round(wordsInScene / scene.suggested_shot_count);
@@ -644,10 +674,43 @@ DIRECTING GRAMMAR:
   - segment_animate for still-image emphasis/reveal shots
   - segment_video_fx for tracked effects on an existing video
   - segment_mask_prep when segmentation should prepare a mask/edit before another step
-- camera_motion vocabulary:
+- camera_motion — choose based on the NARRATIVE CONTRACT each motion makes with the viewer:
+  • static: the camera holds perfectly still. Use for far more than just emotional weight.
+    Static is one of the most powerful AND most reliable tools in the vocabulary:
+    - Emotional weight: grief, dread, revelation — stillness as gravity.
+    - Overview / establishing: a still frame lets the viewer scan the entire scene without distraction.
+    - Explainer / highlight: when paired with segmentation, the stable frame makes subject isolation,
+      spotlight effects, and annotation tracking crisp and reliable.
+    - Detail emphasis: a static close-up of an object or detail forces the viewer's attention.
+    - AI generation advantage: video generators produce their highest-fidelity output on low-motion scenes.
+      A static or near-static shot is NOT a compromise — it is often the most visually polished result.
+    Do not avoid static because it seems passive. A static shot with strong composition is more
+    cinematic than a moving shot with weak motivation.
+
+  STILL SHOTS AS A HIGH-FIDELITY TOOL:
+  Across all camera motions, remember: shots where the subject is still or near-still and only
+  the camera moves (static, push_in, pull_out, orbit, crane, ken_burns) are among the highest-
+  quality compositions available. AI video generators produce dramatically better fidelity when
+  subject motion is minimal. Camera movement alone creates cinematic energy — the viewer does
+  not need subject motion to stay engaged. These shots are also ideal candidates for segmentation
+  treatments (subject isolation, spotlight, depth separation) because the stable frame makes
+  masking highly reliable. Reach for these tools often — they are powerful, not passive.
+  • push_in: the camera wants to get closer to the truth. Intimacy, interrogation, mounting focus.
+    Not a generic "emphasis" tool — implies the viewer is being drawn toward something inescapable.
+  • pull_out: the world is larger than what we're looking at. Consequence, isolation, scale, aftermath.
+    After a reveal, pulling out shows the viewer what surrounds it — a choice becomes a catastrophe.
+  • tracking: the camera is present and participating. Companionship, momentum, following a subject.
+    The camera is a character moving through the world alongside something — it is committed.
+  • handheld: the camera is an observer not in control. Urgency, authenticity, chaos, immediacy.
+    Instability signals: this is real, this is now — not staged, not safe.
+  • crane: the world seen from above. Overview, divine perspective, transition between scales.
+  • orbit: the camera circles a living scene — subjects are active, the world breathes around them.
+    Distinct from freeze_orbit: in orbit, life continues.
   • whip_pan: aggressive fast pan — urgency, kinetic energy, rapid location or perspective shifts.
   • ken_burns: slow graceful pan+zoom across a still image — archival, memorial, evidence photo reveals.
     When using ken_burns, set render_strategy: "ai_image".
+  • zoom_in / zoom_out: optical zoom (not physical movement) — more dramatic and unsettling than push/pull.
+    zoom_in amplifies; push_in immerses. They are not interchangeable.
   • freeze_orbit: see FREEZE-WORLD TECHNIQUE below.
 
 FREEZE-WORLD TECHNIQUE (camera_motion: 'freeze_orbit'):
@@ -662,10 +725,17 @@ When to use freeze_orbit:
 - Educational / Explainer: Spatial overview of a structure, environment, or layout — the camera flies around to show all angles.
 - General rule: If the purpose is to let the viewer SEE THE WORLD rather than WATCH SOMETHING HAPPEN, freeze_orbit is the right choice.
 
+INTENTIONALITY GATE — before using freeze_orbit, ask:
+"Am I doing this because stopping time is the narratively correct choice — or because it is available?"
+If you cannot answer the first half of that question with a specific reason, do not use freeze_orbit.
+- Do NOT use on shots under ~4 seconds — the camera barely moves before the cut; the technique is invisible.
+- Do NOT use when subject motion or action is more informative than spatial inspection.
+- Do NOT use as a default establishing shot when a live-world camera motion would be more appropriate.
+
 In visual_description, describe:
 1. What is frozen (scene, subjects, environment)
 2. How the camera moves through the stillness
-3. What the viewer is meant to discover or absorb
+3. What the viewer is meant to DISCOVER or ABSORB — this is mandatory. If you cannot answer #3, the technique is wrong for this moment.
 Example: "A busy city intersection frozen mid-moment — pedestrians stopped mid-step, cars halted. The camera slowly orbits the frozen tableau from eye level, drifting forward through the stillness to reveal the lone figure at the center."
 
 SEGMENTATION — WHEN IT SERVES THE STORY:
@@ -700,21 +770,97 @@ OBJECT PROMPTS (always use these over text_prompt for subject precision):
 - intensity: subtle or moderate by default — only use strong for the single most dramatic beat of the scene
 - Keep operations to 1–2 simple effects; avoid complex chains except at the scene's true climax moment
 
+PRESET USE-CASE GUIDE:
+- subject_isolation: introduce a character — blur and desaturate the world, keep the person crisp. First appearance = visual authority.
+- focus_reveal: a key piece of evidence — the frame starts normal, then everything except the key object darkens and sharpens.
+- detail_callout: a document, a badge, a weapon — outline glow + slight zoom draws the eye to a small object.
+- danger_emphasis: a threat, a warning sign, something ominous — red-tinted glow, aggressive highlight.
+- tracked_annotation: a person in a crowd — persistent mask tracking keeps them highlighted as the shot plays.
+- progressive_reveal: information unfolds — multiple subjects revealed one by one across the shot duration.
+
+COMBINED TREATMENT PATTERNS (segmentation + image_edit_instruction):
+When you want to dramatically isolate or emphasize a subject, combine both tools:
+
+• SUBJECT COLOR POP: image_edit_instruction: "Convert entire image to black and white with heavy vignette"
+  + segmentation operations: [{ type: "color_grade", target: "mask" }] to restore full color to subject only.
+  Result: B&W world, full-color subject. The eye goes nowhere else.
+
+• DEPTH SEPARATION: segmentation operations: [{ type: "blur", target: "background", value: 12 },
+  { type: "grayscale", target: "background" }]
+  Result: Background blurred and desaturated, subject sharp and vivid.
+  Standard treatment for highlighting a specific person in a scene.
+
+• SPOTLIGHT EMPHASIS: segmentation operations: [{ type: "spotlight", target: "mask" },
+  { type: "opacity", target: "background", value: 0.4 }]
+  Result: Subject lit, world dimmed. For dramatic revelations or "this person matters."
+
+• FORENSIC CALLOUT: segmentation preset: "detail_callout"
+  operations: [{ type: "outline", target: "mask" }, { type: "glow", target: "mask" }]
+  Result: Subject outlined and glowing against its context. For evidence, exhibits, key objects.
+
+• ARCHIVAL HIGHLIGHT: image_edit_instruction: "Apply warm sepia tone with film grain"
+  + segmentation operations: [{ type: "spotlight", target: "mask" }]
+  Result: Aged archival look with the key subject spotlit. Historical documentary standard.
+
+These combined treatments are powerful — use them when you want to create a strong visual
+emphasis moment. They work best on still/near-still shots where segmentation masks are reliable.
+
 STOCK MEDIA:
 - stock_worthy: true ONLY when the narration references specific real-world entities (people, places, events)
 - stock_search_query: 2-4 word search query. Set to empty string "" when stock_worthy is false.
 
-SOUND EFFECTS:
-- Add sound_effects only where they genuinely enhance the experience. Less is more.
-- anchor_word: the word in the narration that the SFX should align with. Set to empty string "" if not applicable.
+SOUND EFFECTS — TWO DISTINCT LAYERS:
+Sound design operates at two levels. Plan both before writing any SFX entries.
+
+LAYER 1 — ATMOSPHERIC THROUGHLINE (scene-level):
+Is there an ambient world-sound that should run as a continuous underpinning for this entire scene?
+Examples: jet engine rumble, city traffic, wind through a building, institutional HVAC hum, crowd murmur, fire.
+If yes — add it once, on the FIRST shot of the scene, with no anchor_word.
+Write the description as: "[sound] — atmospheric, runs through scene" so downstream knows it's continuous.
+This creates audio continuity across visual cuts. The world persists even as the picture changes.
+
+LAYER 2 — REACTIVE PUNCTUATION (shot-level):
+Are there specific moments where a sudden sound reinforces a single impact point?
+Examples: a gunshot, a slamming door, a gavel strike, a glass breaking, a notification tone.
+Use anchor_word to align with the spoken word or moment. Add these sparingly.
+
+CALIBRATION: For most shots, Layer 1 exists and Layer 2 does not.
+A scene with 8 shots should have 1 atmospheric entry and 0–3 reactive entries — not 8 separate effects.
+- anchor_word: the spoken word the SFX aligns with. Set to "" for atmospheric entries (no word anchor).
 
 CREATIVE IMAGE EDITING (image_edit_instruction):
 - Use this to apply a creative edit to the shot's base image BEFORE it's used for anything (video generation, motion graphic composition, overlay display, etc.).
 - This is NOT the same as angle_change — angle_change is specifically for I2V continuity (editing the previous shot's last frame).
 - image_edit_instruction edits the shot's OWN keyframe or stock image for creative effect.
-- Examples: "add a crown to the person's head", "make the background apocalyptic", "highlight the chart data in red", "add dramatic storm clouds", "overlay a red X across the image"
+- Examples of professional post-production treatments:
+  • "Convert entire image to black and white except the central figure" — selective color isolation
+  • "Desaturate and blur the background, keeping the subject sharp and in full color" — depth emphasis
+  • "Apply a warm sepia tone with vignette — aged archival treatment"
+  • "Add dramatic film grain and slight green color shift — surveillance footage aesthetic"
+  • "Darken everything except a spotlight circle on the subject's face" — interrogation / focus
+  • "Split-tone: cool blue shadows, warm amber highlights — cinematic color grade"
+  • "add a crown to the person's head", "make the background apocalyptic", "add dramatic storm clouds"
 - Set to empty string "" when no creative edit is needed (most shots won't need this).
 - Use sparingly and purposefully — only when the edit genuinely enhances storytelling.
+- Combine with segmentation_treatment for powerful compound effects (see COMBINED TREATMENT PATTERNS below).
+
+MOTION GRAPHICS — THE UNIVERSAL DECISION TEST:
+Before routing any shot to media_type: "motiongraphic", apply this single test:
+  "Does this motion graphic add information that footage or narration CANNOT convey on their own?"
+  YES → use MG. (data, geography, spatial relationships, timelines, statistics, abstract system diagrams)
+  NO  → do not use MG. Footage or narration already carries the idea. A graphic here is redundant noise.
+
+Anti-patterns to reject:
+- A lower third or slap annotation labelling what the narrator is already saying aloud
+- A quote card for a quote the narrator is already reading
+- A character dossier for someone the viewer already understands from footage context
+- Any MG on a grief, reaction, or emotional beat where footage should carry the weight
+- MG used as "filler" when you have no clear visual concept for a shot
+
+The correctly used MG is rare and precise. A dramatic chapter might have 20 footage shots and 2 MGs —
+and those 2 MGs are the most informationally dense visuals in the sequence. An explainer might end
+every section with an MG summary card — because that card adds structural information footage cannot show.
+In both cases, the test is identical: does this add something new?
 
 MOTION GRAPHICS STRATEGY:
 - If media_type is "motiongraphic", ALSO decide whether the shot should use mg_mode "template" or "freeform".
@@ -762,11 +908,53 @@ Before assigning media types, framings, or camera moves, ask yourself:
    A person looking out a window as the light changes outside tells us what it felt like.
    You don't need to call it anything. Just ask: does this moment need a human face?
 
-4. VISUAL RHYTHM
-   Does the sequence have a pulse — tension and release, fast and slow?
+   When the answer is yes, these are the compositional tools:
+   • camera_angle: "first_person" — the viewer inhabits the subject's perspective. For eyewitness
+     moments, immersive experience, and any emotion that reads as "I am here, this is happening to me."
+   • Foreground-subject / background-event: the person is in frame while the event unfolds behind
+     or outside them. One shot gives you both the human scale and the context simultaneously.
+   • Reaction BEFORE reveal: show the face registering something BEFORE showing what they see.
+     This is the correct narrative sequence. Shock on a face → then the source is 5x more impactful
+     than source → then face. The viewer needs to feel it before they understand it.
+   • Enter a scene in first_person, then cut to wider context — establishes subjective presence first,
+     then reveals scale. Do not start with the wide and hope to earn the human moment later.
+
+4. VISUAL RHYTHM — CONTRAST IS THE MECHANISM
+   Pacing is not an absolute duration value. It is a RATIO between adjacent shots.
+   A 1.5s cut means nothing in isolation. Next to a 9s hold, it hits like a shockwave.
+   A 9s hold earns its gravity only by being surrounded by shots that move faster.
+   The contrast between durations creates meaning — not any single shot length.
+
+   Apply this within the scene:
+   - The most important moment (from Question 2) should be the most contrasted against its neighbors.
+     Fast scene → give the peak a longer hold than everything around it.
+     Slow scene → give the peak a tighter, faster cut than everything around it.
+   - Build toward the peak: shots before it should progressively tighten (shorter holds, tighter frames).
+   - Release after the peak: shots following can breathe.
+
    Does pacing_intent: "${scene.pacing_intent}" actually feel true in the shots you're planning?
-   A climactic scene with 3 slow wide shots is not climactic.
-   A slow scene with 12 rapid cuts is not slow.
+   A climactic scene with 3 uniform wide shots is not climactic.
+   A slow scene with 12 uniform rapid cuts is not slow.
+   A well-paced scene has internal variation that makes its overall register legible.
+
+5. VISUAL REGISTER SEQUENCING
+   What is the pattern of media types within this scene — and is it intentional?
+   The ORDER and RHYTHM of media types create meaning, not just the individual shots.
+
+   Ask: does the sequence of ai_video → stock → ai_video → stock create a conversation?
+   In a documentary, 3D reconstruction followed by archival validates the reconstruction.
+   The archival says "this actually happened" and the 3D says "this is what it may have looked like."
+   The intercut rhythm makes both more powerful than either alone.
+
+   In an explainer: footage establishing context → MG extracting data from that context
+   → footage applying the conclusion is a natural three-act structure within a single scene.
+
+   In horror or suspense: slow atmospheric footage → a sudden clinical graphic → back to atmosphere
+   creates an uncanny destabilizing effect that pure footage cannot.
+
+   You are not required to vary media types. Pure footage is correct when the footage is strong enough.
+   But if you are mixing types, every switch between footage and graphics should be doing narrative work.
+   Ask: what does each media type transition add that staying in one register wouldn't?
 
 Reason through these before planning. The JSON is the result of that reasoning,
 not a template fill. Use whatever shot types, framings, and movements your answers
@@ -1273,6 +1461,17 @@ function postProcessSceneShots(
       );
       s.render_strategy = 'ai_video';
     }
+    // ❺ image_edit_instruction on a motiongraphic shot
+    // MG has its own compositing pipeline — there is no "source keyframe" to apply an edit to.
+    // These instructions would be silently skipped by the orchestrator; strip here so the
+    // plan is honest and no misleading "No source image for creative edit" logs appear.
+    if (s.media_type === 'motiongraphic' && s.image_edit_instruction) {
+      console.warn(
+        `${LOG_PREFIX} ${label} SYNTHESIS FIX: image_edit_instruction on motiongraphic shot ` +
+        `is not executable (no keyframe source). Stripping.`
+      );
+      s.image_edit_instruction = undefined;
+    }
   }
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -1344,7 +1543,7 @@ export async function planSceneShots(
           model,
           responseFormat,
           temperature: 0.5,
-          maxTokens: 65536,
+          maxTokens: 131072, // 128k — Gemini 3 Flash supports this; 65k was truncating large-video system prompts
           maxRetries: 1,
         }
       );

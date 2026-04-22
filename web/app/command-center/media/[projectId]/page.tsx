@@ -88,6 +88,40 @@ export default function ProjectPage({
     }
   }, [searchParams, activeTab]);
 
+  // Auto-open wizard when navigating here from the Task Panel (?video=<videoId>).
+  // Must watch [searchParams] — not [] — so it re-fires when the user is already
+  // on this page and router.push adds ?video= (no remount, just a URL change).
+  useEffect(() => {
+    const videoId = searchParams.get("video");
+    if (!videoId) return;
+
+    // Clear the ?video= param immediately — prevents re-trigger on refresh and
+    // stops the loop (next invocation gets videoId=null → early return).
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("video");
+    const newUrl = next.toString() ? `?${next.toString()}` : window.location.pathname;
+    router.replace(newUrl, { scroll: false });
+
+    // Open the wizard for this video (centre-screen entrance, no card ref needed)
+    collapse();
+    setWizardState({
+      isOpen: true,
+      isAnimating: true,
+      isClosing: false,
+      origin: {
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+        width: 0,
+        height: 0,
+      },
+      targetVideoIndex: null,
+      videoId,
+    });
+    setTimeout(() => {
+      setWizardState((prev) => ({ ...prev, isAnimating: false }));
+    }, 400);
+  }, [searchParams]); // watch searchParams so same-page navigation is handled too
+
   const handleTabChange = (value: string) => {
     setActiveTab(value);
     // Optional: Update URL without full refresh

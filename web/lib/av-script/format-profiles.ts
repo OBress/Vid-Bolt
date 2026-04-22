@@ -41,25 +41,40 @@ export const FORMAT_PROFILES: Record<string, FormatProfile> = {
       'is not decoration for the narration — it IS the narration. If the footage can ' +
       'say it, the narration shouldn\'t have to.',
     hookGuidance:
-      'The hook drops the viewer into the middle of something — a consequence, a ' +
-      'mystery, a contradiction — before any context is given. Do not explain. Intrigue first.',
+      'The hook drops the viewer into the middle of something — a consequence, a mystery, ' +
+      'a contradiction — before any context is given. Do not explain. Intrigue first. ' +
+      'Rapid intercutting between reconstruction and archival is a proven documentary hook: ' +
+      'each archival cut validates the preceding reconstruction and grounds the abstraction ' +
+      'in reality. Start fast, earn the slower observational sections that follow.',
     pacingCharacter:
-      'A documentary breathes. Fast, urgent sections earn their speed by being preceded ' +
-      'by something slow. Grief lingers. Evidence lands. Revelation is held long enough ' +
-      'to mean something. The edit is a conversation between tension and release.',
+      'A documentary breathes through contrast. Rapid archival-cut passages earn their speed ' +
+      'by being preceded by something slow and observational — and vice versa. A grief scene ' +
+      'should have longer holds than the surrounding investigative sections, not because it is ' +
+      'slow by default, but because it has earned the right to take time. Evidence lands when ' +
+      'given space to exist. Revelation is held long enough to mean something. The edit is a ' +
+      'conversation between tension and release. That contrast is the mechanism — not any ' +
+      'individual shot length in isolation.',
     brollPhilosophy:
       'B-roll is the primary visual language. It carries the emotional weight the narrator ' +
       'describes. A wide shot of a location is not B-roll — it is a statement. Choose every ' +
-      'shot as if it is the only thing the viewer will remember about this moment.',
+      'shot as if it is the only thing the viewer will remember about this moment. ' +
+      'When using archival stills, apply ken_burns camera motion to give them life — ' +
+      'slow, graceful pan+zoom treats historical material with the weight it deserves ' +
+      'and keeps the image active rather than static.',
     humanPerspectiveGuidance:
       'Whenever the narration describes something that happened to a person, ask: can the ' +
       'viewer see it through that person\'s eyes, even briefly? Abstract facts become human ' +
       'when grounded in a specific individual\'s experience. A death toll is a number. ' +
-      'A person clearing belongings from a flooded home is something the viewer will carry.',
+      'A person looking out a window as fire approaches is something the viewer will carry. ' +
+      'Tools: first_person camera angle for eyewitness immersion; foreground-subject with ' +
+      'background-event framing; and always — reaction shot BEFORE the reveal, not after.',
     mgPhilosophy:
-      'Motion graphics are used sparingly — only when footage genuinely cannot convey the ' +
-      'information (data, geography, abstract systems). They should feel like evidence, ' +
-      'not decoration. Never use an MG to replace footage that could have been more powerful.',
+      'Motion graphics are almost never the right choice for emotional or dramatic beats. ' +
+      'Their correct role is purely informational: data that cannot be filmed, geography that ' +
+      'requires a map, abstract systems that need a diagram, timelines, evidence relationships. ' +
+      'Annotation-style templates (slap_annotation, quote_card, lower_third) that merely label ' +
+      'what the narrator is already saying are noise, not information. The test: does this MG ' +
+      'add something footage genuinely cannot show? If not, find a stronger visual instead.',
   },
 
   true_crime: {
