@@ -63,15 +63,8 @@ const POPULAR_MODELS: Array<{
     description: 'Latest Gemini — fast, high-quality code generation',
   },
   {
-    id: 'google/gemini-2.5-flash-preview',
-    name: 'Gemini 2.5 Flash',
-    provider: 'google',
-    badge: 'Fast',
-    description: 'Best balance of speed and quality for code generation',
-  },
-  {
-    id: 'google/gemini-2.5-pro-preview',
-    name: 'Gemini 2.5 Pro',
+    id: 'google/gemini-3-pro-preview',
+    name: 'Gemini 3 Pro',
     provider: 'google',
     badge: 'Pro',
     description: 'Highest quality for complex animations',

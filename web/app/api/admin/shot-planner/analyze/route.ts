@@ -3,16 +3,14 @@
  * POST /api/admin/shot-planner/analyze
  *
  * Admin-only endpoint. Accepts a YouTube video URL (or channel URL + count),
- * fetches video metadata via the YouTube Data API, then sends the video to
- * Gemini 2.5 Flash (via OpenRouter) for a complete shot-by-shot breakdown.
+ * sends the URL(s) directly to Gemini 2.5 Flash (via OpenRouter) for shot-by-shot
+ * analysis. Gemini natively reads YouTube videos — no YouTube Data API needed.
  * Results are persisted in the yt_shot_plans table.
  */
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { getValidGCPToken } from '@/lib/gcp/token-refresh';
-import { YouTubeApi } from '@/lib/youtube/api';
 import { callLLMWithKey } from '@/lib/ai/client';
 
 export const dynamic = 'force-dynamic';
@@ -50,14 +48,19 @@ export interface ShotPlanShot {
   production_notes: string;
 }
 
-interface VideoTarget {
-  videoId: string;
-  title: string;
-  channelName: string;
-  channelId: string;
-  thumbnailUrl: string;
-  durationSeconds: number;
-  publishedAt: string;
+interface VideoMetadata {
+  video_id: string;
+  video_title: string;
+  channel_name: string;
+  channel_id: string;
+  thumbnail_url: string;
+  duration_seconds: number;
+  published_at: string; // ISO date string or empty if unknown
+}
+
+interface GeminiResponse {
+  metadata: VideoMetadata;
+  shots: ShotPlanShot[];
 }
 
 // ============================================================================
@@ -77,37 +80,49 @@ You have deep expertise in:
 - Editorial theory: J-cuts, L-cuts, match cuts, jump cuts, parallel editing
 
 OUTPUT RULES:
-1. Return ONLY a valid JSON array. No markdown, no code fences, no prose outside the JSON.
-2. Start your response with [ and end with ]
+1. Return ONLY a valid JSON object. No markdown, no code fences, no prose outside the JSON.
+2. The root object must have exactly two keys: "metadata" and "shots".
 3. Capture EVERY shot change — do not skip any shot, even quick inserts (minimum 0.5 seconds)
 4. Timestamps must be in seconds (decimal allowed, e.g. 45.5)
 5. Be extremely specific in visual_description — write it as a detailed creative brief
 6. production_notes must be a director's memo: how exactly would you recreate this shot`;
 
-function buildUserPrompt(videoTitle: string, channelName: string): string {
-  return `Analyse every single shot in this video: "${videoTitle}" by ${channelName}.
+function buildUserPrompt(): string {
+  return `Analyse every single shot in this video.
 
-For EACH distinct shot or camera position change, produce a JSON object with this exact schema:
-
+Return a JSON object with this exact top-level structure:
 {
-  "shot_index": 1,                        // 1-based sequential number
-  "start_seconds": 0,                     // Shot start time in seconds
-  "end_seconds": 4.5,                     // Shot end time in seconds  
-  "duration_seconds": 4.5,               // end - start
-  "shot_type": "wide establishing",       // Shot size/type (see examples below)
-  "camera_motion": "static",             // Camera movement during this shot
-  "subject": "Person standing at podium", // Primary subject/focus
-  "action": "Speaker gestures to audience", // What is happening
-  "narrative_purpose": "Establishes speaker authority and venue scale", // Why this shot exists
-  "emotion_tone": "authoritative, inspiring", // Emotional register
-  "visual_description": "A wide shot reveals the full conference hall. The speaker stands at a glass podium, center frame, bathed in warm spotlight. Rows of seated attendees stretch back into the soft-focus background.", // Full cinematic description
-  "visual_elements": ["conference hall", "podium", "audience", "spotlight"], // Key visual elements
-  "narration_excerpt": "Today we're going to talk about...", // What is being said (or empty string if music/ambient)
-  "has_music": false,                    // Is background music audible?
-  "has_sfx": false,                      // Are sound effects present?
-  "audio_notes": "",                     // Any notable audio observations
-  "suggested_media_type": "stock_video", // One of: ai_video, stock_video, ai_image, stock_image, screen_recording, talking_head, motion_graphic
-  "production_notes": "Wide angle lens on a tripod. Position camera at audience eye level, approximately 20 feet from stage. Frame speaker with negative space above and show first 3 rows of audience for depth." // Director's memo to recreate
+  "metadata": {
+    "video_id": "extracted from URL (11-char YouTube ID)",
+    "video_title": "Full title of the video exactly as shown on YouTube",
+    "channel_name": "Channel/creator name exactly as shown",
+    "channel_id": "YouTube channel ID (UCxxxxxxxx) if visible in page, else empty string",
+    "thumbnail_url": "https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg",
+    "duration_seconds": 0,
+    "published_at": "YYYY-MM-DD or empty string if not visible"
+  },
+  "shots": [
+    {
+      "shot_index": 1,
+      "start_seconds": 0,
+      "end_seconds": 4.5,
+      "duration_seconds": 4.5,
+      "shot_type": "wide establishing",
+      "camera_motion": "static",
+      "subject": "Person standing at podium",
+      "action": "Speaker gestures to audience",
+      "narrative_purpose": "Establishes speaker authority and venue scale",
+      "emotion_tone": "authoritative, inspiring",
+      "visual_description": "A wide shot reveals the full conference hall...",
+      "visual_elements": ["conference hall", "podium", "audience", "spotlight"],
+      "narration_excerpt": "Today we're going to talk about...",
+      "has_music": false,
+      "has_sfx": false,
+      "audio_notes": "",
+      "suggested_media_type": "stock_video",
+      "production_notes": "Wide angle lens on a tripod. Position camera at audience eye level..."
+    }
+  ]
 }
 
 Shot type examples: "wide establishing", "medium talking head", "tight close-up", "extreme close-up on hands", "over-the-shoulder", "POV", "cutaway B-roll", "insert shot", "reaction shot", "two-shot", "text/graphic overlay", "screen recording"
@@ -123,7 +138,7 @@ Suggested media type guide:
 - "screen_recording" → software demos, UI walkthroughs
 - "motion_graphic" → animated text, data visualization, lower thirds, transitions
 
-Return ONLY the JSON array. Begin immediately with [`;
+Return ONLY the JSON object. Begin immediately with {`;
 }
 
 // ============================================================================
@@ -131,12 +146,10 @@ Return ONLY the JSON array. Begin immediately with [`;
 // ============================================================================
 
 async function analyzeVideoWithGemini(
-  target: VideoTarget,
+  videoUrl: string,
   apiKey: string
-): Promise<{ summary: string; shots: ShotPlanShot[] }> {
-  const videoUrl = `https://www.youtube.com/watch?v=${target.videoId}`;
-
-  console.log(`[ShotPlanner] Analyzing: "${target.title}" (${target.durationSeconds}s)`);
+): Promise<GeminiResponse> {
+  console.log(`[ShotPlanner] Analyzing: ${videoUrl}`);
 
   const response = await callLLMWithKey(
     apiKey,
@@ -154,13 +167,13 @@ async function analyzeVideoWithGemini(
           } as unknown as import('@/lib/ai/client').OpenRouterMessageContent,
           {
             type: 'text',
-            text: buildUserPrompt(target.title, target.channelName),
+            text: buildUserPrompt(),
           },
         ] as unknown as string,
       },
     ],
     {
-      model: 'google/gemini-2.5-flash-preview',
+      model: 'google/gemini-3-flash-preview',
       temperature: 0.2,
       maxTokens: 32000,
       xTitle: 'VidBolt Shot Planner',
@@ -168,8 +181,8 @@ async function analyzeVideoWithGemini(
     'openrouter'
   );
 
-  // Parse shot plan JSON
-  let shots: ShotPlanShot[] = [];
+  // Parse the combined metadata + shots JSON
+  let parsed: GeminiResponse;
   try {
     let content = response.content.trim();
     // Strip any accidental markdown fences
@@ -178,46 +191,41 @@ async function analyzeVideoWithGemini(
     if (content.endsWith('```')) content = content.slice(0, -3);
     content = content.trim();
 
-    shots = JSON.parse(content) as ShotPlanShot[];
+    parsed = JSON.parse(content) as GeminiResponse;
 
-    // Ensure shot_index is sequential
-    shots = shots.map((s, i) => ({ ...s, shot_index: i + 1 }));
+    // Normalise shot indexes
+    parsed.shots = parsed.shots.map((s, i) => ({ ...s, shot_index: i + 1 }));
   } catch (e) {
-    console.error('[ShotPlanner] Failed to parse shot plan JSON:', e);
+    console.error('[ShotPlanner] Failed to parse Gemini output:', e);
     console.error('[ShotPlanner] Raw content (first 500 chars):', response.content.substring(0, 500));
-    throw new Error(`Failed to parse Gemini shot plan output. Model may have returned malformed JSON.`);
+    throw new Error(`Failed to parse Gemini output. Model may have returned malformed JSON.`);
   }
 
-  // Generate a brief summary from the first and last shots
-  const summary = generateSummary(target, shots);
+  console.log(
+    `[ShotPlanner] ✓ "${parsed.metadata.video_title}" by ${parsed.metadata.channel_name} — ${parsed.shots.length} shots`
+  );
 
-  console.log(`[ShotPlanner] ✓ Parsed ${shots.length} shots for "${target.title}"`);
-
-  return { summary, shots };
+  return parsed;
 }
 
-function generateSummary(target: VideoTarget, shots: ShotPlanShot[]): string {
-  const totalSec = target.durationSeconds;
-  const mins = Math.floor(totalSec / 60);
-  const secs = totalSec % 60;
+function generateSummary(meta: VideoMetadata, shots: ShotPlanShot[]): string {
+  const mins = Math.floor(meta.duration_seconds / 60);
+  const secs = meta.duration_seconds % 60;
   const duration = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 
-  // Count media types
   const typeCounts: Record<string, number> = {};
   for (const shot of shots) {
     typeCounts[shot.suggested_media_type] = (typeCounts[shot.suggested_media_type] || 0) + 1;
   }
   const dominantType = Object.entries(typeCounts).sort(([, a], [, b]) => b - a)[0]?.[0] ?? 'stock_video';
+  const avgShotDur = shots.length > 0 ? Math.round((meta.duration_seconds / shots.length) * 10) / 10 : 0;
 
-  // Average shot duration
-  const avgShotDur = shots.length > 0
-    ? Math.round((totalSec / shots.length) * 10) / 10
-    : 0;
-
-  return `${target.title} by ${target.channelName}. Duration: ${duration}. ` +
+  return (
+    `${meta.video_title} by ${meta.channel_name}. Duration: ${duration}. ` +
     `${shots.length} shots identified with an average shot length of ${avgShotDur}s. ` +
     `Dominant media type: ${dominantType.replace('_', ' ')}. ` +
-    `Shot distribution: ${Object.entries(typeCounts).map(([k, v]) => `${v} ${k.replace('_', ' ')}`).join(', ')}.`;
+    `Shot distribution: ${Object.entries(typeCounts).map(([k, v]) => `${v} ${k.replace('_', ' ')}`).join(', ')}.`
+  );
 }
 
 // ============================================================================
@@ -276,96 +284,43 @@ export async function POST(request: Request) {
       );
     }
 
-    // --- Get GCP token for YouTube Data API ---
-    let accessToken: string;
-    try {
-      accessToken = await getValidGCPToken(user.id);
-    } catch {
-      return NextResponse.json(
-        { error: 'GCP authentication required. Please connect your Google Cloud account.', gcpRequired: true },
-        { status: 401 }
-      );
-    }
-
-    const youtubeApi = new YouTubeApi(accessToken);
-
-    // --- Resolve video targets ---
-    const targets: VideoTarget[] = [];
+    // --- Collect YouTube URLs to analyze ---
+    const videoUrls: string[] = [];
     const batchId = mode === 'channel_batch' ? crypto.randomUUID() : undefined;
 
     if (mode === 'single_video') {
       if (!videoUrl) {
         return NextResponse.json({ error: 'videoUrl is required for single_video mode' }, { status: 400 });
       }
-
-      // Extract video ID from URL or treat as ID directly
-      const videoId = extractVideoId(videoUrl);
-      if (!videoId) {
+      const id = extractVideoId(videoUrl);
+      if (!id) {
         return NextResponse.json({ error: 'Invalid YouTube URL or video ID' }, { status: 400 });
       }
-
-      const details = await youtubeApi.getVideoDetails(videoId);
-      if (!details) {
-        return NextResponse.json({ error: `Video not found: ${videoId}` }, { status: 404 });
-      }
-
-      targets.push({
-        videoId: details.id,
-        title: details.title,
-        channelName: details.channelTitle,
-        channelId: details.channelId,
-        thumbnailUrl: details.thumbnailUrl,
-        durationSeconds: details.durationSeconds,
-        publishedAt: details.publishedAt,
-      });
+      videoUrls.push(`https://www.youtube.com/watch?v=${id}`);
     } else {
-      // Channel batch mode
+      // Channel batch mode: build URLs from channel page
       if (!channelUrl) {
         return NextResponse.json({ error: 'channelUrl is required for channel_batch mode' }, { status: 400 });
       }
-
       const clampedCount = Math.min(Math.max(1, videoCount), 25);
 
-      // Resolve channel ID
-      const channelId = await resolveChannelId(channelUrl, youtubeApi);
-      if (!channelId) {
-        return NextResponse.json({ error: 'Could not resolve channel. Try pasting the channel URL or @handle.' }, { status: 404 });
-      }
-
-      // Get channel info to find uploads playlist
-      const channelInfo = await youtubeApi.getChannelById(channelId);
-      if (!channelInfo) {
-        return NextResponse.json({ error: `Channel not found: ${channelId}` }, { status: 404 });
-      }
-
-      // Fetch recent videos from uploads playlist
-      const { items } = await youtubeApi.getChannelVideos(
-        channelInfo.uploadsPlaylistId,
-        clampedCount
+      // Ask Gemini to list the most recent N video URLs from the channel
+      const channelVideoUrls = await resolveChannelVideosViaGemini(
+        channelUrl.trim(),
+        clampedCount,
+        apiKeys.openrouter_key
       );
 
-      if (items.length === 0) {
-        return NextResponse.json({ error: 'No videos found for this channel.' }, { status: 404 });
+      if (channelVideoUrls.length === 0) {
+        return NextResponse.json(
+          { error: 'Could not retrieve videos from that channel. Try pasting a direct video URL instead.' },
+          { status: 404 }
+        );
       }
-
-      // Fetch video details for each
-      const videoIds = items.map(i => i.videoId);
-      const details = await youtubeApi.getMultipleVideoDetails(videoIds);
-
-      for (const video of details.slice(0, clampedCount)) {
-        targets.push({
-          videoId: video.id,
-          title: video.title,
-          channelName: channelInfo.title,
-          channelId: channelInfo.id,
-          thumbnailUrl: video.thumbnailUrl,
-          durationSeconds: video.durationSeconds,
-          publishedAt: video.publishedAt,
-        });
-      }
+      videoUrls.push(...channelVideoUrls);
     }
 
-    if (targets.length === 0) {
+    if (videoUrls.length === 0) {
       return NextResponse.json({ error: 'No video targets could be resolved.' }, { status: 400 });
     }
 
@@ -373,19 +328,20 @@ export async function POST(request: Request) {
     const createdIds: string[] = [];
     const errors: { videoId: string; error: string }[] = [];
 
-    for (const target of targets) {
+    for (const url of videoUrls) {
+      const videoId = extractVideoId(url) ?? url;
       try {
-        const { summary, shots } = await analyzeVideoWithGemini(target, apiKeys.openrouter_key);
+        const { metadata, shots } = await analyzeVideoWithGemini(url, apiKeys.openrouter_key);
+        const summary = generateSummary(metadata, shots);
 
-        // Check for existing plan for this video to avoid duplicates
+        // Upsert: update if video already analyzed, insert otherwise
         const { data: existing } = await serviceSupabase
           .from('yt_shot_plans')
           .select('id')
-          .eq('youtube_video_id', target.videoId)
+          .eq('youtube_video_id', metadata.video_id || videoId)
           .single();
 
         if (existing) {
-          // Update instead of insert
           await serviceSupabase
             .from('yt_shot_plans')
             .update({
@@ -394,6 +350,10 @@ export async function POST(request: Request) {
               total_shots: shots.length,
               category: category || null,
               notes: notes || null,
+              video_title: metadata.video_title,
+              channel_name: metadata.channel_name,
+              thumbnail_url: metadata.thumbnail_url || null,
+              duration_seconds: metadata.duration_seconds || null,
               updated_at: new Date().toISOString(),
             })
             .eq('id', existing.id);
@@ -403,14 +363,14 @@ export async function POST(request: Request) {
           const { data: inserted, error: insertError } = await serviceSupabase
             .from('yt_shot_plans')
             .insert({
-              youtube_video_id: target.videoId,
-              youtube_url: `https://www.youtube.com/watch?v=${target.videoId}`,
-              video_title: target.title,
-              channel_name: target.channelName,
-              channel_id: target.channelId,
-              thumbnail_url: target.thumbnailUrl,
-              duration_seconds: target.durationSeconds,
-              published_at: target.publishedAt,
+              youtube_video_id: metadata.video_id || videoId,
+              youtube_url: url,
+              video_title: metadata.video_title,
+              channel_name: metadata.channel_name,
+              channel_id: metadata.channel_id || null,
+              thumbnail_url: metadata.thumbnail_url || null,
+              duration_seconds: metadata.duration_seconds || null,
+              published_at: metadata.published_at || null,
               summary,
               shot_plan: shots,
               total_shots: shots.length,
@@ -431,8 +391,8 @@ export async function POST(request: Request) {
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.error(`[ShotPlanner] Error analyzing ${target.videoId}:`, msg);
-        errors.push({ videoId: target.videoId, error: msg });
+        console.error(`[ShotPlanner] Error analyzing ${videoId}:`, msg);
+        errors.push({ videoId, error: msg });
       }
     }
 
@@ -458,7 +418,6 @@ export async function POST(request: Request) {
 // ============================================================================
 
 function extractVideoId(input: string): string | null {
-  // Handle full URLs
   try {
     const url = new URL(input);
     if (url.hostname.includes('youtube.com')) {
@@ -470,37 +429,73 @@ function extractVideoId(input: string): string | null {
   } catch {
     // Not a URL — treat as bare video ID
   }
-  // Validate bare ID (11 chars, alphanumeric + - _)
   if (/^[a-zA-Z0-9_-]{11}$/.test(input.trim())) {
     return input.trim();
   }
   return null;
 }
 
-async function resolveChannelId(input: string, api: YouTubeApi): Promise<string | null> {
-  const trimmed = input.trim();
-
-  // Handle direct channel ID (UCxxxxxxxx)
-  if (/^UC[a-zA-Z0-9_-]{22}$/.test(trimmed)) {
-    return trimmed;
+/**
+ * Ask Gemini to list the most recent N video URLs from a channel page.
+ * Returns an array of youtube.com/watch?v= URLs.
+ */
+async function resolveChannelVideosViaGemini(
+  channelUrl: string,
+  count: number,
+  apiKey: string
+): Promise<string[]> {
+  // Normalise channel URL
+  let normalised = channelUrl;
+  if (!normalised.startsWith('http')) {
+    // Handle @handle or bare name
+    const handle = normalised.replace(/^@/, '');
+    normalised = `https://www.youtube.com/@${handle}`;
   }
 
-  // Handle @handle or full URL
-  let query = trimmed;
+  console.log(`[ShotPlanner] Resolving ${count} videos from channel: ${normalised}`);
+
+  const response = await callLLMWithKey(
+    apiKey,
+    [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'video_url' as const,
+            video_url: { url: normalised },
+          } as unknown as import('@/lib/ai/client').OpenRouterMessageContent,
+          {
+            type: 'text',
+            text: `List the ${count} most recent video URLs from this YouTube channel page.
+Return ONLY a JSON array of strings (full youtube.com/watch?v= URLs). No markdown, no prose.
+Example: ["https://www.youtube.com/watch?v=abc123", "https://www.youtube.com/watch?v=def456"]
+Begin immediately with [`,
+          },
+        ] as unknown as string,
+      },
+    ],
+    {
+      model: 'google/gemini-3-flash-preview',
+      temperature: 0,
+      maxTokens: 2000,
+      xTitle: 'VidBolt Channel Resolver',
+    },
+    'openrouter'
+  );
+
   try {
-    const url = new URL(trimmed);
-    // Extract from /channel/UCxxxxxx
-    const channelMatch = url.pathname.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
-    if (channelMatch) return channelMatch[1];
-    // Extract handle: /@handle or /c/name
-    const handleMatch = url.pathname.match(/\/@?([^/]+)/);
-    if (handleMatch) query = handleMatch[1];
-  } catch {
-    // Not a URL — use as-is (could be @handle or name)
-    query = trimmed.replace(/^@/, '');
-  }
+    let content = response.content.trim();
+    if (content.startsWith('```json')) content = content.slice(7);
+    if (content.startsWith('```')) content = content.slice(3);
+    if (content.endsWith('```')) content = content.slice(0, -3);
+    content = content.trim();
 
-  // Search for channel by name/handle
-  const results = await api.searchChannels(query, 1);
-  return results[0]?.channelId ?? null;
+    const urls = JSON.parse(content) as string[];
+    return urls
+      .filter((u) => typeof u === 'string' && u.includes('youtube.com/watch'))
+      .slice(0, count);
+  } catch {
+    console.error('[ShotPlanner] Failed to parse channel video list from Gemini');
+    return [];
+  }
 }

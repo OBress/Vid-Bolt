@@ -90,7 +90,7 @@ const PIPELINE_TOOLS: ToolCard[] = [
   {
     id: "yt-shot-scraper",
     name: "YouTube Shot Scraper",
-    description: "Analyze YouTube videos shot-by-shot with Gemini 2.5 Flash. Save plans by genre for pipeline benchmarking.",
+    description: "Analyze YouTube videos shot-by-shot with Gemini 3 Flash. Browse past analyses by channel or category.",
     icon: Youtube,
     color: "red",
   },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Film,
   Youtube,
@@ -17,6 +17,10 @@ import {
   X,
   Tag,
   FileText,
+  Search,
+  Plus,
+  ArrowLeft,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,7 +59,29 @@ export interface ShotPlanShot {
 }
 
 type AnalysisMode = "single_video" | "channel_batch";
-type UiPhase = "input" | "analyzing" | "done" | "error";
+type UiPhase = "library" | "detail" | "input" | "analyzing" | "done" | "error";
+
+interface ShotPlanSummary {
+  id: string;
+  created_at: string;
+  youtube_video_id: string;
+  youtube_url: string;
+  video_title: string;
+  channel_name: string;
+  thumbnail_url: string | null;
+  duration_seconds: number | null;
+  summary: string;
+  total_shots: number;
+  category: string | null;
+  notes: string | null;
+  source_type: string;
+}
+
+interface ShotPlanFull extends ShotPlanSummary {
+  shot_plan: ShotPlanShot[];
+  channel_id: string | null;
+  batch_id: string | null;
+}
 
 interface AnalysisResult {
   createdIds: string[];
@@ -79,6 +105,19 @@ function formatSeconds(s: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
+// ============================================================================
+// VID-BOLT GENRES (mirrors ScriptGenre in types/settings.ts)
+// ============================================================================
+
+const VIDBOLT_GENRES: { value: string; label: string }[] = [
+  { value: "documentary",        label: "Documentary" },
+  { value: "educational",        label: "Educational" },
+  { value: "narrative_fiction",  label: "Narrative Fiction" },
+  { value: "historical_fiction", label: "Historical Fiction" },
+  { value: "opinion_essay",      label: "Opinion Essay" },
+  { value: "tutorial",           label: "Tutorial" },
+  { value: "news",               label: "News" },
+];
 const MEDIA_TYPE_COLORS: Record<string, string> = {
   ai_video: "text-violet-400 bg-violet-500/10 border-violet-500/20",
   stock_video: "text-blue-400 bg-blue-500/10 border-blue-500/20",
@@ -116,7 +155,7 @@ function ShotCard({ shot }: { shot: ShotPlanShot }) {
               {formatSeconds(shot.start_seconds)} → {formatSeconds(shot.end_seconds)}
             </span>
             <span className="text-[10px] text-neutral-600">·</span>
-            <span className="text-[10px] text-neutral-500">{shot.duration_seconds.toFixed(1)}s</span>
+            <span className="text-[10px] text-neutral-500">{(shot.duration_seconds ?? 0).toFixed(1)}s</span>
             <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${colorClass}`}>
               {shot.suggested_media_type.replace(/_/g, " ")}
             </span>
@@ -216,10 +255,70 @@ export function YoutubeShotPlanner({ onClose, onPlanSaved }: Props) {
   const [category, setCategory] = useState("");
   const [notes, setNotes] = useState("");
 
-  const [phase, setPhase] = useState<UiPhase>("input");
+  // ── LIBRARY STATE ─────────────────────────────────────────────────────────
+  const [libPlans, setLibPlans] = useState<ShotPlanSummary[]>([]);
+  const [libLoading, setLibLoading] = useState(false);
+  const [libSearch, setLibSearch] = useState("");
+  const [groupBy, setGroupBy] = useState<"channel" | "category">("channel");
+  const [detailPlan, setDetailPlan] = useState<ShotPlanFull | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const fetchLibrary = useCallback(async () => {
+    setLibLoading(true);
+    try {
+      const r = await fetch("/api/admin/shot-planner/plans?limit=200");
+      const d = await r.json();
+      setLibPlans(d.plans ?? []);
+    } finally {
+      setLibLoading(false);
+    }
+  }, []);
+
+  const openDetail = useCallback(async (id: string) => {
+    setDetailLoading(true);
+    setDetailPlan(null);
+    setPhase("detail");
+    try {
+      const r = await fetch(`/api/admin/shot-planner/plans/${id}`);
+      const d = await r.json();
+      setDetailPlan(d.plan ?? null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  const deleteFromLib = useCallback(async (id: string, title: string) => {
+    if (!confirm(`Delete "${title}"?`)) return;
+    await fetch(`/api/admin/shot-planner/plans?id=${id}`, { method: "DELETE" });
+    setLibPlans(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  useEffect(() => { fetchLibrary(); }, [fetchLibrary]);
+
+  // ── SCRAPER STATE ──────────────────────────────────────────────────────────
+  const [phase, setPhase] = useState<UiPhase>("library");
   const [statusMsg, setStatusMsg] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Elapsed timer for the analyzing phase
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const analysisStartRef = useRef<number>(0);
+
+  // Start/stop elapsed timer when phase changes
+  useEffect(() => {
+    if (phase === "analyzing") {
+      analysisStartRef.current = Date.now();
+      setElapsedSec(0);
+      timerRef.current = setInterval(() => {
+        setElapsedSec(Math.floor((Date.now() - analysisStartRef.current) / 1000));
+      }, 1000);
+    } else {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [phase]);
 
   // For previewing the last analyzed plan inline
   const [previewShots, setPreviewShots] = useState<ShotPlanShot[] | null>(null);
@@ -241,7 +340,7 @@ export function YoutubeShotPlanner({ onClose, onPlanSaved }: Props) {
         : { mode, channelUrl: channelUrl.trim(), videoCount, category: category.trim() || undefined, notes: notes.trim() || undefined };
 
     const estimated = mode === "channel_batch" ? videoCount : 1;
-    setStatusMsg(`Sending ${estimated} video${estimated > 1 ? "s" : ""} to Gemini 2.5 Flash for analysis…`);
+    setStatusMsg(`Sending ${estimated} video${estimated > 1 ? "s" : ""} to Gemini 3 Flash for analysis…`);
 
     try {
       const res = await fetch("/api/admin/shot-planner/analyze", {
@@ -278,7 +377,7 @@ export function YoutubeShotPlanner({ onClose, onPlanSaved }: Props) {
   }, [mode, videoUrl, channelUrl, videoCount, category, notes, onPlanSaved]);
 
   const handleReset = () => {
-    setPhase("input");
+    setPhase("library");
     setError(null);
     setResult(null);
     setPreviewShots(null);
@@ -298,17 +397,156 @@ export function YoutubeShotPlanner({ onClose, onPlanSaved }: Props) {
           </div>
           <div>
             <h2 className="text-sm font-bold text-white">YouTube Shot Planner</h2>
-            <p className="text-[11px] text-neutral-500">Gemini 2.5 Flash shot-by-shot analysis</p>
+            <p className="text-[11px] text-neutral-500">Gemini 3 Flash shot-by-shot analysis</p>
           </div>
         </div>
-        <Button variant="ghost" size="sm" onClick={onClose} className="text-neutral-500 hover:text-white">
-          <X className="w-4 h-4" />
-        </Button>
+        {/* back-button in header when not on library */}
+        {(phase !== "library") && (
+          <button onClick={() => setPhase("library")} className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors">
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto">
+
+        {/* ── LIBRARY PHASE ─────────────────────────────────────────────────── */}
+        {phase === "library" && (() => {
+          const q = libSearch.toLowerCase();
+          const filtered = libPlans.filter(p =>
+            !q || p.video_title.toLowerCase().includes(q) || p.channel_name.toLowerCase().includes(q)
+          );
+          const groups: Record<string, ShotPlanSummary[]> = {};
+          for (const p of filtered) {
+            const key = groupBy === "channel"
+              ? (p.channel_name || "Unknown Channel")
+              : (p.category || "Uncategorized");
+            (groups[key] ??= []).push(p);
+          }
+          const sortedKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+          return (
+            <div className="flex flex-col h-full">
+              {/* Toolbar */}
+              <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-800 flex-shrink-0">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-600" />
+                  <input value={libSearch} onChange={e => setLibSearch(e.target.value)}
+                    placeholder="Search videos, channels…"
+                    className="w-full pl-8 pr-3 h-8 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-white placeholder:text-neutral-600 focus:outline-none focus:border-red-500" />
+                </div>
+                <div className="flex items-center bg-neutral-900 border border-neutral-700 rounded-lg overflow-hidden">
+                  {(["channel", "category"] as const).map(g => (
+                    <button key={g} onClick={() => setGroupBy(g)}
+                      className={`px-3 h-8 text-[11px] font-medium capitalize transition-colors ${groupBy === g ? "bg-red-600 text-white" : "text-neutral-500 hover:text-white"}`}>{g}</button>
+                  ))}
+                </div>
+                <button onClick={() => setPhase("input")}
+                  className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold transition-colors">
+                  <Plus className="w-3.5 h-3.5" /> New Analysis
+                </button>
+              </div>
+              {/* Groups */}
+              <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+                {libLoading ? (
+                  <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 text-neutral-600 animate-spin" /></div>
+                ) : sortedKeys.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center">
+                    <div className="w-16 h-16 rounded-2xl bg-neutral-900 border border-neutral-800 flex items-center justify-center mb-4">
+                      <Film className="w-7 h-7 text-neutral-700" />
+                    </div>
+                    <p className="text-sm font-semibold text-neutral-400 mb-1">{libSearch ? "No results" : "No plans yet"}</p>
+                    <p className="text-xs text-neutral-600 mb-4">{libSearch ? "Try a different search term." : "Click \"New Analysis\" to scrape your first video."}</p>
+                    {!libSearch && <button onClick={() => setPhase("input")} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold">New Analysis</button>}
+                  </div>
+                ) : sortedKeys.map(key => (
+                  <div key={key}>
+                    <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2">
+                      {key} <span className="text-neutral-700 normal-case font-normal">· {groups[key].length} plan{groups[key].length !== 1 ? "s" : ""}</span>
+                    </p>
+                    <div className="space-y-1">
+                      {groups[key].map(plan => (
+                        <div key={plan.id} onClick={() => openDetail(plan.id)}
+                          className="flex items-center gap-3 p-2.5 rounded-lg bg-neutral-900/50 border border-neutral-800 hover:border-neutral-700 cursor-pointer transition-all group">
+                          {plan.thumbnail_url
+                            ? <img src={plan.thumbnail_url} alt="" className="w-20 h-12 rounded object-cover flex-shrink-0 opacity-80 group-hover:opacity-100 transition-opacity" />
+                            : <div className="w-20 h-12 rounded bg-neutral-800 flex items-center justify-center flex-shrink-0"><Youtube className="w-4 h-4 text-neutral-700" /></div>}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-white truncate leading-snug">{plan.video_title}</p>
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                              <span className="text-[10px] text-neutral-500"><Camera className="w-3 h-3 inline mr-0.5" />{plan.total_shots} shots</span>
+                              {plan.duration_seconds && <span className="text-[10px] text-neutral-600">{Math.floor(plan.duration_seconds/60)}m {plan.duration_seconds%60}s</span>}
+                              {plan.category && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/20">{plan.category}</span>}
+                              <span className="text-[10px] text-neutral-700">{new Date(plan.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                            <button onClick={e=>{e.stopPropagation();window.open(plan.youtube_url,"_blank");}} className="p-1.5 rounded hover:bg-neutral-700 text-neutral-600 hover:text-neutral-300"><ExternalLink className="w-3.5 h-3.5" /></button>
+                            <button onClick={e=>{e.stopPropagation();deleteFromLib(plan.id,plan.video_title);}} className="p-1.5 rounded hover:bg-red-500/10 text-neutral-600 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── DETAIL PHASE ──────────────────────────────────────────────────── */}
+        {phase === "detail" && (
+          <div className="flex flex-col h-full">
+            {(detailLoading || !detailPlan) ? (
+              <div className="flex justify-center items-center flex-1 py-20"><Loader2 className="w-6 h-6 text-neutral-600 animate-spin" /></div>
+            ) : (() => {
+              const typeDist: Record<string,number> = {};
+              for (const s of detailPlan.shot_plan) typeDist[s.suggested_media_type] = (typeDist[s.suggested_media_type]||0)+1;
+              return (
+                <div className="flex flex-col h-full">
+                  {/* Detail banner */}
+                  <div className="flex border-b border-neutral-800 flex-shrink-0">
+                    {detailPlan.thumbnail_url && <img src={detailPlan.thumbnail_url} alt="" className="w-40 h-24 object-cover flex-shrink-0" />}
+                    <div className="flex-1 px-5 py-3 space-y-1.5 min-w-0">
+                      <p className="text-sm font-bold text-white leading-snug truncate">{detailPlan.video_title}</p>
+                      <div className="flex items-center gap-1.5">
+                        <Youtube className="w-3 h-3 text-red-500 flex-shrink-0" />
+                        <a href={detailPlan.youtube_url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} className="text-[11px] text-neutral-400 hover:text-white truncate">{detailPlan.channel_name}</a>
+                      </div>
+                      <div className="flex items-center gap-3 text-[10px] text-neutral-500 flex-wrap">
+                        <span><Camera className="w-3 h-3 inline mr-0.5" />{detailPlan.total_shots} shots</span>
+                        {detailPlan.duration_seconds && <span><Clock className="w-3 h-3 inline mr-0.5" />{Math.floor(detailPlan.duration_seconds/60)}m {detailPlan.duration_seconds%60}s</span>}
+                        {detailPlan.category && <span className="px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/20 text-[9px] font-semibold">{detailPlan.category}</span>}
+                      </div>
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        {Object.entries(typeDist).sort(([,a],[,b])=>b-a).map(([t,c])=>(
+                          <span key={t} className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${MEDIA_TYPE_COLORS[t]??""}`}>{c}× {t.replace(/_/g," ")}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-center gap-1 p-3 flex-shrink-0 border-l border-neutral-800">
+                      <button onClick={()=>window.open(detailPlan.youtube_url,"_blank")} className="p-1.5 rounded hover:bg-neutral-800 text-neutral-600 hover:text-neutral-300 transition-colors"><ExternalLink className="w-4 h-4" /></button>
+                      <button onClick={()=>deleteFromLib(detailPlan.id,detailPlan.video_title).then(()=>setPhase("library"))} className="p-1.5 rounded hover:bg-red-500/10 text-neutral-600 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                  </div>
+                  {/* Summary */}
+                  <div className="px-5 py-3 border-b border-neutral-800 flex-shrink-0">
+                    <p className="text-[10px] font-semibold text-neutral-600 uppercase tracking-wider mb-1">Summary</p>
+                    <p className="text-xs text-neutral-400 leading-relaxed">{detailPlan.summary}</p>
+                  </div>
+                  {/* Shot list */}
+                  <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+                    <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-3">Shot-by-Shot · {detailPlan.shot_plan.length} shots</p>
+                    {detailPlan.shot_plan.map(shot => <ShotCard key={shot.shot_index} shot={shot} />)}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
         {/* ── INPUT PHASE ─────────────────────────────────────────────────── */}
         {phase === "input" && (
+
           <div className="max-w-2xl mx-auto p-6 space-y-6">
             {/* Mode toggle */}
             <div>
@@ -392,12 +630,16 @@ export function YoutubeShotPlanner({ onClose, onPlanSaved }: Props) {
                   <Tag className="w-3 h-3 inline mr-1" />
                   Category / Genre
                 </label>
-                <Input
-                  placeholder="e.g. Finance, Tech, Documentary"
+                <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="bg-neutral-900 border-neutral-700 text-white placeholder:text-neutral-600 text-sm"
-                />
+                  className="w-full h-9 bg-neutral-900 border border-neutral-700 rounded-md px-3 text-sm text-white focus:outline-none focus:border-red-500 transition-colors"
+                >
+                  <option value="">— Select genre —</option>
+                  {VIDBOLT_GENRES.map(g => (
+                    <option key={g.value} value={g.value}>{g.label}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="text-xs font-semibold text-neutral-400 uppercase tracking-wider block mb-2">
@@ -426,16 +668,54 @@ export function YoutubeShotPlanner({ onClose, onPlanSaved }: Props) {
         )}
 
         {/* ── ANALYZING PHASE ─────────────────────────────────────────────── */}
-        {phase === "analyzing" && (
-          <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mb-6">
-              <Loader2 className="w-8 h-8 text-red-400 animate-spin" />
+        {phase === "analyzing" && (() => {
+          const estimatedTotal = (mode === "channel_batch" ? videoCount : 1) * 90; // ~90s per video
+          const pct = Math.min(95, Math.round((elapsedSec / estimatedTotal) * 100)); // cap at 95 until done
+          const elapsedMin = Math.floor(elapsedSec / 60);
+          const elapsedS = elapsedSec % 60;
+          const elapsedLabel = elapsedMin > 0
+            ? `${elapsedMin}m ${elapsedS.toString().padStart(2, "0")}s`
+            : `${elapsedS}s`;
+
+          return (
+            <div className="flex flex-col items-center justify-center py-16 px-6 text-center gap-6">
+              {/* Spinning icon */}
+              <div className="relative">
+                <div className="absolute -inset-4 bg-red-500/10 rounded-full blur-xl animate-pulse" />
+                <div className="relative w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                  <Loader2 className="w-8 h-8 text-red-400 animate-spin" />
+                </div>
+              </div>
+
+              {/* Title */}
+              <div>
+                <h3 className="text-base font-bold text-white mb-1">Analyzing with Gemini 3 Flash</h3>
+                <p className="text-sm text-neutral-400 max-w-sm leading-relaxed">{statusMsg}</p>
+              </div>
+
+              {/* Progress bar + timer */}
+              <div className="w-full max-w-sm space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-mono">
+                  <span className="text-neutral-500">
+                    <Clock className="w-3 h-3 inline mr-1 text-neutral-600" />
+                    {elapsedLabel} elapsed
+                  </span>
+                  <span className="text-red-400">{pct}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-red-600 to-red-400 rounded-full transition-all duration-1000"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-neutral-600 text-center">
+                  Gemini is reading every frame of the video — typically 30–90s per video
+                </p>
+              </div>
             </div>
-            <h3 className="text-base font-bold text-white mb-2">Analyzing with Gemini 2.5 Flash</h3>
-            <p className="text-sm text-neutral-400 max-w-sm leading-relaxed">{statusMsg}</p>
-            <p className="text-xs text-neutral-600 mt-4">This may take 30–90 seconds per video. Please wait…</p>
-          </div>
-        )}
+          );
+        })()}
+
 
         {/* ── ERROR PHASE ─────────────────────────────────────────────────── */}
         {phase === "error" && (
@@ -466,12 +746,8 @@ export function YoutubeShotPlanner({ onClose, onPlanSaved }: Props) {
                 )}
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={handleReset} className="border-neutral-700 text-neutral-300 hover:text-white text-xs">
-                  Analyze More
-                </Button>
-                <Button variant="outline" size="sm" onClick={onClose} className="border-neutral-700 text-neutral-300 hover:text-white text-xs">
-                  Go to Library
-                </Button>
+                <Button variant="outline" size="sm" onClick={() => setPhase("input")} className="border-neutral-700 text-neutral-300 hover:text-white text-xs">Analyze More</Button>
+                <Button size="sm" onClick={() => { fetchLibrary(); setPhase("library"); }} className="bg-red-600 hover:bg-red-700 text-white text-xs">View in Library</Button>
               </div>
             </div>
 

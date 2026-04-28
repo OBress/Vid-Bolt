@@ -141,7 +141,7 @@ export async function POST(
       .eq("user_id", user.id)
       .single();
 
-    const model = settingsData?.openrouter_model || "google/gemini-2.5-flash-preview";
+    const model = settingsData?.openrouter_model || "google/gemini-3-flash-preview";
 
     console.log(`[GenerateMotionGraphic] Generating for video ${videoId}, shot ${shotIndex}, model: ${model}`);
 
