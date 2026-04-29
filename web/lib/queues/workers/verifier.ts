@@ -20,9 +20,9 @@
  */
 
 import { Job, Processor } from 'bullmq';
-import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { getLlmProviderConfig } from '@/lib/services/api-keys';
 import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
-import type { OpenRouterMessage } from '@/lib/ai/openrouter';
+import type { OpenRouterMessage, LlmProvider } from '@/lib/ai/openrouter';
 import { getStyleSignals } from '@/lib/services/style-signals';
 // Static video detection removed — VLM verifier catches bad media directly
 
@@ -294,13 +294,20 @@ PASS — Everything else, which should be almost all videos.
 - Thematic consistency: only SOFT_FAIL if a shot looks like it's from a completely different production.
 
 FAILURE TYPE CLASSIFICATION (only for FAIL verdicts):
-- "fundamental": The video is catastrophically broken (frozen, black, corrupted).
+- "fundamental": The video requires full regeneration from a corrected prompt. Applies to:
+    - Frozen, black screen, or fully corrupted output (zero motion, unwatchable)
+    - Garbled, unreadable, or hallucinated text overlays as a focal element
+    - Style-contract violations (e.g., photoreal human inside a clay/animation world)
+    - Subject is completely wrong (totally different scene from description)
+  → ALWAYS include "SIMPLIFY_PROMPT" as the FIRST item in suggested_corrections.
+- "recoverable": Minor correctable issues that don't require a prompt change (rare).
 For SOFT_FAIL verdicts, set failure_type to null — the media is accepted.
 For PASS verdicts, set failure_type to null.
 
 PROMPT SIMPLIFICATION:
-When a video FAIL is caused by visual artifacts (frozen, static, corrupted frames),
-include "SIMPLIFY_PROMPT" as the first suggested_correction.
+When a video FAIL is "fundamental", ALWAYS include "SIMPLIFY_PROMPT" as the first
+suggested_correction. This signals the retry path to strip text-generating token vocabulary
+from the prompt before regenerating, which eliminates the most common garbled text failure.
 
 Respond ONLY with valid JSON matching this schema:
 {
@@ -334,7 +341,8 @@ async function callVisionModel(
   apiKey: string,
   systemPrompt: string,
   userContent: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } } | { type: 'video_url'; video_url: { url: string } }>,
-  config?: { model?: string; temperature?: number; maxTokens?: number }
+  config?: { model?: string; temperature?: number; maxTokens?: number },
+  provider: LlmProvider = 'openrouter'
 ): Promise<string> {
   const response = await callOpenRouterWithKey(apiKey, [
     { role: 'system', content: systemPrompt },
@@ -346,7 +354,7 @@ async function callVisionModel(
     timeoutMs: VERIFIER_OPENROUTER_TIMEOUT_MS,
     xTitle: 'Vid-Bolt Verifier',
     responseFormat: VERIFIER_JSON_SCHEMA,
-  });
+  }, provider);
 
   return response.content;
 }
@@ -474,7 +482,8 @@ async function performMetaReview(
   apiKey: string,
   shotIndex: number,
   initialResult: VerifierResult,
-  mediaType: string
+  mediaType: string,
+  provider: LlmProvider = 'openrouter'
 ): Promise<{ result: VerifierResult; overturned: boolean }> {
   try {
     const metaPrompt = buildMetaReviewPrompt(shotIndex, initialResult, mediaType);
@@ -488,7 +497,7 @@ async function performMetaReview(
       temperature: 0.1,
       maxTokens: 65536,
       xTitle: 'Vid-Bolt Verifier Meta-Review',
-    });
+    }, provider);
 
     const revisedResult = parseVerifierResponse(response.content);
     const overturned = revisedResult.verdict !== initialResult.verdict;
@@ -591,7 +600,7 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
   let lastError: Error | null = null;
 
   try {
-    const apiKey = await getOpenRouterApiKey(userId);
+    const { apiKey, provider } = await getLlmProviderConfig(userId);
     const userContent = buildVerificationPrompt(job.data);
 
     // SSIM pre-check removed (C1) — VLM verifier catches static/bad media directly
@@ -600,7 +609,7 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
       try {
         console.log(`${LOG_PREFIX} Calling Gemini 3 Flash for shot ${shotIndex} (attempt ${attempt}/${MAX_VERIFIER_RETRIES})...`);
         const modelCallStartedAt = Date.now();
-        const rawResponse = await callVisionModel(apiKey, buildVerifierSystemPrompt(job.data), userContent);
+        const rawResponse = await callVisionModel(apiKey, buildVerifierSystemPrompt(job.data), userContent, undefined, provider);
         console.log(
           `${LOG_PREFIX} Shot ${shotIndex} model response received in ${Date.now() - modelCallStartedAt}ms`
         );
@@ -620,7 +629,7 @@ export const verifierProcessor: Processor<VerifierJobData> = async (
             console.log(
               `${LOG_PREFIX} Shot ${shotIndex}: Borderline confidence (${result.confidence}) — triggering meta-review`
             );
-            const metaReview = await performMetaReview(apiKey, shotIndex, result, mediaType);
+            const metaReview = await performMetaReview(apiKey, shotIndex, result, mediaType, provider);
             finalResult = metaReview.result;
           }
 

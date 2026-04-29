@@ -147,7 +147,11 @@ export interface ChunkProcessingResult {
 // ============================================================================
 
 export const DEFAULT_CHUNK_CONFIG: ChunkConfig = {
-  batchSize: 10,
+  // Quality-first: 4 shots per batch keeps LLM attention sharp on each shot.
+  // The schema per shot is large (30+ fields). At 10, the model fills the back
+  // half mechanically. At 4, every shot gets full creative focus.
+  // Token budget at worst case (4 × 900 tok/shot): 3,600 — safety margin 18×.
+  batchSize: 4,
   pastContextSize: 5,
   lookaheadSize: 5,
   maxRetries: 3,
@@ -320,6 +324,8 @@ function buildChunkContext(
 
 /**
  * Process a single chunk with retry logic.
+ * If the LLM response is truncated (finish_reason=length), automatically
+ * retries the chunk split into two half-size sub-chunks before giving up.
  */
 async function processChunkWithRetries(
   userId: string,
@@ -345,6 +351,30 @@ async function processChunkWithRetries(
       };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      const errMsg = lastError.message.toLowerCase();
+      
+      // Detect token truncation — auto-retry at half batch size before giving up
+      const isTruncation = errMsg.includes('truncated') || errMsg.includes('finish_reason=length') || errMsg.includes('length');
+      if (isTruncation && context.currentSegments.length > 1 && attempt === 0) {
+        console.warn(`[ChunkedProcessor] ⚠️ Chunk ${context.chunkIndex + 1} truncated — retrying as two half-batches (${Math.ceil(context.currentSegments.length / 2)} shots each)`);
+        try {
+          const midpoint = Math.ceil(context.currentSegments.length / 2);
+          const firstHalf = { ...context, currentSegments: context.currentSegments.slice(0, midpoint) };
+          const secondHalf = { ...context, currentSegments: context.currentSegments.slice(midpoint) };
+          const firstShots = await generateChunkShots(userId, firstHalf, outlineAssets, projectContext);
+          const secondShots = await generateChunkShots(userId, secondHalf, outlineAssets, projectContext);
+          return {
+            shots: [...firstShots, ...secondShots],
+            chunkIndex: context.chunkIndex,
+            retriesUsed: 1,
+            needsManualReview: false,
+          };
+        } catch (splitError) {
+          console.error(`[ChunkedProcessor] Half-batch retry also failed:`, splitError);
+          // Fall through to normal retry loop
+        }
+      }
+      
       console.error(`[ChunkedProcessor] Chunk ${context.chunkIndex + 1} attempt ${attempt + 1} failed:`, lastError.message);
       
       if (attempt < maxRetries - 1) {
@@ -620,18 +650,23 @@ AUDIO (optional):
 - "sound_effects" → SFX (whoosh, impact, etc.)
 - "music" → Background music/score
 
-## WHEN TO USE OVERLAYS (CRITICAL — READ CAREFULLY)
+## REMOTION TOOLS — CAPABILITIES (use your director's judgment)
 
-Motion graphics overlays are one of the most powerful tools. Use them at PRECISE moments that match the narration:
+These tools exist to serve the scene when they genuinely add value. No trigger rules. Decide based on what makes this specific shot — given its genre, emotional register, pacing, and the shots around it — as cinematically powerful as possible.
 
-- When the narrator NAMES a location → use remotion_overlay with a location tag overlay on video/image
-- When showing someone's face → use remotion_overlay for a lower-third with their name/title
-- When presenting data/statistics → use remotion_overlay for animated stat badges, charts, or progress bars
-- When transitioning between topics → use remotion_overlay for a cinematic title card
-- When building suspense or emphasis → use remotion_overlay for lens effects, vignettes, or visual accents
-- When comparing things → use remotion_image_manipulation for split-screen or before/after layouts
+remotion_overlay: Transparent animated elements that live on top of base video/images.
+Capabilities: location chips, lower-thirds, animated data badges, cinematic title cards, subtle lens effects, vignettes, info overlays, countdown timers, animated borders.
+Ask yourself: does adding a layer ON TOP of this shot make it more powerful — or does it clutter a shot that's already strong on its own?
 
-Overlays should NOT be generic — they should react to and complement what the narrator is saying at that exact moment.
+remotion_image_manipulation: The shot IS the image composition — no base video beneath it.
+Capabilities: Ken Burns zoom on a single photo, side-by-side/before-after layouts, photo montages, annotated images with callouts, parallax layers.
+When to consider: the moment calls for a curated image or collection of images as the primary visual, not a generated video scene.
+
+remotion_video_manipulation: Full-frame production compositing on top of video.
+Capabilities: broadcast-style HUDs, cinematic color washes/tints, glitch or distortion effects, letterboxing, animated lower-thirds synced to video motion.
+When to consider: the video itself needs a production design layer that's integral to the shot's identity.
+
+A strong AI video shot with no overlay often lands harder than the same shot buried under graphics. These tools exist for moments when adding them is the best creative choice — not as a default accompaniment.
 
 ## SOUND DESIGN
 
@@ -740,7 +775,7 @@ Return JSON:
       "stock_search_query": "Donald Trump",
       "reuse_entity": "Donald Trump",
       "visual_description": "Cinematic slow-motion shot of the subject speaking at a podium with dramatic lighting",
-      "visual_elements": ["ai_video", "remotion_overlay"],
+      "visual_elements": ["ai_video"],
       "sound_effects": [
         {
           "type": "paper rustle",

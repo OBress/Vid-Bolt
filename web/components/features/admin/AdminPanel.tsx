@@ -10,11 +10,12 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Shield, Lock, LayoutDashboard, Users, Wrench, Bell } from "lucide-react";
+import { Shield, Lock, LayoutDashboard, Users, Wrench, Bell, Film } from "lucide-react";
 import { AnalyticsTab } from "./tabs/AnalyticsTab";
 import { UsersTab } from "./tabs/UsersTab";
 import { DevToolsTab } from "./tabs/DevToolsTab";
 import { NotificationsTab } from "./tabs/NotificationsTab";
+import { ShotPlannerTab } from "./tabs/ShotPlannerTab";
 
 export function AdminPanel() {
   const [isOpen, setIsOpen] = useState(false);
@@ -67,6 +68,13 @@ export function AdminPanel() {
                 Dev Tools
               </TabsTrigger>
               <TabsTrigger
+                value="shot-planner"
+                className="data-[state=active]:bg-transparent data-[state=active]:text-red-500 data-[state=active]:border-b-2 data-[state=active]:border-red-500 rounded-none px-4 py-2 border-transparent border-b-2 text-neutral-400 hover:text-neutral-200 transition-all"
+              >
+                <Film className="w-4 h-4 mr-2" />
+                Shot Planner
+              </TabsTrigger>
+              <TabsTrigger
                 value="notifications"
                 className="data-[state=active]:bg-transparent data-[state=active]:text-red-500 data-[state=active]:border-b-2 data-[state=active]:border-red-500 rounded-none px-4 py-2 border-transparent border-b-2 text-neutral-400 hover:text-neutral-200 transition-all"
               >
@@ -85,6 +93,9 @@ export function AdminPanel() {
             </TabsContent>
             <TabsContent value="devtools" className="m-0 h-full">
               <DevToolsTab />
+            </TabsContent>
+            <TabsContent value="shot-planner" className="m-0 h-full">
+              <ShotPlannerTab />
             </TabsContent>
             <TabsContent value="notifications" className="m-0 h-full">
               <NotificationsTab />

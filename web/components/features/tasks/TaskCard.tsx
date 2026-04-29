@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   Loader2,
   CheckCircle,
@@ -10,7 +11,9 @@ import {
   ChevronDown,
   ChevronRight,
   AlertTriangle,
+  ExternalLink,
 } from "lucide-react";
+import { createBrowserClient } from "@supabase/ssr";
 import { Progress } from "@/components/ui/progress";
 import {
   Collapsible,
@@ -23,6 +26,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { TaskStepTimeline } from "./TaskStepTimeline";
+import { resolveTaskUrl } from "./task-navigation";
 import type { TaskStep } from "@/types/task";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -41,10 +45,15 @@ export interface TaskData {
   updated_at: string;
   started_at?: string | null;
   completed_at?: string | null;
+  /** Input payload stored by the worker — contains videoId for video-linked tasks */
+  input_data?: Record<string, unknown> | null;
+  /** Media project ID (set on some task types; may be null for closed_loop tasks) */
+  project_id?: string | null;
 }
 
 interface TaskCardProps {
   task: TaskData;
+  onClose?: () => void;
 }
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -138,16 +147,48 @@ function getStepStats(steps?: TaskStep[]) {
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function TaskCard({ task }: TaskCardProps) {
+export function TaskCard({ task, onClose }: TaskCardProps) {
   const isActive = task.status === "running" || task.status === "pending";
   const [isExpanded, setIsExpanded] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const router = useRouter();
 
   const typeConfig = TYPE_CONFIG[task.type] || {
     label: task.type,
     color: "text-neutral-400",
     bg: "bg-neutral-500/15 border-neutral-500/25",
   };
+
+  // Memoized Supabase client for navigation lookup (read-only)
+  const supabase = useMemo(
+    () =>
+      createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
+
+  // Navigate to the page where this task is being performed
+  const handleNavigate = useCallback(
+    async (e: React.MouseEvent) => {
+      // Only fire when clicking the card body — not the steps toggle
+      if ((e.target as HTMLElement).closest("[data-steps-toggle]")) return;
+      if (isNavigating) return;
+      setIsNavigating(true);
+      try {
+        const url = await resolveTaskUrl(task, supabase);
+        if (url) {
+          router.push(url);
+          onClose?.();  // Dismiss the task panel after navigating
+        }
+      } finally {
+        setIsNavigating(false);
+      }
+    },
+    [task, supabase, router, isNavigating, onClose]
+  );
 
   // Live elapsed timer for active tasks
   const computeElapsed = useCallback(() => {
@@ -177,23 +218,31 @@ export function TaskCard({ task }: TaskCardProps) {
   if (isActive) {
     return (
       <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-        <div className="rounded-lg border border-neutral-800 bg-neutral-900/70 overflow-hidden transition-all duration-200 hover:border-neutral-700">
+        <div
+          className="group rounded-lg border border-neutral-800 bg-neutral-900/70 overflow-hidden transition-all duration-200 hover:border-orange-500/40 cursor-pointer"
+          onClick={handleNavigate}
+        >
           {/* Main content */}
           <div className="p-3">
             <div className="flex items-start gap-2.5">
               {/* Status icon */}
               {task.status === "running" ? (
-                <Loader2 className="w-4 h-4 animate-spin text-orange-500 mt-0.5 flex-shrink-0" />
+                isNavigating ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-orange-400 mt-0.5 flex-shrink-0" />
+                ) : (
+                  <Loader2 className="w-4 h-4 animate-spin text-orange-500 mt-0.5 flex-shrink-0" />
+                )
               ) : (
                 <Clock className="w-4 h-4 text-neutral-500 mt-0.5 flex-shrink-0" />
               )}
 
               <div className="flex-1 min-w-0">
-                {/* Top row: name + type badge */}
+                {/* Top row: name + type badge + navigate hint */}
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-white truncate flex-1">
                     {task.name}
                   </p>
+                  <ExternalLink className="w-3 h-3 text-neutral-600 group-hover:text-orange-400 transition-colors flex-shrink-0" />
                   <span
                     className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${typeConfig.bg} ${typeConfig.color}`}
                   >
@@ -241,11 +290,15 @@ export function TaskCard({ task }: TaskCardProps) {
             </div>
           </div>
 
-          {/* Expand toggle for step timeline */}
+          {/* Expand toggle for step timeline — isolated from card-level onClick */}
           {task.steps && task.steps.length > 0 && (
             <>
               <CollapsibleTrigger asChild>
-                <button className="w-full flex items-center justify-center gap-1 py-1.5 text-[10px] text-neutral-500 hover:text-neutral-300 bg-neutral-900/50 border-t border-neutral-800/50 transition-colors cursor-pointer">
+                <button
+                  data-steps-toggle
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full flex items-center justify-center gap-1 py-1.5 text-[10px] text-neutral-500 hover:text-neutral-300 bg-neutral-900/50 border-t border-neutral-800/50 transition-colors cursor-pointer"
+                >
                   {isExpanded ? (
                     <ChevronDown className="w-3 h-3" />
                   ) : (
@@ -280,12 +333,13 @@ export function TaskCard({ task }: TaskCardProps) {
     <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
       <div
         className={`
-          rounded-lg border overflow-hidden transition-all duration-200
+          group rounded-lg border overflow-hidden transition-all duration-200 cursor-pointer
           ${task.status === "failed"
             ? "border-red-500/20 bg-red-950/20 hover:border-red-500/30"
             : "border-neutral-800/60 bg-neutral-900/40 hover:border-neutral-700/60"
           }
         `}
+        onClick={handleNavigate}
       >
         <div className="p-2.5">
           <div className="flex items-center gap-2.5">
@@ -302,6 +356,7 @@ export function TaskCard({ task }: TaskCardProps) {
                 >
                   {task.name}
                 </p>
+                <ExternalLink className="w-3 h-3 text-neutral-700 group-hover:text-neutral-400 transition-colors flex-shrink-0" />
                 <span
                   className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${typeConfig.bg} ${typeConfig.color} opacity-70`}
                 >
@@ -355,11 +410,15 @@ export function TaskCard({ task }: TaskCardProps) {
           )}
         </div>
 
-        {/* Expand toggle for step timeline (history cards) */}
+        {/* Expand toggle for step timeline (history cards) — isolated from card-level onClick */}
         {task.steps && task.steps.length > 0 && (
           <>
             <CollapsibleTrigger asChild>
-              <button className="w-full flex items-center justify-center gap-1 py-1.5 text-[10px] text-neutral-600 hover:text-neutral-400 bg-neutral-900/30 border-t border-neutral-800/30 transition-colors cursor-pointer">
+              <button
+                data-steps-toggle
+                onClick={(e) => e.stopPropagation()}
+                className="w-full flex items-center justify-center gap-1 py-1.5 text-[10px] text-neutral-600 hover:text-neutral-400 bg-neutral-900/30 border-t border-neutral-800/30 transition-colors cursor-pointer"
+              >
                 {isExpanded ? (
                   <ChevronDown className="w-3 h-3" />
                 ) : (

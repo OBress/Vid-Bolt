@@ -42,7 +42,7 @@ export function TaskStatusButton() {
       const { data, error } = await supabase
         .from("tasks")
         .select(
-          "id, name, type, status, current_phase, current_step, progress_percent, error_message, steps, created_at, updated_at, started_at, completed_at"
+          "id, name, type, status, current_phase, current_step, progress_percent, error_message, steps, created_at, updated_at, started_at, completed_at, input_data, project_id"
         )
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
@@ -88,12 +88,14 @@ export function TaskStatusButton() {
     };
   }, [supabase, fetchTasks]);
 
-  // Auto-refresh for running tasks
+  // Auto-refresh: fast poll (5s) when tasks are running, slow poll (15s) always
+  // The slow poll catches newly created tasks that realtime may have missed
   useEffect(() => {
     const hasRunningTasks = tasks.some((t) => t.status === "running");
-    if (!hasRunningTasks) return;
-
-    const interval = setInterval(fetchTasks, 5000);
+    const interval = setInterval(
+      fetchTasks,
+      hasRunningTasks ? 5000 : 15000
+    );
     return () => clearInterval(interval);
   }, [tasks, fetchTasks]);
 

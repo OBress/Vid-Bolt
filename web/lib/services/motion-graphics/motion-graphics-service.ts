@@ -37,7 +37,7 @@ import {
   callOpenRouterWithKey as centralCallOpenRouter,
   streamOpenRouterWithKey as centralStreamOpenRouter,
 } from '@/lib/ai/openrouter';
-import type { OpenRouterMessage } from '@/lib/ai/openrouter';
+import type { OpenRouterMessage, LlmProvider } from '@/lib/ai/openrouter';
 
 export interface GenerationRequest {
   prompt: string;
@@ -66,11 +66,18 @@ type SSEWriter = (data: Record<string, unknown>) => void;
  * Call OpenRouter API (non-streaming) via the central module.
  * Wrapper that adapts the service's call pattern to the central module's interface.
  */
+// Maximum tokens for MG code generation (TSX output can be very large for complex compositions).
+// Raised from 65,536 to 262,144 (256k) to prevent truncation-induced Babel failures.
+// Planning/analysis calls (vision, plan, template spec) use the wrapper default (65536)
+// since their outputs are compact JSON, not full TSX modules.
+const MG_CODE_GEN_MAX_TOKENS = 262_144;
+
 async function callOpenRouter(
   apiKey: string,
   model: string,
   messages: Array<{ role: string; content: string }>,
-  options: { temperature?: number; maxTokens?: number; responseFormat?: { type: string } } = {}
+  options: { temperature?: number; maxTokens?: number; responseFormat?: { type: string } } = {},
+  provider: LlmProvider = 'openrouter'
 ): Promise<{ content: string; finishReason: string }> {
   const result = await centralCallOpenRouter(
     apiKey,
@@ -78,10 +85,11 @@ async function callOpenRouter(
     {
       model,
       temperature: options.temperature ?? 0.7,
-      maxTokens: options.maxTokens ?? 65536,
+      maxTokens: options.maxTokens ?? 131072,
       xTitle: 'Vid-Bolt Motion Graphics',
-      responseFormat: options.responseFormat as any,
-    }
+      responseFormat: options.responseFormat as unknown as import('@/lib/ai/providers/types').LLMConfig['responseFormat'],
+    },
+    provider
   );
 
   return {
@@ -98,7 +106,8 @@ async function* streamOpenRouter(
   apiKey: string,
   model: string,
   messages: Array<{ role: string; content: string }>,
-  options: { temperature?: number; maxTokens?: number } = {}
+  options: { temperature?: number; maxTokens?: number } = {},
+  provider: LlmProvider = 'openrouter'
 ): AsyncGenerator<string> {
   yield* centralStreamOpenRouter(
     apiKey,
@@ -106,9 +115,10 @@ async function* streamOpenRouter(
     {
       model,
       temperature: options.temperature ?? 0.7,
-      maxTokens: options.maxTokens ?? 65536,
+      maxTokens: options.maxTokens ?? 131072,
       xTitle: 'Vid-Bolt Motion Graphics',
-    }
+    },
+    provider
   );
 }
 
@@ -265,7 +275,7 @@ class MotionGraphicsService {
   /**
    * Analyze the user's vision
    */
-  async analyzeVision(apiKey: string, prompt: string, model: string): Promise<string | null> {
+  async analyzeVision(apiKey: string, prompt: string, model: string, provider: LlmProvider = 'openrouter'): Promise<string | null> {
     try {
 
       
@@ -274,9 +284,9 @@ class MotionGraphicsService {
         { role: 'user', content: prompt },
       ], {
         temperature: 0.7,
-        maxTokens: 65536,
+        maxTokens: 131072,
         responseFormat: { type: 'json_object' },
-      });
+      }, provider);
 
       if (finishReason === 'length') {
         console.warn('[MotionGraphicsService] ⚠️ Vision response truncated');
@@ -303,7 +313,8 @@ class MotionGraphicsService {
     apiKey: string,
     vision: string,
     originalPrompt: string,
-    model: string
+    model: string,
+    provider: LlmProvider = 'openrouter'
   ): Promise<Record<string, unknown> | null> {
     try {
 
@@ -315,9 +326,9 @@ class MotionGraphicsService {
         { role: 'user', content: planningInput },
       ], {
         temperature: 0.7,
-        maxTokens: 65536,
+        maxTokens: 131072,
         responseFormat: { type: 'json_object' },
-      });
+      }, provider);
 
       if (finishReason === 'length') {
         console.warn('[MotionGraphicsService] ⚠️ Plan response truncated');
@@ -464,7 +475,7 @@ class MotionGraphicsService {
   /**
    * Detect skills with optional AI fallback
    */
-  async detectSkills(apiKey: string, prompt: string, model: string): Promise<string[]> {
+  async detectSkills(apiKey: string, prompt: string, model: string, provider: LlmProvider = 'openrouter'): Promise<string[]> {
     try {
       const keywordSkills = this.detectSkillsFromKeywords(prompt);
       
@@ -484,7 +495,7 @@ class MotionGraphicsService {
       ], {
         temperature: 0.1,
         maxTokens: 512,
-      });
+      }, provider);
 
       const result = this.parseAIJson<{ skills?: string[] }>(content, { skills: [] });
       const detectedSkills = result.skills || [];
@@ -505,7 +516,8 @@ class MotionGraphicsService {
   async streamGeneration(
     sendSSE: SSEWriter,
     apiKey: string,
-    request: GenerationRequest
+    request: GenerationRequest,
+    provider: LlmProvider = 'openrouter'
   ): Promise<void> {
     const {
       prompt,
@@ -544,7 +556,7 @@ class MotionGraphicsService {
       if ((isFollowUp || errorCorrection) && previouslyUsedSkills.length > 0) {
         detectedSkills = [...previouslyUsedSkills];
       } else {
-        detectedSkills = await this.detectSkills(apiKey, prompt, model);
+        detectedSkills = await this.detectSkills(apiKey, prompt, model, provider);
       }
       
       // Always include spring-physics
@@ -577,11 +589,11 @@ class MotionGraphicsService {
       
       if (!isFollowUp && !errorCorrection && this.isComplexPrompt(prompt)) {
         sendSSE({ type: 'stage', stage: 'analyzing', message: 'Understanding your vision...' });
-        const visionDescription = await this.analyzeVision(apiKey, prompt, model);
+        const visionDescription = await this.analyzeVision(apiKey, prompt, model, provider);
         
         if (visionDescription) {
           sendSSE({ type: 'stage', stage: 'planning', message: 'Creating detailed plan...' });
-          const plan = await this.createPlan(apiKey, visionDescription, prompt, model);
+          const plan = await this.createPlan(apiKey, visionDescription, prompt, model, provider);
           
           if (plan) {
             planContext = this.formatPlanContext(visionDescription, plan);
@@ -628,7 +640,7 @@ class MotionGraphicsService {
           detectedSkills,
           errorCorrection,
           baseSystemPrompt: systemPrompt,
-        });
+        }, provider);
         return;
       }
 
@@ -644,8 +656,8 @@ class MotionGraphicsService {
 
       for await (const content of streamOpenRouter(apiKey, model, messages, {
         temperature: 0.7,
-        maxTokens: 65536,
-      })) {
+        maxTokens: MG_CODE_GEN_MAX_TOKENS,
+      }, provider)) {
         accumulatedCode += content;
         sendSSE({
           type: 'code_chunk',
@@ -656,7 +668,7 @@ class MotionGraphicsService {
 
       // Step 6: Finalize (with syntax retry context so Babel failures auto-correct)
       await this.finalizeGeneration(sendSSE, accumulatedCode, detectedSkills, null, plannedDuration, {
-        apiKey, model, prompt, attempt: 0, baseSystemPrompt: systemPrompt,
+        apiKey, model, prompt, attempt: 0, baseSystemPrompt: systemPrompt, provider,
       });
 
     } catch (error) {
@@ -684,8 +696,9 @@ class MotionGraphicsService {
       errorCorrection?: GenerationRequest['errorCorrection'];
       baseSystemPrompt?: string;
       /** Syntax retry context — if present, finalizeGeneration can auto-retry Babel failures */
-      syntaxRetryContext?: { apiKey: string; model: string; prompt: string; attempt: number; baseSystemPrompt?: string };
-    }
+      syntaxRetryContext?: { apiKey: string; model: string; prompt: string; attempt: number; baseSystemPrompt?: string; provider?: LlmProvider };
+    },
+    provider: LlmProvider = 'openrouter'
   ): Promise<void> {
     const { prompt, model, currentCode, conversationHistory, detectedSkills, errorCorrection, baseSystemPrompt, syntaxRetryContext } = options;
 
@@ -723,8 +736,8 @@ class MotionGraphicsService {
         { role: 'user', content: editPrompt },
       ], {
         temperature: 0.3,
-        maxTokens: 65536,
-      });
+        maxTokens: MG_CODE_GEN_MAX_TOKENS,
+      }, provider);
 
       const result = this.parseAIJson<{
         type?: string;
@@ -749,8 +762,8 @@ class MotionGraphicsService {
               { role: 'user', content: fallbackPrompt },
             ], {
               temperature: 0.3,
-              maxTokens: 65536,
-            });
+              maxTokens: MG_CODE_GEN_MAX_TOKENS,
+            }, provider);
 
             const fallbackResult = this.parseAIJson<{
               type?: string;
@@ -921,7 +934,7 @@ class MotionGraphicsService {
     detectedSkills: string[],
     editType: string | null = null,
     duration: number | null = null,
-    _syntaxRetryContext?: { apiKey: string; model: string; prompt: string; attempt: number; baseSystemPrompt?: string }
+    _syntaxRetryContext?: { apiKey: string; model: string; prompt: string; attempt: number; baseSystemPrompt?: string; provider?: LlmProvider }
   ): Promise<void> {
     const MAX_SYNTAX_RETRIES = 2;
 

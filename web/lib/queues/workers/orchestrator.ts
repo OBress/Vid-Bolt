@@ -39,6 +39,7 @@ import { withGpuLock } from '@/lib/queues/gpu-lock';
 import { executeSegmentationShot } from '@/lib/services/segmentation-shot-executor';
 import { buildVideoGenerationWaves } from '@/lib/services/continuity-wave-planner';
 import { processContinuityWaveBatch } from '@/lib/av-script/i2v-processor';
+import { calculateTimeout, MODE_SWITCH_TIMEOUT_MS } from '@/lib/av-script/gpu-batch-generation';
 import type { VerifierResult } from '@/lib/queues/workers/verifier';
 import type {
   OrchestratorJobData,
@@ -1173,6 +1174,34 @@ async function executeProductionPhase(
   const videoShots = allVideoShots.filter(s =>
     videoGenerationWaves[0]?.shotIndices.includes(s.segment_index)
   );
+  // Always log wave composition — even single-wave runs — so we can diagnose
+  // why specific shots (e.g. shot-0, shot-1) may be missing from the main batch.
+  console.log(
+    `${LOG_PREFIX} [WAVE-DEBUG] allVideoShots (${allVideoShots.length}): [${allVideoShots.map(s => s.segment_index).join(', ')}]`
+  );
+  console.log(
+    `${LOG_PREFIX} [WAVE-DEBUG] ${videoGenerationWaves.length} wave(s): ` +
+    `${videoGenerationWaves.map(w => `wave ${w.index} [${w.shotIndices.join(', ')}]`).join(' | ')}`
+  );
+  console.log(
+    `${LOG_PREFIX} [WAVE-DEBUG] Main batch (wave 0) shots (${videoShots.length}): [${videoShots.map(s => s.segment_index).join(', ')}]`
+  );
+  // Explicitly flag shots missing from wave 0 (the main batch) — these will never get webhooks from the main video-gen job
+  const missingShotsFromMainBatch = allVideoShots.filter(s => !videoGenerationWaves[0]?.shotIndices.includes(s.segment_index));
+  if (missingShotsFromMainBatch.length > 0) {
+    console.warn(
+      `${LOG_PREFIX} [WAVE-DEBUG] ⚠️  ${missingShotsFromMainBatch.length} video shots NOT in main batch: [${missingShotsFromMainBatch.map(s => s.segment_index).join(', ')}] ` +
+      `— these are continuity-wave shots and will be handled after wave 0 completes.`
+    );
+    // Extra check: warn if shot-0 or shot-1 are excluded — they should always be in wave 0
+    const firstTwoMissing = missingShotsFromMainBatch.filter(s => s.segment_index <= 1);
+    if (firstTwoMissing.length > 0) {
+      console.error(
+        `${LOG_PREFIX} [WAVE-DEBUG] ❌ UNEXPECTED: shot(s) ${firstTwoMissing.map(s => s.segment_index).join(', ')} excluded from wave 0. ` +
+        `These shots have: ${firstTwoMissing.map(s => `shot-${s.segment_index}(continuity_from_previous=${s.continuity_from_previous}, synthesis_mode=${s.synthesis_mode}, angle_change="${s.angle_change}")`).join(', ')}`
+      );
+    }
+  }
   const i2vShots: typeof allVideoShots = [];
   if (videoGenerationWaves.length > 1) {
     console.log(
@@ -1180,6 +1209,7 @@ async function executeProductionPhase(
       `${videoGenerationWaves.map(w => `wave ${w.index} [${w.shotIndices.join(', ')}]`).join(' | ')}`
     );
   }
+
   const mgShots = shots.filter(s =>
     s.media_type === 'motiongraphic' ||
     resolveVisualTreatment(s) === 'mg_template' ||
@@ -1199,18 +1229,21 @@ async function executeProductionPhase(
       };
     }
 
-    const { generateMotionGraphic, buildPlaceholderAssets } = await import(
+    const { generateMotionGraphic, buildPlaceholderAssets, TemplateVarietyTracker } = await import(
       '@/lib/services/motion-graphics/pipeline-motion-graphics'
     );
     const { getRecommendedPlaceholderCount, inferTemplateType } = await import(
       '@/lib/services/motion-graphics/strategy'
     );
-    const { getOpenRouterApiKey } = await import('@/lib/services/api-keys');
-    const apiKey = await getOpenRouterApiKey(jobData.userId);
+    const { getLlmProviderConfig } = await import('@/lib/services/api-keys');
+    const { apiKey } = await getLlmProviderConfig(jobData.userId);
     const mgResults = new Map<number, string>();
     const persistentStateMap = new Map<string, PersistentMotionGraphicState>(
       Object.entries(persistentMotionGraphics)
     );
+    // Fix 5: Template diversity guard — prevents the same template appearing 2+ times
+    // in any 5-shot window. Instantiated once per video so the window spans the full batch.
+    const templateTracker = new TemplateVarietyTracker(5, 2);
 
     // Build style context from creative manifest for MG visual consistency
     // NOTE: LoRA is NOT included here — LoRA is for GPU image diffusion, not Remotion code gen
@@ -1263,6 +1296,17 @@ async function executeProductionPhase(
         requestedTemplateType: shot.template_type,
         persistentGraphicType: shot.persistent_graphic_type,
       });
+
+      // Fix 5: Diversity guard — if this template type has appeared >= 2x in the last 5 shots,
+      // route to a content-aware alternative so the video doesn't feel repetitive.
+      const diversifiedTemplate = templateTracker.isSaturated(recommendedTemplateType)
+        ? templateTracker.suggestAlternative(recommendedTemplateType, shot.visual_description || shot.summary || '')
+        : recommendedTemplateType;
+      if (diversifiedTemplate !== recommendedTemplateType) {
+        console.log(
+          `${LOG_PREFIX} MG shot ${shot.segment_index}: template '${recommendedTemplateType}' saturated → routing to '${diversifiedTemplate}'`
+        );
+      }
       const placeholderCount = getRecommendedPlaceholderCount(
         recommendedTemplateType,
         shot.image_count || 1
@@ -1310,7 +1354,7 @@ async function executeProductionPhase(
               ? `documentary template: ${shot.template_type}`
               : undefined;
       let activeMode = shot.mg_mode;
-      let activeTemplate = shot.template_type || recommendedTemplateType;
+      let activeTemplate = diversifiedTemplate;
 
       // Attempt 1: Full generation with rich prompt
       let success = false;
@@ -1340,6 +1384,8 @@ async function executeProductionPhase(
           if (persistentGraphic?.id && result.persistentGraphicState) {
             persistentStateMap.set(persistentGraphic.id, result.persistentGraphicState);
           }
+          // Record the actually-used template type so the diversity tracker stays accurate
+          templateTracker.record(activeTemplate);
           mgCompleted++;
           success = true;
         } else {
@@ -1753,7 +1799,10 @@ async function executeProductionPhase(
         const sourceUrl = currentImages[shotKey] || currentStock[shotKey];
 
         if (!sourceUrl) {
-          console.warn(`${LOG_PREFIX} Shot ${shot.segment_index}: No source image for creative edit, skipping`);
+          console.warn(
+            `${LOG_PREFIX} Shot ${shot.segment_index}: No source image for creative edit, skipping ` +
+            `(media_type=${shot.media_type}, treatment=${resolveVisualTreatment(shot)}, synthesis_mode=${shot.synthesis_mode ?? 'unset'})`
+          );
           return;
         }
 
@@ -1901,8 +1950,23 @@ async function executeProductionPhase(
       // Uses 2x leniency so timeouts only fire for genuinely stuck batches.
       // Mode switch buffer: 9 min total (image→video + possible OOM cleanup between)
       const gpuProcessingMs = Math.max(300_000, totalVideoDuration * 12 * 1_000 * queueMultiplier * 2);
-      const VIDEO_BATCH_TIMEOUT_MS = gpuProcessingMs + lockWaitBufferMs + 540_000;
-      console.log(`${LOG_PREFIX} Video batch timeout: ${Math.round(VIDEO_BATCH_TIMEOUT_MS / 1000)}s for ${totalVideoDuration.toFixed(1)}s of video (${videoShots.length} shots, ${queueDepth} jobs ahead → ${queueMultiplier}x multiplier, lock buffer: ${Math.round(lockWaitBufferMs / 1000)}s)`);
+      // The video-gen worker uses calculateTimeout() as a per-item cap, and since all items
+      // wait in parallel, a GPU-dropped shot causes the worker to block for the FULL batch
+      // timeout before it can resolve. The orchestrator must therefore wait LONGER than the
+      // worker's own ceiling, not shorter. A +30 min hard buffer guarantees we never fire
+      // waitUntilFinished() before the worker has had a chance to handle dropped shots.
+      const workerCeilingMs = calculateTimeout('video_generation', videoShots.length, {
+        totalVideoDurationSec: totalVideoDuration,
+      }) + MODE_SWITCH_TIMEOUT_MS;
+      const VIDEO_BATCH_TIMEOUT_MS = Math.max(
+        gpuProcessingMs + lockWaitBufferMs + 540_000,
+        workerCeilingMs + 1_800_000,  // +30 min hard buffer over worker ceiling
+      );
+      console.log(
+        `${LOG_PREFIX} Video batch timeout: ${Math.round(VIDEO_BATCH_TIMEOUT_MS / 1000)}s ` +
+        `(worker ceiling: ${Math.round(workerCeilingMs / 1000)}s, formula: ${Math.round((gpuProcessingMs + lockWaitBufferMs + 540_000) / 1000)}s) ` +
+        `for ${totalVideoDuration.toFixed(1)}s of video (${videoShots.length} shots, ${queueDepth} jobs ahead → ${queueMultiplier}x multiplier, lock buffer: ${Math.round(lockWaitBufferMs / 1000)}s)`
+      );
 
       // -----------------------------------------------------------------------
       // STREAMING VERIFICATION: Subscribe to per-shot completions BEFORE

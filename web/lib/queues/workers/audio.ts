@@ -2,6 +2,12 @@
  * Audio Workflow Worker
  * ============================================================================
  * BullMQ worker for TTS audio generation.
+ *
+ * Pipeline (Inworld TTS):
+ *   1. Split script into chunks
+ *   2. Optimize chunks for speech (Gemini 3 Flash, Inworld-only)
+ *   3. Generate TTS + upload per chunk
+ *   4. Finalize metadata
  */
 
 import { Job, Processor } from 'bullmq';
@@ -16,6 +22,7 @@ import {
 } from '@/lib/queues/shared';
 import { CostTracker } from '@/lib/queues/cost-tracker';
 import { CancellationError, checkCancelled } from '@/lib/queues/cancellation';
+import type { TtsOptimizationContext } from '@/lib/services/tts-text-optimizer';
 
 // ============================================================================
 // JOB DATA INTERFACE
@@ -36,10 +43,17 @@ export interface AudioJobData {
     similarityBoost?: number;
     temperature?: number;
   };
+  /**
+   * Project style context used by the TTS text optimizer.
+   * Only consumed when voiceProvider === 'inworld'.
+   * If omitted, optimization is skipped and the raw script is used.
+   */
+  ttsOptimizationContext?: TtsOptimizationContext;
 }
 
 const AUDIO_STEP_ORDER = {
   SPLIT_TEXT: 1,
+  OPTIMIZE_TEXT: 5,  // Inworld-only: LLM-based speech text optimization
   TTS_BASE: 10,
   UPLOAD_BASE: 100,
   FINALIZE: 200,
@@ -59,7 +73,7 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
 
   try {
     // Cost tracking for Step 4 (Audio/TTS)
-    const costTracker = new CostTracker(4);
+    const costTracker = new CostTracker(4, userId);
 
     // Link task to video project (skip in closed-loop — orchestrator manages this)
     if (!isClosedLoop) {
@@ -80,23 +94,77 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
     }
 
     // Step 1: Split script into chunks
-    const stepId = !isClosedLoop ? await addTaskStep(taskId, 'audio_generation', 'Split Script', AUDIO_STEP_ORDER.SPLIT_TEXT) : null;
+    const splitStepId = !isClosedLoop ? await addTaskStep(taskId, 'audio_generation', 'Split Script', AUDIO_STEP_ORDER.SPLIT_TEXT) : null;
     if (!isClosedLoop) await updateTaskStatus(taskId, { current_step: 'Splitting script into chunks...', progress_percent: 10 });
 
     const { splitTextIntoChunks, getChunkStats } = await import('@/lib/utils/text-chunking');
-    const chunks = splitTextIntoChunks(script, 200);
+    let chunks = splitTextIntoChunks(script, 200);
     const stats = getChunkStats(chunks);
 
     console.log(`[Audio] Split script into ${stats.totalChunks} chunks, estimated duration: ${stats.estimatedTotalDuration}s`);
-    if (stepId) await completeStep(taskId, stepId);
+    if (splitStepId) await completeStep(taskId, splitStepId);
 
-    // Step 2: Generate TTS and upload each chunk
+    // Step 2 (Inworld only): Optimize chunks for speech delivery
+    // Uses Gemini 3 Flash to apply register-aware Inworld TTS optimizations:
+    // emphasis injection, pacing punctuation, SSML breaks, number normalization.
+    // Fully non-blocking — failures fall back to raw text per-chunk.
+    const chunkOriginalTexts: Map<number, string> = new Map();
+
+    if (voiceProvider === 'inworld' && job.data.ttsOptimizationContext) {
+      const optimizeStepId = !isClosedLoop
+        ? await addTaskStep(taskId, 'audio_generation', 'Optimize Script for Speech', AUDIO_STEP_ORDER.OPTIMIZE_TEXT)
+        : null;
+
+      if (!isClosedLoop) {
+        await updateTaskStatus(taskId, {
+          current_step: 'Optimizing script for speech delivery...',
+          progress_percent: 12,
+        });
+      }
+
+      try {
+        const { optimizeChunksForInworldTts } = await import('@/lib/services/tts-text-optimizer');
+        const optimized = await optimizeChunksForInworldTts(
+          userId,
+          chunks,
+          job.data.ttsOptimizationContext,
+          async (done, total) => {
+            if (!isClosedLoop) {
+              await updateTaskStatus(taskId, {
+                current_step: `Optimizing speech text... (${done}/${total})`,
+                progress_percent: 12 + Math.round((done / total) * 3), // 12% → 15%
+              });
+            }
+          }
+        );
+
+        // Replace chunk texts with optimized versions; stash originals for metadata
+        chunks = chunks.map((chunk, i) => {
+          const opt = optimized[i];
+          chunkOriginalTexts.set(chunk.index, opt.originalText);
+          return { ...chunk, text: opt.text, charCount: opt.charCount };
+        });
+
+        const optimizedCount = optimized.filter(o => o.wasOptimized).length;
+        console.log(`[Audio] TTS optimization complete: ${optimizedCount}/${chunks.length} chunks transformed`);
+        if (optimizeStepId) await completeStep(taskId, optimizeStepId);
+      } catch (optError) {
+        // Non-blocking — log and continue with raw chunks
+        console.warn('[Audio] TTS optimization step failed (non-blocking), using raw script:', optError);
+        if (optimizeStepId) await failStep(taskId, optimizeStepId, String(optError));
+      }
+    } else if (voiceProvider === 'inworld' && !job.data.ttsOptimizationContext) {
+      console.log('[Audio] No ttsOptimizationContext provided — skipping TTS optimization step');
+    }
+
+    // Step 3: Generate TTS and upload each chunk
     const uploadedChunks: Array<{
       chunkIndex: number;
       url: string;
       durationSeconds: number;
       wordTimestamps?: WordTimestamp[];
       text?: string;
+      originalText?: string;
     }> = [];
 
     const failedChunkErrors: string[] = [];
@@ -193,6 +261,8 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
           durationSeconds: ttsResult.durationSeconds,
           wordTimestamps: ttsResult.wordTimestamps,
           text: chunk.text,
+          // Preserve the original (pre-optimization) text for debugging/re-gen
+          originalText: chunkOriginalTexts.get(chunk.index),
         });
         console.log(`[Audio] Chunk ${i + 1}: complete (${Date.now() - chunkStart}ms total)`);
       } catch (error) {
@@ -233,6 +303,8 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
           duration_seconds: c.durationSeconds,
           word_timestamps: c.wordTimestamps,
           text: c.text,
+          // Preserved for debugging: what was sent vs the raw script text
+          original_text: c.originalText ?? null,
         })),
         total_duration_seconds: totalDuration,
         final_audio: primaryAudioUrl,
@@ -268,9 +340,30 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
       });
     }
 
-    // Save cost data (TTS character count)
-    costTracker.setTtsUsage(script.length, voiceModel || voiceName || 'inworld-tts-1.5-max');
+    // Save cost data (TTS character count + emit cost_events row)
+    const ttsModelKey = voiceModel || voiceName || 'inworld-tts-1.5-max';
+    costTracker.setTtsUsage(script.length, ttsModelKey);
     await costTracker.save(videoId);
+
+    // Emit dedicated TTS cost event
+    try {
+      const { emitCostEvent } = await import('@/lib/costs/emit-cost-event');
+      const { getTtsPricePerChar } = await import('@/lib/costs/pricing');
+      const pricePerChar = getTtsPricePerChar(ttsModelKey);
+      const ttsAmountUsd = script.length * pricePerChar;
+      await emitCostEvent({
+        userId,
+        videoId,
+        category: 'tts',
+        service: 'inworld_tts',
+        subLabel: ttsModelKey,
+        amountUsd: ttsAmountUsd,
+        rawUnits: { chars: script.length },
+        isEstimated: false,
+      });
+    } catch (costErr) {
+      console.warn('[Audio] TTS cost event emission failed (non-blocking):', costErr);
+    }
 
     // Update video project
     const { updateVideoContent } = await import('@/lib/services/video-service');
@@ -284,6 +377,7 @@ export const audioProcessor: Processor<AudioJobData> = async (job: Job<AudioJobD
           duration_seconds: c.durationSeconds,
           wordTimestamps: c.wordTimestamps,
           text: c.text,
+          original_text: c.originalText ?? null,
         }))
       }
     });

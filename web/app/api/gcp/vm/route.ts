@@ -100,8 +100,23 @@ export async function POST(req: NextRequest) {
             updated_at: new Date().toISOString()
         }, { onConflict: 'user_id' });
         
+        // Track VM provisioning as session start
+        try {
+          const { openVmSession } = await import('@/lib/costs/close-vm-session');
+          await openVmSession(userId);
+        } catch (costErr) {
+          console.warn('[GCP VM] Failed to open cost session (non-blocking):', costErr);
+        }
+        
         result = { status: 'QUEUED', jobId: job.id };
     } else if (action === "stop") {
+        // Record session cost BEFORE stopping
+        try {
+          const { closeVmSession } = await import('@/lib/costs/close-vm-session');
+          await closeVmSession(userId);
+        } catch (costErr) {
+          console.warn('[GCP VM] Failed to close cost session (non-blocking):', costErr);
+        }
         result = await stopNode(gcpToken, projectId);
         await adminDb.from("user_gcp_config").update({ status: 'STOPPING' }).eq('user_id', userId);
     } else if (action === "start") {
@@ -111,6 +126,13 @@ export async function POST(req: NextRequest) {
             status: 'STAGING',
             last_gpu_activity_at: new Date().toISOString()
         }).eq('user_id', userId);
+        // Track new session start
+        try {
+          const { openVmSession } = await import('@/lib/costs/close-vm-session');
+          await openVmSession(userId);
+        } catch (costErr) {
+          console.warn('[GCP VM] Failed to open cost session (non-blocking):', costErr);
+        }
     } else if (action === "status") {
         try {
           result = await getNodeStatus(gcpToken, projectId);

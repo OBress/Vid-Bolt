@@ -1,114 +1,215 @@
 /**
- * Analytics Cost API
- * GET — Aggregates costData from video_projects.metadata for the current user
+ * Analytics Costs API
+ * ============================================================================
+ * Returns aggregated cost data for the authenticated user from the
+ * cost_events ledger table.
+ *
+ * Query params:
+ *   ?period=7d|30d|90d|all   (default: 30d)
+ *   ?videoId=uuid             (optional — filter to a specific video)
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
+import {
+  CATEGORY_LABELS,
+  CATEGORY_COLORS,
+  CATEGORY_ICONS,
+  type CostCategory,
+} from '@/lib/costs/pricing';
+import { VM_HOURLY_RATE_USD, VM_DAILY_FLAT_RATE_USD } from '@/lib/costs/pricing';
 
-interface CostEntry {
+// ============================================================================
+// TYPES
+// ============================================================================
+
+interface CostEvent {
+  id: string;
+  category: string;
   service: string;
-  model?: string;
-  cost: number;
-  tokens?: number;
-  calls?: number;
+  sub_label: string | null;
+  amount_usd: number;
+  raw_units: Record<string, number> | null;
+  is_estimated: boolean;
+  occurred_at: string;
+  video_id: string | null;
 }
 
-interface CostData {
-  totalCost?: number;
-  entries?: CostEntry[];
-  steps?: Record<string, { totalCost: number; entries: CostEntry[] }>;
-}
+// ============================================================================
+// HANDLER
+// ============================================================================
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
 
-  // Get all video projects with costData
-  const { data: projects, error } = await supabase
-    .from('video_projects')
-    .select('id, name, status, created_at, metadata')
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(req.url);
+  const period = searchParams.get('period') || '30d';
+  const videoIdFilter = searchParams.get('videoId');
+
+  // Compute date range
+  const now = new Date();
+  let sinceDate: Date | null = null;
+  if (period === '7d') sinceDate = new Date(now.getTime() - 7 * 86400000);
+  else if (period === '30d') sinceDate = new Date(now.getTime() - 30 * 86400000);
+  else if (period === '90d') sinceDate = new Date(now.getTime() - 90 * 86400000);
+  // 'all' → no date filter
+
+  const serviceClient = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
+  // Build cost_events query
+  let query = serviceClient
+    .from('cost_events')
+    .select('id, category, service, sub_label, amount_usd, raw_units, is_estimated, occurred_at, video_id')
     .eq('user_id', user.id)
-    .not('metadata', 'is', null)
-    .order('created_at', { ascending: false });
+    .order('occurred_at', { ascending: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (sinceDate) {
+    query = query.gte('occurred_at', sinceDate.toISOString());
+  }
+  if (videoIdFilter) {
+    query = query.eq('video_id', videoIdFilter);
+  }
 
-  // Aggregate cost data
-  let totalCostAllProjects = 0;
-  const costByService: Record<string, number> = {};
-  const costByModel: Record<string, number> = {};
-  const projectCosts: Array<{
-    id: string;
-    name: string;
-    status: string;
-    created_at: string;
-    totalCost: number;
-    entries: CostEntry[];
-  }> = [];
+  const { data: events, error: eventsError } = await query;
 
-  // Cost trend by date
-  const costByDate: Record<string, number> = {};
+  if (eventsError) {
+    console.error('[API /analytics/costs]', eventsError.message);
+    return NextResponse.json({ error: 'Failed to fetch cost events' }, { status: 500 });
+  }
 
-  for (const project of projects || []) {
-    const costData = (project.metadata as Record<string, unknown>)?.costData as CostData | undefined;
-    if (!costData) continue;
+  const typedEvents: CostEvent[] = (events || []).map((e: any) => ({
+    ...e,
+    amount_usd: Number(e.amount_usd),
+  }));
 
-    const projectTotal = costData.totalCost || 0;
-    totalCostAllProjects += projectTotal;
+  // ---- Breakdown by category ----
+  const categoryTotals: Record<string, number> = {};
+  for (const ev of typedEvents) {
+    categoryTotals[ev.category] = (categoryTotals[ev.category] || 0) + ev.amount_usd;
+  }
 
-    // Date bucket
-    const dateKey = project.created_at.split('T')[0];
-    costByDate[dateKey] = (costByDate[dateKey] || 0) + projectTotal;
+  const totalCostUsd = Object.values(categoryTotals).reduce((a, b) => a + b, 0);
 
-    // Collect all entries from steps
-    const allEntries: CostEntry[] = [];
-    if (costData.steps) {
-      for (const step of Object.values(costData.steps)) {
-        for (const entry of step.entries || []) {
-          allEntries.push(entry);
-          costByService[entry.service] = (costByService[entry.service] || 0) + entry.cost;
-          if (entry.model) {
-            costByModel[entry.model] = (costByModel[entry.model] || 0) + entry.cost;
-          }
-        }
-      }
-    } else if (costData.entries) {
-      for (const entry of costData.entries) {
-        allEntries.push(entry);
-        costByService[entry.service] = (costByService[entry.service] || 0) + entry.cost;
-        if (entry.model) {
-          costByModel[entry.model] = (costByModel[entry.model] || 0) + entry.cost;
-        }
+  const breakdown = (Object.entries(categoryTotals) as [CostCategory, number][])
+    .sort((a, b) => b[1] - a[1])
+    .map(([category, amountUsd]) => ({
+      category,
+      label: CATEGORY_LABELS[category] ?? category,
+      color: CATEGORY_COLORS[category] ?? 'hsl(0,0%,50%)',
+      icon: CATEGORY_ICONS[category] ?? '💲',
+      amountUsd,
+      pct: totalCostUsd > 0 ? (amountUsd / totalCostUsd) * 100 : 0,
+    }));
+
+  // ---- By model/service (sorted by cost) ----
+  const modelTotals: Record<string, { service: string; amountUsd: number }> = {};
+  for (const ev of typedEvents) {
+    const key = ev.sub_label || ev.service;
+    if (!modelTotals[key]) modelTotals[key] = { service: ev.service, amountUsd: 0 };
+    modelTotals[key].amountUsd += ev.amount_usd;
+  }
+
+  const byModel = Object.entries(modelTotals)
+    .map(([label, { service, amountUsd }]) => ({ label, service, amountUsd }))
+    .sort((a, b) => b.amountUsd - a.amountUsd)
+    .slice(0, 15);
+
+  // ---- Daily trend ----
+  const trendMap: Record<string, Record<string, number>> = {};
+  const categories = Object.keys(CATEGORY_LABELS) as CostCategory[];
+
+  for (const ev of typedEvents) {
+    const dateKey = ev.occurred_at.slice(0, 10); // YYYY-MM-DD
+    if (!trendMap[dateKey]) {
+      trendMap[dateKey] = Object.fromEntries(categories.map((c) => [c, 0]));
+    }
+    trendMap[dateKey][ev.category] = (trendMap[dateKey][ev.category] || 0) + ev.amount_usd;
+  }
+
+  const trend = Object.entries(trendMap)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, cats]) => ({ date, ...cats }));
+
+  // ---- Per-video breakdown ----
+  const videoIdSet = new Set(typedEvents.map((e) => e.video_id).filter(Boolean));
+  let byVideo: any[] = [];
+
+  if (videoIdSet.size > 0) {
+    const { data: projects } = await serviceClient
+      .from('video_projects')
+      .select('id, name, status, created_at')
+      .in('id', Array.from(videoIdSet) as string[]);
+
+    const videoTotals: Record<string, number> = {};
+    for (const ev of typedEvents) {
+      if (ev.video_id) {
+        videoTotals[ev.video_id] = (videoTotals[ev.video_id] || 0) + ev.amount_usd;
       }
     }
 
-    projectCosts.push({
-      id: project.id,
-      name: project.name,
-      status: project.status,
-      created_at: project.created_at,
-      totalCost: projectTotal,
-      entries: allEntries,
-    });
+    byVideo = (projects || [])
+      .map((p: any) => ({
+        videoId: p.id,
+        name: p.name,
+        status: p.status,
+        createdAt: p.created_at,
+        amountUsd: videoTotals[p.id] || 0,
+      }))
+      .sort((a: any, b: any) => b.amountUsd - a.amountUsd);
   }
 
-  // Sort cost trend by date
-  const costTrend = Object.entries(costByDate)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, cost]) => ({ date, cost: parseFloat(cost.toFixed(4)) }));
+  // ---- Live GCP VM data ----
+  const { data: gcpConfig } = await serviceClient
+    .from('user_gcp_config')
+    .select('vm_session_started_at, vm_provisioned_at, total_vm_hours_run, total_vm_days_owned, status')
+    .eq('user_id', user.id)
+    .single();
+
+  const sessionStartedAt = gcpConfig?.vm_session_started_at ?? null;
+  const vmProvisionedAt = gcpConfig?.vm_provisioned_at ?? null;
+
+  // Live estimate for the current running session (server-side at this moment)
+  let liveEstimateUsd = 0;
+  if (sessionStartedAt && gcpConfig?.status === 'RUNNING') {
+    const sessionMs = now.getTime() - new Date(sessionStartedAt).getTime();
+    liveEstimateUsd = (sessionMs / 3600000) * VM_HOURLY_RATE_USD;
+  }
+
+  // Total historical cost
+  const historicalHours = gcpConfig?.total_vm_hours_run ?? 0;
+  const historicalDays = gcpConfig?.total_vm_days_owned ?? 0;
+  const totalHistoricalCostUsd =
+    historicalHours * VM_HOURLY_RATE_USD + historicalDays * VM_DAILY_FLAT_RATE_USD;
+
+  const gcpVm = {
+    sessionStartedAt,
+    vmProvisionedAt,
+    vmStatus: gcpConfig?.status ?? null,
+    totalHistoricalHours: historicalHours,
+    totalHistoricalDaysOwned: historicalDays,
+    totalHistoricalCostUsd,
+    liveEstimateUsd,
+  };
 
   return NextResponse.json({
-    totalCost: parseFloat(totalCostAllProjects.toFixed(4)),
-    projectCount: projectCosts.length,
-    costByService: Object.entries(costByService)
-      .map(([service, cost]) => ({ service, cost: parseFloat(cost.toFixed(4)) }))
-      .sort((a, b) => b.cost - a.cost),
-    costByModel: Object.entries(costByModel)
-      .map(([model, cost]) => ({ model, cost: parseFloat(cost.toFixed(4)) }))
-      .sort((a, b) => b.cost - a.cost),
-    costTrend,
-    projects: projectCosts.slice(0, 50), // Top 50 most recent
+    totalCostUsd,
+    periodStart: typedEvents.length > 0 ? typedEvents[typedEvents.length - 1].occurred_at : null,
+    periodEnd: typedEvents.length > 0 ? typedEvents[0].occurred_at : null,
+    eventCount: typedEvents.length,
+    breakdown,
+    byModel,
+    trend,
+    byVideo,
+    gcpVm,
   });
 }

@@ -149,6 +149,11 @@ export default function NicheNetworkGraph({
   const [layoutStable, setLayoutStable] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
+  // Bumped when thumbnail images finish loading so the canvas repaints.
+  // Without this, images that load after the simulation cools down would
+  // never appear because the force-graph stops redrawing frames.
+  const [imageLoadGen, setImageLoadGen] = useState(0);
+  const imgLoadBatchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Use ref instead of state for hover — avoids full React re-render on every
   // mouse move, which was causing the graph to rebuild and "glitch".
   const hoveredNodeRef = useRef<string | null>(null);
@@ -168,16 +173,48 @@ export default function NicheNetworkGraph({
     return () => window.removeEventListener("resize", updateDimensions);
   }, []);
 
-  // Preload thumbnail images
+  // Preload thumbnail images.
+  // • Retries images that previously failed (e.g. stale HMR cache).
+  // • Triggers a batched canvas repaint so images that load after the
+  //   simulation cools down still appear.
   useEffect(() => {
     for (const node of nodes) {
-      if (node.thumbnail_url && !imageCache.current.has(node.channel_id)) {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.src = node.thumbnail_url;
-        imageCache.current.set(node.channel_id, img);
-      }
+      if (!node.thumbnail_url) continue;
+
+      const cached = imageCache.current.get(node.channel_id);
+      // Skip only if the image already loaded successfully
+      if (cached && cached.complete && cached.naturalWidth > 0) continue;
+
+      const img = new Image();
+      // NOTE: Do NOT set crossOrigin = "anonymous" here.
+      // YouTube's yt3.ggpht.com CDN may not serve CORS headers, which
+      // would block the load entirely.  Without the attribute the image
+      // loads normally; the only side-effect is a "tainted" canvas,
+      // which is harmless because we never call toDataURL/getImageData.
+      img.onload = () => {
+        // Batch repaint triggers — many images may load in quick succession
+        if (imgLoadBatchTimer.current) clearTimeout(imgLoadBatchTimer.current);
+        imgLoadBatchTimer.current = setTimeout(() => {
+          setImageLoadGen((g) => g + 1);
+          imgLoadBatchTimer.current = null;
+        }, 300);
+      };
+      img.onerror = () => {
+        console.warn(
+          `[NicheGraph] Failed to load thumbnail for ${node.channel_id}:`,
+          node.thumbnail_url,
+        );
+      };
+      img.src = node.thumbnail_url;
+      imageCache.current.set(node.channel_id, img);
     }
+
+    return () => {
+      if (imgLoadBatchTimer.current) {
+        clearTimeout(imgLoadBatchTimer.current);
+        imgLoadBatchTimer.current = null;
+      }
+    };
   }, [nodes]);
 
   // Build graph data — memoized to prevent re-creating on every render.
@@ -209,15 +246,17 @@ export default function NicheNetworkGraph({
       if (isUserChannel) userChannelId = n.channel_id;
 
       // Size: user's channel = largest, others scaled by similarity
+      // Sizes must be large enough to remain visible bubbles after zoomToFit
+      // compresses the ~600-unit layout spread into the viewport.
       const baseSize = isUserChannel
-        ? 12
-        : Math.max(4, n.similarity_score * 10);
+        ? 35
+        : Math.max(12, n.similarity_score * 30);
 
       // Radial distance: higher similarity → closer to center
       // Range: ~80 (sim=1.0) to ~350 (sim=0.0)
       const distance = isUserChannel
         ? 0
-        : 80 + (1 - n.similarity_score) * 270;
+        : 150 + (1 - n.similarity_score) * 450;
 
       // Angular position: base cluster angle + small offset per node
       // so nodes within a cluster fan out slightly
@@ -413,8 +452,10 @@ export default function NicheNetworkGraph({
         }
       }
     },
-    // Only depends on selectedNodeId — hoveredNodeRef is a ref, not state
-    [selectedNodeId]
+    // imageLoadGen triggers a canvas repaint when thumbnails finish loading.
+    // hoveredNodeRef is a ref, not state — does not need to be a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedNodeId, imageLoadGen]
   );
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -456,7 +497,7 @@ export default function NicheNetworkGraph({
     );
 
     // 2. Charge repulsion — pushes all nodes apart globally
-    fg.d3Force('charge')?.strength(-200).distanceMax(400);
+    fg.d3Force('charge')?.strength(-400).distanceMax(600);
 
     // 3. Link force — VERY weak, only for visual structure
     // All ~170 edges shown, so must be weak to not override positioning
@@ -546,10 +587,15 @@ export default function NicheNetworkGraph({
         linkDirectionalParticleSpeed={0.005}
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
-        cooldownTicks={150}
+        cooldownTicks={200}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
-        warmupTicks={80}
+        // NOTE: warmupTicks was removed intentionally.
+        // Warmup runs N simulation ticks BEFORE our useEffect configures
+        // custom forces (clusterX/Y, removing center force).  During those
+        // ticks, the default d3.forceCenter collapses everything to (0,0).
+        // Nodes already start at computed initX/initY near their targets,
+        // so the correct forces settle them quickly without warmup.
         onEngineStop={() => setLayoutStable(true)}
       />
 

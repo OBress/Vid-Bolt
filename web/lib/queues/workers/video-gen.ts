@@ -81,6 +81,21 @@ function getResolvedPromptForShot(
     || `Video for segment ${shot.segment_index as number}`;
 }
 
+/**
+ * Amend a visual prompt for a retry by appending verifier corrections as
+ * natural-language prose. The original prompt is kept intact — its scene
+ * description, style language, and entity context are all still needed.
+ *
+ * @param fullPrompt  - The original resolved visual prompt (unchanged)
+ * @param corrections - Parsed verifier correction strings (SIMPLIFY_PROMPT stripped out)
+ * @returns Amended prompt with corrections appended as plain sentences
+ */
+function amendPromptForRetry(fullPrompt: string, corrections: string[]): string {
+  if (corrections.length === 0) return fullPrompt;
+  const amendment = corrections.join('. ');
+  return `${fullPrompt.trim().replace(/\.$/, '')}. ${amendment}.`;
+}
+
 export const videoGenProcessor: Processor<VideoGenJobData> = async (
   job: Job<VideoGenJobData>
 ) => {
@@ -93,7 +108,7 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
 
-  const costTracker = new CostTracker(6); // Step 6 in the pipeline
+  const costTracker = new CostTracker(6, userId); // Step 6 in the pipeline
 
   try {
     const result = await costTracker.run(async () => {
@@ -200,29 +215,36 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
         const segmentIndex = s.segment_index as number;
         const keyframeUrl = generatedImages[`shot-${segmentIndex}`];
 
-        // For retries, check if the verifier suggested prompt simplification
-        // (catastrophic failures like frozen/corrupted video are often caused by overly complex prompts)
-        let feedbackPrefix = '';
-        let shouldSimplify = false;
+        // Build verifier corrections for all retry types.
+        // The corrections are the semicolon-delimited strings after SIMPLIFY_PROMPT.
+        // They are appended to the full prompt as plain prose — no brackets, no truncation.
+        let corrections: string[] = [];
         if (isBatchRetry && retryFeedbackMap?.[segmentIndex]) {
           const feedback = retryFeedbackMap[segmentIndex];
-          shouldSimplify = feedback.includes('SIMPLIFY_PROMPT');
-          feedbackPrefix = shouldSimplify ? '' : `[RETRY GUIDANCE: ${feedback}] `;
+          corrections = feedback
+            .split(';')
+            .map((s: string) => s.trim())
+            .filter((s: string) => s && s !== 'SIMPLIFY_PROMPT');
         } else if (isSingleShotRetry && previousFeedback) {
-          shouldSimplify = previousFeedback.includes('SIMPLIFY_PROMPT');
-          feedbackPrefix = shouldSimplify ? '' : `[RETRY GUIDANCE: ${previousFeedback}] `;
+          corrections = previousFeedback
+            .split(';')
+            .map((s: string) => s.trim())
+            .filter((s: string) => s && s !== 'SIMPLIFY_PROMPT');
         }
 
-        // Build the visual prompt — simplify if verifier flagged prompt complexity as the issue
+        // Build the visual prompt: keep the full original prompt, append corrections.
+        // enrichLtx2Prompt() will then wrap this with the style prefix, camera motion,
+        // pacing hints, and style safety suffix as usual.
         const fullPrompt = getResolvedPromptForShot(metadata, s);
         let visualPrompt: string;
-        if (shouldSimplify) {
-          // Strip to first sentence only — removes complex lighting/mood/camera details
-          const firstSentence = fullPrompt.split(/[.!?]/)[0]?.trim() || fullPrompt;
-          visualPrompt = firstSentence;
-          console.log(`${LOG_PREFIX} Shot ${segmentIndex}: Simplified prompt for retry (was ${fullPrompt.length} chars → ${visualPrompt.length} chars)`);
+        if (isRetry && corrections.length > 0) {
+          visualPrompt = amendPromptForRetry(fullPrompt, corrections);
+          console.log(
+            `${LOG_PREFIX} Shot ${segmentIndex}: Appending ${corrections.length} verifier correction(s). ` +
+            `Prompt: ${fullPrompt.length} chars → ${visualPrompt.length} chars.`,
+          );
         } else {
-          visualPrompt = feedbackPrefix + fullPrompt;
+          visualPrompt = fullPrompt;
         }
 
         // Build neighbor context for style continuity across adjacent shots
@@ -244,12 +266,25 @@ export const videoGenProcessor: Processor<VideoGenJobData> = async (
           start_frame_url: keyframeUrl, // Will be undefined for T2V shots
           visual_elements: s.visual_elements as import('@/types/video').RoutingTag[] | undefined,
           narration_text: s.text as string | undefined,
-          neighbor_context: shouldSimplify ? undefined : (neighborCtx.compactNote || undefined),
+          neighbor_context: neighborCtx.compactNote || undefined,
         };
       });
 
       const withKeyframe = gpuShots.filter(s => s.start_frame_url).length;
+      const t2vShots = gpuShots.filter(s => !s.start_frame_url && s.synthesis_mode !== 'I2V');
+      const i2vMissingFrame = gpuShots.filter(s => !s.start_frame_url && s.synthesis_mode === 'I2V');
       console.log(`${LOG_PREFIX} ${withKeyframe}/${gpuShots.length} video shots have keyframe images (FF2V mode)`);
+      if (t2vShots.length > 0) {
+        console.log(`${LOG_PREFIX} [KEYFRAME-DEBUG] ${t2vShots.length} T2V shots (no keyframe needed): [${t2vShots.map(s => s.segment_index).join(', ')}]`);
+      }
+      // ❌ Only flag I2V shots missing their start frame — these will be silently dropped by the GPU
+      if (i2vMissingFrame.length > 0) {
+        console.error(`${LOG_PREFIX} [KEYFRAME-DEBUG] ❌ ${i2vMissingFrame.length} I2V shot(s) have no start_frame_url — GPU will silently drop these: [${i2vMissingFrame.map(s => s.segment_index).join(', ')}]`);
+        for (const s of i2vMissingFrame) {
+          console.error(`${LOG_PREFIX} [KEYFRAME-DEBUG]   shot-${s.segment_index}: synthesis_mode=I2V, start_frame=MISSING`);
+        }
+      }
+
 
       // =====================================================================
       // STEP 3: Run GPU batch video generation

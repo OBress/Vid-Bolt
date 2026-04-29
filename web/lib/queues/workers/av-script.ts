@@ -10,7 +10,7 @@
 
 import { Job, Processor } from 'bullmq';
 import { getSupabaseServiceClient, updateTaskStatus, updateTaskOutput } from '@/lib/queues/shared';
-import { getOpenRouterApiKey, getUserApiKeys } from '@/lib/services/api-keys';
+import { getLlmProviderConfig, getUserApiKeys } from '@/lib/services/api-keys';
 import type { ShotForGpuGeneration } from '@/lib/av-script/gpu-batch-generation';
 import { CostTracker } from '@/lib/queues/cost-tracker';
 
@@ -149,7 +149,7 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
   console.log(`${logPrefix} Starting job ${job.id} for video ${videoId} (mode: ${mode})`);
 
   // Cost tracking for Step 5 (AV Script)
-  const costTracker = new CostTracker(5);
+  const costTracker = new CostTracker(5, userId);
 
   try {
     const result = await costTracker.run(async () => {
@@ -304,7 +304,42 @@ export const avScriptProcessor: Processor<AVScriptJobData> = async (job: Job<AVS
       // Full mode: Generate visual prompts
       console.log(`${logPrefix} Step 3: Generating visual prompts...`);
       const { generateVisualPrompts } = await import('@/lib/av-script/prompt-gen');
-      const shotsWithPrompts = await generateVisualPrompts(userId, segments);
+
+      // Fetch creative manifest AND full outline_assets for the Visual Bible injection.
+      // Both live in the same row — no extra DB call needed.
+      let creativeManifestContext: Record<string, unknown> | undefined;
+      let fullOutlineAssets: import('@/lib/av-script/prompt-gen').OutlineAssets | undefined;
+      try {
+        const { data: videoForManifest } = await supabase
+          .from('video_projects')
+          .select('creative_manifest, metadata')
+          .eq('id', videoId)
+          .single();
+        creativeManifestContext =
+          (videoForManifest?.creative_manifest as Record<string, unknown> | undefined)
+          || ((videoForManifest?.metadata as Record<string, unknown> | undefined)?.creative_manifest as Record<string, unknown> | undefined);
+        // Full AssetRegistry written by Step 1 outline generation
+        fullOutlineAssets = (videoForManifest?.metadata as Record<string, unknown> | undefined)?.outline_assets as
+          import('@/lib/av-script/prompt-gen').OutlineAssets | undefined;
+      } catch (_e) {
+        console.warn(`${logPrefix} Could not fetch project data for visual prompt generation — proceeding without style/entity bible`);
+      }
+
+      // Build CreativeManifestContext for the Visual Bible
+      const visualStyleCtx = creativeManifestContext
+        ? {
+            visualStyle: ((creativeManifestContext.style || {}) as Record<string, unknown>).visual_style as string | undefined,
+            colorPalette: ((creativeManifestContext.style || {}) as Record<string, unknown>).color_palette as string | undefined,
+            genre: creativeManifestContext.genre as string | undefined,
+            toneStyle: creativeManifestContext.tone as string | undefined,
+            masterCreativePrompt: creativeManifestContext.master_creative_prompt as string | undefined,
+          }
+        : undefined;
+
+      // Prefer full DB profiles; fall back to thin job.data stubs if outline_assets not stored
+      const assetsForBible = fullOutlineAssets || outlineAssets;
+
+      const shotsWithPrompts = await generateVisualPrompts(userId, segments, assetsForBible, visualStyleCtx);
       console.log(`${logPrefix} Generated ${shotsWithPrompts.filter(s => s.visual_prompt).length} visual prompts`);
       
       // Convert to ShotPart1 format for storage
@@ -740,20 +775,21 @@ export const avScriptPart2Processor: Processor<AVScriptPart2JobData> = async (jo
           });
         }
 
-        // Fetch user's OpenRouter API key (user DB → env var fallback) + model
+        // Fetch user's LLM provider config (user DB → env var fallback) + model
         const { generateMotionGraphic } = await import('@/lib/services/motion-graphics/pipeline-motion-graphics');
 
         let openrouterKey: string | undefined;
         let openrouterModel = 'google/gemini-3.1-pro-preview';
         try {
-          openrouterKey = await getOpenRouterApiKey(userId);
+          const providerConfig = await getLlmProviderConfig(userId);
+          openrouterKey = providerConfig.apiKey;
           // Also fetch model preference if user has one
           const userKeys = await getUserApiKeys(userId);
           if ((userKeys as any)?.openrouter_model) {
             openrouterModel = (userKeys as any).openrouter_model;
           }
         } catch (keyErr) {
-          console.error(`${logPrefix} Failed to get OpenRouter API key:`, keyErr);
+          console.error(`${logPrefix} Failed to get LLM API key:`, keyErr);
         }
 
         if (!openrouterKey) {

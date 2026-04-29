@@ -189,7 +189,7 @@ export async function stockMediaProcessor(
   const supabase = getSupabaseClient();
   
   // Cost tracking for Step 2 (Stock Media)
-  const costTracker = new CostTracker(2);
+  const costTracker = new CostTracker(2, userId);
   let serperSearchCount = 0;
   
   log.info(`Starting job ${job.id} for video ${videoId} (${level})`);

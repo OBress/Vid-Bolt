@@ -43,6 +43,10 @@ export interface ImageGenJobData {
   loraName?: string;
   /** Optional LoRA trigger words to prepend to image prompts */
   loraTriggerWords?: string;
+  /** Verifier feedback from the previous attempt (populated by orchestrator on retries) */
+  previousFeedback?: string;
+  /** Which attempt number this is (1-based); used for logging */
+  attempt?: number;
 }
 
 // ============================================================================
@@ -81,17 +85,26 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
     singleShotIndex,
     shotIndex,
     taskLifecycleOwner,
+    previousFeedback,
+    attempt,
   } = job.data;
   const requestedShotIndex = typeof singleShotIndex === 'number'
     ? singleShotIndex
     : shotIndex;
+
+  if (previousFeedback && requestedShotIndex !== undefined) {
+    console.log(
+      `${LOG_PREFIX} Shot ${requestedShotIndex} retry (attempt ${attempt ?? '?'}): ` +
+      `Feedback: "${previousFeedback.slice(0, 120)}..."`
+    );
+  }
   const updateOwnedTaskStatus = (
     updates: Parameters<typeof updateTaskStatus>[1]
   ) => updateTaskStatus(taskId, updates, { lifecycleOwner: taskLifecycleOwner });
 
   console.log(`${LOG_PREFIX} Starting for video ${videoId}`);
 
-  const costTracker = new CostTracker(5); // Step 5 in the pipeline
+  const costTracker = new CostTracker(5, userId); // Step 5 in the pipeline
 
   try {
     const result = await costTracker.run(async () => {
@@ -153,7 +166,26 @@ export const imageGenProcessor: Processor<ImageGenJobData> = async (
           return {
             segment_index: s.segment_index as number,
             media_type: 'image' as const,
-            visual_prompt: getResolvedPromptForShot(metadata, s),
+            visual_prompt: (() => {
+              const rawPrompt = getResolvedPromptForShot(metadata, s);
+              const isTargetShot = typeof requestedShotIndex === 'number' &&
+                (s.segment_index as number) === requestedShotIndex;
+
+              if (!isTargetShot || !previousFeedback) return rawPrompt;
+
+              // Append verifier corrections as natural-language amendments.
+              // Never truncate — the full prompt carries necessary style and scene context.
+              const corrections = previousFeedback
+                .split(';')
+                .map((s: string) => s.trim())
+                .filter((s: string) => s && s !== 'SIMPLIFY_PROMPT');
+              if (corrections.length === 0) return rawPrompt;
+              const amendment = corrections.join('. ');
+              console.log(
+                `${LOG_PREFIX} Shot ${s.segment_index as number}: Appending verifier corrections as amendment.`
+              );
+              return `${rawPrompt.trim().replace(/\.$/, '')}. ${amendment}.`;
+            })(),
             duration_seconds: (s.duration_seconds as number) || 5,
             start_frame_url: undefined,
             visual_elements: s.visual_elements as import('@/types/video').RoutingTag[] | undefined,

@@ -156,7 +156,15 @@ export function selectBestFitSalvage(
   const belowFloor = best.score < QUALITY_FLOOR || hardContractViolation;
 
   if (belowFloor) {
-    console.warn(`[BestFitSalvage] Shot ${shotIndex}: best score ${best.score.toFixed(1)} is below quality floor (${QUALITY_FLOOR}) — flagging for replacement`);
+    if (best.score < QUALITY_FLOOR) {
+      console.warn(
+        `[BestFitSalvage] Shot ${shotIndex}: best score ${best.score.toFixed(1)} is below quality floor (${QUALITY_FLOOR}) — flagging for replacement`
+      );
+    } else {
+      console.warn(
+        `[BestFitSalvage] Shot ${shotIndex}: score ${best.score.toFixed(1)} passes floor but hard contract violation detected — flagging for replacement`
+      );
+    }
   }
 
   // Build human-readable reason

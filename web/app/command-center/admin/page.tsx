@@ -2,10 +2,11 @@
 
 import React from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LayoutDashboard, Users, Wrench } from "lucide-react";
+import { LayoutDashboard, Users, Wrench, DollarSign } from "lucide-react";
 import { AnalyticsTab } from "@/components/features/admin/tabs/AnalyticsTab";
 import { UsersTab } from "@/components/features/admin/tabs/UsersTab";
 import { DevToolsTab } from "@/components/features/admin/tabs/DevToolsTab";
+import { PlatformCostsTab } from "@/components/features/admin/tabs/PlatformCostsTab";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
@@ -32,6 +33,12 @@ function AdminPageContent() {
       label: "Dev Tools",
       icon: Wrench,
       Component: DevToolsTab,
+    },
+    {
+      id: "platform-costs",
+      label: "Platform Costs",
+      icon: DollarSign,
+      Component: PlatformCostsTab,
     },
   ];
 

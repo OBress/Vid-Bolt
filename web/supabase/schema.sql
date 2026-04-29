@@ -696,11 +696,12 @@ COMMENT ON FUNCTION "public"."credit_gpu_hours"("p_user_id" "uuid", "p_hours" in
 
 CREATE OR REPLACE FUNCTION "public"."decrement_active_gpu_productions"("p_user_id" "uuid") RETURNS TABLE("new_count" integer, "should_shutdown" boolean)
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
 DECLARE
-  v_new_count INTEGER;
+  v_new_count          INTEGER;
   v_shutdown_requested BOOLEAN;
-  v_status TEXT;
+  v_status             TEXT;
 BEGIN
   -- Atomic decrement + read in a single UPDATE ... RETURNING
   UPDATE public.user_gcp_config
@@ -714,13 +715,13 @@ BEGIN
 
   -- If no row found, return safe defaults
   IF NOT FOUND THEN
-    new_count := 0;
+    new_count      := 0;
     should_shutdown := FALSE;
     RETURN NEXT;
     RETURN;
   END IF;
 
-  new_count := v_new_count;
+  new_count       := v_new_count;
   should_shutdown := (v_new_count = 0 AND v_shutdown_requested = TRUE AND v_status = 'RUNNING');
 
   -- If shutting down, clear the flag atomically
@@ -943,6 +944,7 @@ ALTER FUNCTION "public"."get_incomplete_videos"("p_user_id" "uuid") OWNER TO "po
 
 CREATE OR REPLACE FUNCTION "public"."get_request_role"() RETURNS "text"
     LANGUAGE "sql" STABLE
+    SET "search_path" TO ''
     AS $$
   SELECT COALESCE(
     nullif(current_setting('request.jwt.claim.role', true), ''),
@@ -963,14 +965,15 @@ COMMENT ON FUNCTION "public"."get_request_role"() IS 'Returns the JWT role claim
 
 CREATE OR REPLACE FUNCTION "public"."get_stock_media_by_entity"("p_video_id" "uuid", "p_entity_name" "text") RETURNS TABLE("id" "uuid", "r2_key" "text", "metadata" "jsonb")
     LANGUAGE "sql" STABLE
+    SET "search_path" TO ''
     AS $$
-  SELECT 
+  SELECT
     stock_media.id,
     stock_media.r2_key,
     stock_media.metadata
   FROM public.stock_media
-  WHERE 
-    stock_media.video_id = p_video_id
+  WHERE
+    stock_media.video_id    = p_video_id
     AND stock_media.entity_name = p_entity_name
   ORDER BY stock_media.created_at DESC
   LIMIT 1;
@@ -1191,6 +1194,7 @@ ALTER FUNCTION "public"."handle_updated_at"() OWNER TO "postgres";
 
 CREATE OR REPLACE FUNCTION "public"."increment_active_gpu_productions"("p_user_id" "uuid") RETURNS "void"
     LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
   UPDATE public.user_gcp_config
   SET active_gpu_productions = COALESCE(active_gpu_productions, 0) + 1
@@ -1654,6 +1658,7 @@ COMMENT ON FUNCTION "public"."protect_video_projects_sensitive_columns"() IS 'Bl
 
 CREATE OR REPLACE FUNCTION "public"."reset_active_gpu_productions"("p_user_id" "uuid", "p_count" integer DEFAULT 0) RETURNS "void"
     LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO ''
     AS $$
   UPDATE public.user_gcp_config
   SET active_gpu_productions = p_count
@@ -1693,6 +1698,7 @@ ALTER FUNCTION "public"."reset_payment_month"("target_user_id" "uuid", "target_m
 
 CREATE OR REPLACE FUNCTION "public"."update_render_jobs_updated_at"() RETURNS "trigger"
     LANGUAGE "plpgsql"
+    SET "search_path" TO ''
     AS $$
 BEGIN
   NEW.updated_at = now();
@@ -1811,6 +1817,7 @@ ALTER FUNCTION "public"."update_video_progress"("p_video_id" "uuid", "p_current_
 
 CREATE OR REPLACE FUNCTION "public"."update_video_project_state_updated_at"() RETURNS "trigger"
     LANGUAGE "plpgsql"
+    SET "search_path" TO ''
     AS $$
 BEGIN
   NEW.updated_at = NOW();
@@ -1847,6 +1854,20 @@ $$;
 
 
 ALTER FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "target_month_date" "text", "proof_url" "text") OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."admin_platform_costs" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "month_date" "date" NOT NULL,
+    "category" "text" NOT NULL,
+    "label" "text" NOT NULL,
+    "amount_usd" numeric(10,2) NOT NULL,
+    "notes" "text",
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."admin_platform_costs" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."analytics_sync_log" (
@@ -1945,6 +1966,24 @@ CREATE TABLE IF NOT EXISTS "public"."continuity_state" (
 
 
 ALTER TABLE "public"."continuity_state" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."cost_events" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "video_id" "uuid",
+    "category" "text" NOT NULL,
+    "service" "text" NOT NULL,
+    "sub_label" "text",
+    "amount_usd" numeric(12,8) NOT NULL,
+    "raw_units" "jsonb",
+    "is_estimated" boolean DEFAULT false NOT NULL,
+    "note" "text",
+    "occurred_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."cost_events" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."gpu_hours_transactions" (
@@ -2317,7 +2356,9 @@ CREATE TABLE IF NOT EXISTS "public"."user_api_keys" (
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "groq_key" "text",
-    "valyu_key" "text"
+    "valyu_key" "text",
+    "inworld_router_key" "text",
+    "llm_provider" "text" DEFAULT 'openrouter'::"text"
 );
 
 
@@ -2329,6 +2370,14 @@ COMMENT ON COLUMN "public"."user_api_keys"."groq_key" IS 'Groq API key for Whisp
 
 
 COMMENT ON COLUMN "public"."user_api_keys"."valyu_key" IS 'Valyu API key for research search and DeepResearch features';
+
+
+
+COMMENT ON COLUMN "public"."user_api_keys"."inworld_router_key" IS 'Inworld AI Router API key for LLM calls. Separate from inworld_tts_key for independent cost tracking.';
+
+
+
+COMMENT ON COLUMN "public"."user_api_keys"."llm_provider" IS 'Active LLM provider for this user: ''openrouter'' (default) or ''inworld''.';
 
 
 
@@ -2359,6 +2408,10 @@ CREATE TABLE IF NOT EXISTS "public"."user_gcp_config" (
     "youtube_oauth_verified" boolean DEFAULT false,
     "active_gpu_productions" integer DEFAULT 0,
     "shutdown_after_production_requested" boolean DEFAULT false,
+    "vm_provisioned_at" timestamp with time zone,
+    "vm_session_started_at" timestamp with time zone,
+    "total_vm_hours_run" numeric(10,4) DEFAULT 0,
+    "total_vm_days_owned" integer DEFAULT 0,
     CONSTRAINT "gpu_auto_shutdown_minutes_range" CHECK ((("gpu_auto_shutdown_minutes" >= 10) AND ("gpu_auto_shutdown_minutes" <= 600)))
 );
 
@@ -2685,6 +2738,44 @@ CREATE TABLE IF NOT EXISTS "public"."youtube_video_analytics" (
 ALTER TABLE "public"."youtube_video_analytics" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."yt_shot_plans" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "youtube_video_id" "text" NOT NULL,
+    "youtube_url" "text" NOT NULL,
+    "video_title" "text" NOT NULL,
+    "channel_name" "text" NOT NULL,
+    "channel_id" "text",
+    "thumbnail_url" "text",
+    "duration_seconds" integer,
+    "published_at" timestamp with time zone,
+    "summary" "text" DEFAULT ''::"text" NOT NULL,
+    "shot_plan" "jsonb" DEFAULT '[]'::"jsonb" NOT NULL,
+    "total_shots" integer DEFAULT 0,
+    "analysis_model" "text" DEFAULT 'google/gemini-2.5-flash-preview'::"text",
+    "category" "text",
+    "notes" "text",
+    "source_type" "text" DEFAULT 'single'::"text" NOT NULL,
+    "batch_id" "uuid",
+    "created_by" "uuid" NOT NULL,
+    CONSTRAINT "yt_shot_plans_source_type_check" CHECK (("source_type" = ANY (ARRAY['single'::"text", 'channel_batch'::"text"])))
+);
+
+
+ALTER TABLE "public"."yt_shot_plans" OWNER TO "postgres";
+
+
+ALTER TABLE ONLY "public"."admin_platform_costs"
+    ADD CONSTRAINT "admin_platform_costs_month_date_category_label_key" UNIQUE ("month_date", "category", "label");
+
+
+
+ALTER TABLE ONLY "public"."admin_platform_costs"
+    ADD CONSTRAINT "admin_platform_costs_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."analytics_sync_log"
     ADD CONSTRAINT "analytics_sync_log_pkey" PRIMARY KEY ("id");
 
@@ -2722,6 +2813,11 @@ ALTER TABLE ONLY "public"."continuity_state"
 
 ALTER TABLE ONLY "public"."continuity_state"
     ADD CONSTRAINT "continuity_state_task_id_key" UNIQUE ("task_id");
+
+
+
+ALTER TABLE ONLY "public"."cost_events"
+    ADD CONSTRAINT "cost_events_pkey" PRIMARY KEY ("id");
 
 
 
@@ -2935,6 +3031,11 @@ ALTER TABLE ONLY "public"."youtube_video_analytics"
 
 
 
+ALTER TABLE ONLY "public"."yt_shot_plans"
+    ADD CONSTRAINT "yt_shot_plans_pkey" PRIMARY KEY ("id");
+
+
+
 CREATE INDEX "idx_audience_demo_channel_date" ON "public"."youtube_audience_demographics" USING "btree" ("channel_id", "snapshot_date" DESC);
 
 
@@ -2956,6 +3057,18 @@ CREATE INDEX "idx_competitor_channels_user" ON "public"."competitor_channels" US
 
 
 CREATE INDEX "idx_competitor_snapshots_date" ON "public"."competitor_channel_snapshots" USING "btree" ("competitor_id", "snapshot_date" DESC);
+
+
+
+CREATE INDEX "idx_cost_events_category" ON "public"."cost_events" USING "btree" ("user_id", "category", "occurred_at" DESC);
+
+
+
+CREATE INDEX "idx_cost_events_user_date" ON "public"."cost_events" USING "btree" ("user_id", "occurred_at" DESC);
+
+
+
+CREATE INDEX "idx_cost_events_video" ON "public"."cost_events" USING "btree" ("video_id") WHERE ("video_id" IS NOT NULL);
 
 
 
@@ -3183,6 +3296,26 @@ CREATE INDEX "idx_youtube_channels_user_id" ON "public"."youtube_channels" USING
 
 
 
+CREATE INDEX "idx_yt_shot_plans_batch_id" ON "public"."yt_shot_plans" USING "btree" ("batch_id");
+
+
+
+CREATE INDEX "idx_yt_shot_plans_category" ON "public"."yt_shot_plans" USING "btree" ("category");
+
+
+
+CREATE INDEX "idx_yt_shot_plans_channel_id" ON "public"."yt_shot_plans" USING "btree" ("channel_id");
+
+
+
+CREATE INDEX "idx_yt_shot_plans_created_at" ON "public"."yt_shot_plans" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_yt_shot_plans_created_by" ON "public"."yt_shot_plans" USING "btree" ("created_by");
+
+
+
 CREATE INDEX "stock_media_embedding_idx" ON "public"."stock_media" USING "ivfflat" ("embedding" "extensions"."vector_cosine_ops") WITH ("lists"='100');
 
 
@@ -3192,6 +3325,10 @@ CREATE OR REPLACE TRIGGER "auto_approve_admin_trigger" BEFORE INSERT OR UPDATE O
 
 
 CREATE OR REPLACE TRIGGER "handle_updated_at" BEFORE UPDATE ON "public"."user_gcp_config" FOR EACH ROW EXECUTE FUNCTION "extensions"."moddatetime"('updated_at');
+
+
+
+CREATE OR REPLACE TRIGGER "handle_yt_shot_plans_updated_at" BEFORE UPDATE ON "public"."yt_shot_plans" FOR EACH ROW EXECUTE FUNCTION "extensions"."moddatetime"('updated_at');
 
 
 
@@ -3282,6 +3419,16 @@ ALTER TABLE ONLY "public"."competitor_channels"
 
 ALTER TABLE ONLY "public"."continuity_state"
     ADD CONSTRAINT "continuity_state_task_id_fkey" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."cost_events"
+    ADD CONSTRAINT "cost_events_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."cost_events"
+    ADD CONSTRAINT "cost_events_video_id_fkey" FOREIGN KEY ("video_id") REFERENCES "public"."video_projects"("id") ON DELETE SET NULL;
 
 
 
@@ -3462,6 +3609,11 @@ ALTER TABLE ONLY "public"."youtube_channels"
 
 ALTER TABLE ONLY "public"."youtube_video_analytics"
     ADD CONSTRAINT "youtube_video_analytics_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "public"."youtube_channels"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."yt_shot_plans"
+    ADD CONSTRAINT "yt_shot_plans_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE CASCADE;
 
 
 
@@ -3803,6 +3955,9 @@ CREATE POLICY "Users view own video analytics" ON "public"."youtube_video_analyt
 
 
 
+ALTER TABLE "public"."admin_platform_costs" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."analytics_sync_log" ENABLE ROW LEVEL SECURITY;
 
 
@@ -3816,6 +3971,9 @@ ALTER TABLE "public"."competitor_channels" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."continuity_state" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."cost_events" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."gpu_hours_transactions" ENABLE ROW LEVEL SECURITY;
@@ -3851,6 +4009,10 @@ ALTER TABLE "public"."project_settings" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."render_jobs" ENABLE ROW LEVEL SECURITY;
 
 
+CREATE POLICY "service_role_full_access_admin_platform_costs" ON "public"."admin_platform_costs" USING (("auth"."role"() = 'service_role'::"text")) WITH CHECK (("auth"."role"() = 'service_role'::"text"));
+
+
+
 ALTER TABLE "public"."social_connections" ENABLE ROW LEVEL SECURITY;
 
 
@@ -3867,6 +4029,10 @@ ALTER TABLE "public"."user_api_keys" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."user_gcp_config" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "user_read_own_cost_events" ON "public"."cost_events" FOR SELECT USING (("auth"."uid"() = "user_id"));
+
 
 
 ALTER TABLE "public"."user_settings" ENABLE ROW LEVEL SECURITY;
@@ -3894,6 +4060,15 @@ ALTER TABLE "public"."youtube_channels" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."youtube_video_analytics" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."yt_shot_plans" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "yt_shot_plans_admin_only" ON "public"."yt_shot_plans" USING ((EXISTS ( SELECT 1
+   FROM "public"."users"
+  WHERE (("users"."id" = "auth"."uid"()) AND ("users"."is_admin" = true)))));
+
 
 
 
@@ -4752,6 +4927,12 @@ GRANT ALL ON FUNCTION "public"."verify_payment_month"("target_user_id" "uuid", "
 
 
 
+GRANT ALL ON TABLE "public"."admin_platform_costs" TO "anon";
+GRANT ALL ON TABLE "public"."admin_platform_costs" TO "authenticated";
+GRANT ALL ON TABLE "public"."admin_platform_costs" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."analytics_sync_log" TO "anon";
 GRANT ALL ON TABLE "public"."analytics_sync_log" TO "authenticated";
 GRANT ALL ON TABLE "public"."analytics_sync_log" TO "service_role";
@@ -4779,6 +4960,12 @@ GRANT ALL ON TABLE "public"."competitor_channels" TO "service_role";
 GRANT ALL ON TABLE "public"."continuity_state" TO "anon";
 GRANT ALL ON TABLE "public"."continuity_state" TO "authenticated";
 GRANT ALL ON TABLE "public"."continuity_state" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."cost_events" TO "anon";
+GRANT ALL ON TABLE "public"."cost_events" TO "authenticated";
+GRANT ALL ON TABLE "public"."cost_events" TO "service_role";
 
 
 
@@ -4929,6 +5116,12 @@ GRANT ALL ON TABLE "public"."youtube_channels" TO "service_role";
 GRANT ALL ON TABLE "public"."youtube_video_analytics" TO "anon";
 GRANT ALL ON TABLE "public"."youtube_video_analytics" TO "authenticated";
 GRANT ALL ON TABLE "public"."youtube_video_analytics" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."yt_shot_plans" TO "anon";
+GRANT ALL ON TABLE "public"."yt_shot_plans" TO "authenticated";
+GRANT ALL ON TABLE "public"."yt_shot_plans" TO "service_role";
 
 
 

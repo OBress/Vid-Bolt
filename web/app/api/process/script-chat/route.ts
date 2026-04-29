@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { getOpenRouterApiKey } from "@/lib/services/api-keys";
+import { getLlmProviderConfig } from "@/lib/services/api-keys";
 import { callOpenRouterWithKey } from "@/lib/ai/openrouter";
 
 // POST /api/process/script-chat - AI-assisted script rewriting
@@ -75,10 +75,10 @@ Rules:
 - explanation should be concise and helpful
 - Do NOT include anything outside the JSON`;
 
-    // Get OpenRouter API key from user's stored keys
-    let openRouterKey: string;
+    // Get LLM provider config — respects user's active provider
+    let llmConfig: { apiKey: string; provider: import('@/lib/ai/providers/types').LlmProvider };
     try {
-      openRouterKey = await getOpenRouterApiKey(user.id);
+      llmConfig = await getLlmProviderConfig(user.id);
     } catch (keyError) {
       return NextResponse.json(
         { error: keyError instanceof Error ? keyError.message : "Failed to get API key" },
@@ -86,7 +86,7 @@ Rules:
       );
     }
 
-    const response = await callOpenRouterWithKey(openRouterKey, [
+    const response = await callOpenRouterWithKey(llmConfig.apiKey, [
       { role: "system", content: systemPrompt },
       { role: "user", content: message },
     ], {
@@ -94,7 +94,8 @@ Rules:
       maxTokens: 2000,
       temperature: 0.7,
       xTitle: 'Vid-Bolt Script Chat',
-    });
+      trackingUserId: user.id,
+    }, llmConfig.provider);
 
     const aiResponse = response.content;
 

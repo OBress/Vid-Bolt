@@ -71,13 +71,24 @@ export async function valyuSearch(
     }
 
     const data = await response.json();
-    
-    console.log(`[Valyu:Search] Found ${data.results?.length || 0} results`);
+    const resultCount = data.results?.length || 0;
+    console.log(`[Valyu:Search] Found ${resultCount} results`);
+
+    // Record to active CostTracker if one is in context
+    try {
+      const { getActiveCostTracker } = await import('@/lib/queues/cost-tracker');
+      const tracker = getActiveCostTracker();
+      if (tracker) {
+        tracker.addValyuSearch(resultCount, params.search_type || 'web');
+      }
+    } catch {
+      // ignore — cost tracking is non-blocking
+    }
     
     return {
       success: true,
       results: data.results || [],
-      total_results: data.total_results || data.results?.length || 0,
+      total_results: data.total_results || resultCount,
     };
   } catch (error) {
     console.error('[Valyu:Search] Error:', error);
@@ -233,13 +244,28 @@ export async function getDeepResearchStatus(
       console.log(`  - sources: ${data.sources?.length || 0}`);
     }
 
+    const exactCost = data.cost || 0;
+
+    // Record exact DeepResearch cost to active CostTracker when completed
+    if (data.status === 'completed' && exactCost > 0) {
+      try {
+        const { getActiveCostTracker } = await import('@/lib/queues/cost-tracker');
+        const tracker = getActiveCostTracker();
+        if (tracker) {
+          tracker.addValyuDeepResearch(exactCost);
+        }
+      } catch {
+        // ignore — cost tracking is non-blocking
+      }
+    }
+
     return {
       deepresearch_id: deepresearchId,
       status: data.status,
       output: outputString,
       structured_output: structuredOutput,
       sources: data.sources || [],
-      cost: data.cost || 0,
+      cost: exactCost,
       pdf_url: data.pdf_url,
       error: data.error,
     };

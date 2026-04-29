@@ -83,19 +83,28 @@ export const GRAPH_EDGES: Array<{ from: string; to: string }> = [
 // LAYOUT — SVG viewbox positions (820 × 240)
 // ============================================================================
 
-/** Desktop layout (≥640px): 2-row conveyor belt with dual parallel pairs */
+/** Desktop layout (≥640px): 2-row conveyor belt with dual parallel pairs.
+ *  ViewBox: 900 × 240
+ *  Row 1 (y=52):  Preparing(120) · Narrating(345) · Scripting(570)
+ *  Row 2 (y=145): Designing(195) · Animating(450) · Assembling(685) · Finalizing(850)
+ *                 Scoring(195)   · Rendering(450)  (stacked, y=195)
+ *  The three top nodes are evenly spaced over the full bottom-row span.
+ */
 export const DESKTOP_POSITIONS: Record<string, { x: number; y: number }> = {
-  // Row 1 (y=58): 3 sequential nodes
-  preparing:  { x: 110, y: 58  },
-  narrating:  { x: 310, y: 58  },
-  scripting:  { x: 510, y: 58  },
-  // Row 2: Pair 1 (stacked left), Pair 2 (stacked center), Assembling, Finalizing
-  designing:  { x: 110, y: 148 },
-  scoring:    { x: 110, y: 198 },
-  animating:  { x: 360, y: 148 },
-  rendering:  { x: 360, y: 198 },
-  assembling: { x: 580, y: 173 },
-  finalizing: { x: 760, y: 173 },
+  // Row 1 (y=52): evenly centered above the full bottom-row span
+  // All x values scaled by 0.8 for 20% horizontal compression
+  preparing:  { x: 96,   y: 52  },
+  narrating:  { x: 276,  y: 52  },
+  scripting:  { x: 456,  y: 52  },
+  // Row 2 parallel pair 1 — left column, stacked
+  designing:  { x: 156,  y: 145 },
+  scoring:    { x: 156,  y: 197 },
+  // Row 2 parallel pair 2 — centre column, stacked
+  animating:  { x: 364,  y: 145 },
+  rendering:  { x: 364,  y: 197 },
+  // Right column — sequential merge
+  assembling: { x: 548,  y: 171 },
+  finalizing: { x: 684,  y: 171 },
 };
 
 /** Mobile layout (<640px): vertical flow */
@@ -221,7 +230,7 @@ export function PipelineGraphNode({
       style={{ display: "inline-flex" }}
     >
       <div
-        className="relative flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-500"
+        className="relative flex items-center gap-1.5 px-2 py-1.5 rounded-xl border transition-all duration-500"
         style={styles.containerStyle}
       >
         {/* Outer glow ring for running state */}
@@ -236,7 +245,7 @@ export function PipelineGraphNode({
 
         {/* Icon */}
         <div
-          className={`relative w-6 h-6 rounded-lg flex items-center justify-center ${styles.iconBgClass} ${styles.iconTextClass}`}
+          className={`relative w-5 h-5 rounded-md flex items-center justify-center ${styles.iconBgClass} ${styles.iconTextClass}`}
         >
           {displayIcon}
         </div>

@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { getLlmProviderConfig } from '@/lib/services/api-keys';
 import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 
 // Service role client for DB reads
@@ -69,8 +69,8 @@ export async function POST(request: NextRequest) {
     const qualityAnchors = (cd.qualityAnchors || []).join(', ');
     const imageConstraints = (cd.imageConstraints || []).join(', ');
 
-    // 4. Get OpenRouter API key
-    const openRouterKey = await getOpenRouterApiKey(user.id);
+    // 4. Get LLM provider config (respects user's active provider)
+    const { apiKey, provider } = await getLlmProviderConfig(user.id);
 
     // 5. Build system prompt
     const typeLabel =
@@ -98,8 +98,8 @@ Rules:
 - ${generationType === 'video' ? 'Include specific camera movement, action verbs for motion (who moves, what moves, how), spatial blocking (left/right, foreground/background), texture and material details, and audio descriptions. Write as a rich, detailed paragraph — LTX 2.3 rewards specificity over simplicity' : 'Focus on composition, color, and detail'}
 - Do NOT include any explanation — output ONLY the enhanced prompt text`;
 
-    // 6. Call OpenRouter
-    const result = await callOpenRouterWithKey(openRouterKey, [
+    // 6. Call LLM
+    const result = await callOpenRouterWithKey(apiKey, [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt },
     ], {
@@ -107,7 +107,8 @@ Rules:
       maxTokens: 1024,
       temperature: 0.7,
       xTitle: 'Vid-Bolt Enhance Prompt',
-    });
+      trackingUserId: user.id,
+    }, provider);
 
     const enhancedPrompt = result.content.trim() || prompt;
 

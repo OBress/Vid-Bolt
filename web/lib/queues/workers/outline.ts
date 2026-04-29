@@ -74,7 +74,7 @@ export const outlineProcessor: Processor<OutlineJobData> = async (
   );
 
   // Cost tracking for Step 1 (Outline)
-  const costTracker = new CostTracker(1);
+  const costTracker = new CostTracker(1, userId);
 
   // Store results across phases
   let researchDossier: ResearchDossier | null = null;

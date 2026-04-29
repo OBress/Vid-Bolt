@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { getLlmProviderConfig } from '@/lib/services/api-keys';
 import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 
 /**
@@ -56,10 +56,10 @@ export async function POST(request: NextRequest) {
       hasEndFrame,
     });
 
-    // 4. Call OpenRouter
-    const openRouterKey = await getOpenRouterApiKey(user.id);
+    // 4. Call LLM (respects user's active provider)
+    const { apiKey, provider } = await getLlmProviderConfig(user.id);
 
-    const result = await callOpenRouterWithKey(openRouterKey, [
+    const result = await callOpenRouterWithKey(apiKey, [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt },
     ], {
@@ -67,7 +67,8 @@ export async function POST(request: NextRequest) {
       maxTokens: 1024,
       temperature: 0.7,
       xTitle: 'Vid-Bolt GPU Enhance Prompt',
-    });
+      trackingUserId: user.id,
+    }, provider);
 
     const enhancedPrompt = result.content.trim() || prompt;
 

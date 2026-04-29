@@ -36,7 +36,10 @@ import { waitForWebhookResult } from '@/lib/queues/webhook-listener';
 import { v4 as uuidv4 } from 'uuid';
 
 const LOG_PREFIX = '[I2VProcessor]';
-const CONTINUITY_EDIT_TIMEOUT_MS = 90_000;
+/** Timeout for I2V continuity frame edits — single-shot, relatively fast. */
+const CONTINUITY_EDIT_TIMEOUT_MS = 120_000; // 2 min
+/** Timeout for creative edits on keyframes/stock images — matches standalone image-edit worker budget. */
+const CREATIVE_EDIT_TIMEOUT_MS = 300_000;   // 5 min
 const getWebhookUrl = () => process.env.WEBHOOK_CALLBACK_URL || 'http://localhost:3000/api/gpu-callback';
 const getWebhookSecret = () => process.env.GPU_WEBHOOK_SECRET;
 
@@ -114,7 +117,8 @@ export async function editImage(
   videoId: string,
   shotIndex: number,
   userId: string,
-  aspectRatio: string = '16:9'
+  aspectRatio: string = '16:9',
+  timeoutMs: number = CONTINUITY_EDIT_TIMEOUT_MS,
 ): Promise<string | null> {
   try {
     console.log(
@@ -142,15 +146,27 @@ export async function editImage(
     });
 
     if (!submitResult.success) {
+      console.error(
+        `${LOG_PREFIX} Shot ${shotIndex}: GPU image edit rejected — ` +
+        `code=${submitResult.errorCode}, msg=${submitResult.errorMessage}`
+      );
+      return null;
     }
 
-    let editedUrl = submitResult.publicUrl || publicUrl;
+    // For async jobs, editedUrl is not known yet — initialize to null and only
+    // set to a real URL once the webhook or job-status poll confirms completion.
+    // (publicUrl is the presigned PUT destination, not a readable URL.)
+    let editedUrl: string | null = null;
+    if (!submitResult.isAsync) {
+      // Rare sync completion path — GPU returned save_url immediately.
+      editedUrl = submitResult.publicUrl || null;
+    }
 
-    if (submitResult.isAsync && submitResult.jobId) {
+    if (editedUrl === null && submitResult.isAsync && submitResult.jobId) {
       try {
-        const webhookResult = await waitForWebhookResult(itemId, CONTINUITY_EDIT_TIMEOUT_MS);
+        const webhookResult = await waitForWebhookResult(itemId, timeoutMs);
         if (webhookResult.status === 'completed') {
-          editedUrl = webhookResult.result?.save_url || publicUrl;
+          editedUrl = webhookResult.result?.save_url || null;
         } else {
           console.error(
             `${LOG_PREFIX} Shot ${shotIndex}: Image edit webhook failed: ${webhookResult.errorMessage || 'Unknown error'}`
@@ -160,7 +176,7 @@ export async function editImage(
       } catch (webhookError) {
         const jobStatus = await callGpuGetJobStatus(submitResult.jobId);
         if (jobStatus.success && jobStatus.job?.status === 'completed') {
-          editedUrl = jobStatus.job.result?.save_url || publicUrl;
+          editedUrl = jobStatus.job.result?.save_url || null;
         } else {
           console.error(`${LOG_PREFIX} Shot ${shotIndex}: Image edit completion check failed:`, webhookError);
           return null;
@@ -505,7 +521,8 @@ export async function processI2VShot(
     videoId,
     shotIndex,
     userId,
-    aspectRatio
+    aspectRatio,
+    CONTINUITY_EDIT_TIMEOUT_MS,
   );
 
   if (!editedUrl) {
@@ -551,7 +568,8 @@ export async function applyCreativeEdit(
     videoId,
     shotIndex,
     userId,
-    aspectRatio
+    aspectRatio,
+    CREATIVE_EDIT_TIMEOUT_MS,  // Creative edits get 5 min — matches standalone image-edit worker
   );
 
   // Creative edits are non-blocking — if they fail, use the original image

@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useUserSettings } from "@/hooks/use-user-settings";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { SaveStatusIndicator } from "@/components/ui/SaveStatusIndicator";
+import type { SaveStatus } from "@/hooks/use-project-settings";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGpuHours } from "@/hooks/use-gpu-hours";
@@ -85,7 +86,7 @@ export function AccountTab() {
 
   const [name, setName] = useState("");
   const [gpuShutdownMinutes, setGpuShutdownMinutes] = useState<number>(60);
-  const [gpuSettingsSaving, setGpuSettingsSaving] = useState(false);
+  const [gpuSaveStatus, setGpuSaveStatus] = useState<SaveStatus>("idle");
   const gpuSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Sync name from profile
@@ -138,9 +139,11 @@ export function AccountTab() {
         clearTimeout(gpuSaveTimeoutRef.current);
       }
 
+      // Show saving immediately on change
+      setGpuSaveStatus("saving");
+
       // Debounce save
       gpuSaveTimeoutRef.current = setTimeout(async () => {
-        setGpuSettingsSaving(true);
         try {
           const {
             data: { user },
@@ -154,10 +157,12 @@ export function AccountTab() {
             },
             { onConflict: "user_id" },
           );
+          setGpuSaveStatus("saved");
+          setTimeout(() => setGpuSaveStatus("idle"), 2500);
         } catch (err) {
           console.error("Failed to save GPU shutdown setting:", err);
-        } finally {
-          setGpuSettingsSaving(false);
+          setGpuSaveStatus("error");
+          setTimeout(() => setGpuSaveStatus("idle"), 3000);
         }
       }, 1000);
     },
@@ -378,11 +383,7 @@ export function AccountTab() {
                 className="w-20 bg-black/40 border-neutral-700 text-white focus:border-orange-500 text-sm"
               />
               <span className="text-xs text-neutral-400">min</span>
-              {gpuSettingsSaving && (
-                <span className="text-xs text-orange-500 animate-pulse">
-                  Saving...
-                </span>
-              )}
+              <SaveStatusIndicator status={gpuSaveStatus} />
             </div>
           </div>
 

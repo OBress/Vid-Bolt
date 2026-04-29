@@ -14,7 +14,7 @@
  *   4. Return adjustment recommendations
  */
 
-import { getOpenRouterApiKey } from '@/lib/services/api-keys';
+import { getLlmProviderConfig } from '@/lib/services/api-keys';
 import { callOpenRouterWithKey } from '@/lib/ai/openrouter';
 import { getSupabaseServiceClient } from '@/lib/queues/shared';
 
@@ -122,8 +122,8 @@ export async function reviewTimelinePacing(
     };
   });
 
-  // Call Gemini 3 Flash for pacing review
-  const apiKey = await getOpenRouterApiKey(userId);
+  // Call the user's active LLM provider for pacing review
+  const { apiKey, provider } = await getLlmProviderConfig(userId);
 
   const result = await callOpenRouterWithKey(apiKey, [
     {
@@ -194,7 +194,7 @@ For each issue, suggest a specific adjustment. If the pacing is well-crafted wit
         },
       },
     },
-  });
+  }, provider);
 
   const content = result.content;
 

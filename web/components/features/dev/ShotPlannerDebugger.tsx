@@ -38,6 +38,10 @@ import {
   Copy,
   Check,
   GitCompare,
+  Youtube,
+  Search,
+  Filter,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsService } from "@/lib/services/settings-service";
@@ -185,10 +189,25 @@ function getSnapshots(): DebugSnapshot[] {
 }
 
 function saveSnapshot(snap: DebugSnapshot) {
+  // Strip heavyweight events array before persisting — events contain full
+  // LLM prompts/responses that easily exceed localStorage's ~5 MB quota.
+  // Comparison mode only uses shots/scenes/manifest so nothing is lost.
+  const liteSnap: DebugSnapshot = { ...snap, events: [] };
+
   const snaps = getSnapshots();
   const filtered = snaps.filter(s => s.id !== snap.id);
-  const updated = [snap, ...filtered].slice(0, 20);
-  localStorage.setItem(STORAGE_SNAPSHOTS_KEY, JSON.stringify(updated));
+  let updated = [liteSnap, ...filtered].slice(0, 10);
+
+  // Progressive eviction: if the serialized payload still exceeds quota,
+  // keep removing the oldest snapshot until it fits.
+  while (updated.length > 0) {
+    try {
+      localStorage.setItem(STORAGE_SNAPSHOTS_KEY, JSON.stringify(updated));
+      return;
+    } catch {
+      updated = updated.slice(0, -1);
+    }
+  }
 }
 
 function deleteSnapshot(id: string) {
@@ -235,6 +254,222 @@ function diffSummary(baseline: ShotResult[], current: ShotResult[]) {
   const removed = baselineAnnotated.filter(s => s._diff === "removed").length;
   const changed = currentAnnotated.filter(s => s._diff === "changed").length;
   return { added, removed, changed };
+}
+
+// ============================================================================
+// YT PLAN → ShotResult MAPPER
+// ============================================================================
+
+interface YtShotPlanShot {
+  shot_index: number;
+  start_seconds: number;
+  end_seconds: number;
+  duration_seconds: number;
+  shot_type: string;
+  camera_motion: string;
+  subject: string;
+  action: string;
+  narrative_purpose: string;
+  emotion_tone: string;
+  visual_description: string;
+  visual_elements: string[];
+  narration_excerpt?: string;
+  has_music: boolean;
+  has_sfx: boolean;
+  suggested_media_type: string;
+  production_notes: string;
+}
+
+function mapYtPlanToShotResults(shots: YtShotPlanShot[]): ShotResult[] {
+  return shots.map(s => ({
+    segment_index: s.shot_index,
+    start_seconds: s.start_seconds,
+    end_seconds: s.end_seconds,
+    duration_seconds: s.duration_seconds,
+    summary: `${s.subject} — ${s.action}`,
+    visual_description: s.visual_description,
+    media_type: s.suggested_media_type,
+    narrative_beat: s.narrative_purpose,
+    camera_motion: s.camera_motion,
+    visual_elements: s.visual_elements,
+    // Extras surfaced in the debugger's field view
+    shot_type: s.shot_type,
+    emotion_tone: s.emotion_tone,
+    has_music: s.has_music,
+    has_sfx: s.has_sfx,
+    narration_excerpt: s.narration_excerpt,
+    production_notes: s.production_notes,
+  }));
+}
+
+// ============================================================================
+// YT IMPORT MODAL
+// ============================================================================
+
+interface YtPlanSummary {
+  id: string;
+  video_title: string;
+  channel_name: string;
+  thumbnail_url: string | null;
+  total_shots: number;
+  duration_seconds: number | null;
+  category: string | null;
+  created_at: string;
+}
+
+function YtImportModal({
+  onClose,
+  onLoadBaseline,
+}: {
+  onClose: () => void;
+  onLoadBaseline: (shots: ShotResult[], label: string) => void;
+}) {
+  const [categories, setCategories] = useState<{ name: string; count: number }[]>([]);
+  const [plans, setPlans] = useState<YtPlanSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/shot-planner/categories")
+      .then(r => r.json())
+      .then(d => setCategories(d.categories ?? []));
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    const params = new URLSearchParams({ limit: "50" });
+    if (activeCategory) params.set("category", activeCategory);
+    if (search.trim()) params.set("search", search.trim());
+    fetch(`/api/admin/shot-planner/plans?${params}`)
+      .then(r => r.json())
+      .then(d => setPlans(d.plans ?? []))
+      .finally(() => setLoading(false));
+  }, [activeCategory, search]);
+
+  const handleLoad = async (plan: YtPlanSummary) => {
+    setLoadingId(plan.id);
+    try {
+      const r = await fetch(`/api/admin/shot-planner/plans/${plan.id}`);
+      const d = await r.json();
+      const shots = mapYtPlanToShotResults(d.plan?.shot_plan ?? []);
+      onLoadBaseline(shots, `${plan.video_title} — ${plan.channel_name}`);
+      onClose();
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
+      <div className="relative w-[640px] max-w-[95vw] max-h-[80vh] bg-neutral-950 border border-neutral-800 rounded-2xl shadow-2xl flex flex-col">
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-neutral-800">
+          <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center flex-shrink-0">
+            <Youtube className="w-4 h-4 text-red-400" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-sm font-bold text-white">Import YT Plan as Baseline</h3>
+            <p className="text-[11px] text-neutral-500">Load a saved YouTube shot analysis into the comparison baseline slot</p>
+          </div>
+          <button onClick={onClose} className="text-neutral-500 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Search + filters */}
+        <div className="px-5 py-3 border-b border-neutral-800 space-y-2">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search videos, channels…"
+              className="w-full pl-8 pr-3 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-white placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+          {categories.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Filter className="w-3 h-3 text-neutral-600" />
+              <button
+                onClick={() => setActiveCategory(null)}
+                className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors ${
+                  !activeCategory ? "bg-red-600/20 border-red-500/40 text-red-400" : "bg-neutral-900 border-neutral-700 text-neutral-500 hover:border-neutral-600"
+                }`}
+              >
+                All
+              </button>
+              {categories.map(cat => (
+                <button
+                  key={cat.name}
+                  onClick={() => setActiveCategory(activeCategory === cat.name ? null : cat.name)}
+                  className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors ${
+                    activeCategory === cat.name ? "bg-red-600/20 border-red-500/40 text-red-400" : "bg-neutral-900 border-neutral-700 text-neutral-500 hover:border-neutral-600"
+                  }`}
+                >
+                  {cat.name} ({cat.count})
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Plan list */}
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-5 h-5 text-neutral-600 animate-spin" />
+            </div>
+          ) : plans.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Youtube className="w-8 h-8 text-neutral-700 mb-2" />
+              <p className="text-sm text-neutral-500">No saved plans found</p>
+              <p className="text-xs text-neutral-600 mt-1">Analyze videos using DevTools → YouTube Shot Scraper first</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-neutral-800">
+              {plans.map(plan => (
+                <div key={plan.id} className="flex items-center gap-3 px-5 py-3 hover:bg-neutral-900/50 transition-colors">
+                  {/* Thumbnail */}
+                  <div className="w-16 h-10 rounded-md bg-neutral-900 flex-shrink-0 overflow-hidden">
+                    {plan.thumbnail_url
+                      ? <img src={plan.thumbnail_url} alt="" className="w-full h-full object-cover" />
+                      : <div className="w-full h-full flex items-center justify-center"><Youtube className="w-4 h-4 text-neutral-700" /></div>
+                    }
+                  </div>
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-white truncate">{plan.video_title}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-neutral-500">{plan.channel_name}</span>
+                      {plan.category && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">{plan.category}</span>
+                      )}
+                      <span className="text-[10px] text-neutral-600">{plan.total_shots} shots</span>
+                    </div>
+                  </div>
+                  {/* Load button */}
+                  <button
+                    onClick={() => handleLoad(plan)}
+                    disabled={loadingId === plan.id}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50 flex-shrink-0"
+                  >
+                    {loadingId === plan.id
+                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : <Download className="w-3 h-3" />
+                    }
+                    Load as Baseline
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ============================================================================
@@ -882,6 +1117,10 @@ export function ShotPlannerDebugger({ onClose }: Props) {
   // null = not in compare mode.
   const [compareSnapshotId, setCompareSnapshotId] = useState<string | null>(null);
   const [baselineDropdownOpen, setBaselineDropdownOpen] = useState(false);
+  // YT import baseline — when set, overrides compareSnapshotId for the left column
+  const [ytBaselineShots, setYtBaselineShots] = useState<ShotResult[] | null>(null);
+  const [ytBaselineLabel, setYtBaselineLabel] = useState<string | null>(null);
+  const [ytImportOpen, setYtImportOpen] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1114,6 +1353,14 @@ export function ShotPlannerDebugger({ onClose }: Props) {
   const handleExitCompare = () => {
     setCompareSnapshotId(null);
     setBaselineDropdownOpen(false);
+    setYtBaselineShots(null);
+    setYtBaselineLabel(null);
+  };
+
+  const handleLoadYtBaseline = (shots: ShotResult[], label: string) => {
+    setYtBaselineShots(shots);
+    setYtBaselineLabel(label);
+    setCompareSnapshotId(null); // clear snapshot-based compare
   };
 
   const handleDeleteCompareSnapshot = (id: string) => {
@@ -1493,11 +1740,18 @@ export function ShotPlannerDebugger({ onClose }: Props) {
     ? snapshots.find(s => s.id === compareSnapshotId) ?? null
     : null;
 
+  // Active baseline: prefer YT plan, fall back to saved snapshot
+  const activeBaselineShots: ShotResult[] | null =
+    ytBaselineShots ?? (compareSnapshot?.shots ?? null);
+  const activeBaselineLabel: string | null =
+    ytBaselineLabel ?? (compareSnapshot?.name ?? null);
+  const isComparing = activeBaselineShots !== null && shots.length > 0;
+
   // Comparison mode: compute diffs
-  const { baselineAnnotated, currentAnnotated } = compareSnapshot
-    ? diffShots(compareSnapshot.shots, shots)
+  const { baselineAnnotated, currentAnnotated } = activeBaselineShots
+    ? diffShots(activeBaselineShots, shots)
     : { baselineAnnotated: [] as ShotResultWithDiff[], currentAnnotated: [] as ShotResultWithDiff[] };
-  const diff = compareSnapshot ? diffSummary(compareSnapshot.shots, shots) : null;
+  const diff = activeBaselineShots ? diffSummary(activeBaselineShots, shots) : null;
 
   return (
     <div className="flex flex-col h-full bg-neutral-950">
@@ -1508,13 +1762,18 @@ export function ShotPlannerDebugger({ onClose }: Props) {
         </button>
         <div className="flex-1 flex items-center gap-3 flex-wrap">
           <span className="text-sm font-bold text-white">
-            {compareSnapshot ? "Shot Planning — Side-by-Side" : "Shot Planning Debug Results"}
+            {isComparing ? "Shot Planning — Side-by-Side" : "Shot Planning Debug Results"}
           </span>
           <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 text-[10px] font-semibold">
             {shots.length} shots · {scenes.length} scenes · {formatDuration(totalDuration)}
           </span>
           {errorCount > 0 && (
             <span className="px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 text-[10px] font-semibold">{errorCount} errors</span>
+          )}
+          {isComparing && ytBaselineLabel && (
+            <span className="px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 text-[10px] font-semibold">
+              YT: {ytBaselineLabel.slice(0, 40)}{ytBaselineLabel.length > 40 ? "…" : ""}
+            </span>
           )}
           {diff && (
             <span className="px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-400 text-[10px] font-semibold">
@@ -1546,18 +1805,38 @@ export function ShotPlannerDebugger({ onClose }: Props) {
               />
             </>
           )}
+          {/* Import YT Plan button — always visible when there are shots */}
+          {shots.length > 0 && (
+            <button
+              onClick={() => setYtImportOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-red-600/10 text-red-400 hover:bg-red-600/20 border border-red-500/20 transition-colors"
+            >
+              <Youtube className="w-3.5 h-3.5" />
+              Import YT Baseline
+            </button>
+          )}
           {/* Side-by-Side view button */}
           {snapshots.length > 0 && shots.length > 0 && (
             <button
-              onClick={compareSnapshot ? handleExitCompare : handleEnterCompare}
+              onClick={isComparing && !ytBaselineShots ? handleExitCompare : handleEnterCompare}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                compareSnapshot
+                isComparing && !ytBaselineShots
                   ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
                   : "bg-neutral-800 text-neutral-400 hover:text-white"
               }`}
             >
               <GitCompare className="w-3.5 h-3.5" />
-              {compareSnapshot ? "Exit Side-by-Side" : "Side-by-Side View"}
+              {isComparing && !ytBaselineShots ? "Exit Side-by-Side" : "Side-by-Side View"}
+            </button>
+          )}
+          {/* Exit compare when in YT baseline mode */}
+          {isComparing && ytBaselineShots && (
+            <button
+              onClick={handleExitCompare}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-amber-500/20 text-amber-400 border border-amber-500/30 transition-colors"
+            >
+              <GitCompare className="w-3.5 h-3.5" />
+              Exit YT Comparison
             </button>
           )}
           <button
@@ -1622,21 +1901,25 @@ export function ShotPlannerDebugger({ onClose }: Props) {
       {/* ================================================================
           COMPARISON VIEW
           ================================================================ */}
-      {compareSnapshot ? (
+      {isComparing ? (
         <div className="flex-1 flex overflow-hidden">
           {/* Baseline column */}
           <div className="flex-1 flex flex-col border-r border-amber-500/20 overflow-hidden">
-            {/* Baseline column header with snapshot selector dropdown */}
+            {/* Baseline column header */}
             <div className="px-4 py-2 bg-amber-500/5 border-b border-amber-500/20 flex items-center gap-2 flex-shrink-0 relative">
-              <GitCompare className="w-3 h-3 text-amber-400 flex-shrink-0" />
+              {ytBaselineShots ? (
+                <Youtube className="w-3 h-3 text-red-400 flex-shrink-0" />
+              ) : (
+                <GitCompare className="w-3 h-3 text-amber-400 flex-shrink-0" />
+              )}
               <button
-                onClick={() => setBaselineDropdownOpen(!baselineDropdownOpen)}
+                onClick={() => !ytBaselineShots && setBaselineDropdownOpen(!baselineDropdownOpen)}
                 className="flex items-center gap-1.5 text-[10px] font-bold text-amber-400 uppercase tracking-wider hover:text-amber-300 transition-colors"
               >
-                {compareSnapshot.name}
-                <ChevronDown className="w-3 h-3" />
+                {ytBaselineShots ? (ytBaselineLabel?.slice(0, 50) ?? "YouTube Baseline") : compareSnapshot?.name}
+                {!ytBaselineShots && <ChevronDown className="w-3 h-3" />}
               </button>
-              <span className="text-[10px] text-neutral-500">{compareSnapshot.shots.length} shots · {formatDuration(compareSnapshot.totalDurationSeconds)}</span>
+              <span className="text-[10px] text-neutral-500">{activeBaselineShots?.length ?? 0} shots</span>
               {/* Snapshot selector dropdown */}
               {baselineDropdownOpen && (
                 <>
@@ -1694,7 +1977,7 @@ export function ShotPlannerDebugger({ onClose }: Props) {
                   key={i}
                   shot={shot}
                   realIndex={i}
-                  allShots={compareSnapshot.shots}
+                  allShots={activeBaselineShots ?? []}
                   onClick={() => {}}
                   diffStatus={shot._diff}
                 />
@@ -1849,6 +2132,14 @@ export function ShotPlannerDebugger({ onClose }: Props) {
           index={openShotIndex}
           sceneEvents={sceneEvents}
           onClose={() => setOpenShot(null)}
+        />
+      )}
+
+      {/* YT Import Modal */}
+      {ytImportOpen && (
+        <YtImportModal
+          onClose={() => setYtImportOpen(false)}
+          onLoadBaseline={handleLoadYtBaseline}
         />
       )}
     </div>
